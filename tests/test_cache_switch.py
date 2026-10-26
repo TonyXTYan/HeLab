@@ -218,7 +218,7 @@ def test_newer_store_is_read_but_never_written(tmp_path: Path) -> None:
 
 
 def test_synced_and_network_cache_folders_are_refused(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
-    home = Path.home()
+    home = tmp_path / "home"  # (Never the real home: ``realpath`` lstats each part. The rules read names only.)
     assert cache_location_problem(str(home / "Library/Mobile Documents/com~apple~CloudDocs/c")) == \
         "in a synced folder (Mobile Documents)"
     assert cache_location_problem(str(home / "Library/CloudStorage/Box-Box/c")) == \
@@ -245,14 +245,15 @@ def test_synced_and_network_cache_folders_are_refused(monkeypatch: pytest.Monkey
 
 def test_unsafe_saved_cache_folder_is_replaced_for_this_session(monkeypatch: pytest.MonkeyPatch,
                                                                 tmp_path: Path) -> None:
-    synced = str(Path.home() / "Dropbox" / "HeLab" / "caches")
+    home = tmp_path / "home"  # (As above: never the real home.)
+    synced = str(home / "Dropbox" / "HeLab" / "caches")
     fallback = str(tmp_path / "default")
     path, reason, enabled = refuse_unsafe_cache_dir(synced, [fallback])
     assert path == fallback and os.path.isdir(fallback) and enabled
     assert synced in reason and "synced folder" in reason and fallback in reason
     assert refuse_unsafe_cache_dir(fallback, [str(tmp_path / "other")]) == (fallback, "", True)
     # With no safe default the refused folder is never used: the disk cache is off.
-    path, reason, enabled = refuse_unsafe_cache_dir(synced, [str(Path.home() / "Dropbox" / "x")])
+    path, reason, enabled = refuse_unsafe_cache_dir(synced, [str(home / "Dropbox" / "x")])
     assert not enabled and "no safe default" in reason and "off for this session" in reason
 
 
