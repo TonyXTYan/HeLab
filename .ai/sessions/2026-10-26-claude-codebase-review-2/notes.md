@@ -230,3 +230,63 @@ this test's I/O asked for: [.ai/temp/pytest-wt/popen-gw3/test_window_icon_is_fou
 Checks for batch 2, at `e47242b` (before C-26): full suite 4354 passed, 2 skipped, 2 xfailed, **no
 RERUN**; strict mypy on helab and tests and pyright clean. C-26 after: affected tests 170 passed,
 types clean.
+
+## Follow-up: Tony's answers (2026-10-26, via CoCo)
+
+### Batch 3, before the merge (accepted by Sextant)
+
+- **Item 8, `a40ef18`:** the per-minute cap is dropped.
+  - The hub keeps "once per key". `RATE_SECONDS`, `rate_key`, the clock and the held-back count are
+    gone.
+  - Shot trends' tooltip no longer says "at most one a minute".
+  - `explorer_live` never passed `rate_key`.
+- **Item 9, `33849f4`:** two waits, `VERIFY_WAIT` (15 s, compute) and `SAVE_VERIFY_WAIT` (120 s,
+  save).
+  - The status bar notice and the plot's status line show `VERIFY_NOTE`, cleared like
+    `PENDING_NOTE`.
+  - The amber line shows `UNCHECKED_NOTE` (a new `AnalysisInstance._save_note`), with one log line.
+  - A late guard is fenced by a Clear after the run started (`_cache_removed`; mutation-checked).
+- **C-12, `d1aa85b`:** Live reads `fingerprints.RACY_SECONDS`.
+  `test_a_recently_modified_folder_is_listed_again` sets the margin and checks a margin of 0
+  compares.
+- **C-15, `898966f`:** `dataset_view.root_key` quotes each part, as `cache_paths`. Test against
+  `DataRoots.key`.
+- **C-23, `3e04f03`:** the inspector's `_say` names refused or RAM-only changes. `note_saved` puts a
+  parameterless script's note on the status line, kept in front of the waiting text and after runs.
+- **C-14** was set aside as a patch: its tests pinned binary sizes built from `N << 30`, and the
+  budget unit needed Tony's word.
+
+### Merge
+
+`c1da54d` merged `dev/v0.0.6` at `117b578` cleanly: 4447 passed, no RERUN.
+
+### Batch 4, after the merge (accepted by Sextant)
+
+- **C-2, `cb6fa23`:** `resultPendingAnswered(str, bool, str, str)` with `PENDING_*` reasons, and the
+  plot's `NOT_SAVED_NOTES`. Lifecycle tests now expect "its cached analysis was cleared" for a clear
+  or purge.
+- **Sextant's remarks, `8026637`:**
+  - the fence covers `not entry.wait` (holds-state scripts too);
+  - a run already going says "this result isn't saved" instead of "computing";
+  - remark 3 is a handoff doc edit.
+- **C-10, `dce92c7`.**
+- **The rename, `d95b18b`.**
+- **Held cleanups, `fce2de0`.** C-5 keeps `paths=` because `test_result_cache_store.py:98` uses it.
+- **C-24 rest, `0d7a83c`.**
+- **C-26 part, `1a15f61`.**
+- **C-28: declined for `PresetBar`** (reasons in the handoff). `PlotReopen` already injected.
+
+### Batch 5
+
+- **C-14, `bbed82c`:** SI `byte_size`, `app_log.MB`, the memory window; SI budgets
+  (`DISK_BUDGET_SETTING` default 8e9, `MIN_DISK_BUDGET` and `MIN_RAM_BUDGET` 10^9,
+  `CacheTab.GB = 10**9`, SettingsDialog's Reset); `duration` = `span` on whole seconds. The tests
+  build sizes in SI.
+- **C-29, C-30, `28c0dff`:**
+  - `PresetFolder._busy()` counts an asked load until the data shows, the load fails, or the folder
+    is held back as large. The instrumented probe showed `loading` cleared before `opened` was set.
+  - Offline, a never-listed folder is named.
+  - Tests in `tests/test_preset_folder_live.py`, built from Sextant's probes.
+
+Checks at `28c0dff`: 4464 passed, 2 skipped, no RERUN; mypy --strict on helab and tests, and
+pyright, clean.

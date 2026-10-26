@@ -433,3 +433,101 @@ default, env seam and path named in AGENTS.md) matches the code.
   `pytest -n 4 --reruns 5 --reruns-delay 1`: 4354 passed, 2 skipped, 2 xfailed, **no RERUN**
   (1:56); `mypy helab/ --strict` (161 files), `mypy tests --strict` (134 files), `pyright helab
   tests`: clean.
+
+## Follow-up (Tony's answers, 2026-10-26)
+
+- **Batch 3** (`a40ef18`…`3e04f03`, pre-merge): every commit read in full against Tony's answers,
+  accepted. Item 8 (`a40ef18`): the per-minute cap, `RATE_SECONDS`, `rate_key` and the held-back
+  count are gone; `Event.shown` is "asked for a notification". Item 9 (`33849f4`): `VERIFY_WAIT`
+  15 s runs the plot and says `VERIFY_NOTE` in the status bar and status line; the save (or the
+  late lookup, asked again for the guard alone) waits to `SAVE_VERIFY_WAIT` 120 s from the refusal
+  on one timer (`_schedule`); then, or on a second refusal, `UNCHECKED_NOTE` on the amber line and
+  one WARNING; a Clear after the run started fences the late guard (`fenced`). C-12 (`d1aa85b`):
+  Live reads `fingerprints.RACY_SECONDS`. C-15 (`898966f`): `dataset_view.root_key` quotes each
+  part as `cache_paths` does; the test compares it with the store's `DataRoots.key` for "run 1",
+  a dated folder and `a%b/c#d`. C-23 (`3e04f03`): the inspector's note line names a refused or
+  RAM-only change with `saved_note`; a parameterless script's reopen note goes on the status line
+  (`AnalysisInstance.note_saved`), kept after its runs.
+  Remarks, no change required before the merge, Rasp's call whether to fold in with batch 4:
+  - `_cache_removed`'s fence takes `entry.late` only; a holds-state script's lookup (`wait` False
+    from the start) also runs before its guard when refused, so a Clear between its run's start and
+    the guard taken after verification isn't fenced: `not entry.wait and not entry.answered` covers
+    both (low: needs an unverified volume, a holds-state plot and a Clear in that window).
+  - `_answer` for a late lookup whose second answer is a plain `error` says "…: computing" though
+    the run already computed (wording only).
+  - AGENTS.md's Live paragraph still says "at most once a minute per kind and folder
+    (`RATE_SECONDS`), the held-back ones counted in the next": a doc edit for the handoff.
+  Checks: a full run that straddled the `dev/v0.0.6` merge (`c1da54d`) failed one test with a
+  mixed tree (`test_helper_events`: `offline` not in `GUI_KINDS` from the pre-merge test file);
+  on the merged head it passes (5 passed). Strict mypy (162 + 136 files) and pyright clean. The
+  full suite is rerun at the final head below.
+
+- **Batch 4** (`cb6fa23`…`1a15f61`, after the `dev/v0.0.6` merge `c1da54d`): every commit read in
+  full, accepted. C-2 (`cb6fa23`): `resultPendingAnswered` carries why (`PENDING_*`), the plot's
+  notes read "not saved (expired): it waited over an hour for Make room", "not saved: the disk cache
+  was recreated", "not saved: its cached analysis was cleared", Discard keeps "(discarded)".
+  Item 9 follow-up (`8026637`): the fence on `not entry.wait`, the "computing" note only for a run
+  not yet going, a holds-state fence test. C-10 (`dce92c7`): the menu item gone, its key in
+  `RETIRED`. C-12 rename (`d95b18b`). Held cleanups (`fce2de0`: `remove_results` keeps `paths`,
+  which is tested, drops `_stored_keys`; `DEFAULT_BUDGET`, `RESULT_FORMAT`, `LISTINGS`,
+  `STATUS_LEFT_*`, `diskUsageChanged`, `itemExpandedSignal`, `current_cache_paths`,
+  `rescan_current_folder_explorer`, `named_temp_files` with the `HeLab-shutdown` thread that only
+  closed them). C-24 rest (`0d7a83c`: the five Cache Only views call `folder_cache.store_options()`;
+  `arrangement.py` and `instance.py` stay by value, the presets tests' seam). C-26 part (`1a15f61`:
+  `ResultCount.event()`, `Usage.event()`, `write_presets`, `read_presets` typed; four casts gone).
+  Rasp's decline of C-28 for `PresetBar` (presets are app-wide by design; `preset_store()` is the
+  one place) is reasonable: C-28 stays a note in the handoff.
+  My rerun at `1a15f61`: `pytest -n 4 --reruns 5 --reruns-delay 1`: 4451 passed, 2 skipped, 2
+  rerun, both `test_typing.py::test_pyright_tests` on 2 pyright errors in `tests/test_zz_seam_probe.py`,
+  **my own scratch probe, which sat in `tests/` during the run** (not the branch's: with it removed,
+  `test_typing.py` 6 passed); `mypy helab/ --strict` (162 files), `mypy tests --strict` (136
+  files), `pyright helab tests`: clean.
+
+## The combined branch: Cache Only (Work Offline) meeting the review fixes
+
+Read: the merge's changes to `io_service.py` (`OFFLINE_OPERATIONS`, `set_offline`,
+`finishes_offline`), `folder_cache.py` (`_offline`, `set_offline`, `_offline_submit`,
+`store_options`), `io_ops/stores.py` (`_offline_mounts`, `offline` keying), `cache_store.py`
+(`listings`, `_migrate`), the explorer, the model, the main window, `io_helper.py`, `listings.py`,
+`conftest.py`; Cache Only's own four review rounds (`review-findings.md`) so as not to repeat them.
+The seams, each traced and found consistent:
+- Saved results (C-1, item 9): `result_find`, `result_save`, `cache_admin` and `volumes_verify` are
+  `OFFLINE_OPERATIONS`, so lookups and saves run offline, the identity probe runs, and the 15 s /
+  120 s waits can end; `_store_or_off` passes `offline` to `_cache_store`, so a folder on an
+  unmounted hinted volume keys through its hint; `set_offline(False)` calls `_verify_roots`, whose
+  `volumesVerified` re-asks any waiting lookup or save.
+- Reopened plots and presets: `FolderWait`'s `cached` read is allowed offline; `PresetFolder`'s
+  deliberate load becomes the explorer's `_show_offline` (RAM, else one cached read); Live is refused
+  through `live_unavailable` with `OFFLINE_LIVE`; `set_work_offline(True)` stops Live before the
+  switch, and the remembered setting is applied before `PlotReopen.restore`.
+- Dock layout (C-17/18): no interplay with offline. The event-contract test (C-13) passes with the
+  `offline` kind in `GUI_KINDS`. `store_free` counts `saved_list` helpers (`CACHE_OPERATIONS`).
+  Saved listings carry each subfolder's `results` count and `data_root`, so the REPORT badge and
+  the root hints hold offline. `KINDS` gained `listings`; `remove_results` and `cache_move.verify`
+  are unaffected (listings have no files).
+- Probes (in this folder, `review-probe-seam-offline-preset*.py`; run as `tests/test_zz_*.py`
+  copies, then removed): an arrangement preset with a plot and Live applied while offline for a
+  folder seen online opens the plot, runs it on the folder's RAM data (shots 1–3), refuses Live with
+  "Live is off while working offline", and starts only `cache_admin` helpers; for a folder never
+  listed online, the plot waits ("Reading run's data from the disk cache…", then waiting) and
+  nothing reads the folder. Two findings came out of them, neither a seam defect:
+
+- **C-29 (low)** — `helab/views/plots/presets.py` (`PresetFolder.check`, the
+  `selected_path_globally != self.folder` branch): offline, `open_to_path` of a folder with no saved
+  listing leaves the selection on its parent (the tab can't list it), so the notice says "Live not
+  started: another folder was selected", which isn't what happened. Fix: when
+  `cache.offline` and the folder isn't the tab's node, say "can't be opened while working offline
+  (not listed while online): its plots wait for its data".
+- **C-30 (low, online; from the Presets Reopen floor, not the merge)** — `PresetFolder.check`
+  gives up too early on a folder whose data isn't shown yet: in the probe, `apply("on")` (Live, no
+  plots) on a folder with three shots, after the tab's startup listing had settled, ended with
+  "Live not started: Select a folder with loaded data, or with no shots yet, to watch it for new
+  shots" while the folder's load then completed and showed the data (`opened True data True`
+  right after). `_busy()` covers `loading`, `load_waiting` and `settling` only; between
+  `load_to_ram_cache` returning and the load (or a pending cached read, `_cache_read_path`)
+  becoming visible there is a gap in which `live_unavailable` is asked and `finish()` called.
+  Applied before the startup resolve answered, it instead ends "another folder was selected" (the
+  resolve moves the selection after `open_to_path`). The repo's test uses an empty folder, which has
+  no load, so it never sees this. Fix: after `load_asked`, wait for the next `dataLoaded` /
+  `loadStateChanged` (or count a pending cached read as busy) before judging Live; and treat the
+  startup resolve as the tab settling. Observed twice by the probe; the exact gap is my reading.
