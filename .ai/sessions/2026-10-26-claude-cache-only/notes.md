@@ -244,3 +244,30 @@ clean; pyright 0 errors.
 
 **Checks.** Full suite: 4424 passed, 2 skipped, **no RERUN**. mypy --strict on `helab/` and `tests/`
 clean; pyright 0 errors.
+
+## Review round 3 fix (Vernier's delta check; rule from CoCo), 2026-10-26
+
+**P2. A current NFS4 mount at a custom path missed the rule.**
+- psutil gave `remote=False`, and the mount had no volume ID, no `/dev` source and wasn't under a
+  mount top. So an old nested SMB hint won again.
+- CoCo asked to invert the rule rather than add a fourth case.
+
+**Fix.** `_volume_mount` is replaced by `stores._transparent_mount`:
+- A current mount at or above a hint's path wins over the hint, whatever its filesystem (disk,
+  share, NFS, FUSE, CIFS, autofs, anything unknown).
+- **Exceptions** (`TRANSPARENT_FILESYSTEMS`): the system volume (`fixed_mount`) and pseudo
+  filesystems such as tmpfs, devtmpfs, devfs, ramfs, overlay, proc, sysfs and cgroup. Hints below
+  these stay usable.
+- Vernier's NFS reproducer, adapted to the new names (it imported `_volume_mount`): `/srv/lab/subdir/run`
+  now raises `UnresolvedRemotePath` (NFS, no disk cache) instead of keying to `root://old-root/run`.
+
+**Tests.** `test_any_mount_at_a_custom_path_wins_over_a_hint_below_it_unless_transparent`, run for
+`nfs4`, `fuse`, `cifs` and `autofs`:
+- each mount at `/srv/lab` wins over the `/srv/lab/subdir` hint;
+- tmpfs at `/tmp` and at `/run/user/1000` keeps the hints below it.
+
+Without the fix, `nfs4`, `fuse` and `autofs` fail; `cifs` already passed, its source being an SMB
+share. The round 1 and round 2 tests still pass.
+
+**Checks.** Full suite: 4428 passed, 2 skipped, **no RERUN**. mypy --strict on `helab/` and `tests/`
+clean; pyright 0 errors.

@@ -208,40 +208,33 @@ def _record_mount_hints(store: CacheStore, mounts: list[Mount], paths: CachePath
                 store.record_mount_hint(mount_path, top)
 
 
-def _volume_mount(mount: Mount, volumes: LocalVolumes) -> bool:
-    """A volume or share attached now, whose folders are its own, wherever it is mounted: a share,
-    a remote mount, a volume with a known ID now (``volumes``), a block device's filesystem
-    (``/dev/…``: a disk at ``/srv/lab`` too; Vernier, review round 2), a Windows drive other than
-    the system's, or anything below a mount top (``/Volumes``…). Never the system volume, nor a
-    pseudo filesystem such as a tmpfs ``/tmp``, whose hints below stay usable."""
-    from helab.utils import cache_paths
-    from helab.utils.cache_paths import _inside, _normal
+# Mounts a hint may lie below and still be used: they hold no volume or share of their own whose
+# folders would replace the hinted one's (memory, kernel and container filesystems).
+TRANSPARENT_FILESYSTEMS = frozenset({
+    "tmpfs", "devtmpfs", "devfs", "ramfs", "overlay", "overlayfs", "proc", "sysfs", "cgroup", "cgroup2",
+    "securityfs", "debugfs", "tracefs", "efivarfs", "bpf", "pstore", "configfs", "fusectl", "mqueue",
+    "hugetlbfs", "binfmt_misc"})
+
+
+def _transparent_mount(mount: Mount) -> bool:
+    """A current mount that doesn't take a hint's place below it: the system volume, or a pseudo
+    filesystem (a tmpfs ``/tmp`` or ``/run/user``…). Every other mount is what is there now, whatever
+    its kind (a disk, a share, NFS, FUSE…), so it wins over a hint at or below it (Vernier, review
+    rounds 1–3: the rule lists what doesn't count, so an unknown filesystem counts)."""
     from helab.utils.data_roots import fixed_mount
-    from helab.io_ops.infra import MOUNT_TOPS
-    if fixed_mount(mount):
-        return False
-    if mount.remote or cache_paths._smb_source(mount.source, mount.fstype) is not None:
-        return True
-    if any(_normal(known.path) == _normal(mount.path) for known, _ in volumes.volumes):
-        return True
-    if mount.source.startswith("/dev/"):
-        return True
-    if sys.platform == "win32":
-        return True
-    return any(_inside(_normal(mount.path), _normal(top)) and _normal(mount.path) != _normal(top)
-               for top in MOUNT_TOPS)
+    return fixed_mount(mount) or mount.fstype.lower() in TRANSPARENT_FILESYSTEMS
 
 
 def _offline_mounts(store: CacheStore, mounts: list[Mount],
                     volumes: LocalVolumes) -> tuple[CachePaths, LocalVolumes]:
     """The mount table and local volumes with the hinted shares and volumes added back at mount
-    paths nothing is mounted at now (offline keys, never source I/O). A volume or share mounted at
-    the hint's path or above it now wins (``_volume_mount``): the folder there is its own, not the
-    hinted one's (Vernier, review round 1)."""
+    paths nothing is mounted at now (offline keys, never source I/O). Whatever is mounted at the
+    hint's path or above it now wins (``_transparent_mount`` names the exceptions): the folder there
+    is its own, not the hinted one's (Vernier, review rounds 1–3)."""
     from helab.utils.cache_paths import CachePaths, Mount, _inside, _normal
     from helab.utils.data_roots import LocalVolumes
     mounted = {_normal(mount.path) for mount in mounts}
-    attached = [_normal(mount.path) for mount in mounts if _volume_mount(mount, volumes)]
+    attached = [_normal(mount.path) for mount in mounts if not _transparent_mount(mount)]
     shares: list[Mount] = []
     local = list(volumes.volumes)
     for mount_path, top in store.mount_hints().items():

@@ -60,3 +60,15 @@ Additional acceptance probes: 67 passed, 1 failed (below). Full suite: 4422 pass
 - `/srv/lab/subdir/run` resolves to `root://old-root/run`, not `root://new-root/subdir/run`.
 - Keeping hints under a tmpfs `/tmp` is fine. Tell genuine current volumes (including verified or supplied `LocalVolumes`) apart from system and pseudo filesystems, instead of judging only by the mountpoint's directory.
 - Failing reproducer: `review-probe-round2-acceptance.py`, lines 47–56 (in this folder; it loads the project conftest through its own conftest in `/private/tmp/helab-review-r2-tests/`).
+
+## Round 3, delta check (046c3c2..a30f671, 2026-10-26)
+
+Round 2's custom ext4 fix is correct. The 68 acceptance probes pass, the 5 round-1 scenarios hold, and the full suite passed: 4424, no RERUN.
+
+**P2 (blocker for landing). `helab/io_ops/stores.py:223` (and :231): a current NFS or other unsupported network filesystem at a custom path is missed when `Mount.remote=False`.**
+- `current_mounts` derives `remote` only from an exact "remote" token in psutil's options. An NFS4 mount with `rw,relatime,vers=4.2,proto=tcp` becomes `Mount("new-server:/export", "/srv/lab", "nfs4", False)`.
+- It has no LocalVolumes ID, no `/dev` source and no MOUNT_TOPS path, so `_volume_mount` returns False.
+- The stale `/srv/lab/subdir` → `smb://old-server/old-share` hint is then injected, and `/srv/lab/subdir/run` resolves to `root://old-root/run`. Without the hint, CachePaths correctly raises `UnresolvedRemotePath`.
+- Reproducer: `review-probe-round3-nfs.py` (synthetic mounts only).
+
+**CoCo:** this is the third adjacent case in this one function, so fix the rule rather than the case. Invert it: any current mount at or above a hint's path wins, except an explicit short list of transparent ones: the system volume, and pseudo filesystems such as tmpfs, devtmpfs and overlay, if they are needed.

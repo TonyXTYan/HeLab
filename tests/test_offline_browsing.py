@@ -648,3 +648,34 @@ def test_work_online_cancels_a_saved_listing_in_flight_and_lists_the_folder_anew
     finally:
         model.close_cleanup()
         service.shutdown()
+
+
+@pytest.mark.parametrize("current", [
+    ("new-server:/export", "nfs4"),  # psutil: no "remote" option, no volume ID, no /dev source (round 3).
+    ("sshfs#lab@new-server:/data", "fuse.sshfs"),
+    ("//new-server/lab", "cifs"),
+    ("map auto_lab", "autofs"),
+], ids=["nfs4", "fuse", "cifs", "autofs"])
+def test_any_mount_at_a_custom_path_wins_over_a_hint_below_it_unless_transparent(current: tuple[str, str]) -> None:
+    """Vernier, review round 3, and the rule it asked for: whatever is mounted at or above a hint's
+    path now wins, whatever its filesystem; only the system volume and pseudo filesystems (tmpfs at
+    /tmp or /run/user…) let the hints below them be used."""
+    from helab.io_ops import stores
+    from helab.utils.cache_paths import Mount, UnresolvedRemotePath
+    from helab.utils.data_roots import LocalVolumes
+
+    class Hints:
+        def mount_hints(self) -> dict[str, str]:
+            return {"/srv/lab/subdir": "smb://old-server/old-share", "/tmp/shares/a": "smb://server/a",
+                    "/run/user/1000/b": "smb://server/b"}
+    source, fstype = current
+    mounts = [Mount("/dev/sda1", "/", "ext4"), Mount(source, "/srv/lab", fstype),
+              Mount("tmpfs", "/tmp", "tmpfs"), Mount("tmpfs", "/run/user/1000", "tmpfs")]
+    paths, _ = stores._offline_mounts(cast(Any, Hints()), mounts, LocalVolumes([]))
+    try:
+        key = paths.key("/srv/lab/subdir/run")
+    except UnresolvedRemotePath:
+        key = ""  # (A network mount without an SMB share: no disk cache, never the old share's.)
+    assert not key.startswith("smb://old-server")
+    assert paths.key("/tmp/shares/a/run") == "smb://server/a/run"
+    assert paths.key("/run/user/1000/b/run") == "smb://server/b/run"
