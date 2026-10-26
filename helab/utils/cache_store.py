@@ -47,7 +47,6 @@ PENDING_MAX_AGE = 3600.0
 ORPHAN_MIN_AGE = 3600.0
 # Over this share of the budget, a save that grows a cached folder's dataset asks first.
 APPROVAL_SHARE = 0.8
-DEFAULT_BUDGET = 8 << 30
 # The diskcache folders of earlier versions, deleted at startup.
 OLD_CACHE_DIRS = ("data_ram_cache", "status_cache", "os_file_system_cache")
 
@@ -71,7 +70,6 @@ T = TypeVar("T")
 # and a JSON tree, never a pickle) is a file in ``results/``, retired and swept like dataset files
 # (``retired_files`` names it ``results/<file>``).
 RESULTS_DIRNAME = "results"
-RESULT_FORMAT = "npz-json-1"
 # What a result row takes in the records database beyond its text columns and their copies in the
 # indexes (ids, numbers, b-tree slack), measured: about 400 bytes.
 RESULT_ROW_BYTES = 400
@@ -2023,7 +2021,7 @@ class CacheStore:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
 
     def remove_results(self, paths: Iterable[str] | None = None, *, root: str | None = None,
-                       cutoff: float | None = None, _stored_keys: bool = False) -> ResultRemoval:
+                       cutoff: float | None = None) -> ResultRemoval:
         """The one removal of saved results (Clear cached analysis, purges by age): every result
         (bumping ``gen_results``), a data root's (``root``, its UUID: bumping its results epoch),
         those of ``paths`` (each folder's results epoch), or those not used since ``cutoff``
@@ -2043,7 +2041,7 @@ class CacheStore:
                 elif cutoff is not None:
                     where, args = " WHERE last_used < ?", (cutoff,)
                 elif paths is not None:
-                    keys = tuple(dict.fromkeys(path if _stored_keys else self._path_key(path) for path in paths))
+                    keys = tuple(dict.fromkeys(self._path_key(path) for path in paths))
                     where, args = f" WHERE path IN ({','.join('?' * len(keys)) or 'NULL'})", keys
                 else:
                     where, args = "", ()

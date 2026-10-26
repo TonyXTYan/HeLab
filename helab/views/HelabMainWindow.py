@@ -4,9 +4,7 @@ import os
 import platform
 import signal
 import sys
-import tempfile
 import types
-import threading
 import time
 from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, io_trace_folder, io_trace_refused
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, get_folder_cache, set_disk_budget, store_options
@@ -15,7 +13,7 @@ from helab.utils.lab_parameters import read_lab_constants
 from helab.utils import app_log, events
 from datetime import datetime
 from sys import getsizeof
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Optional
 
 import psutil
 from PyQt6.QtCore import Qt, QSize, QTimer, QItemSelection, QUrl, QDateTime, QSettings, QRect
@@ -88,9 +86,6 @@ class HelabMainWindow(QMainWindow):
     INTERVAL_UPDATE_STATUS_BAR_RIGHT = 1000
     INTERVAL_UPDATE_CENTRAL_LOADING_INDICATOR = 100
 
-    STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_COUNTS = 10
-    STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_SECS = 10
-    STATUS_LEFT_DEBUG_PRINT_HANG_THRESHOLD_MS = 999
 
     def __init__(self) -> None:
         super().__init__()
@@ -104,7 +99,6 @@ class HelabMainWindow(QMainWindow):
         if not os.path.exists(DIR_TEMPS): os.makedirs(DIR_TEMPS)
 
         self.current_tracking_folder_path = '/'
-        self.named_temp_files: List[tempfile._TemporaryFileWrapper[bytes]] = [] #TODO: dev code, remove these in prod
 
         signal.signal(signal.SIGINT, self.handle_exit)
         signal.signal(signal.SIGTERM, self.handle_exit)
@@ -1553,15 +1547,6 @@ class HelabMainWindow(QMainWindow):
             timer.stop()
         self.tab_widget.closeEvent(None)
         get_io_service().shutdown()
-        # Local file cleanup never waits in the GUI.
-        def cleanup() -> None:
-            for temp_file in self.named_temp_files:
-                temp_file.close()
-                try:
-                    os.remove(temp_file.name)
-                except OSError:
-                    pass
-        threading.Thread(target=cleanup, daemon=True, name="HeLab-shutdown").start()
         if a0 is not None:
             a0.accept()
         QApplication.quit()

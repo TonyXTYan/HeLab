@@ -194,8 +194,6 @@ class FolderCache(QObject):
     cacheAdminResult = pyqtSignal(str, object)
     # A cache_admin job ended: its owner, action, and "" or why it failed.
     cacheAdminDone = pyqtSignal(str, str, str)
-    # The disk cache's live usage changed (``disk_usage``).
-    diskUsageChanged = pyqtSignal()
     # Automatic loads of folders without cached data paused (True) or resumed (False).
     autoLoadPauseChanged = pyqtSignal(bool)
     # Usage crossed 80% of the budget (or rose another 10% after Ignore): ask the user once.
@@ -1431,7 +1429,6 @@ class FolderCache(QObject):
         if replaced:
             self._results_store_replaced(self._store)
             self._usage_seq, self.disk_usage = None, None
-            self.diskUsageChanged.emit()
             self.update_auto_load_pause()
             self._inventory_started.clear()
 
@@ -2868,9 +2865,7 @@ class FolderCache(QObject):
         if self._usage_seq is not None and self._usage_seq[0] == store_id and writes < self._usage_seq[1]:
             return
         self._usage_seq = (store_id, writes)
-        if usage != self.disk_usage:
-            self.disk_usage = usage
-            self.diskUsageChanged.emit()
+        self.disk_usage = usage
         self.update_auto_load_pause()
 
     def disk_nearly_full(self) -> bool:

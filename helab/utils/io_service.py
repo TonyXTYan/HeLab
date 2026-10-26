@@ -149,7 +149,6 @@ class IOService(QObject):
     # Paused work resumes this long after the foreground goes idle, so consecutive
     # expands do not stop and start it.
     RESUME_DELAY = 0.5
-    LISTINGS = ("list", "resolve")
     # Operations in the local lane: they never wait for or pause with source-folder I/O.
     # (``volumes_verify`` reads mounted volumes' IDs, never source folders.)
     # (``trace_check`` reads HeLab's temp folder and the mount table, before the I/O trace starts.)

@@ -166,7 +166,6 @@ class ScanDelegate(QStyledItemDelegate):
 
 class FolderExplorer(QWidget):
     rootPathChanged = pyqtSignal(str)
-    itemExpandedSignal = pyqtSignal(QModelIndex)
     selectionPathChanged = pyqtSignal(str)
     loadStateChanged = pyqtSignal()
     dataLoaded = pyqtSignal(str)
@@ -526,7 +525,6 @@ class FolderExplorer(QWidget):
         node = self.model.node(index)
         if node:
             self.model.request_scan(node.path, priority=True)
-        self.itemExpandedSignal.emit(index)
         self._schedule_visible_checks()
 
     def on_selection_changed(self, selected: QItemSelection, deselected: QItemSelection) -> None:
