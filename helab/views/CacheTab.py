@@ -36,13 +36,15 @@ DAY = 86400.0
 DEFAULT_PURGE_DAYS = 90
 # The rows of the disk cache, by record kind: label and button.
 KIND_ROWS = {"datasets": ("Cached data", "Clear…"), "summaries": ("Folder summaries", "Clear…"),
-             "histories": ("Scan failures", "Forget…"), "subtrees": ("Subfolder status", "Clear…")}
+             "histories": ("Scan failures", "Forget…"), "subtrees": ("Subfolder status", "Clear…"),
+             "listings": ("Folder listings", "Clear…")}
 # What a Clear of each kind loses and keeps, for its confirmation.
 CLEAR_TEXT = {
     "datasets": "Loaded data stays open; the next load of each folder reads its TXY files again.",
     "summaries": "Folders show their counts and status again after their next check.",
     "histories": "Automatic checks will try these folders again.",
     "subtrees": "Each folder's status from its subfolders is derived again when it is listed.",
+    "listings": "Browsing offline can't show these folders' subfolders until they are listed again.",
 }
 # Saved analysis results (result caching R2): apart from the kinds above (Clear all keeps them).
 RESULTS_LABEL = "Cached analysis"
@@ -167,6 +169,9 @@ class CacheTab(QWidget):
             button.clicked.connect(lambda checked=False, k=kind: self.clear([k]))
             self.kind_buttons[kind] = button
             grid.addWidget(button, row, 2)
+        self.kind_labels["listings"].setToolTip(
+            "Each listed folder's subfolder names and counts (below data roots), for browsing cached folders "
+            "when their drive or share isn't there.")
         # Saved analysis results (R2): their own Clear, not part of Clear all.
         row = len(KIND_ROWS)
         grid.addWidget(QLabel(RESULTS_LABEL), row, 0)
@@ -439,14 +444,15 @@ class CacheTab(QWidget):
             title = "Clear the disk cache?"
             text = (f"Removes everything in the disk cache: cached data for "
                     f"{plural(inventory['datasets']['count'], 'folder')} ({byte_size(inventory['datasets']['bytes'])}),"
-                    " folder summaries, scan failures and subfolder status.\n\n"
+                    " folder summaries, scan failures, subfolder status and folder listings.\n\n"
                     "Loaded data stays open. Automatic checks will try failed folders again. Cached analysis "
                     "stays (its own Clear).")
             verb, label = "Clear all", "Clear all"
         else:
             kind = kinds[0]
             name = KIND_ROWS[kind][0]
-            count = inventory["histories"]["blocked"] if kind == "histories" else inventory[kind]["count"]
+            count = (inventory["histories"]["blocked"] if kind == "histories"
+                     else (inventory.get(kind) or {"count": 0})["count"])
             size = f" ({byte_size(inventory['datasets']['bytes'])})" if kind == "datasets" else ""
             verb = "Forget" if kind == "histories" else "Clear"
             title = f"{verb} {name.lower()}?"
@@ -500,7 +506,7 @@ class CacheTab(QWidget):
                  "Scan failures are kept, so automatic checks still skip those folders.")
         if self.confirm("Remove old folder records?",
                         f"Removes {plural(sum(estimate.values()), 'folder record')} not checked in the last "
-                        f"{plural(days, 'day')}: summaries, subfolder status and scan histories.\n\n"
+                        f"{plural(days, 'day')}: summaries, subfolder status, listings and scan histories.\n\n"
                         f"Cached data stays. {stays}", "Remove"):
             self._run("Remove old folder records", "purge", what="records", cutoff=cutoff,
                       include_failures=failures)
@@ -533,6 +539,7 @@ class CacheTab(QWidget):
         self.record_estimate.setText(f"— {plural(sum(records.values()), 'record')}")
         self.record_estimate.setToolTip(f"{plural(records['summaries'], 'folder summary')} · "
                                         f"{plural(records['subtrees'], 'subfolder status')} · "
+                                        f"{plural(records['listings'], 'folder listing')} · "
                                         f"{plural(records['histories'], 'scan history')}")
         results = results_purge_estimate(inventory, now - self.result_days.value() * DAY)
         self.result_estimate.setText(f"— frees ~{byte_size(results['bytes'])} "
@@ -588,6 +595,7 @@ class CacheTab(QWidget):
         self.kind_labels["histories"].setText(f"{plural(histories['blocked'], 'folder')} skip automatic checks")
         self.kind_labels["histories"].setToolTip(f"{plural(histories['count'], 'folder')} with a scan history")
         self.kind_labels["subtrees"].setText(plural(inventory["subtrees"]["count"], "folder"))
+        self.kind_labels["listings"].setText(plural((inventory.get("listings") or {"count": 0})["count"], "folder"))
         results = inventory.get("results") or {"count": 0, "bytes": 0, "last_used": None}
         text = f"{plural(int(results['count']), 'result')} · {byte_size(int(results['bytes']))}"
         if isinstance(results.get("last_used"), (int, float)):

@@ -51,10 +51,12 @@ DEFAULT_BUDGET = 8 << 30
 # The diskcache folders of earlier versions, deleted at startup.
 OLD_CACHE_DIRS = ("data_ram_cache", "status_cache", "os_file_system_cache")
 
-Kind = Literal["datasets", "summaries", "histories", "subtrees"]
-KINDS: tuple[Kind, ...] = ("datasets", "summaries", "histories", "subtrees")
+# ``listings``: each listed folder's subfolder names and own counts, for browsing it offline
+# (cache-only browsing C2; written by ``list`` helpers, ``io_ops.listings``).
+Kind = Literal["datasets", "summaries", "histories", "subtrees", "listings"]
+KINDS: tuple[Kind, ...] = ("datasets", "summaries", "histories", "subtrees", "listings")
 RECORD_TABLES: dict[Kind, str] = {
-    "summaries": "folder_summaries", "histories": "scan_histories", "subtrees": "subtrees"}
+    "summaries": "folder_summaries", "histories": "scan_histories", "subtrees": "subtrees", "listings": "listings"}
 TABLES: dict[Kind, str] = {"datasets": "datasets", **RECORD_TABLES}
 
 T = TypeVar("T")
@@ -102,6 +104,8 @@ CREATE TABLE IF NOT EXISTS scan_histories (path TEXT PRIMARY KEY, record TEXT NO
 CREATE INDEX IF NOT EXISTS scan_histories_saved_at ON scan_histories (saved_at);
 CREATE TABLE IF NOT EXISTS subtrees (path TEXT PRIMARY KEY, record TEXT NOT NULL, saved_at REAL NOT NULL);
 CREATE INDEX IF NOT EXISTS subtrees_saved_at ON subtrees (saved_at);
+CREATE TABLE IF NOT EXISTS listings (path TEXT PRIMARY KEY, record TEXT NOT NULL, saved_at REAL NOT NULL);
+CREATE INDEX IF NOT EXISTS listings_saved_at ON listings (saved_at);
 CREATE TABLE IF NOT EXISTS folder_prefs (
     path TEXT PRIMARY KEY, no_cache INTEGER NOT NULL DEFAULT 0, no_auto_load INTEGER NOT NULL DEFAULT 0,
     set_at REAL NOT NULL);
@@ -485,6 +489,7 @@ class CacheStore:
                  source_path: Callable[[str], str] | None = None,
                  root_mode: bool = False) -> None:
         busy_timeout = BUSY_TIMEOUT if busy_timeout is None else busy_timeout
+        self._busy_timeout = busy_timeout
         self.root = root
         self._path_key = path_key or (lambda path: path)
         self._source_path = source_path or (lambda path: path)
@@ -514,6 +519,8 @@ class CacheStore:
                 self._presets_table = _has_table(self._conn, "presets")
                 # (Nor the results table: it then has no results saved, and saves none.)
                 self._results_table = _has_table(self._conn, "results")
+                # (Nor the listings table: no folder was listed for offline browsing.)
+                self._listings_table = _has_table(self._conn, "listings")
                 self._pending_results = _has_table(self._conn, "pending_results")
                 meta = self._meta()
                 self.layout_version = int(meta["layout_version"])
@@ -717,10 +724,10 @@ class CacheStore:
         """
         if not old.startswith("root://") or not new.startswith("root://") or old == new:
             return []
-        tables = ("folder_epochs", "folder_summaries", "scan_histories", "subtrees",
+        tables = ("folder_epochs", "folder_summaries", "scan_histories", "subtrees", "listings",
                   "folder_prefs", "folder_constants", "pending_saves", "datasets")
         timestamps = {"folder_summaries": "saved_at", "scan_histories": "saved_at",
-                      "subtrees": "saved_at", "folder_prefs": "set_at", "folder_constants": "set_at",
+                      "subtrees": "saved_at", "listings": "saved_at", "folder_prefs": "set_at", "folder_constants": "set_at",
                       "pending_saves": "created_at", "datasets": "last_used"}
         moved: set[str] = set()
         try:
@@ -801,6 +808,16 @@ class CacheStore:
                         continue
                 self._conn.execute("UPDATE pending_results SET path=? WHERE pending_id=?", (target, pending_id))
         return moved
+
+    @contextlib.contextmanager
+    def waiting(self, seconds: float) -> Generator[None, None, None]:
+        """Wait at most ``seconds`` for the store's locks meanwhile (an optional write, such as a
+        listing's, gives up rather than hold up its helper), then the store's own wait again."""
+        self._conn.execute(f"PRAGMA busy_timeout = {int(seconds * 1000)}")
+        try:
+            yield
+        finally:
+            self._conn.execute(f"PRAGMA busy_timeout = {int(self._busy_timeout * 1000)}")
 
     @contextlib.contextmanager
     def transaction(self, write: bool = True) -> Generator[None, None, None]:
@@ -1088,6 +1105,8 @@ class CacheStore:
         """Each path's record: found, missing, or (for that path, or all on a database error) error."""
         table = RECORD_TABLES[kind]
         unique = list(dict.fromkeys(paths))
+        if kind == "listings" and not self._listings_table:
+            return {path: _missing() for path in unique}  # (A read-only store from before listings.)
         keys = list(dict.fromkeys(self._path_key(path) for path in unique))
         rows: dict[str, str] = {}
         try:
@@ -2022,6 +2041,8 @@ class CacheStore:
         try:
             with self.transaction(write=False):
                 for table in (*TABLES.values(), "pending_saves"):
+                    if table == "listings" and not self._listings_table:
+                        continue  # (A read-only store from before listings.)
                     for path, size in self._conn.execute(
                             f"SELECT path, {'bytes' if table == 'datasets' else '0'} FROM {table} "
                             "WHERE substr(path, 1, 7) = 'root://'"):
@@ -2226,8 +2247,8 @@ class CacheStore:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
 
     def purge_records(self, cutoff: float, include_failures: bool = False) -> list[Removal]:
-        """Remove folder records not checked (saved) since ``cutoff``: summaries and subfolder
-        status, and scan histories without failures, or all old histories with ``include_failures``."""
+        """Remove folder records not checked (saved) since ``cutoff``: summaries, subfolder
+        status and listings, and scan histories without failures, or all old histories with ``include_failures``."""
         removals = []
         try:
             with self.transaction():
@@ -2249,9 +2270,10 @@ class CacheStore:
                     "SELECT last_used, bytes FROM datasets ORDER BY last_used")]
                 ram_bytes = int(self._conn.execute("SELECT COALESCE(SUM(ram_bytes), 0) FROM datasets").fetchone()[0])
                 ages: dict[str, Any] = {"datasets": dataset_ages}
-                for kind in ("summaries", "subtrees"):
+                for kind in ("summaries", "subtrees", "listings"):
                     ages[kind] = [float(saved_at) for (saved_at,) in self._conn.execute(
-                        f"SELECT saved_at FROM {RECORD_TABLES[kind]} ORDER BY saved_at")]
+                        f"SELECT saved_at FROM {RECORD_TABLES[kind]} ORDER BY saved_at")
+                    ] if kind != "listings" or self._listings_table else []
                 ages["histories"] = [[float(saved_at), bool(failures)] for saved_at, failures in self._conn.execute(
                     "SELECT saved_at, json_array_length(record, '$.failures') > 0 FROM scan_histories "
                     "ORDER BY saved_at")]
@@ -2292,6 +2314,7 @@ class CacheStore:
             "results": {"count": len(result_ages), "bytes": result_bytes,
                         "last_used": max((used for used, _ in result_ages), default=None)},
             "summaries": {"count": len(ages["summaries"])}, "subtrees": {"count": len(ages["subtrees"])},
+            "listings": {"count": len(ages["listings"])},
             "histories": {"count": len(ages["histories"]), "blocked": blocked}, "prefs": prefs,
             "pending": pending, "pending_results": pending_results,
             "retired": {"count": len(retired), "bytes": retired_bytes},
@@ -2412,7 +2435,8 @@ class CacheStore:
 _RECORD_PURGES: dict[Kind, str] = {
     "summaries": "SELECT path FROM folder_summaries WHERE saved_at < ?",
     "subtrees": "SELECT path FROM subtrees WHERE saved_at < ?",
-    "histories": "SELECT path FROM scan_histories WHERE saved_at < ?"}
+    "histories": "SELECT path FROM scan_histories WHERE saved_at < ?",
+    "listings": "SELECT path FROM listings WHERE saved_at < ?"}
 
 
 def purge_estimate(inventory: Mapping[str, Any], cutoff: float, *, datasets: bool,
@@ -2426,6 +2450,7 @@ def purge_estimate(inventory: Mapping[str, Any], cutoff: float, *, datasets: boo
         return {"datasets": len(old), "bytes": sum(old)}
     return {"summaries": sum(saved_at < cutoff for saved_at in ages["summaries"]),
             "subtrees": sum(saved_at < cutoff for saved_at in ages["subtrees"]),
+            "listings": sum(saved_at < cutoff for saved_at in ages.get("listings", ())),
             "histories": sum(saved_at < cutoff and (include_failures or not failures)
                              for saved_at, failures in ages["histories"])}
 
@@ -2468,22 +2493,25 @@ def _migrate(conn: sqlite3.Connection) -> None:
     """Bring a store made by an earlier HeLab of this layout up to date, on every writable open:
     the ``folder_constants`` table (F0b), ``datasets.raw_times`` (D7; ``[]``: no raw times
     known), the ``presets`` table and the ``results`` table with its ``gen_results`` generation
-    (result caching R2). ``SCHEMA`` gives a new store all of them; a store created before one is
+    (result caching R2), and the ``listings`` table with its ``gen_listings`` generation (cache-only
+    browsing C2). ``SCHEMA`` gives a new store all of them; a store created before one is
     never created again, so without this it would lack it for good. Older HeLabs name the tables
     and columns they use, so they keep working with these (they never read or clear results).
     Checked again under the write lock: several helpers may open an old store at once, and only
     the first one changes it."""
-    def missing() -> tuple[bool, bool, bool, bool]:
+    def missing() -> tuple[bool, bool, bool, bool, bool]:
         return (not _has_table(conn, "folder_constants"),
                 _has_table(conn, "datasets") and not _has_raw_times(conn),
                 not _has_table(conn, "presets"),
                 not _has_table(conn, "results") or not _has_table(conn, "pending_results") or conn.execute(
-                    "SELECT 1 FROM meta WHERE key = 'gen_results'").fetchone() is None)
+                    "SELECT 1 FROM meta WHERE key = 'gen_results'").fetchone() is None,
+                not _has_table(conn, "listings") or conn.execute(
+                    "SELECT 1 FROM meta WHERE key = 'gen_listings'").fetchone() is None)
     if not any(missing()):
         return
     conn.execute("BEGIN IMMEDIATE")
     try:
-        constants, raw_times, presets, results = missing()  # (Another helper may have added them meanwhile.)
+        constants, raw_times, presets, results, listings = missing()  # (Another helper may have added them meanwhile.)
         if constants:
             conn.execute("CREATE TABLE IF NOT EXISTS folder_constants "
                          "(path TEXT PRIMARY KEY, record TEXT NOT NULL, set_at REAL NOT NULL)")
@@ -2496,6 +2524,11 @@ def _migrate(conn: sqlite3.Connection) -> None:
             for statement in RESULT_SCHEMA:
                 conn.execute(statement)
             conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('gen_results', '0')")
+        if listings:
+            conn.execute("CREATE TABLE IF NOT EXISTS listings "
+                         "(path TEXT PRIMARY KEY, record TEXT NOT NULL, saved_at REAL NOT NULL)")
+            conn.execute("CREATE INDEX IF NOT EXISTS listings_saved_at ON listings (saved_at)")
+            conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('gen_listings', '0')")
         conn.execute("COMMIT")
     except BaseException:
         conn.execute("ROLLBACK")

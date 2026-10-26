@@ -109,7 +109,7 @@ def test_clear_all_names_cached_analysis_as_kept(
     tab.clear_all_button.click()
     assert "Cached analysis stays" in asked[-1][1]
     assert admin_request(service, "clear").payload["params"]["kinds"] == ["datasets", "summaries", "histories",
-                                                                         "subtrees"]
+                                                                         "subtrees", "listings"]
 
 
 def test_purging_cached_analysis_by_age_asks_with_its_estimate(

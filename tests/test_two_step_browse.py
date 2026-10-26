@@ -100,7 +100,7 @@ def saved_summary(options: dict[str, Any], path: str) -> dict[str, Any]:
     return found.value
 
 
-def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_listing_reads_names_only_and_writes_only_its_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / "source"
     data_folder(source)
     path = str(source)
@@ -125,7 +125,8 @@ def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: 
     # Saved cache metadata comes along; dates need a stat (step 2).
     assert {"scan_history", "scan_status", "disk_cached", "cache_info"} <= set(entries[0])
     assert not {"modified", "identity"} & set(entries[0])
-    # The folder's own saved summary is restored; nothing is written.
+    # The folder's own saved summary is restored and left as it was; only its listing is saved
+    # (for browsing it offline: tests/test_saved_listings.py).
     assert next(event for event in events if event["kind"] == "scan_cached")["status"] == saved
     assert saved_summary(options, path) == saved
 
