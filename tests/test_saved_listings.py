@@ -9,8 +9,10 @@ import json
 import os
 from pathlib import Path
 import sqlite3
+import sys
 import time
-from typing import Any
+import types
+from typing import Any, cast
 
 import pytest
 from pytestqt.qtbot import QtBot
@@ -276,7 +278,11 @@ def test_an_unmounted_shares_listing_is_found_offline_through_its_mount_hint(
     data_folder(share)
     _, marker = new_marker(str(share))
     (share / ".helab-root").write_bytes(marker)
-    mounted = [*current_mounts(), Mount("//operator@server.example/LabData", str(share), "smbfs", True)]
+    # The mount table's own spelling of a share: macOS's mount source with its account, Windows'
+    # WNetGetConnection UNC (where "user@host" is a WebDAV path, which has no disk cache).
+    source, fstype = (("\\\\server.example\\LabData", "smb") if sys.platform == "win32"
+                      else ("//operator@server.example/LabData", "smbfs"))
+    mounted = [*current_mounts(), Mount(source, str(share), fstype, True)]
     monkeypatch.setattr(stores, "_mounts", lambda reason: mounted)
     cache = options(tmp_path)
     listed(str(share), cache)
@@ -288,6 +294,43 @@ def test_an_unmounted_shares_listing_is_found_offline_through_its_mount_hint(
     found = saved_listing(str(share), {**cache, "offline": True}).value
     assert found is not None and found["names"] == ["run_a", "run_b"]
     # Another share mounted at that path now wins: the hint is not used for it.
-    other = [*current_mounts(), Mount("//server.example/Other", str(share), "smbfs", True)]
+    other = [*current_mounts(), Mount(source.replace("LabData", "Other"), str(share), fstype, True)]
     monkeypatch.setattr(stores, "_mounts", lambda reason: other)
     assert saved_listing(str(share), {**cache, "offline": True}).missing
+
+
+def test_a_windows_mapped_drive_gets_a_hint_and_keys_offline_once_unmapped(monkeypatch: pytest.MonkeyPatch) -> None:
+    """D1 on Windows, whatever the OS running the test: a mapped drive (``Z:``, its share from
+    WNetGetConnection) is hinted, and once the drive letter is gone an offline request keys its
+    folders by that share again; a drive mapped to another share now wins. The system drive is
+    never hinted."""
+    from helab.utils import cache_paths, data_roots
+    from helab.utils.cache_paths import CachePaths, Mount
+    from helab.utils.data_roots import LocalVolumes
+    windows = types.SimpleNamespace(platform="win32")
+    monkeypatch.setattr(cache_paths, "sys", windows)
+    monkeypatch.setattr(data_roots, "sys", windows)
+    monkeypatch.setenv("SystemDrive", "C:")
+    drive = Mount("\\\\lab-server\\LabData", "Z:\\", "smb", True)
+    system = Mount("C:\\", "C:\\", "local")
+    tops = stores._mount_tops([system, drive], CachePaths([system, drive]), LocalVolumes([]),
+                              ["Z:\\2026\\run_1", "C:\\Users\\lab\\data"])
+    assert tops == {"Z:\\": "smb://lab-server/labdata"}
+    # A "user@host" UNC is WebDAV on Windows (no disk cache): no hint (CI 40272585640's failure was
+    # the test giving a share macOS's mount source there).
+    webdav = Mount("\\\\operator@lab-server\\LabData", "Y:\\", "smb", True)
+    assert stores._mount_tops([system, webdav], CachePaths([system, webdav]), LocalVolumes([]), ["Y:\\run"]) == {}
+
+    class Hints:
+        def __init__(self, hints: dict[str, str]) -> None:
+            self.hints = hints
+
+        def mount_hints(self) -> dict[str, str]:
+            return self.hints
+    hinted = Hints(tops)
+    paths, _ = stores._offline_mounts(cast(Any, hinted), [system], LocalVolumes([]))
+    assert paths.key("Z:\\2026\\run_1") == "smb://lab-server/labdata/2026/run_1"
+    assert paths.key("z:\\2026") == "smb://lab-server/labdata/2026"  # (Drive letters ignore case.)
+    other = Mount("\\\\lab-server\\Other", "Z:\\", "smb", True)
+    paths, _ = stores._offline_mounts(cast(Any, hinted), [system, other], LocalVolumes([]))
+    assert paths.key("Z:\\2026") == "smb://lab-server/other/2026"

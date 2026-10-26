@@ -129,3 +129,33 @@ after the store is open.
   - The new test file imported helpers as `tests.…`, which mypy found twice (`test_typing`).
 - mypy --strict on `helab/` (163 files) and on `tests/` (133 files): clean.
 - pyright: 0 errors.
+
+## CI 40272585640 on 3b2223f: Windows failure of the mount-hint test (2026-10-26)
+
+**Result.** Green on macOS (4416) and Ubuntu (4414), no RERUN. On Windows,
+`test_an_unmounted_shares_listing_is_found_offline_through_its_mount_hint` failed all 6 attempts:
+no hint was recorded (`{}`).
+
+**Cause: the test, not D1.**
+- The test gave the fake share macOS's mount source, `//operator@server.example/LabData`.
+- On Windows, `cache_paths._webdav_unc` treats a UNC whose first part has `user@` as WebDAV, which
+  has no disk cache. So `CachePaths.key` raised `UnresolvedRemotePath` and `_mount_tops` skipped
+  the mount.
+- Real Windows SMB mounts come from `WNetGetConnectionW` as `\\server\share`, with no account in
+  them. The expected key's mixed separators are fine: a Windows mount path as the key, an
+  `smb://` URL as the value.
+
+**Fix.**
+- The test now uses each platform's own spelling: `\\server.example\LabData` (`smb`) on Windows,
+  `//operator@…` (`smbfs`) elsewhere.
+- A new test, `test_a_windows_mapped_drive_gets_a_hint_and_keys_offline_once_unmapped`, patches
+  `cache_paths.sys` and `data_roots.sys` to `win32`, so it runs Windows' path logic on every OS. It
+  checks that:
+  - a mapped `Z:` is hinted as `smb://lab-server/labdata`, and the system drive isn't;
+  - a `user@host` UNC gets no hint (the CI failure's cause);
+  - with `Z:` gone, `Z:\2026\run_1` keys as `smb://lab-server/labdata/2026/run_1`, case-insensitively;
+  - a drive mapped to another share at `Z:` wins.
+
+**Checks.** Full suite: 4417 passed, 2 skipped, no RERUN.
+
+Not pushed: it is folded into the push after Vernier's review.
