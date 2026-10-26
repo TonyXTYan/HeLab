@@ -210,3 +210,30 @@ useful for other Qt errors from C and is left alone.
 - **Checks:** full suite `-n 4 --reruns 5 --reruns-delay 1`: 4339 passed, 2 skipped, 2 xfailed,
   no RERUN; `tests/test_live_plots.py` 10 times under `-n 4`: 131 passed each, no RERUN; mypy
   --strict helab and tests, pyright: clean.
+
+## Job 6: load labels, proposals 1-4 of job 4 (Tony agreed, 2026-10-26)
+
+- **Origin:** `load_origin(source, load_counts)` (`helab/views/FolderExplorer.py`) replaces the
+  `merged` / `updated` entries of `LOAD_ORIGINS`, used by the cache line's tooltip and Folder
+  details' Source row: merged "disk cache + N TXY files read" or "disk cache"; updated "memory"
+  [+ " + disk cache"] [+ " + N TXY files read"]. N is `load_counts["read"]` (files the load set
+  out to read, including any then found still being written or unreadable).
+- **File being read:** `io_ops/loading.py` sends `file_started` / `file_finished` only for files it
+  reads (not for shots in memory or reused from the cache); the save's re-reads and Live already
+  did. What read those events: `IOService` (current file, per-file 15/20/30 s timeouts, and "while
+  a file is read only file events count as progress"), `FolderCache` (`job.current_file` for the
+  I/O tooltip, attempts), `FolderExplorer` and `explorer_live` (the file name). Progress counts,
+  `LoadClock`'s estimate and rate come from `progress` events and are unchanged; reused shots
+  are covered by the 60 s no-progress timeout through their progress and shot events.
+- **Cache reason:** "Reused N shots from memory, M shots from disk cache; K new or changed TXY
+  files to read" (singular "file" for 1), the clause dropped when K is 0.
+- **Kept:** "Cached data found" (proposal 5).
+- **Tests:** `test_load_sources.py` (origins and reasons per case, announced files),
+  `test_gui_responsiveness.py::test_load_progress_counts_cached_files_and_reports_unreadable_files`
+  (announced files per source: files 1, 2; disk none; memory 2), `test_folder_cache.py` (two
+  reasons).
+- **Commit:** `93fb3dd`.
+- **Checks:** full suite `-n 4 --reruns 5 --reruns-delay 1`: 4339 passed, 2 skipped, 2 xfailed, no
+  RERUN; mypy --strict helab and tests, pyright: clean.
+- **Proposed `_readme.md` change:** close "Finish the status-message audit" (done: `8de9ea6`,
+  `93fb3dd`).
