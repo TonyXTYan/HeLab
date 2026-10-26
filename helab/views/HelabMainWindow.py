@@ -9,7 +9,7 @@ import types
 import threading
 import time
 from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, io_trace_folder, io_trace_refused
-from helab.utils.folder_cache import get_folder_cache, set_disk_budget, store_options
+from helab.utils.folder_cache import OFFLINE_TOOLTIP, get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
 from helab.utils.lab_parameters import read_lab_constants
 from helab.utils import app_log, events
@@ -37,7 +37,7 @@ from helab.utils.constants import (
 )
 from helab.utils.number_format import byte_size, fnum
 from helab.utils.settings_defaults import (
-    AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, THREAD_STATUS_SETTING, read_setting)
+    AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, THREAD_STATUS_SETTING, WORK_OFFLINE_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
 from helab.views.ClockSkewWarning import ClockSkewWarning
@@ -46,8 +46,8 @@ from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HoverMenuToolButton import HoverMenuToolButton
 from helab.views.FolderExplorer import (
-    AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP, IO_SPINNER, FolderExplorer,
-    paint_spinner,
+    AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP,
+    IO_SPINNER, FolderExplorer, paint_spinner,
 )
 from helab.views.explorer_text import large_text
 from helab.views.FolderTabWidget import FolderTabWidget
@@ -62,6 +62,15 @@ from helab.views.DebugIconsWindow import DebugIconsWindow
 from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
 
 PLACE_ROOT_MENU = " Place .helab-root…"
+
+# Work Offline (cache-only browsing; Tony named it, 2026-10-26: D2).
+WORK_OFFLINE_TOOLTIP = ("Browse and analyse cached data only: HeLab reads no source folder and no server until you "
+                        "turn this off. Remembered at the next start.")
+OFFLINE_STATUS = "Offline · cached data only"
+OFFLINE_STATUS_TOOLTIP = ("Working offline (File › Work Offline): folders show what was saved when they were last "
+                          "listed, checked or loaded. Click to work online.")
+REFRESH_TOOLTIP = ("Refresh folder list\nUpdate folder names and expanded folders in view.\n"
+                   "Use Check folder status to update counts and status.")
 
 
 class HelabMainWindow(QMainWindow):
@@ -128,6 +137,11 @@ class HelabMainWindow(QMainWindow):
 
         # The disk cache's questions (Make room, Save update, 80% full), one at a time.
         cache = get_folder_cache(get_io_service())
+        # Work Offline is remembered (D2): on from the start, before any tab lists a folder.
+        cache.offlineChanged.connect(self._offline_changed)
+        if read_setting(app_settings(), WORK_OFFLINE_SETTING, typed=True):
+            cache.set_offline(True)
+        self._offline_changed(cache.offline)
         self.cache_dialogs = CacheDialogs(cache, self, lambda: self.show_settings_dialog(purge=True),
                                           self.show_status_notice)
         # A folder's files dated ahead of this computer's clock: once per share or volume per session.
@@ -196,6 +210,14 @@ class HelabMainWindow(QMainWindow):
         self.roots_button.setAutoRaise(True)
         self.roots_button.hide()
         self.status_bar.addPermanentWidget(self.roots_button)
+        # Shown while working offline (File › Work Offline); a click offers Work Online.
+        self.offline_button = QToolButton()
+        self.offline_button.setAutoRaise(True)
+        self.offline_button.setText(OFFLINE_STATUS)
+        self.offline_button.setToolTip(OFFLINE_STATUS_TOOLTIP)
+        self.offline_button.hide()
+        self.offline_button.clicked.connect(self._offline_button_clicked)
+        self.status_bar.addPermanentWidget(self.offline_button)
         # Shown from 50 % of the RAM budget (loaded folders and plots); opens their sizes.
         self.status_bar.addPermanentWidget(self.plots.ram_button)
         # Shown while Help › Record I/O trace is on.
@@ -366,6 +388,13 @@ class HelabMainWindow(QMainWindow):
             menu_file.addAction(self.action_place_root)
             menu_file.setToolTipsVisible(True)
             menu_file.aboutToShow.connect(self.update_place_root_action)
+
+            # Cache-only browsing (D2): no source folder or server is read while it is on.
+            self.action_work_offline = QAction(" Work Offline", self)
+            self.action_work_offline.setCheckable(True)
+            self.action_work_offline.setToolTip(WORK_OFFLINE_TOOLTIP)
+            self.action_work_offline.triggered.connect(self.set_work_offline)
+            menu_file.addAction(self.action_work_offline)
 
             menu_file.addSeparator()
 
@@ -828,9 +857,7 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_new.setWhatsThis(
             "New Tab??? plz let me know if you see this text")  # literally don't know where this will show up memm
         # self.action_tab_new.set
-        self.action_tab_refresh.setToolTip(
-            "Refresh folder list\nUpdate folder names and expanded folders in view.\n"
-            "Use Check folder status to update counts and status.")
+        self.action_tab_refresh.setToolTip(REFRESH_TOOLTIP)
         self.action_tab_folder_up.setToolTip("Navigate up one directory")
         self.action_tab_rescan.setToolTip(self.FOLDER_STATUS_TOOLTIP)
         self.action_tab_cancel.setToolTip("Cancel loading in this tab (Esc)")
@@ -1171,6 +1198,47 @@ class HelabMainWindow(QMainWindow):
             self._update_folder_details()
             self.plots.update_placeholder_visibility()
 
+    def set_work_offline(self, on: bool) -> None:
+        """File › Work Offline (cache-only browsing; Tony, 2026-10-26: D1–D10). On: Live turns off in
+        every tab (its save finishes), then no source folder is read until it is turned off. Off:
+        every tab lists its shown folders again (Refresh, D8) and the current tab's selected folder
+        is checked as usual. Remembered across restarts."""
+        cache = get_folder_cache(get_io_service())
+        app_settings().setValue(WORK_OFFLINE_SETTING, bool(on))
+        if on == cache.offline:
+            self._offline_changed(on)
+            return
+        tabs = [widget for index in range(self.tab_widget.count())
+                if isinstance(widget := self.tab_widget.widget(index), FolderExplorer) and not widget.closed]
+        if on:
+            for explorer in tabs:
+                if explorer.live is not None:
+                    explorer.stop_live()
+            cache.set_offline(True)
+            return
+        cache.set_offline(False)
+        for explorer in tabs:
+            explorer.refresh()
+        current = self.tab_widget.currentWidget()
+        if isinstance(current, FolderExplorer) and not current.closed and current.selected_path_globally:
+            current.load_to_ram_cache(current.selected_path_globally)
+
+    def _offline_button_clicked(self) -> None:
+        if QMessageBox.question(self, "Work online?", "Work online again? HeLab lists the folders in every tab "
+                                "again and checks the selected folder's data.",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                                QMessageBox.StandardButton.Yes) == QMessageBox.StandardButton.Yes:
+            self.set_work_offline(False)
+
+    def _offline_changed(self, offline: bool) -> None:
+        """The File menu's check, the status-bar button and the tools that read source folders."""
+        if self._closing:
+            return
+        self.action_work_offline.setChecked(offline)
+        self.offline_button.setVisible(offline)
+        self._update_live_action()
+        self._update_folder_status_action()
+
     def _update_roots_button(self) -> None:
         count = len(get_folder_cache(get_io_service()).root_duplicates)
         self.roots_button.setText(f"⚓ {count:,} to confirm")
@@ -1363,7 +1431,9 @@ class HelabMainWindow(QMainWindow):
     def _update_folder_status_action(self) -> None:
         explorer = self.tab_widget.currentWidget()
         # Live locks the tab's folder tree: no status checks of it meanwhile.
-        available = isinstance(explorer, FolderExplorer) and not explorer.closed and explorer.live is None
+        # Working offline, no folder is checked either (cache-only browsing).
+        available = (isinstance(explorer, FolderExplorer) and not explorer.closed and explorer.live is None
+                     and not get_folder_cache(get_io_service()).offline)
         active = isinstance(explorer, FolderExplorer) and not explorer.closed and explorer._basic_active
         self.action_tab_rescan.setEnabled(available)
         title = "Cancel check" if active else "Check folder status"
@@ -1390,8 +1460,13 @@ class HelabMainWindow(QMainWindow):
         # logging.debug("set_tools_and_tabs_enable")
         self.action_tab_new.setEnabled(True)
         # self.action_tab_folder_up.setEnabled(True)
-        self.action_tab_refresh.setEnabled(True)
-        self.action_tab_rescan.setEnabled(True)
+        offline = get_folder_cache(get_io_service()).offline
+        # Working offline, Refresh and Check folder status would read folders (cache-only browsing).
+        self.action_tab_refresh.setEnabled(not offline)
+        self.action_tab_rescan.setEnabled(not offline)
+        self.action_tab_refresh.setToolTip(f"Refresh folder list\n{OFFLINE_TOOLTIP}." if offline else REFRESH_TOOLTIP)
+        self.action_tab_rescan.setToolTip(f"Check folder status\n{OFFLINE_TOOLTIP}." if offline
+                                          else self.FOLDER_STATUS_TOOLTIP)
         self.update_tool_enabled_state()
 
     def set_tools_and_tabs_disable(self) -> None:

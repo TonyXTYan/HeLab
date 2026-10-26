@@ -145,12 +145,18 @@ def set_disk_budget(budget: int) -> None:
     _disk_budget, _disk_budget_set_at = int(budget), time.time()
 
 
+# Work Offline (cache-only browsing, ``FolderCache.set_offline``): sent with every request's cache
+# options, so helpers key a folder on an unmounted share or volume through its mount hint.
+_offline = False
+
+
 def store_options() -> dict[str, Any]:
     """What a helper needs to open the disk cache, and its budget in bytes; {} when the
     cache is off for this session. The GUI process never opens the store."""
     if not (DISK_CACHE_ENABLED and cache_dir_enabled()):
         return {}
-    return {"directory": store_root(cache_dir()), "budget": _disk_budget, "budget_set_at": _disk_budget_set_at}
+    return {"directory": store_root(cache_dir()), "budget": _disk_budget, "budget_set_at": _disk_budget_set_at,
+            **({"offline": True} if _offline else {})}
 
 
 class FolderCache(QObject):
@@ -219,6 +225,8 @@ class FolderCache(QObject):
     clockSkew = pyqtSignal(str, float)
     # The saves the quit window waits for changed (``quit_saves``).
     quitSavesChanged = pyqtSignal()
+    # Work Offline turned on (True) or off (False): ``set_offline``.
+    offlineChanged = pyqtSignal(bool)
     # The presets (``presets``) or what is known about them (``presets_note``) changed.
     presetsChanged = pyqtSignal()
     MAX_FOLDER_ICONS = 4096
@@ -708,12 +716,13 @@ class FolderCache(QObject):
             self.subtreeChanged.emit(path)
 
     def save_subtree(self, path: str, record: dict[str, Any], cache_options: dict[str, Any]) -> None:
-        """Share a newly derived status with other tabs and save it for later sessions."""
+        """Share a newly derived status with other tabs and save it for later sessions (not while
+        working offline: derived from saved results, it would date old information as new)."""
         self.remember_subtree(path, record, notify=False)
         # Notified later: the deriving tab must not re-enter its own derivation.
         QTimer.singleShot(0, lambda: None if self.service.closed else self.subtreeChanged.emit(path))
-        if not cache_options:
-            return  # The disk cache is off: shared in memory only.
+        if not cache_options or self.offline:
+            return  # The disk cache is off, or working offline: shared in memory only.
         self._subtree_pending[path] = {"path": path, **record}
         self._subtree_pending.move_to_end(path)
         self._subtree_options = cache_options
@@ -1843,6 +1852,8 @@ class FolderCache(QObject):
             return False
         if self.has_request(owner, operation, path):
             return True
+        if self.offline and operation not in IOService.OFFLINE_OPERATIONS:
+            return self._offline_submit(owner, generation, path, operation, payload, priority)
         request = IORequest(owner, generation, path, operation, payload,
                             self.service.NO_PROGRESS_TIMEOUT if timeout is None else timeout)
         snapshot = self.snapshot(path) if operation in SCANS else None
@@ -1970,6 +1981,77 @@ class FolderCache(QObject):
             self.jobs.pop(job_key)
             self._producers.pop(job.owner)
             return False
+        return True
+
+    @property
+    def offline(self) -> bool:
+        """Work Offline (cache-only browsing): no source folder is read; see ``set_offline``."""
+        return self.service.offline
+
+    def set_offline(self, on: bool) -> None:
+        """Work Offline on or off (Tony, 2026-10-26: D1–D10 of the cache-only design).
+
+        On: no source operation starts (``IOService.OFFLINE_OPERATIONS``; ``submit`` answers
+        the others with an ``offline`` event, and lists a folder from its saved listing). Running
+        listings, scans, icon lookups and loads are cancelled; saves already asked for, cached
+        reads and other local-disk work go on. The caller turns Live off first, so its save is
+        one of those. Off: volumes and data roots are verified again; the main window refreshes the tabs.
+        """
+        global _offline
+        if on == self.offline:
+            return
+        _offline = on
+        if on:
+            for job in list(self.jobs.values()):
+                stand_in = IORequest(job.owner, 0, job.path, job.operation, job.payload, 0.0)
+                if not IOService.finishes_offline(stand_in) and not job.saves():
+                    self._cancel_job(job)
+            self._subtree_pending.clear()
+        self.service.set_offline(on)
+        logging.info("Work Offline %s", "on: cached data only" if on else "off")
+        if not on:
+            self._verify_roots()  # Volumes and markers may have changed meanwhile.
+        self.offlineChanged.emit(on)
+
+    def _offline_submit(self, owner: str, generation: int, path: str, operation: str,
+                        payload: dict[str, Any], priority: bool) -> bool:
+        """``submit`` while working offline: a listing reads the folder's saved listing (the local
+        lane's ``saved_list``; no snapshot, no scan history: ``_on_event``), a default folder's lookup
+        finds the newest data root, a local operation goes on as usual, and any other is answered
+        ``offline`` at once, as accepted (never a failure)."""
+        if operation in ("list", "resolve"):
+            # (A tab's default folder: the data root seen most recently, ``io_ops.listings.newest_root_folder``.)
+            payload = {**payload, "offline": True, "cache": store_options(), "verified_volumes": self.verified_volumes(),
+                       **({"resolve": True} if operation == "resolve" else
+                          {"listing_only": True, "scan_manual": False, "automatic": False})}
+            request = IORequest(owner, generation, path, operation, payload, self.service.NO_PROGRESS_TIMEOUT)
+            job = self.jobs.get((operation, path))
+            if job is not None:
+                job.subscribers[(owner, generation)] = request
+                self._catch_up(job, request)
+                return True
+            job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload)
+            job.subscribers[(owner, generation)] = request
+            self.jobs[job.key] = job
+            self._producers[job.owner] = job
+            if not self.service.submit(job.owner, 0, path, "saved_list", payload, priority=priority):
+                self.jobs.pop(job.key)
+                self._producers.pop(job.owner)
+                return False
+            return True
+        request = IORequest(owner, generation, path, operation, payload, 0.0)
+        self._deliveries.append(request)
+
+        def answer() -> None:
+            if request in self._deliveries:
+                self._deliveries.remove(request)
+            if request.cancelled.is_set() or self.service.closed:
+                return
+            self.resultReady.emit(request, {"kind": "offline", "operation": operation})
+            # A status check ends as a skipped one would (its row keeps what it shows); others cancelled.
+            self.resultReady.emit(request, {"kind": "done", "scan_skipped": True, "offline": True} if operation in SCANS
+                                  else {"kind": "cancelled", "offline": True})
+        QTimer.singleShot(0, answer)
         return True
 
     def replay_snapshot(self, owner: str, generation: int, path: str, *, metadata_only: bool = False,
@@ -3449,6 +3531,19 @@ class FolderCache(QObject):
                 job.status = event
                 job.completed_scan = FolderSnapshot(tuple(job.entries), event, time.monotonic())
                 return
+            if job.payload.get("offline") and kind in ("done", "error", "cancelled"):
+                # A saved listing (``saved_list``): saved results only, so no snapshot is kept for
+                # other tabs as a fresh listing and no scan outcome is recorded. Its subscribers get
+                # its names and status as a listing's (``_replay``), without one.
+                self._forget_job(job)
+                listing = (FolderSnapshot(tuple(job.entries), job.status, 0.0)
+                           if kind == "done" and job.status else None)
+                for request in tuple(job.subscribers.values()):
+                    if listing is not None:
+                        self._replay(request, listing)
+                    else:
+                        self.resultReady.emit(request, event)
+                return
             if kind == "error" and job.completed_scan is not None:
                 self.scan_history_errors[job.path] = "Folder status check completed, but saving its metadata failed."
                 job.status = job.completed_scan.status
@@ -3630,7 +3725,7 @@ class FolderCache(QObject):
             self._schedule_sweep(event.get("next_deadline"))
             self._note_usage(event.get("usage"), event.get("usage_seq"))
             return
-        elif job.operation == "resolve" and kind == "resolved":
+        elif job.operation == "resolve" and kind == "resolved" and not job.payload.get("offline"):
             candidates = tuple(job.payload["candidates"])
             self._defaults[candidates] = event["path"]
             if len(self._defaults) > 16:
@@ -3668,6 +3763,8 @@ def get_folder_cache(service: IOService) -> FolderCache:
     return service.folder_cache
 
 
+# Work Offline (cache-only browsing): what controls that would read a source folder say meanwhile.
+OFFLINE_TOOLTIP = "Not while working offline"
 # Data roots (Tony, 2026-10-18): the right-click action, and how a folder's disk cache is described.
 PLACE_ROOT_ACTION = "Place .helab-root here…"
 PLACE_ROOT_TOOLTIP = ("No .helab-root found here or above, so this folder uses RAM only.\n"

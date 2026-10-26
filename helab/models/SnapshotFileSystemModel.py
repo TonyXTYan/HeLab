@@ -89,6 +89,10 @@ class FolderNode:
     # Whether the folder had subfolders at its last listing (saved with its summary);
     # None if unknown. An unlisted folder known to have none shows no expand arrow.
     has_dirs: bool | None = None
+    # Working offline: when the saved listing shown was made, and whether the folder was never
+    # listed while online (its subfolders unknown; only those leading to data roots show).
+    offline_listed_at: float | None = None
+    offline_unlisted: bool = False
 
 
 class SnapshotFileSystemModel(QAbstractItemModel):
@@ -160,6 +164,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         # Locations waiting for Same folder or Copy: their rows show ROOT_PENDING (memory only).
         self._pending_roots = {str(entry["path"]) for entry in self.cache.root_duplicates.values()}
         self.cache.rootDuplicatesChanged.connect(self._root_duplicates_changed)
+        self.cache.offlineChanged.connect(self._offline_changed)
 
     def node(self, index: QModelIndex) -> FolderNode | None:
         return cast(FolderNode, index.internalPointer()) if index.isValid() else None
@@ -488,7 +493,12 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             lines.append(warning)
         if warning := self.cache.cache_read_errors.get(node.path):
             lines.append(f"Saved results unknown: {warning}")
-        if not busy and not load_state and not history["blocked"]:
+        if self.cache.offline and not busy:
+            saved_at = node.offline_listed_at or node.scanned_at
+            lines.append("Offline: not listed while online" if node.offline_unlisted and not node.children else
+                         f"Offline: showing saved results from {_stamp(saved_at)}" if saved_at is not None
+                         else "Offline: nothing saved for this folder")
+        elif not busy and not load_state and not history["blocked"]:
             if node.error:
                 lines.append("Use Retry / Refresh to try again.")
             elif report is None and not node.subtree:
@@ -528,6 +538,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         """What is known about the subfolders: listed in this tab, else saved."""
         info = node.subtree_info
         saved = info is not None and not node.subtree_live
+        if node.offline_unlisted and not node.children:
+            return "not listed while online"
         if node.loaded or node.children:
             total = len(node.children)
             if total == 0:
@@ -610,6 +622,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         """Called after viewport changes, never by data() or other render queries."""
         if self.closed or self.root is None:
             return False
+        if self.cache.offline:
+            return True  # Working offline: generic icons (and those already in memory).
         missing = [path for path in dict.fromkeys(paths)
                    if path in self.nodes and path not in self.cache.folder_icons][:64]
         if not missing:
@@ -690,6 +704,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
 
     def _request_details(self, node: FolderNode, *, manual: bool) -> None:
         """Browse step 2 in the background: signature, dates and subfolder details."""
+        if self.cache.offline:
+            return  # Working offline: the saved results are all there is.
         if self.refreshing and not manual:
             self._refresh_details.add(node.path)
             return
@@ -747,6 +763,11 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if kind in ("done", "error", "cancelled"):
             self._scan_seen.pop(request, None)
         owns_tree = self._tree_requests.get(node.path) is request
+        if kind == "offline":
+            # Working offline: a check that would read the folder wasn't run; the row keeps what it shows.
+            node.error = ""
+            self.changed(node)
+            return
         if kind == "cancelled" and request.payload.get("refresh_cancelled"):
             # Refresh discards optional automatic work without presenting a failure.
             if owns_tree:
@@ -852,6 +873,9 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                     self._update_ancestors(node)
                 node.empty = event.get("empty", node.empty)
                 node.has_dirs = event.get("has_dirs", node.has_dirs)
+                # A saved listing (working offline) says when it was made; a listing online clears that.
+                node.offline_listed_at = event.get("listed_at") if event.get("offline") else None
+                node.offline_unlisted = bool(event.get("offline")) and not event.get("listed")
                 self.changed(node)
                 return
             self._apply_status(node, event)
@@ -894,6 +918,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
     def _apply_status(self, node: FolderNode, event: dict[str, Any]) -> None:
         """A check's status of the folder (a listing's, a scan's or a load's) on its row."""
         node.cached_report = False
+        node.offline_listed_at, node.offline_unlisted = None, False
         node.saved_modified = metadata_date(event.get("modified"))
         node.raw_count, node.txy_count = len(event["raw"]), len(event["txy"])
         extras = list(node.report.extra_icons) if node.report else []
@@ -969,6 +994,18 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         node.error = ""
         node.scan_skipped = False
         return True
+
+    def _offline_changed(self, offline: bool) -> None:
+        """Work Offline on: listings and checks it cancelled leave their rows as they were (no
+        "Cancelled"); a top folder not listed yet shows its saved listing. Off: Refresh follows."""
+        if self.closed or not offline:
+            return
+        for node in self.nodes.values():
+            if node.state == "cancelled":
+                node.state, node.error = "idle", ""
+                self.changed(node)
+        if self.root is not None and not self.root.loaded:
+            self.request_scan(self.root.path, priority=True)
 
     def _cache_removed(self, paths: list[str] | None, kinds: list[str]) -> None:
         """Saved results removed from the disk cache stop showing; what this tab checked
@@ -1203,3 +1240,4 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.dataRootsChanged.disconnect(self._data_root_changed)
         self.cache.resultCountsChanged.disconnect(self._result_counts_changed)
         self.cache.rootDuplicatesChanged.disconnect(self._root_duplicates_changed)
+        self.cache.offlineChanged.disconnect(self._offline_changed)

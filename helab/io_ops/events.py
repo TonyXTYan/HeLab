@@ -188,6 +188,23 @@ class ListedStatusEvent(_StatusBase):
     results: NotRequired[ResultCountField]  # The folder's saved analysis results (R2)
 
 
+class OfflineListingEvent(TypedDict):
+    """A saved listing's status of its folder, working offline (``io_ops.listings.saved_list_folder``):
+    counts only (in its ``scan_cached``), never shot lists. ``listed`` False: never listed while
+    online, so its subfolders aren't known (those leading to known data roots are sent anyway)."""
+    kind: Literal["status"]
+    details: Literal[False]
+    offline: Literal[True]
+    listed: bool
+    listed_at: float | None
+    empty: bool | None
+    has_dirs: bool | None
+    disk_cached: NotRequired[bool]
+    cache_info: NotRequired[dict[str, Any]]
+    data_root: NotRequired[DataRoot]
+    results: NotRequired[ResultCountField]
+
+
 class FolderSummary(_StatusBase):
     """A folder's complete status as a scan or load computes it (``summary._summary``): a scan's
     ``status`` event starts from it, and a load sends it as ``scan_summary``."""
@@ -821,7 +838,7 @@ class RootsVerifiedEvent(TypedDict):
 HelperEvent = Union[
     DoneEvent, ErrorEvent, PausedEvent, ResumedEvent, HeartbeatEvent, DrivesEvent, ResolvedEvent,
     CacheWarningEvent, CacheSkippedEvent,
-    EntriesEvent, ListedStatusEvent, ScanStatusEvent, MountsSeenEvent, SaveGuardEvent, ScanHistoryEvent,
+    EntriesEvent, ListedStatusEvent, OfflineListingEvent, ScanStatusEvent, MountsSeenEvent, SaveGuardEvent, ScanHistoryEvent,
     ScanHistorySavedEvent, ScanHistoryWarningEvent, ScanModeEvent, ScanCachedEvent, SubtreeCachedEvent,
     SubtreeSavedEvent, SummarySaveFailedEvent, FolderPrefsEvent, FolderConstantsEvent, PresetsEvent, CacheMismatchEvent,
     FolderIconEvent,

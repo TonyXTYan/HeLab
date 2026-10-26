@@ -9,9 +9,13 @@ back (``read_listing``) is local-lane work: the disk cache only, never the sourc
 from __future__ import annotations
 
 import math
+import os
 from typing import Any, Iterable, Mapping, TYPE_CHECKING
 
-from helab.io_ops.stores import _open_store
+from helab.io_ops import metadata, stores
+from helab.io_ops.events import OfflineListingEvent, ResultsField
+from helab.io_ops.infra import Emit, emit
+from helab.io_ops.stores import _data_root, _open_store
 from helab.io_ops.summary import SUMMARY_STATUSES
 from helab.utils import file_kinds
 
@@ -112,3 +116,110 @@ def saved_listing(path: str, cache_options: dict[str, Any] | None, *,
         return read_listing(store, path)
     finally:
         store.close()
+
+
+def _listing_status(listing: Mapping[str, Any]) -> dict[str, Any]:
+    """A folder summary (as ``scan_cached`` carries one) from a saved listing's counts, for a folder
+    whose full summary isn't saved: its row shows them as saved results."""
+    return {"version": 1, "status": listing["status"], "count": listing["count"],
+            "raw_count": listing["raw_count"], "txy_count": listing["txy_count"], "empty": listing["empty"],
+            "has_dirs": listing["has_dirs"], "files": listing["files"], "scanned_at": listing["listed_at"],
+            "signature": "", "from_listing": True}
+
+
+def _roots_below(store: CacheStore, path: str) -> list[str]:
+    """The subfolders of ``path`` that lead down to a known data root (offline, a folder above the
+    roots has no saved listing), by their source paths here: mounted, or hinted (``mount_hints``)."""
+    from helab.utils.cache_paths import _inside, _normal
+    names: set[str] = set()
+    for location, _, decision in store.root_locations():
+        if decision != "confirmed":
+            continue
+        root = store._location_source(location)
+        if root.startswith(("smb://", "vol://")) or _normal(root) == _normal(path) or not _inside(
+                _normal(root), _normal(path)):
+            continue
+        names.add(root[len(path.rstrip("/\\")):].lstrip("/\\").replace("\\", "/").split("/")[0])
+    return sorted(name for name in names if name)
+
+
+def saved_list_folder(path: str, send: Emit = emit, cache_options: dict[str, Any] | None = None, *,
+                      verified_volumes: list[list[str]] | None = None) -> None:
+    """Work Offline's listing of ``path`` (``saved_list``, local lane): what ``list`` sends, from the
+    disk cache alone, never the source folder. Its own saved records and summary (or its saved
+    listing's counts), then its saved subfolders with theirs, then an ``OfflineListingEvent``. A
+    folder never listed while online sends ``listed`` False, with the subfolders leading down to
+    known data roots. On a volume not verified yet it raises ``VolumeUnverified``, as cached reads."""
+    from helab.io_ops.browse import _result_counts
+    from helab.utils.cache_paths import UnresolvedRemotePath, _inside, _normal
+    from helab.utils.cache_store import StoreError
+    from helab.utils.data_roots import VolumeUnverified
+    if not cache_options:
+        raise ValueError("The disk cache is off for this session")
+    store = stores._cache_store(cache_options["directory"], [path], local_lane=True, allow_unrooted=True,
+                                verified_volumes=verified_volumes, offline=bool(cache_options.get("offline")))
+    try:
+        if any(_inside(_normal(path), _normal(mount)) for mount in store._unverified_mounts):
+            raise VolumeUnverified(path)
+        try:
+            store._path_key(path)
+        except UnresolvedRemotePath:  # No data root here: no listing, only the way down to roots.
+            found: Read[dict[str, Any]] | None = None
+        else:
+            found = read_listing(store, path)
+            if found.failed:
+                raise StoreError(found.error)
+        listing = found.value if found is not None else None
+        # (Without a key, its own records are unknown, as for ``list`` of a folder without a root.)
+        keyed = store if found is not None else None
+        _, saved = metadata._send_saved(keyed, path, send)
+        if listing is not None and not (saved or {}).get("scan_status"):
+            send({"kind": "scan_cached", "status": _listing_status(listing)})
+        names = list(listing["names"]) if listing is not None else _roots_below(store, path)
+        for start in range(0, len(names), 128):
+            batch: list[dict[str, Any]] = [{"path": os.path.join(path, name), "name": name}
+                                           for name in names[start:start + 128]]
+            records = metadata._saved_folders(store, [child["path"] for child in batch], send)
+            counts = _result_counts(store, [child["path"] for child in batch])
+            # A subfolder listed but never checked in full has no summary: its own listing's counts.
+            unchecked = [path for path, saved in records.items() if not saved.get("scan_status")]
+            listed_only = store.read_records("listings", unchecked) if unchecked else {}
+            for child in batch:
+                child.update(records.get(child["path"], {}))
+                if (found := listed_only.get(child["path"])) is not None and (listed := valid_listing(found.value)):
+                    child["scan_status"] = _listing_status(listed)
+                if child["path"] in counts:
+                    child["results"] = counts[child["path"]]
+                if listing is None:
+                    child["root_path"] = True
+            send({"kind": "entries", "entries": batch})
+        own = _result_counts(store, [path]).get(path) if listing is not None else None
+        results: ResultsField = {} if own is None else {"results": own}
+        report: OfflineListingEvent = {
+            "kind": "status", "details": False, "offline": True, "listed": listing is not None,
+            "listed_at": listing["listed_at"] if listing is not None else None,
+            "empty": listing["empty"] if listing is not None else None,
+            "has_dirs": listing["has_dirs"] if listing is not None else bool(names),
+            **metadata._dataset_flags(keyed, path, send), **_data_root(keyed, path), **results}
+        send(report)
+    finally:
+        store.close()
+
+
+def newest_root_folder(send: Emit = emit, cache_options: dict[str, Any] | None = None, *,
+                       verified_volumes: list[list[str]] | None = None) -> None:
+    """Work Offline's start folder (``saved_list`` with ``resolve``): the data root seen most
+    recently, at its folder here (mounted, or hinted: ``mount_hints``), sent as ``resolved``, as a
+    default folder's lookup sends it. The disk cache only; never a source folder."""
+    if not cache_options:
+        raise ValueError("The disk cache is off for this session")
+    with stores._cache_store(cache_options["directory"], local_lane=True, verified_volumes=verified_volumes,
+                             offline=bool(cache_options.get("offline"))) as store:
+        rows = sorted((row for row in store.root_rows() if row["decision"] == "confirmed"),
+                      key=lambda row: row["last_seen"], reverse=True)
+        for row in rows:
+            folder = store._location_source(row["location"])
+            if not folder.startswith(("smb://", "vol://")):
+                send({"kind": "resolved", "path": folder})
+                return
+    raise FileNotFoundError("No data root saved to browse offline")

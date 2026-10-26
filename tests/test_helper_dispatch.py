@@ -37,7 +37,8 @@ MOUNTED = ("\\\\no-such-server\\share\\run_1" if sys.platform == "win32"
 HANDLERS = ("list_folder", "folder_icons", "scan", "save_scan_history", "save_subtrees", "live_check",
             "save_held", "load", "read_cached", "cache_move_job", "cache_admin", "result_find", "result_save",
             "verify_known_roots",
-            "verify_volumes", "trace_check", "create_root", "reassign_root", "remove_root", "save_marker_copy")
+            "verify_volumes", "trace_check", "create_root", "reassign_root", "remove_root", "save_marker_copy",
+            "saved_list_folder", "newest_root_folder")
 
 
 @pytest.fixture(autouse=True)
@@ -147,6 +148,11 @@ ROUTES: list[tuple[dict[str, Any], str, tuple[Any, ...], dict[str, Any]]] = [
       "allow_large": 1, "verified_volumes": [["/v", "dev"]]}, "read_cached", (PATH, OUTPUT),
      {"cache_options": CACHE, "limits": {"ram": 9}, "allow_large": True, "verified_volumes": [["/v", "dev"]]}),
     ({"operation": "cache_move", "move": {"to": OTHER}}, "cache_move_job", ({"to": OTHER},), {}),
+    # Work Offline's listing and start folder (cache-only browsing): the disk cache only.
+    ({"operation": "saved_list", "path": PATH, "cache": CACHE, "verified_volumes": [["/v", "dev"]]},
+     "saved_list_folder", (PATH,), {"cache_options": CACHE, "verified_volumes": [["/v", "dev"]]}),
+    ({"operation": "saved_list", "path": PATH, "cache": CACHE, "resolve": True}, "newest_root_folder", (),
+     {"cache_options": CACHE, "verified_volumes": None}),
     ({"operation": "result_find", "path": PATH, "output": OUTPUT, "cache": CACHE, "lookup": "k", "family": "f",
       "verified_volumes": [["/v", "dev"]]}, "result_find", (PATH, OUTPUT, CACHE, "k", "f"),
      {"verified_volumes": [["/v", "dev"]]}),
@@ -221,7 +227,7 @@ def test_invalidate_removes_the_folders_datasets_on_the_local_lane(
 
     monkeypatch.setattr(stores, "_cache_store", open_store)
     events = send(monkeypatch, capsys, {"operation": "invalidate", "path": PATH, "cache": CACHE})
-    assert opened == [("open", (CACHE["directory"], [PATH]), {"local_lane": True}),
+    assert opened == [("open", (CACHE["directory"], [PATH]), {"local_lane": True, "offline": False}),
                       ("remove", (("datasets",), [PATH]), {})]
     assert events == [
         {"kind": "removed", "kinds": ["datasets"], "paths": [PATH], "datasets": 1, "bytes": 2048},
@@ -244,6 +250,28 @@ def test_cache_only_operations_are_refused_without_the_cache(
     events = send(monkeypatch, capsys, request)
     assert events == [{"kind": "error", "message": "The disk cache is off for this session"}]
     assert not calls
+
+
+OFFLINE = {**CACHE, "offline": True}
+
+
+@pytest.mark.parametrize("operation", sorted(io_helper.OFFLINE_REFUSED))
+def test_working_offline_a_source_operation_is_refused_before_its_handler(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], calls: list[Call], operation: str,
+) -> None:
+    events = send(monkeypatch, capsys, {"operation": operation, "path": PATH, "paths": [PATH], "cache": OFFLINE,
+                                        "output": OUTPUT, "candidates": [PATH], "uuid": "u", "old_uuid": "u",
+                                        "keep": "", "contents": "{}"})
+    assert events == [{"kind": "error", "message": f"Working offline: {operation} reads source folders"}]
+    assert not calls
+
+
+def test_working_offline_a_save_asked_for_before_still_runs(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], calls: list[Call],
+) -> None:
+    events = send(monkeypatch, capsys, {"operation": "load", "save": True, "save_memory": True, "held_dir": OTHER,
+                                        "path": PATH, "cache": OFFLINE, "output": OUTPUT})
+    assert [call[0] for call in calls] == ["save_held"] and events == [{"kind": "done"}]
 
 
 def test_an_unknown_operation_is_an_error(
