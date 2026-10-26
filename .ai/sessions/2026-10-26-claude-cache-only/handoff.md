@@ -230,5 +230,10 @@ share, restart, browse and plot.
   name until it is listed online. Its data shows only if cached.
 - **Windows:** a disconnected mapped drive is still in the mount table (`WNetGetConnection` 1201),
   so it is keyed as today and hints aren't needed there. Not tested on Windows by hand.
-- **Merging dev:** `dev/v0.0.6` hasn't been merged in yet. Quick Fixes 2 (`agent/quick-fixes-2`
-  `26994dd`) changes one `io_helper.CACHE_ONLY` entry, so a trivial conflict is expected.
+- **Merged dev:** `dev/v0.0.6` at `3eb0fbf` (Quick Fixes 2) is merged in as `1dfeba3`.
+  - Two conflicts, both kept both sides: `io_helper.CACHE_ONLY` has both `saved_list` and
+    `roots_verify`, and `tests/test_helper_dispatch.py` keeps both sets of tests.
+  - `folder_cache.py` (Ferrule's `_root_results_gone` / `_root_holds`) and `FolderExplorer.py`
+    (`load_origin`) merged without conflicts.
+  - After the merge: 4416 passed, 2 skipped, **no RERUN**; mypy --strict on `helab/` and `tests/`
+    clean; pyright 0 errors.
