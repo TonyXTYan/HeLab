@@ -25,7 +25,7 @@ import time
 from typing import Any, Callable
 
 from helab.utils.cache_location import cache_location_problem
-from helab.utils.cache_store import LAYOUT_VERSION, STORE_DIRNAME, store_root
+from helab.utils.cache_store import LAYOUT_VERSION, RESULTS_DIRNAME, STORE_DIRNAME, store_root
 from helab.utils.number_format import byte_size
 
 RECORD_NAME = "cache-move.json"
@@ -151,8 +151,8 @@ def valid_at(cache_dir: str, store_id: str) -> bool:
 
 def verify(cache_dir: str, store_id: str) -> str:
     """Why the copy in ``cache_dir`` isn't the store ``store_id``, or "" if it is: its database
-    passes ``integrity_check``, has the same id and layout, and every dataset file the
-    datasets and pending saves name exists with its recorded size."""
+    passes ``integrity_check``, has the same id and layout, and every file the datasets, pending
+    saves, saved results and pending results name exists with its recorded size."""
     try:
         conn = _connect_read_only(cache_dir)
         if conn is None:
@@ -162,16 +162,25 @@ def verify(cache_dir: str, store_id: str) -> str:
                 return "the copied database is damaged"
             files = conn.execute("SELECT file, bytes FROM datasets UNION ALL "
                                  "SELECT file, bytes FROM pending_saves").fetchall()
+            # (Saved results' files are ``results/<name>``, beside ``datasets/``; a store from
+            # before result caching has no such tables.)
+            for table in ("results", "pending_results"):
+                if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                                (table,)).fetchone() is not None:
+                    files += conn.execute(f"SELECT file, bytes FROM {table}").fetchall()
         finally:
             conn.close()
     except sqlite3.Error as exc:
         return f"the copied database can't be read ({exc})"
     if store_id_at(cache_dir) != store_id:
         return "the copied database is not the same cache"
-    datasets = os.path.join(store_root(cache_dir), "datasets")
+    root = store_root(cache_dir)
+    datasets = os.path.join(root, "datasets")
     for file, size in files:
+        path = (os.path.join(root, *file.split("/")) if file.startswith(RESULTS_DIRNAME + "/")
+                else os.path.join(datasets, file))
         try:
-            if os.path.getsize(os.path.join(datasets, file)) != int(size):
+            if os.path.getsize(path) != int(size):
                 return f"a copied data file has the wrong size ({file})"
         except OSError:
             return f"a data file is missing from the copy ({file})"
