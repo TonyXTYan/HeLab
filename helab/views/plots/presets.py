@@ -462,6 +462,7 @@ class PresetFolder(QObject):
         self._notice = notice
         self.done = False
         self.load_asked = False
+        self.data_expected = False  # A load of its data was asked: Live waits for it to show.
         self._signals = [explorer.dataLoaded, explorer.loadStateChanged, explorer.liveChanged,
                          explorer.model.activityChanged]
         for signal in self._signals:
@@ -476,7 +477,13 @@ class PresetFolder(QObject):
             self.finish()
             return
         if explorer.selected_path_globally != self.folder:
-            if self.live:
+            unlisted = explorer.model.nodes.get(self.folder)
+            if explorer.model.cache.offline and (unlisted is None or unlisted.report is None):
+                # Working offline, the tab can't open a folder it never listed online (C-29): its
+                # selection stays above it, which isn't another choice of folder.
+                self._notice(f"Preset “{self.name}”: {folder_name(self.folder)} can't be opened while working "
+                             "offline (not listed while online): its plots wait for its data")
+            elif self.live:
                 self._notice(f"Preset “{self.name}”: Live not started: another folder was selected")
             self.finish()
             return
@@ -492,7 +499,7 @@ class PresetFolder(QObject):
         if not self.load_asked:
             has_shots = node is not None and node.report is not None and node.txy_count > 0
             if self._shown() or explorer.model.cache.disk_cached(self.folder) or has_shots:
-                self.load_asked = True
+                self.load_asked = self.data_expected = True
                 explorer.load_to_ram_cache(self.folder, dwell=False, explicit=True)
                 if self.done:
                     return  # (A load answered at once, and this ran again meanwhile.)
@@ -518,9 +525,14 @@ class PresetFolder(QObject):
         return explorer.folder_opened_path == self.folder and explorer.folder_opened_data is not None
 
     def _busy(self) -> bool:
-        """The folder's load (or its wait to start) is still going: its data may yet show."""
+        """The folder's load (or its wait to start) is still going: its data may yet show. A load it
+        asked counts until the data shows, the load fails or the folder is held back as large: the
+        load's end comes a moment before the tab shows its data (C-30), and each brings a signal."""
         explorer = self.explorer
-        return (explorer.loading and explorer.load_path == self.folder) or explorer.load_waiting or explorer.settling
+        if (explorer.loading and explorer.load_path == self.folder) or explorer.load_waiting or explorer.settling:
+            return True
+        return (self.data_expected and not self._shown() and not explorer.load_error
+                and explorer.large_state(self.folder) is None)
 
     def finish(self) -> None:
         if self.done:

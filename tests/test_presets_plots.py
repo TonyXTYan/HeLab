@@ -952,6 +952,7 @@ class Model(QObject):
         self.nodes: dict[str, Any] = {}
         self.cached = True  # Whether the folder has a disk cache (it loads at once)
         self.cache = self
+        self.offline = False  # (FolderCache.offline: Work Offline)
 
     def disk_cached(self, path: str) -> bool:
         return self.cached
