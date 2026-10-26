@@ -342,7 +342,7 @@ class PresetBar(QWidget):
                                       else "none saved")
         self.apply_button.setEnabled(bool(names))
         self.delete_button.setEnabled(bool(names))
-        if problems and not self.note.isVisible():
+        if problems and self.note.isHidden():  # (Not isVisible: false while its page isn't shown.)
             self._show_problems()
         conflicts = take_conflicts(SCRIPT, script_scope(self.ref))
         if conflicts:

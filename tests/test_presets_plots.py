@@ -539,6 +539,19 @@ def test_an_unreadable_script_preset_is_named_and_replaced_only_when_asked(qtbot
     assert read_script_presets(ref).names() == ["broken", "new"]
 
 
+def test_a_store_problem_keeps_a_background_plots_note(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-21: a plot whose page isn't the Settings panel's current one isn't visible, so a store
+    problem replaced its note (e.g. "Reopened · ⚠ …") on any presetsChanged; only a hidden note is."""
+    window = new_window(qtbot, cache, windows)
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    presets = bar(waiting_plot(window, cache, ref))
+    presets.note.setText("Reopened · ⚠ 1 setting at the script's defaults")
+    presets.note.setVisible(True)
+    assert not presets.note.isVisible()  # (Its page isn't shown.)
+    preset_store().set_presets([(SCRIPT, script_scope(ref), "broken", "{broken")])
+    assert presets.note.text() == "Reopened · ⚠ 1 setting at the script's defaults"
+
+
 # Arrangements: placement, and reopening at start
 
 
