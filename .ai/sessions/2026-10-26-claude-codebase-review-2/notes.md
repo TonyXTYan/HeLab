@@ -290,3 +290,7 @@ types clean.
 
 Checks at `28c0dff`: 4464 passed, 2 skipped, no RERUN; mypy --strict on helab and tests, and
 pyright, clean.
+
+- **C-31 (quality), Sextant's C-14 leftover:** `HelabMainWindow.update_status_bar_right`'s RAM
+  figures divide by 10^9, and `LARGE_RESULT_BYTES` = 50 * 10**6. `CacheTab`'s `1 << 20` spin-box
+  ceiling is a count of GB, not a size, so it stays.

@@ -8,11 +8,11 @@ Floor "Codebase Review 2", branch `agent/codebase-review-2`, from `3eb0fbf` (`de
 
 ## Counts and outcomes
 
-30 findings: **0 blocker, 0 high, 2 medium, 13 low, 14 quality, 1 doc.**
+31 findings: **0 blocker, 0 high, 2 medium, 13 low, 15 quality, 1 doc.**
 
 | Outcome | Findings |
 |---|---|
-| Fixed | C-1, C-2, C-3, C-5, C-7, C-8, C-9, C-10, C-12, C-13, C-14, C-15, C-17, C-18, C-19, C-20, C-21, C-22, C-23, C-24, C-25, C-27, C-29, C-30 |
+| Fixed | C-1, C-2, C-3, C-5, C-7, C-8, C-9, C-10, C-12, C-13, C-14, C-15, C-17, C-18, C-19, C-20, C-21, C-22, C-23, C-24, C-25, C-27, C-29, C-30, C-31 |
 | Fixed in part | C-26 (the app side's event typing is left for the `folder_cache` split) |
 | Kept, made explicit | C-11 (receipts listed in the event test) |
 | Declined, with reasons | C-28 for `PresetBar`; C-24 for `helab/views/plots/arrangement.py` and `instance.py` |
@@ -23,8 +23,8 @@ per-minute notification cap) and 9 (the two verification waits).
 
 Every behaviour change has a test, and each new test fails before its fix. The exceptions are
 pinning or hygiene tests, named in [notes.md](notes.md). Sextant read and accepted every commit:
-batches 1 to 4 in [findings.md](findings.md#review-of-rasps-fixes); batch 5 (C-14, C-29, C-30)
-is with Sextant at the time of writing.
+batches 1 to 5 in [findings.md](findings.md#review-of-rasps-fixes); C-31's small commit is with
+Sextant at the time of writing.
 
 **Checks at the final head** (`28c0dff`, before docs):
 - `pytest -n 4 --reruns 5 --reruns-delay 1`: 4464 passed, 2 skipped, **no RERUN**.
@@ -124,6 +124,10 @@ The structural cause is C-28, declined below.
     up in the moment between the load's end and the data showing).
   - Offline, a folder never listed online is named: "<folder> can't be opened while working
     offline (not listed while online): its plots wait for its data".
+
+- **C-31 (quality, C-14's leftover):** the commit after `41df9ce`. The status bar's RAM figures
+  divide by 10^9, and `result_cache.LARGE_RESULT_BYTES` is 50 MB in SI (`50 * 10**6`), as its
+  comment says.
 
 **Declined:**
 - **C-28 for `PresetBar`.** Presets are app-wide by design: one store in use, kept in one

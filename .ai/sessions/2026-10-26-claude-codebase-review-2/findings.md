@@ -531,3 +531,17 @@ The seams, each traced and found consistent:
   no load, so it never sees this. Fix: after `load_asked`, wait for the next `dataLoaded` /
   `loadStateChanged` (or count a pending cached read as busy) before judging Live; and treat the
   startup resolve as the tab settling. Observed twice by the probe; the exact gap is my reading.
+
+- **Batch 5** (`bbed82c`, `28c0dff`, docs `41df9ce`): both code commits read in full, accepted.
+  C-14 (`bbed82c`): `byte_size` SI (999.5 / 1000), `app_log.MB`, `MIN_DISK_BUDGET` and
+  `MIN_RAM_BUDGET` 10^9, the default budget 8e9, `CacheTab.GB` 10^9, the memory window in SI,
+  `duration` = `span` on whole seconds; a saved budget keeps its bytes. C-29/C-30 (`28c0dff`):
+  `PresetFolder.data_expected` keeps `_busy()` True from the load it asked until the data shows,
+  the load fails or the folder is held as large; offline, a folder never listed online is named as
+  such; `tests/test_preset_folder_live.py` from my probes, both failing before.
+- **C-31 (quality; C-14 leftover)** — two byte sizes still binary after "SI everywhere":
+  `helab/views/HelabMainWindow.py:346–347` (`update_status_bar_right`: RAM shown as "x.x GB" from
+  `/ (1024 ** 3)`), and `helab/analysis/result_cache.py:40` (`LARGE_RESULT_BYTES = 50 << 20`,
+  whose comment says "50 MB as HeLab shows sizes"). `CacheTab.py:148`'s `1 << 20` is a spin-box
+  ceiling in GB (fine); `MAX_MARKER_BYTES`, `_LOCK_OFFSET`, `MAX_BINS` aren't sizes shown. Fix:
+  `/ 1e9` and `50 * 10**6`.

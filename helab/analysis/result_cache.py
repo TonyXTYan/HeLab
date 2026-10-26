@@ -37,7 +37,7 @@ from helab.analysis.results import DISK_CACHED, FROM_DISK, AnalysisContext, Anal
 RECORD_TYPES: tuple[type, ...] = (AnalysisResult, AnalysisIdentity, ViewKey, ViewIdentity, Coverage, ResolvedConstants)
 # Above this, saving a result is said each time (Tony, 2026-10-22): the plot and the size (50 MB as
 # HeLab shows sizes, ``number_format.byte_size``).
-LARGE_RESULT_BYTES = 50 << 20
+LARGE_RESULT_BYTES = 50 * 10**6
 
 
 @lru_cache(maxsize=1)

@@ -344,8 +344,8 @@ class HelabMainWindow(QMainWindow):
         cpu_usage_total = sum(psutil.cpu_percent(percpu=True))
         ram_usage_app = self.process.memory_info().rss  # in bytes
         ram_usage_total = psutil.virtual_memory().used  # total used RAM in bytes
-        ram_usage_app_gb = ram_usage_app / (1024 ** 3)
-        ram_usage_total_gb = ram_usage_total / (1024 ** 3)
+        ram_usage_app_gb = ram_usage_app / 1e9  # (SI GB, as every size HeLab shows)
+        ram_usage_total_gb = ram_usage_total / 1e9
 
         # HeLab's own use; the system totals are in the tooltip.
         self.status_bar_message_right.setText(f"CPU {cpu_usage_app:.0f}% · RAM {ram_usage_app_gb:.1f} GB")
