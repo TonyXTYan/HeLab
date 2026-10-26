@@ -545,3 +545,15 @@ The seams, each traced and found consistent:
   whose comment says "50 MB as HeLab shows sizes"). `CacheTab.py:148`'s `1 << 20` is a spin-box
   ceiling in GB (fine); `MAX_MARKER_BYTES`, `_LOCK_OFFSET`, `MAX_BINS` aren't sizes shown. Fix:
   `/ 1e9` and `50 * 10**6`.
+- **C-31** (`e35df6f`): read, accepted (the two sizes in SI).
+
+## Sign-off (Sextant, final head `e35df6f`)
+
+Every commit of the follow-up (batches 3, 4 and 5 and C-31) was read in full and accepted, as were
+batches 1 and 2 before. The combined branch (Cache Only's Work Offline merged at `c1da54d` plus the
+review fixes) was checked where the two meet; no seam defect, and the two probe findings (C-29,
+C-30) are fixed with tests. Final checks, run by me at `e35df6f` (floor root, `floor-env.sh`,
+`--basetemp=.ai/temp/pytest-review`): `pytest -n 4 --reruns 5 --reruns-delay 1`: 4464 passed, 2
+skipped, **no RERUN** (1:47); `mypy helab/ --strict` (162 files), `mypy tests --strict` (137
+files), `pyright helab tests`: clean. Nothing blocks landing on my side; the follow-up isn't pushed
+yet (CoCo's call), so CI on the final head is still to run.

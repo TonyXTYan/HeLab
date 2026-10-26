@@ -275,4 +275,29 @@ logs from `gh api repos/TonyXTYan/HeLab/actions/jobs/<id>/logs`:
 | macOS | 121425551244 | 4354 passed, 2 skipped, 2 xfailed (8:06) | none |
 | Ubuntu | 121425551270 | 4352 passed, 4 skipped, 2 xfailed (4:31) | none |
 
-The follow-up (from `c1da54d` to the final head) isn't pushed: CoCo asked not to push yet.
+**The follow-up**, pushed at `e35df6f` (run 40289764951), **failed**; Ubuntu passed.
+- **Windows:** the test step was cancelled at 83% after 18:25. My new offline test
+  (`test_preset_folder_live.py`) left the app-wide IOService offline for the worker's next tests:
+  two `test_presets_window.py` Live-preset tests ran offline, each with 5 reruns of a 30 s wait.
+- **macOS:** `test_offline_browsing.py::test_a_source_request_left_queued_is_refused_as_it_starts`
+  failed 6 times. Its `no_source_io` fixture sees every service's starts, and the app-wide
+  FolderCache's local-lane inventory and identity probe (prompted by each test's new private store)
+  started during it.
+- **Fixed in `938b041`** (tests only):
+  - the offline test ends online, in a `finally` and with an autouse fixture;
+  - the macOS test checks only its own queued request.
+  - The macOS collision wasn't reproduced locally, even in that worker's order. It's the C-28
+    cross-test leak (open risks).
+
+Pushed at `938b041`, run 40293473874: **success**, no RERUN on any OS:
+
+| OS | Job | Result | RERUN |
+|---|---|---|---|
+| Windows | 121473849127 | 4437 passed, 25 skipped (pytest 12:42; the Run Tests step 12:46, dev's was 13:23) | none |
+| macOS | 121473849306 | 4464 passed, 2 skipped (8:26) | none |
+| Ubuntu | 121473849231 | 4462 passed, 4 skipped (7:37) | none |
+
+Proposed known-issues entry, so it doesn't recur: the app-wide IOService and FolderCache last a
+worker's run, and real-window tests that change their state (Work Offline, quitting) must restore it
+(as `back_online` and `no_quitting_cache` do). A test may not assume no other service starts work
+during it.
