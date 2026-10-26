@@ -12,7 +12,7 @@ from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QAbstractButton, QApplication, QDialog, QDialogButtonBox, QFileDialog, QLabel,
                              QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
-from helab.utils.folder_cache import PLACE_ROOT_ACTION, FolderCache, marker_path
+from helab.utils.folder_cache import OFFLINE_TOOLTIP, PLACE_ROOT_ACTION, FolderCache, marker_path
 from helab.utils.io_service import IORequest
 
 TITLE = "Place .helab-root"
@@ -165,6 +165,10 @@ class ManualMarkerDialog(QDialog):
         self.save = QPushButton(SAVE_ACTION)
         self.save.setToolTip(f"Save {name} in a folder you can write, then move it into {folder}.\n{hidden_hint()}")
         self.save.clicked.connect(self.save_to_folder)
+        # Work Offline: Save to folder… writes through a helper that may reach a share (D6).
+        self._save_tip = self.save.toolTip()
+        cache.offlineChanged.connect(self._offline_changed)
+        self._offline_changed(cache.offline)
         buttons.addButton(copy, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.addButton(self.save, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.rejected.connect(self.close)
@@ -175,7 +179,13 @@ class ManualMarkerDialog(QDialog):
         if (clipboard := QApplication.clipboard()) is not None:
             clipboard.setText(self.contents)
 
+    def _offline_changed(self, offline: bool) -> None:
+        self.save.setEnabled(not offline)
+        self.save.setToolTip(OFFLINE_TOOLTIP if offline else self._save_tip)
+
     def save_to_folder(self) -> None:
+        if self.cache.offline:
+            return
         if target := QFileDialog.getExistingDirectory(self, f"Save {self.name} to folder", os.path.expanduser("~")):
             self.write(target)
 

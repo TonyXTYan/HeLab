@@ -154,10 +154,12 @@ class IOService(QObject):
     # (``volumes_verify`` reads mounted volumes' IDs, never source folders.)
     # (``trace_check`` reads HeLab's temp folder and the mount table, before the I/O trace starts.)
     # (``result_find`` and ``result_save``: saved analysis results, in the local disk cache only.)
-    LOCAL_OPERATIONS = ("cached", "subtree_save", "cache_admin", "cache_move", "volumes_verify", "trace_check",
+    # (``saved_list``: a folder's saved listing, offline: cache-only browsing.)
+    LOCAL_OPERATIONS = ("cached", "saved_list", "subtree_save", "cache_admin", "cache_move", "volumes_verify",
+                        "trace_check",
                         "result_find", "result_save")
     # Operations that open the disk cache whatever their payload says.
-    CACHE_OPERATIONS = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
+    CACHE_OPERATIONS = ("cached", "saved_list", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
                         "volumes_verify", "result_find", "result_save")
     LOCAL_CAP = 2
     PAUSABLE = ("load", "list", "details", "scan", "icons", "roots_verify")
@@ -166,7 +168,13 @@ class IOService(QObject):
     MISMATCH_HELD = ("load", "details", "scan")
     # Maintenance nothing waits for: other background work queued later still goes first.
     LAST = ("roots_verify",)
-    LABELS = {"load": "Load data", "cached": "Read cached data", "list": "Browse folder", "details": "Folder details",
+    # Work Offline (cache-only browsing): the only operations that start while it is on. They read
+    # or write the local disk cache, HeLab's temp folder or the mount table, never a source folder
+    # or a server. A save running when Work Offline started finishes (``FolderCache.set_offline``).
+    OFFLINE_OPERATIONS = frozenset({"cached", "saved_list", "cache_admin", "result_find", "result_save",
+                                    "invalidate", "volumes_verify", "trace_check", "cache_move", "drives"})
+    LABELS = {"load": "Load data", "cached": "Read cached data", "saved_list": "Browse saved listing",
+              "list": "Browse folder", "details": "Folder details",
               "scan": "Check folder status", "resolve": "Browse folder", "invalidate": "Clear data cache",
               "scan_history": "Save scan history", "icons": "Folder icons",
               "subtree_save": "Save subfolder status", "cache_admin": "Clean up disk cache",
@@ -175,7 +183,7 @@ class IOService(QObject):
               "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root",
               "marker_save": "Save .helab-root to folder", "trace_check": "Check I/O trace folder",
               "result_find": "Read cached analysis", "result_save": "Save analysis to disk cache"}
-    NOUNS = {"load": "load", "cached": "cached data read", "list": "folder listing", "details": "folder details scan",
+    NOUNS = {"load": "load", "cached": "cached data read", "saved_list": "saved listing read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
              "subtree_save": "subfolder-status save", "cache_admin": "disk cache cleanup",
@@ -203,6 +211,10 @@ class IOService(QObject):
         # Cached data doesn't match several folders: loads and scans pause, and none start,
         # until the user answers (``FolderCache.resume_after_mismatch`` and friends).
         self.mismatch_hold = False
+        # Work Offline (``set_offline``): only ``OFFLINE_OPERATIONS`` start; the operations refused
+        # so far this session (logged once each).
+        self.offline = False
+        self._offline_refused: set[str] = set()
         # Set by the main window: a running request's tab, progress and time, for the I/O tooltip.
         self.request_note: Callable[[IORequest], str] | None = None
         # Set by FolderCache: the owners (tabs) a request's helper works for, for the I/O trace.
@@ -246,7 +258,8 @@ class IOService(QObject):
         """Queue a helper; ``timeout`` is seconds without progress (``math.inf``: none). ``arrays`` and
         ``blob``: data from this process the helper reads from its private folder
         (``IORequest.arrays``, ``IORequest.blob``)."""
-        if self.closed:
+        if self.closed or (self.offline_refuses(operation) and not (
+                operation == "load" and (payload or {}).get("save") and (payload or {}).get("before_offline"))):
             return False
         if any((r.owner, r.generation, r.path, r.operation) == (owner, generation, path, operation)
                for r in (*self.active, *self.pending)):
@@ -421,7 +434,55 @@ class IOService(QObject):
                 self.resultReady.emit(request, {"kind": "cancelled"})
         self.activityChanged.emit()
 
+    def offline_refuses(self, operation: str) -> bool:
+        """Whether Work Offline refuses this operation now (logged once per operation per session)."""
+        if not self.offline or operation in self.OFFLINE_OPERATIONS:
+            return False
+        if operation not in self._offline_refused:
+            self._offline_refused.add(operation)
+            logging.info("Working offline: no %s (source folders aren't read)", self.NOUNS.get(operation, operation))
+        return True
+
+    # Why a finished load's disk-cache write stopped when Work Offline started: it reads the folder's
+    # files (the shots it reused from RAM), so it can't go on; its data stays in RAM.
+    OFFLINE_SAVE_STOPPED = "Not cached: Work Offline stopped the save (it reads the folder); saved by its next load"
+
+    @classmethod
+    def finishes_offline(cls, request: IORequest) -> bool:
+        """Work that goes on when Work Offline starts: what it allows, and saves the user asked for
+        before it started (Live's stop-save, saves waiting for another load: ``before_offline``);
+        ``submit`` refuses new ones. A finished ordinary load's cache write is no such save."""
+        return request.operation in cls.OFFLINE_OPERATIONS or (
+            request.operation == "load" and bool(request.payload.get("save")))
+
+    def set_offline(self, on: bool) -> None:
+        """Work Offline on or off. On: queued and running requests it refuses are cancelled, except
+        saves already asked for (``finishes_offline``). FolderCache cancels its own jobs first, so
+        their tabs hear of it (``FolderCache.set_offline``)."""
+        self.offline = on
+        if not on:
+            return
+        for request in [r for r in self.pending if not self.finishes_offline(r)]:
+            self.pending.remove(request)
+            request.cancelled.set()
+            self.resultReady.emit(request, {"kind": "cancelled"})
+        for request in [r for r in self.active if not self.finishes_offline(r)]:
+            # A load that delivered its data may still read the folder for its cache write: it
+            # stops too, and says so (Vernier, review round 1: going offline never waits on a
+            # volume that may be gone).
+            self._retire(request)
+            self.resultReady.emit(request, {"kind": "cancelled", "message": self.OFFLINE_SAVE_STOPPED}
+                                  if request.completed else {"kind": "cancelled"})
+        self.activityChanged.emit()
+
     def _start(self, request: IORequest, lane: str) -> None:
+        if self.offline and not self.finishes_offline(request):
+            # (Queued before Work Offline and missed by its cancelling: never started.)
+            self.offline_refuses(request.operation)
+            self.pending.remove(request)
+            request.cancelled.set()
+            self.resultReady.emit(request, {"kind": "cancelled"})
+            return
         if request.payload.get("cache") and self.cache_options is not None:
             # Queued before a cache move: it opens the cache where it is now, or none if the disk
             # cache is off now (a cache-only job then fails; a source job runs without the cache).
@@ -600,7 +661,8 @@ class IOService(QObject):
         return text
 
     # Status-bar phrases for running operations other than scans and loads.
-    ACTIVITIES = {"resolve": "Finding default folder", "cached": "Reading cached data", "invalidate": "Clearing data cache",
+    ACTIVITIES = {"resolve": "Finding default folder", "cached": "Reading cached data",
+                  "saved_list": "Reading saved listing", "invalidate": "Clearing data cache",
                   "scan_history": "Saving scan history", "icons": "Fetching folder icons",
                   "subtree_save": "Saving subfolder status", "cache_admin": "Cleaning up disk cache",
                   "drives": "Listing drives", "roots_verify": "Verifying data roots",

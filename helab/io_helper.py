@@ -18,6 +18,7 @@ from helab.io_ops.events import UnverifiedField
 from helab.io_ops.fingerprints import DEFAULT_CHECK_LEVEL
 from helab.io_ops.icons import folder_icons
 from helab.io_ops.infra import Pause, SOURCE_GUARD, _end_trace, _guard, _isdir, _start_trace, emit
+from helab.io_ops.listings import newest_root_folder, saved_list_folder
 from helab.io_ops.live import live_check
 from helab.io_ops.loading import load, read_cached
 from helab.io_ops.results import result_find, result_save
@@ -31,7 +32,7 @@ from helab.io_ops.trace_check import trace_check
 
 # Operations that need the disk cache on: the app's ``IOService.CACHE_OPERATIONS`` and the two marker
 # writes that update its ``roots`` (tests/test_helper_dispatch.py checks they agree).
-CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
+CACHE_ONLY = ("cached", "saved_list", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
               "volumes_verify", "root_reassign", "root_remove", "result_find", "result_save")
 
 
@@ -39,6 +40,11 @@ CACHE_ONLY = ("cached", "invalidate", "subtree_save", "scan_history", "cache_adm
 # ``_guard`` checks first under tests; the others name a folder only as a cache key.
 SOURCE_OPERATIONS = frozenset({"list", "icons", "scan", "details", "load", "root_create", "root_reassign",
                                "root_remove", "marker_save"})
+
+
+# Work Offline (cache-only browsing): requests whose cache options say ``offline`` never run these;
+# the app doesn't send them then (``IOService.OFFLINE_OPERATIONS``), and this refuses them anyway.
+OFFLINE_REFUSED = SOURCE_OPERATIONS | {"resolve", "roots_verify"}
 
 
 def main() -> None:
@@ -50,6 +56,9 @@ def main() -> None:
         _start_trace(request)
         if operation in CACHE_ONLY and not request.get("cache"):
             raise ValueError("The disk cache is off for this session")
+        if (operation in OFFLINE_REFUSED and (request.get("cache") or {}).get("offline")
+                and not (operation == "load" and request.get("save"))):  # (A save asked for before: D3.)
+            raise PermissionError(f"Working offline: {operation} reads source folders")
         if SOURCE_GUARD is not None and operation in SOURCE_OPERATIONS:
             for path in [request.get("path", ""), *request.get("paths", [])]:
                 _guard(str(path))
@@ -69,6 +78,11 @@ def main() -> None:
                 raise FileNotFoundError("No available default data folder")
         elif operation == "list":
             list_folder(request["path"], cache_options=request.get("cache"))
+        elif operation == "saved_list" and request.get("resolve"):
+            newest_root_folder(cache_options=request["cache"], verified_volumes=request.get("verified_volumes"))
+        elif operation == "saved_list":
+            saved_list_folder(request["path"], cache_options=request["cache"],
+                              verified_volumes=request.get("verified_volumes"))
         elif operation == "icons":
             folder_icons(request["paths"])
         elif operation in ("scan", "details"):
@@ -117,7 +131,8 @@ def main() -> None:
                         computed_at=float(request["computed_at"]), guard=request["guard"],
                         verified_volumes=request.get("verified_volumes"), label=str(request.get("label") or ""))
         elif operation == "invalidate":
-            with stores._cache_store(request["cache"]["directory"], [request["path"]], local_lane=True) as store:
+            with stores._cache_store(request["cache"]["directory"], [request["path"]], local_lane=True,
+                                     offline=bool(request["cache"].get("offline"))) as store:
                 # Bumps the folder's epoch: a load started before cannot save it back.
                 emit(_removed_event(store.remove(("datasets",), [request["path"]])))
                 emit({"kind": "admin_result", "action": "invalidate", "next_deadline": _deadline(store),

@@ -586,3 +586,20 @@ def test_settings_review_opens_the_duplicates_window_at_a_pending_row(
     assert asked == ["smb://b/run"]
     page.detach()
     service.shutdown()
+
+
+def test_working_offline_save_to_folder_is_off(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+                                               manual: ManualMarkerDialog) -> None:
+    """Work Offline (cache-only browsing, D6): Save to folder… writes through a helper; Copy stays."""
+    from helab.utils import folder_cache
+    from helab.utils.folder_cache import OFFLINE_TOOLTIP
+    monkeypatch.setattr("helab.views.DataRootDialogs.QFileDialog.getExistingDirectory",
+                        lambda *args: pytest.fail("asked for a folder"))
+    try:
+        manual.cache.set_offline(True)
+        assert not manual.save.isEnabled() and manual.save.toolTip() == OFFLINE_TOOLTIP
+        manual.save_to_folder()
+        manual.cache.set_offline(False)
+        assert manual.save.isEnabled() and manual.save.toolTip() != OFFLINE_TOOLTIP
+    finally:
+        folder_cache._offline = False

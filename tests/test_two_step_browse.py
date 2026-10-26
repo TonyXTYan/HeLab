@@ -100,7 +100,7 @@ def saved_summary(options: dict[str, Any], path: str) -> dict[str, Any]:
     return found.value
 
 
-def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_listing_reads_names_only_and_writes_only_its_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / "source"
     data_folder(source)
     path = str(source)
@@ -125,7 +125,8 @@ def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: 
     # Saved cache metadata comes along; dates need a stat (step 2).
     assert {"scan_history", "scan_status", "disk_cached", "cache_info"} <= set(entries[0])
     assert not {"modified", "identity"} & set(entries[0])
-    # The folder's own saved summary is restored; nothing is written.
+    # The folder's own saved summary is restored and left as it was; only its listing is saved
+    # (for browsing it offline: tests/test_saved_listings.py).
     assert next(event for event in events if event["kind"] == "scan_cached")["status"] == saved
     assert saved_summary(options, path) == saved
 
@@ -525,23 +526,14 @@ def test_row_returns_to_a_running_status_check_when_refresh_listing_finishes(
     assert node.state == "idle" and node.children
 
 
-# Near-term fix (roadmaps/_readme.md): while a tab refreshes, it ignores
-# results other tabs finish. `_shared_snapshot_changed` applies them through
-# `request_scan(automatic=True)`, which Refresh blocks so it starts no new
-# checks; that also blocks results already in memory, which need no I/O. The
-# planned fix is a separate no-I/O path for in-memory results, also useful for
-# cache-only browsing (roadmaps/cache-only-browsing.md). Remove these markers then;
-# strict xfail fails as soon as the behaviour is fixed.
-SHARED_RESULTS_DURING_REFRESH = pytest.mark.xfail(
-    strict=True, reason="Refresh blocks other tabs' in-memory results; needs no-I/O replay (roadmaps/_readme.md)")
-
-
 def check_in_other_tab(qtbot: QtBot, cache: FolderCache, path: str, options: dict[str, Any]) -> None:
+    """Another tab checks the folder; this tab shows the result from memory, submitting nothing."""
+    before = list(cache.service.pending)
     assert cache.submit("other-tab", 0, path, "scan", {"metadata_only": True}, force=True)
     replay(qtbot, cache, path, "scan", lambda send: scan(path, send, options))
+    assert list(cache.service.pending) == before
 
 
-@SHARED_RESULTS_DURING_REFRESH
 def test_other_tabs_finished_check_shows_while_this_tab_refreshes(
     qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path,
 ) -> None:
@@ -555,7 +547,6 @@ def test_other_tabs_finished_check_shows_while_this_tab_refreshes(
     assert explorer.model.nodes[child].txy_count == 1
 
 
-@SHARED_RESULTS_DURING_REFRESH
 def test_other_tabs_finished_check_of_an_off_screen_row_shows_after_refresh(
     qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path,
 ) -> None:
@@ -573,6 +564,25 @@ def test_other_tabs_finished_check_of_an_off_screen_row_shows_after_refresh(
     replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
     qtbot.waitUntil(lambda: not explorer.model.refreshing)
     assert explorer.model.nodes[str(inner)].txy_count == 1
+
+
+@pytest.mark.parametrize("refreshing", [False, True])
+def test_applying_another_tabs_old_result_submits_no_source_operation(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path, refreshing: bool,
+) -> None:
+    service, explorer, _ = checked_browser
+    cache, child = explorer.model.cache, str(tmp_path / "run")
+    check_in_other_tab(qtbot, cache, child, explorer.model._cache_options)
+    if refreshing:
+        explorer.refresh()
+    before = list(service.pending)
+    # Older than the freshness window: a replay through ``submit`` would revalidate it in a helper.
+    cache.snapshots[child].checked_at -= 10 * cache.FRESH_SECONDS
+    cache.snapshotChanged.emit(child)
+    qtbot.waitUntil(lambda: not any(r.path == child for r in cache._deliveries))
+    node = explorer.model.nodes[child]
+    assert list(service.pending) == before
+    assert node.state == "idle" and node.report is not None and node.loaded
 
 
 @pytest.mark.parametrize("row_state", ["queued", "idle"])

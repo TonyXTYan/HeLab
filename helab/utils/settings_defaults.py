@@ -38,6 +38,8 @@ LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
 RESULT_REUSE_SETTING = "result_reuse"
 THREAD_STATUS_SETTING = "view_toggle_thread_status"
+# File › Work Offline (cache-only browsing): remembered across restarts (Tony, 2026-10-26: D2).
+WORK_OFFLINE_SETTING = "work_offline"
 LOG_KEEP_SETTING = "log_files_keep"
 # The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).
 REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
@@ -79,6 +81,9 @@ SETTINGS: tuple[Setting, ...] = (
             "for the same data, script and settings instead of computing it again, and save new ones; off: "
             "neither (Settings → Cache)."),
     Setting(THREAD_STATUS_SETTING, bool, True, "View › Toggle Thread Status Auto Pop-up."),
+    Setting(WORK_OFFLINE_SETTING, bool, False,
+            "File › Work Offline: browse and analyse cached data only, reading no source folder and no "
+            "server, until turned off (also at the next start)."),
     Setting(LOG_KEEP_SETTING, int, 300,
             "Log files to keep, every session's helab-<pid>.log files and their rotated copies counted; "
             "at startup the oldest beyond it are deleted, never a running HeLab's, 1 to 100,000 "

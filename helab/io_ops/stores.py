@@ -4,13 +4,15 @@ from __future__ import annotations
 import math
 import os
 import sys
-from typing import Any, TYPE_CHECKING, cast
+from typing import Any, Iterable, TYPE_CHECKING, cast
 
 from helab.io_ops.events import DataRootField, RemovedEvent, StoreField, UsageFields
 from helab.io_ops.infra import Emit, _cached_volume_id, _mounts
 
 if TYPE_CHECKING:
+    from helab.utils.cache_paths import CachePaths, Mount
     from helab.utils.cache_store import CacheStore
+    from helab.utils.data_roots import LocalVolumes
 
 
 def _cache_info(info: object) -> dict[str, Any]:
@@ -75,7 +77,7 @@ def _store_or_off(cache_options: dict[str, Any] | None, send: Emit, path: str,
     from helab.utils.data_roots import VolumeUnverified
     try:
         return _cache_store(cache_options["directory"], [path], local_lane=local_lane,
-                            verified_volumes=verified_volumes), False
+                            verified_volumes=verified_volumes, offline=bool(cache_options.get("offline"))), False
     except VolumeUnverified:
         raise
     except UnresolvedRemotePath as exc:
@@ -92,8 +94,12 @@ def _store_or_off(cache_options: dict[str, Any] | None, send: Emit, path: str,
 
 def _cache_store(root: str, source_paths: list[str] | None = None,
                  *, local_lane: bool = False, allow_unrooted: bool = False,
-                 verified_volumes: list[list[str]] | None = None) -> CacheStore:
+                 verified_volumes: list[list[str]] | None = None, offline: bool = False) -> CacheStore:
     """Open root-keyed records; the local lane uses only captured volume IDs.
+
+    Source helpers record the share or volume at each source path's mount (``mount_hints``).
+    ``offline`` (cache-only browsing) keys a path below a mount path nothing is mounted at now
+    through that hint: the share or volume last seen there, whose cached data it still names.
 
     With ``verified_volumes`` (the mounts the app's last data-root verification checked), the
     local lane trusts only those hints and the system volume's: a disk swapped in at the same
@@ -122,6 +128,8 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
                         if (mount.path, mount.source) not in verified and not fixed_mount(mount)]
                 hinted = [mount for mount in hinted if mount.path not in held]
             volumes = LocalVolumes((mount, known[(mount.path, mount.source)]) for mount in hinted)
+            if offline:
+                paths, volumes = _offline_mounts(store, mounts, volumes)
         else:
             volumes = current_local_volumes(mounts, paths=source_paths or (), id_reader=_cached_volume_id)
             if not store.read_only:
@@ -129,6 +137,7 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
                 for mount, identifier in volumes.volumes:
                     if known.get((mount.path, mount.source)) != identifier:
                         store.record_volume(mount.path, mount.source, identifier)
+                _record_mount_hints(store, mounts, paths, volumes, source_paths or ())
         resolver = DataRoots(paths, (RootLocation(*row) for row in store.root_locations()),
                              local_location=volumes.location, local_source=volumes.source,
                              case_insensitive_volumes=sys.platform == "win32")
@@ -156,6 +165,86 @@ def _cache_store(root: str, source_paths: list[str] | None = None,
     store._location_source = lambda location: (paths.source(location) if location.startswith("smb://")
                                                else volumes.source(location))
     return store
+
+
+def _mount_tops(mounts: list[Mount], paths: CachePaths, volumes: LocalVolumes,
+                source_paths: Iterable[str]) -> dict[str, str]:
+    """Each source path's mount (not the system volume's) and its location's top: the share
+    (``smb://server/share``) or the volume (``vol://<id>``)."""
+    from helab.utils.cache_paths import UnresolvedRemotePath, _inside, _normal
+    from helab.utils.data_roots import fixed_mount
+    tops: dict[str, str] = {}
+    for path in source_paths:
+        matches = [mount for mount in mounts if _inside(_normal(path), _normal(mount.path))]
+        if not matches:
+            continue
+        mount = max(matches, key=lambda entry: len(_normal(entry.path)))
+        if fixed_mount(mount) or mount.path in tops:
+            continue
+        try:
+            top = paths.key(mount.path)
+            if not top.startswith("smb://"):
+                top = volumes.location(mount.path)
+        except UnresolvedRemotePath:  # (NoDataRoot: a volume without an ID.)
+            continue
+        tops[mount.path] = top
+    return tops
+
+
+def _record_mount_hints(store: CacheStore, mounts: list[Mount], paths: CachePaths, volumes: LocalVolumes,
+                        source_paths: Iterable[str]) -> None:
+    """A source helper's record of the share or volume at its paths' mounts, when it changed. Optional:
+    a busy or failing store skips it (the next helper records it)."""
+    import contextlib
+    import sqlite3
+    from helab.utils.cache_store import StoreError
+    tops = _mount_tops(mounts, paths, volumes, source_paths)
+    if not tops:
+        return
+    with contextlib.suppress(StoreError, sqlite3.Error):
+        saved = store.mount_hints()
+        for mount_path, top in tops.items():
+            if saved.get(mount_path) != top:
+                store.record_mount_hint(mount_path, top)
+
+
+# Mounts a hint may lie below and still be used: they hold no volume or share of their own whose
+# folders would replace the hinted one's (memory, kernel and container filesystems).
+TRANSPARENT_FILESYSTEMS = frozenset({
+    "tmpfs", "devtmpfs", "devfs", "ramfs", "overlay", "overlayfs", "proc", "sysfs", "cgroup", "cgroup2",
+    "securityfs", "debugfs", "tracefs", "efivarfs", "bpf", "pstore", "configfs", "fusectl", "mqueue",
+    "hugetlbfs", "binfmt_misc"})
+
+
+def _transparent_mount(mount: Mount) -> bool:
+    """A current mount that doesn't take a hint's place below it: the system volume, or a pseudo
+    filesystem (a tmpfs ``/tmp`` or ``/run/user``…). Every other mount is what is there now, whatever
+    its kind (a disk, a share, NFS, FUSE…), so it wins over a hint at or below it (Vernier, review
+    rounds 1–3: the rule lists what doesn't count, so an unknown filesystem counts)."""
+    from helab.utils.data_roots import fixed_mount
+    return fixed_mount(mount) or mount.fstype.lower() in TRANSPARENT_FILESYSTEMS
+
+
+def _offline_mounts(store: CacheStore, mounts: list[Mount],
+                    volumes: LocalVolumes) -> tuple[CachePaths, LocalVolumes]:
+    """The mount table and local volumes with the hinted shares and volumes added back at mount
+    paths nothing is mounted at now (offline keys, never source I/O). Whatever is mounted at the
+    hint's path or above it now wins (``_transparent_mount`` names the exceptions): the folder there
+    is its own, not the hinted one's (Vernier, review rounds 1–3)."""
+    from helab.utils.cache_paths import CachePaths, Mount, _inside, _normal
+    from helab.utils.data_roots import LocalVolumes
+    mounted = {_normal(mount.path) for mount in mounts}
+    attached = [_normal(mount.path) for mount in mounts if not _transparent_mount(mount)]
+    shares: list[Mount] = []
+    local = list(volumes.volumes)
+    for mount_path, top in store.mount_hints().items():
+        if _normal(mount_path) in mounted or any(_inside(_normal(mount_path), above) for above in attached):
+            continue
+        if top.startswith("smb://"):
+            shares.append(Mount(top, mount_path, "smbfs", True))
+        elif top.startswith("vol://"):
+            local.append((Mount(top, mount_path, "local"), top[len("vol://"):]))
+    return CachePaths([*mounts, *shares]), LocalVolumes(local)
 
 
 def _deadline(store: CacheStore) -> float | None:

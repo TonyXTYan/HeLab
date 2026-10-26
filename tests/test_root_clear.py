@@ -66,7 +66,7 @@ def test_clearing_a_root_removes_only_its_rows_and_keeps_folder_flags(store: Cac
     removal = store.clear_root(A)
     assert sorted(removal.paths or ()) == [f"root://{A}", f"root://{A}/run_1", f"root://{A}/run_1/a",
                                            f"root://{A}/run_2"]
-    assert removal.datasets == 3 and set(removal.kinds) == {"datasets", "summaries", "histories", "subtrees"}
+    assert removal.datasets == 3 and set(removal.kinds) == {"datasets", "summaries", "histories", "subtrees", "listings"}
     for table, left in (("datasets", 2), ("folder_summaries", 2), ("subtrees", 2), ("pending_saves", 1)):
         assert count(store, table, f"root://{A}/") == 0 and count(store, table, f"root://{B}/") == left
     assert store.read_dataset(f"root://{A}0").found

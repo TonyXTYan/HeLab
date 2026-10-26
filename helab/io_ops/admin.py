@@ -50,7 +50,8 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     # writes keyed by a source folder (scan history, subfolder status); the other actions name
     # no source folder.
     verified_volumes = params.get("verified_volumes") if action == "constants" else None
-    with stores._cache_store(root, local_lane=True, verified_volumes=verified_volumes) as store:
+    with stores._cache_store(root, local_lane=True, verified_volumes=verified_volumes,
+                             offline=bool(cache_options.get("offline"))) as store:
         if (budget is not None and budget_set_at is not None and not store.read_only
                 and action not in ("trim", "budget")):
             # Every job tells the store the app's budget, so running loads save within it.

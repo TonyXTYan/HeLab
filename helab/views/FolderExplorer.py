@@ -21,7 +21,7 @@ from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
 from helab.utils.io_service import IORequest
 from helab.utils import large_folder
 from helab.utils.colours import AMBER as AMBER  # Shared; the views import it from here too.
-from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, PENDING_ROOT_TOOLTIP, PENDING_SUMMARY, PLACE_ROOT_ACTION,
+from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, OFFLINE_TOOLTIP, PENDING_ROOT_TOOLTIP, PENDING_SUMMARY, PLACE_ROOT_ACTION,
                                       PLACE_ROOT_TOOLTIP, REVIEW_ROOT_TOOLTIP, Dataset, pending_root_text,
                                       marker_path, store_options)
 from helab.utils.number_format import byte_size
@@ -65,6 +65,9 @@ MISMATCH_RETRY_TOOLTIP = ("Check this folder again. If the wrong drive was mount
 MISMATCH_REVIEW_TOOLTIP = ("Cached data doesn't match this folder: shots it had are missing now. Show it in the "
                            "list of mismatched folders, where you can load it as it is now.")
 LIVE_RETRY_TOOLTIP = "Check the folder again and go on watching it"
+# Work Offline (cache-only browsing, File › Work Offline): what reads source folders is off
+# (``OFFLINE_TOOLTIP`` says so).
+OFFLINE_NOT_KEPT = "Data not kept (offline): work online to load it"
 
 # Spinner colours: a listing or status check is blue, a load green; lighter on a selected row.
 # The status bar's spinner, for all I/O, is grey.
@@ -399,6 +402,7 @@ class FolderExplorer(QWidget):
         self.model.cache.volumesVerified.connect(self._volumes_verified)
         self.model.cache.rootDecided.connect(self._root_decided)
         self.model.cache.rootDuplicatesChanged.connect(self._update_activity)
+        self.model.cache.offlineChanged.connect(self._offline_changed)
         self.model.cache.saveEnded.connect(self._live_save_ended)
         self.model.activityChanged.connect(self._update_activity)
         self.animation = QTimer(self)
@@ -488,6 +492,8 @@ class FolderExplorer(QWidget):
     def refresh_folder(self, path: str) -> None:
         """Right-click Retry / Refresh: list the folder again (no timeout), and check its cached
         or shown data file by file. The selected folder's shown data is checked now."""
+        if self.model.cache.offline:
+            return  # (Not offered while working offline.)
         self.model.request_scan(path, priority=True, force=True, no_timeout=True)
         if not (self.model.cache.disk_cached(path) or self.folder_opened_path == path):
             return
@@ -763,6 +769,8 @@ class FolderExplorer(QWidget):
     def _load_to_ram_cache(self, path: str, dwell: bool, explicit: bool) -> bool:
         if self.watching(path):
             return False  # Live keeps its data current.
+        if self.model.cache.offline:
+            return self._show_offline(path, explicit)
         # A scan finishing after Cancel must not restart automatic loading.
         if dwell and path == self._cancelled_load_path:
             return False
@@ -1009,6 +1017,56 @@ class FolderExplorer(QWidget):
         queued = sum(1 for request in service.pending if request.path != path)
         return min(self.SETTLE_MAX, self.SETTLE_SECONDS + self.SETTLE_STEP * queued)
 
+    def _show_offline(self, path: str, explicit: bool) -> bool:
+        """Working offline, a folder's data shows from RAM, else from one cached read, never from
+        the folder: unchecked, as cached data is before its check (it can't have one now). Whether
+        a cached read is pending. A folder not auto-loaded by choice shows nothing until asked."""
+        if not explicit and self.model.cache.folder_prefs(path)["no_auto_load"]:
+            pending = False
+        elif self.folder_opened_path != path or self.folder_opened_data is None:
+            pending = self._show_cached(path, explicit)
+        else:
+            pending = False
+        if self.folder_opened_path == path and self.folder_opened_data is not None:
+            self._unchecked_path = path
+        if path == self.selected_path_globally:
+            self._update_activity()
+            self.loadStateChanged.emit()
+        return pending
+
+    def _offline_changed(self, offline: bool) -> None:
+        """Work Offline on: the load it cancelled leaves no error; the selection shows its data from
+        RAM or the disk cache. Off: the main window lists the tabs again (Refresh), and selecting
+        a folder checks its data as usual."""
+        if self.closed:
+            return
+        if offline:
+            self._stop_dwell()
+            self.loading = self.load_paused = False
+            self.load_error = ""
+            for path in list(self.model.load_states):
+                self.model.set_load_state(path, "")
+            self._bg_paths.clear()
+            if self.selected_path_globally:
+                self._show_offline(self.selected_path_globally, False)
+        self._update_activity()
+        self.loadStateChanged.emit()
+
+    def offline_data_note(self, path: str) -> str:
+        """Working offline, why ``path`` shows no data ("" when it does, or while its cached read runs)."""
+        cache = self.model.cache
+        if (not cache.offline or self.folder_opened_path == path and self.folder_opened_data is not None
+                or cache.has_request(self.model.owner, "cached", path)):
+            return ""
+        if path in cache.mismatched:
+            return "Cached data doesn't match the folder (offline)"
+        if cache.disk_cached(path):
+            return "Cached data couldn't be read (offline)"
+        node = self.model.nodes.get(path)
+        if node is not None and (node.txy_count or node.report is not None and node.report.d_txy_shots):
+            return OFFLINE_NOT_KEPT
+        return ""
+
     def _show_cached(self, path: str, deliberate: bool = False, read: bool = True) -> bool:
         """Display this folder's dataset from memory, or start reading it from the
         disk cache (unless not ``read``). True while that read is pending: the check
@@ -1118,6 +1176,8 @@ class FolderExplorer(QWidget):
         """Explicit load: never cancels another load; runs now when idle, otherwise queues."""
         if path == self.selected_path_globally:
             return self.load_to_ram_cache(path, dwell=False, explicit=True)
+        if self.model.cache.offline:
+            return False  # Working offline: only the selected folder's cached data shows.
         if path in self._bg_paths or (self.loading and self._load_path == path):
             return True
         try:
@@ -1703,7 +1763,7 @@ class FolderExplorer(QWidget):
                 if self.folder_opened_path != path:
                     text += " · Previous data"
             else:
-                text += " · Not loaded"
+                text += f" · {self.offline_data_note(path) or 'Not loaded'}"
             if self.load_error:
                 text += f" · {self.load_error}"
             elif self.load_waiting:
@@ -1775,7 +1835,18 @@ class FolderExplorer(QWidget):
             status_freshness, "Use Check folder status to recheck counts and status.")))))
         live = self.live_control.session(path)
         stopped = False
-        if live is not None:
+        if self.model.cache.offline and live is None:
+            # Working offline: what shows is saved, never checked now.
+            listed = node.offline_listed_at if node else None
+            self.folder_freshness_label.setText(
+                "Offline · cached data only" + (f" · listed {self._relative_age(time.time() - listed)}"
+                                                if listed else " · not listed while online"
+                                                if node and node.offline_unlisted else ""))
+            self.folder_freshness_label.setToolTip(
+                "Working offline (File › Work Offline): HeLab reads only its disk cache. Folders show what "
+                "was saved when they were last listed, checked or loaded; nothing is checked against the "
+                "folders until you work online again.")
+        elif live is not None:
             # Live replaces the line: what it checked, found and saved.
             text, tooltip, stopped = self.live_control.live_line(live)
             self.folder_freshness_label.setText(text)
@@ -1844,9 +1915,11 @@ class FolderExplorer(QWidget):
                                   self.load_counts.get("reused_disk", 0) > 0)
             text = ("Cached data loaded" if reused else "Cached data found") + suffix
         else:
-            text = "No cached data"
+            text = "No cached data (offline)" if cache.offline else "No cached data"
         freshness = self.model.data_freshness(node) if node else CacheFreshness.UNKNOWN
-        if unchecked:
+        if unchecked and cache.offline:
+            text += " · not checked (offline)"
+        elif unchecked:
             text += " · Check failed" if self.load_error else " · Checking for changes…"
         elif cache.disk_cached(path) and freshness.value:
             text += f" · {freshness.value}"
@@ -1919,7 +1992,8 @@ class FolderExplorer(QWidget):
         return self.model.viewport_paths()
 
     def _check_visible_folders(self) -> None:
-        if self.closed or self.model.refreshing or not self.auto_scan_visible or not self.isVisible():
+        if (self.closed or self.model.refreshing or not self.auto_scan_visible or not self.isVisible()
+                or self.model.cache.offline):
             return
         paths = self._viewport_paths()
         self._visible_seen.intersection_update(paths)
@@ -1951,6 +2025,8 @@ class FolderExplorer(QWidget):
 
     def start_basic_scan(self, scope: str = "view", depth: int = 0) -> None:
         self.cancel_basic_scan()
+        if self.model.cache.offline:
+            return  # Working offline: no status check reads a folder.
         if scope == "view":
             paths = [self.view_path, *self._viewport_paths()]
         else:
@@ -2016,7 +2092,7 @@ class FolderExplorer(QWidget):
     def context_menu_action_deep_calc_status(self, path: str, max_depth: int = 0,
                                             invalidate_cache: bool = True) -> None:
         node = self.model.nodes.get(path)
-        if node:
+        if node and not self.model.cache.offline:
             self.cancel_basic_scan()
             self._basic_active = True
             self._basic_seen.clear()
@@ -2031,21 +2107,33 @@ class FolderExplorer(QWidget):
             return
         path = self.model.filePath(index)
         menu = QMenu(self)
+        offline = self.model.cache.offline
         menu.addAction("Open folder", lambda: self.open_to_path(path))
-        menu.addAction("Open in File Manager", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(path)))
+        reveal = menu.addAction("Open in File Manager", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(path)))
+        if reveal and offline:
+            reveal.setEnabled(False)  # A file manager would read the folder (and wake its share).
+            reveal.setToolTip(OFFLINE_TOOLTIP)
         clipboard = QApplication.clipboard()
         if clipboard:
             menu.addAction("Copy Pathname", lambda: clipboard.setText(path))
         # One folder the user asked for: no timeout, with elapsed time and Cancel.
         retry = menu.addAction("Retry / Refresh", lambda: self.refresh_folder(path))
         if retry:
-            retry.setEnabled(not self.model.refresh_pending(path))
+            retry.setEnabled(not self.model.refresh_pending(path) and not offline)
+            if offline:
+                retry.setToolTip(OFFLINE_TOOLTIP)
         submenu = menu.addMenu("Check folder status")
-        if submenu:
+        if submenu and offline:
+            submenu.setEnabled(False)
+            submenu.setToolTip(OFFLINE_TOOLTIP)
+        elif submenu:
             for depth in (0, 1, 2, 3, 32768):
                 submenu.addAction("All subfolders" if depth == 32768 else f"Depth {depth}", lambda checked=False, d=depth: self.context_menu_action_deep_calc_status(path, d))
             submenu.addAction("Custom depth…", lambda: self._choose_scan_depth_for(path))
-        menu.addAction("Load data", lambda: self.queue_load(path))
+        load = menu.addAction("Load data", lambda: self.queue_load(path))
+        if load and offline and path != self.selected_path_globally:
+            load.setEnabled(False)
+            load.setToolTip("Working offline: select the folder to see its cached data")
         prefs = self.model.cache.folder_prefs(path)
         # Folder flags and cached data live in the disk cache: a RAM-only folder has neither.
         ram_only = self.model.cache.no_root(path) is not None
@@ -2084,6 +2172,8 @@ class FolderExplorer(QWidget):
         cache = self.model.cache
         if not store_options():
             return False, "The disk cache is off for this session"
+        if cache.offline:
+            return False, OFFLINE_TOOLTIP
         root = cache.root_of(path)
         if root is not None and root[0] == path:
             return False, "This folder already has a .helab-root"
@@ -2096,7 +2186,7 @@ class FolderExplorer(QWidget):
         """Right-click › Place .helab-root here…: confirm (with the checks' warnings), then write the
         marker in the chosen folder, or adopt the one there. Whether it was submitted."""
         from helab.views.DataRootDialogs import ask_place_root
-        if self.closed or not store_options():
+        if self.closed or not store_options() or self.model.cache.offline:
             return False
         target = ask_place_root(self, self.model.cache, path)
         if target is None:
@@ -2381,6 +2471,7 @@ class FolderExplorer(QWidget):
         self.model.cache.volumesVerified.disconnect(self._volumes_verified)
         self.model.cache.rootDecided.disconnect(self._root_decided)
         self.model.cache.rootDuplicatesChanged.disconnect(self._update_activity)
+        self.model.cache.offlineChanged.disconnect(self._offline_changed)
         self.model.cache.saveEnded.disconnect(self._live_save_ended)
         self.model.cache.release(self.model.owner)
         self.folder_opened_data = None

@@ -1,0 +1,94 @@
+# Cache Only review findings (Vernier, Codex; relayed by CoCo)
+
+## Round 1 (3eb0fbf...3b2223f, 2026-10-26)
+
+Blocker found: five findings, all reproduced. Vernier's probe script is `review-probe-round1.py`, in this folder.
+
+Vernier's validation in the review copy: 4416 passed, no RERUN; mypy strict on helab and tests, and pyright, all clean.
+
+**P1. `helab/utils/io_service.py:463`: completed ordinary loads keep source access after Work Offline.**
+- Once a normal load sends `loaded`, its SharedJob is removed and `request.completed=True`.
+- `FolderCache.set_offline` no longer sees it, and this condition leaves it out of cancellation, although `finishes_offline=False` (no save flag).
+- `loading.py:618–632` then re-reads held TXY shots and checks source files for its cache write.
+- Scenario: reuse shot 1 from RAM while loading new shot 2, then go offline after `loaded` but before the cache tail finishes. The probe recorded a real `d_txy_forc1.txt` read, reason "cache save: read", while `service.offline=True`.
+- D3 calls these finishing writes local, but this tail isn't local. Either keep truly local writes and the explicitly allowed Live save while stopping ordinary source-reading tails, or don't claim offline until the remaining source work ends.
+
+**P2. `helab/utils/folder_cache.py:1867` (also `set_offline` 2017–2022, `_start_deferred` 2372–2381): saves asked for but deferred are lost on entry.**
+- Scenario: another ordinary load (e.g. another tab's) owns a Live folder when Live's stop asks for its save, so `save()` records it in `_deferred_saves`.
+- Going offline cancels the blocking load, `_forget_job` schedules `_start_deferred`, and that pops the old save and resubmits it through the new offline refusal.
+- It gets offline/cancelled and leaves `quit_saves` without being saved. Probe: a deferred save existed before the switch; afterwards the events were [offline, cancelled], no pending save, and `quit_saves=[]`.
+- The same refusal happens when a deferred stop-save waits for a finishing cache writer.
+- Keep the authorization of saves asked for before the switch.
+
+**P2. `helab/io_ops/stores.py:220–224`: exact mount-path equality doesn't make current mounts win over nested hints.**
+- Scenario: last session had old-server/old-share mounted at `/Volumes/lab/subdir`. Now a different share is mounted at `/Volumes/lab`, and `subdir` is an ordinary folder in it.
+- `_offline_mounts` still injects the old nested mount, because no current mount has that exact path.
+- Longest-prefix resolution then maps `/Volumes/lab/subdir/run` to `smb://old-server/old-share/run`, and so to that share's old root:// data, not the mounted share's. The probe confirmed this key.
+- The same applies to stale hints carried in a cache copied from another machine.
+- Hints are correctly offline-only, and an exact current mount does win. A current non-system mount that contains the path must win too.
+
+**P2. `helab/utils/folder_cache.py:2024–2026` (Work Online's caller, `HelabMainWindow.py:1219–1224`): an offline listing still queued or running absorbs Work Online's forced Refresh.**
+- Going online leaves its SharedJob keyed (list, path). `refresh()` either sees the existing subscription at `submit:1865` or joins that same job at :1934, so no online list is queued.
+- Its old entries then arrive after the switch. Probe: only `saved_list` at Refresh, then `offline_listed_at=1000` while `cache.offline=False`.
+- A following details scan adds current children but never prunes missing ones, by design (`SnapshotFileSystemModel.py:778–782`). After a current child "fresh" was injected, the removed offline child "stale" stayed beside it.
+- Cancel or fence offline jobs and replays when leaving, then issue real listings.
+
+**P2. `helab/io_ops/listings.py:84–89`: "newer listing wins" is compared outside the write transaction.**
+- Two HeLabs or helpers can both read the previous row. The newer observation commits first, then the older helper `save_records` it unconditionally under a still-valid guard.
+- Probe, with two CacheStore connections interleaved between the comparison and the write: the listing at 2000 saved, then the listing at 1000 saved, and the final row had `listed_at=1000` with the old child names.
+- Guard generations and epochs don't order listings. Compare and write under the same write lock, or use a conditional update.
+
+**Test coverage limits (to fix with the findings):**
+- `no_source_io` asserts operation names after `_start`. Most navigation tests freeze dispatch and answer helpers by hand.
+- It doesn't deny the underlying source filesystem or network calls, and it misses completed helper tails and deferred saves that already exist.
+- The test named `relists_every_tab` opens only one tab and waits until its offline listing has finished.
+- Not tested: an in-flight listing across the online/offline switch, a nested current mount against a hint, and concurrent listings' ordering.
+
+## Round 2 (3b2223f..046c3c2, 2026-10-26)
+
+The round-1 P1 and all five round-1 scenarios are fixed. Vernier checked:
+- the adapted probe (`review-probe-round2.py`);
+- P1 through a real helper behind `HELAB_TEST_READ_GATE`;
+- a reopened plot offline with the source deleted and `deny_source` armed;
+- 65 store-identity combinations offline.
+
+Additional acceptance probes: 67 passed, 1 failed (below). Full suite: 4422 passed, no RERUN. mypy and pyright are clean.
+
+**P2 (blocker for landing). `helab/io_ops/stores.py:225–226` (`_volume_mount`; used at :238–245): real volumes mounted at custom paths are treated like system mounts.**
+- Scenario: `/dev/sdb1` (ext4, `remote=False`, with a known current volume ID new-disk) is mounted at `/srv/lab`. The store has an old SMB hint for `/srv/lab/subdir` → `smb://old-server/old-share`.
+- `_volume_mount` returns False because `/srv/lab` is outside `MOUNT_TOPS`. So the old nested SMB hint is injected and wins by longest prefix.
+- `/srv/lab/subdir/run` resolves to `root://old-root/run`, not `root://new-root/subdir/run`.
+- Keeping hints under a tmpfs `/tmp` is fine. Tell genuine current volumes (including verified or supplied `LocalVolumes`) apart from system and pseudo filesystems, instead of judging only by the mountpoint's directory.
+- Failing reproducer: `review-probe-round2-acceptance.py`, lines 47–56 (in this folder; it loads the project conftest through its own conftest in `/private/tmp/helab-review-r2-tests/`).
+
+## Round 3, delta check (046c3c2..a30f671, 2026-10-26)
+
+Round 2's custom ext4 fix is correct. The 68 acceptance probes pass, the 5 round-1 scenarios hold, and the full suite passed: 4424, no RERUN.
+
+**P2 (blocker for landing). `helab/io_ops/stores.py:223` (and :231): a current NFS or other unsupported network filesystem at a custom path is missed when `Mount.remote=False`.**
+- `current_mounts` derives `remote` only from an exact "remote" token in psutil's options. An NFS4 mount with `rw,relatime,vers=4.2,proto=tcp` becomes `Mount("new-server:/export", "/srv/lab", "nfs4", False)`.
+- It has no LocalVolumes ID, no `/dev` source and no MOUNT_TOPS path, so `_volume_mount` returns False.
+- The stale `/srv/lab/subdir` → `smb://old-server/old-share` hint is then injected, and `/srv/lab/subdir/run` resolves to `root://old-root/run`. Without the hint, CachePaths correctly raises `UnresolvedRemotePath`.
+- Reproducer: `review-probe-round3-nfs.py` (synthetic mounts only).
+
+**CoCo:** this is the third adjacent case in this one function, so fix the rule rather than the case. Invert it: any current mount at or above a hint's path wins, except an explicit short list of transparent ones: the system volume, and pseudo filesystems such as tmpfs, devtmpfs and overlay, if they are needed.
+
+## Round 4, delta check (a30f671..1a13d1b, 2026-10-26): review complete, no blocker
+
+**The inverted rule fixes the last wrong-root case.** The adapted NFS reproducer now gets `UnresolvedRemotePath`, and the five round-1 probes still hold.
+
+Platform review:
+- **macOS:**
+  - `/` and `/System/Volumes/Data` stay transparent through `fixed_mount`, and devfs is listed.
+  - Hints below the Data volume's physical path keep working, as do `/Volumes` and `/Users` spellings.
+  - VM, Preboot and Update are separate mounts and don't affect hints elsewhere.
+  - autofs stays non-transparent on purpose: a map at `/System/Volumes/Data/home` or at a custom path blocks a stale nested share hint. Neither all of `/System/Volumes/*` nor all of autofs needs to be transparent.
+  - References: Apple's firmlinks (WWDC 2019 session 710) and `auto_master`.
+- **Windows:** tested with C: and with D: as SystemDrive, case-insensitive paths, an absent mapped-drive hint, a different share mapped now, and a volume mounted under a system-drive folder. Hints on the system drive stay usable, and current non-system mounts win.
+- **Other filesystems:** tmpfs under `/tmp` and `/run/user` stays transparent. Current NFS, FUSE, CIFS, autofs and unknown mounts win. An exact current mount path beats a hint whatever its filesystem.
+
+Validation at `1a13d1b`:
+- Full suite: 4428 passed, 2 skipped, no RERUN.
+- Acceptance probes plus the platform matrix (`review-probe-round4-platform.py`): 81 passed.
+
+No P1, P2 or P3 finding. Still manual: real-volume unmount and remount, and the on-screen checks.
