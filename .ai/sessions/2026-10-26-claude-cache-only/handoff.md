@@ -193,9 +193,20 @@ re-key) and the `mount_hints` table, with their sizes.
   - a Disk cache off session offline, which today gives error rows ("The disk cache is off for
     this session").
 
-**`roadmaps/known-issues.md`:** the mixed-versions caveat. An older HeLab's Clear all and root
-clear don't remove listings or bump `gen_listings`, and its re-key leaves them at the old key. The
-next listing re-saves them, so this is harmless.
+**`roadmaps/known-issues.md`:**
+- **Mixed versions:** an older HeLab's Clear all and root clear don't remove listings or bump
+  `gen_listings`, and its re-key leaves them at the old key. The next listing re-saves them, so
+  this is harmless.
+- **Flaky test** (needed a RERUN; stays listed until its cause is found):
+  `tests/test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]`.
+  - **Where:** macOS, CI run 40279097363 (`276e571`).
+  - **Rerun reason:** `assert 'Cached data loaded · Cached just now · Freshness unknown' == 'Cached
+    data loaded · Cached just now'` at `tests/test_folder_summary.py:413`. The second tab's cache
+    line gained " · Freshness unknown".
+  - **Likely cause:** a timing race. The second tab's row has no folder modified time yet when the
+    save completes, so `data_freshness` is unknown.
+  - **Evidence:** it passed on its retry; 12 local runs of the file under `-n 4` never failed.
+    This branch doesn't touch the test or what it checks.
 
 **`.ai/MANUAL_TODO.md`:** the on-screen checks below, and a real-volume check: unmount the lab
 share, restart, browse and plot.
