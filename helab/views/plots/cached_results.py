@@ -10,7 +10,11 @@ never waiting on its I/O. Its answer:
 - an outdated one (same plot and settings, another script version, environment, data or
   constants): it shows at once, marked, while the run goes on and replaces it;
 - none, or an error (never taken as "nothing saved": the run goes on, and the plot says the
-  disk cache couldn't be read).
+  disk cache couldn't be read);
+- refused because the folder's local volume isn't verified yet this session (``unverified``): not
+  a miss. The lookup is asked again once verification has run (``volumesVerified``, once, as a
+  cached read is), the run waiting meanwhile; a save refused so is asked again the same way, with
+  its guard. Without verification within ``VERIFY_WAIT`` either goes on as for any error.
 
 Either way the answer carries the save guard taken now, as the run starts; the save of its
 completed result (packed on the worker thread, ``AnalysisResult.packed``) checks it, so a
@@ -27,7 +31,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional
 from uuid import uuid4
 
-from PyQt6.QtCore import QObject, pyqtSlot
+from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 
 from helab.analysis import result_cache
 from helab.analysis.dataset_view import DatasetView
@@ -46,6 +50,9 @@ if TYPE_CHECKING:
 
 # The plot's status while its result waits for the user's answer (replaced once answered).
 PENDING_NOTE = "not saved yet: the disk cache is full (Make room or Discard)"
+# How long a lookup or save its folder's unverified volume refused waits for this session's volume
+# verification before going on as for any error (the run computes; the result isn't saved).
+VERIFY_WAIT = 15.0
 
 
 def reuse_on(settings: Optional[QSettings] = None) -> bool:
@@ -68,6 +75,23 @@ class Lookup:
     answered: bool = False
     # A completed result waiting for the guard to arrive, to be saved then.
     waiting: Optional[AnalysisResult] = None
+    # The ``unverified`` error it waits to be asked again after (volume verification), whether it
+    # was asked again already (only once), and the verifications seen when it was last asked.
+    unverified: Optional[Dict[str, Any]] = None
+    retried: bool = False
+    verified: int = 0
+
+
+@dataclass
+class Save:
+    """A save asked for: the run's result (without its packed data) and what it was asked with."""
+    result: AnalysisResult
+    path: str
+    packed: bytes
+    params: Dict[str, Any]
+    unverified: Optional[Dict[str, Any]] = None  # As ``Lookup``'s.
+    retried: bool = False
+    verified: int = 0
 
 
 class CachedRuns(QObject):
@@ -89,7 +113,13 @@ class CachedRuns(QObject):
         # The saved result of each of the plot's runs it found or saved: job id → its row's result_id.
         self._keys: Dict[str, str] = {}
         self._lookups: Dict[str, Lookup] = {}  # By the run's job id.
-        self._saves: Dict[str, AnalysisResult] = {}  # By the save's owner.
+        self._saves: Dict[str, Save] = {}  # By the save's owner.
+        # Saves refused for their folder's unverified volume, to ask again after verification.
+        self._unverified_saves: List[Save] = []
+        self._verified = 0  # Volume verifications seen (``volumesVerified``) since connecting.
+        self._verify_timer = QTimer(self)
+        self._verify_timer.setSingleShot(True)
+        self._verify_timer.timeout.connect(self._verification_late)
         # Results that didn't fit the disk budget, waiting for Make room or Discard, by pending_id.
         self._waiting: Dict[str, tuple[AnalysisResult, int]] = {}
         self._connected = False
@@ -120,6 +150,7 @@ class CachedRuns(QObject):
             return False
         entry = Lookup(context, context.view, key, result_cache.digest(key), family, wait=not holds)
         self._connect()
+        entry.verified = self._verified
         if not self.cache.find_result(entry.owner, context.view.identity.source_path, entry.lookup,
                                       "" if holds else family):
             return False
@@ -140,7 +171,7 @@ class CachedRuns(QObject):
         if result.state != "completed" or result.packed is None:
             if result.packing_error:
                 self._note(f"not saved in the disk cache: {result.packing_error}")
-            self._lookups.pop(result.job_id, None)
+            self.forget(result.job_id)  # (Its lookup's answer, if still to come, is for nobody.)
             return
         if not entry.answered:
             entry.waiting = result  # Saved when the guard arrives.
@@ -158,13 +189,22 @@ class CachedRuns(QObject):
             logging.exception("%s: its result's record can't be saved", self.name)
             self._note(f"not saved in the disk cache: {error}")
             return
+        self._submit_save(Save(replace(result, packed=None), entry.view.identity.source_path, packed,
+                               {"lookup": entry.lookup, "family": entry.family, "record": record,
+                                "analysis_id": result.analysis.analysis_id, "action": result.action,
+                                "computed_at": result.finished_at, "guard": entry.guard, "label": self.name}))
+
+    def _submit_save(self, save: Save) -> bool:
         owner = f"result-save:{uuid4().hex}"
         self._connect()
-        if self.cache.save_result(owner, entry.view.identity.source_path, packed, lookup=entry.lookup,
-                                  family=entry.family, record=record, analysis_id=result.analysis.analysis_id,
-                                  action=result.action, computed_at=result.finished_at, guard=entry.guard,
-                                  label=self.name):
-            self._saves[owner] = replace(result, packed=None)
+        save.verified = self._verified
+        if not self.cache.save_result(owner, save.path, save.packed, **save.params):
+            return False
+        self._saves[owner] = save
+        return True
+
+    def _saving(self) -> bool:
+        return bool(self._saves or self._unverified_saves)
 
     def _connect(self) -> None:
         if not self._connected:
@@ -172,7 +212,53 @@ class CachedRuns(QObject):
             self.cache.cacheRemoved.connect(self._cache_removed)
             self.cache.resultPendingAnswered.connect(self._pending_answered)
             self.cache.resultsEvicted.connect(self._results_evicted)
+            self.cache.volumesVerified.connect(self._volumes_verified)
             self._connected = True
+
+    def _wait_for_verification(self, asked: int) -> None:
+        """Something asked at ``asked`` verifications was refused for its volume: asked again now if
+        a verification ran since, else once the next one has."""
+        if asked < self._verified:
+            self._ask_again()
+        elif not self._verify_timer.isActive():
+            self._verify_timer.start(int(VERIFY_WAIT * 1000))
+
+    @pyqtSlot()
+    def _volumes_verified(self) -> None:
+        """This session's volume verification ran: the lookups and saves it refused are asked again."""
+        self._verified += 1
+        self._verify_timer.stop()
+        self._ask_again()
+
+    def _ask_again(self) -> None:
+        """Ask again what its volume refused before the latest verification (once each)."""
+        for entry in [item for item in self._lookups.values()
+                      if item.unverified is not None and item.verified < self._verified]:
+            refused, entry.unverified = entry.unverified, None
+            entry.owner, entry.verified = f"result-find:{uuid4().hex}", self._verified
+            if not self.cache.find_result(entry.owner, entry.view.identity.source_path, entry.lookup,
+                                          entry.family if entry.wait else ""):
+                self._answer(entry, "error", refused or {})
+        saves = [save for save in self._unverified_saves if save.verified < self._verified]
+        self._unverified_saves = [save for save in self._unverified_saves if save not in saves]
+        for save in saves:
+            refused, save.unverified = save.unverified, None
+            if not self._submit_save(save):
+                self._save_ended(save, "error", refused or {})
+        if self._closed() and not self._saving():
+            self.disconnect_all()
+
+    @pyqtSlot()
+    def _verification_late(self) -> None:
+        """No volume verification within ``VERIFY_WAIT``: what waited for it goes on as for any error."""
+        for entry in [item for item in self._lookups.values() if item.unverified is not None]:
+            refused, entry.unverified = entry.unverified, None
+            self._answer(entry, "error", refused or {})
+        saves, self._unverified_saves = self._unverified_saves, []
+        for save in saves:
+            self._save_ended(save, "error", save.unverified or {})
+        if self._closed() and not self._saving():
+            self.disconnect_all()
 
     @pyqtSlot(object)
     def _results_evicted(self, ids: Any) -> None:
@@ -211,11 +297,13 @@ class CachedRuns(QObject):
         """The plot closed: its lookups' answers are dropped (saves already asked for go on)."""
         for job_id in list(self._lookups):
             self.forget(job_id)
-        if self._connected and not self._saves:
+        if self._connected and not self._saving():
             self._waiting.clear()
+            self._verify_timer.stop()
             for signal, slot in ((self.cache.resultReady, self._event), (self.cache.cacheRemoved, self._cache_removed),
                                  (self.cache.resultPendingAnswered, self._pending_answered),
-                                 (self.cache.resultsEvicted, self._results_evicted)):
+                                 (self.cache.resultsEvicted, self._results_evicted),
+                                 (self.cache.volumesVerified, self._volumes_verified)):
                 try:
                     signal.disconnect(slot)
                 except TypeError:
@@ -224,7 +312,7 @@ class CachedRuns(QObject):
 
     @pyqtSlot(object, object)
     def _event(self, request: IORequest, event: Dict[str, Any]) -> None:
-        if self._closed() and not self._saves and not any(not item.answered for item in self._lookups.values()):
+        if self._closed() and not self._saving() and not any(not item.answered for item in self._lookups.values()):
             self.disconnect_all()
             return
         if request.owner in self._saves:
@@ -236,6 +324,16 @@ class CachedRuns(QObject):
         kind = event.get("kind")
         if kind not in ("result_found", "result_missing", "error", "cancelled"):
             return
+        if kind == "error" and event.get("unverified") and not entry.retried and not self._closed():
+            # The folder's volume isn't verified yet this session: not a miss, nor a failed read.
+            entry.retried, entry.unverified = True, dict(event)
+            self._wait_for_verification(entry.verified)
+            return
+        self._answer(entry, str(kind), event)
+
+    def _answer(self, entry: Lookup, kind: str, event: Dict[str, Any]) -> None:
+        """The lookup's answer: show a match, else the run computes; a result waiting for the guard
+        is saved (or not, without one)."""
         entry.answered = True
         entry.guard = event.get("guard")
         if self._closed():
@@ -284,10 +382,20 @@ class CachedRuns(QObject):
 
     def _save_event(self, owner: str, event: Dict[str, Any]) -> None:
         kind = event.get("kind")
-        result = self._saves.get(owner)
-        if result is None or kind not in ("result_saved", "result_not_saved", "result_pending", "error", "cancelled"):
+        save = self._saves.get(owner)
+        if save is None or kind not in ("result_saved", "result_not_saved", "result_pending", "error", "cancelled"):
             return
         del self._saves[owner]
+        if kind == "error" and event.get("unverified") and not save.retried:
+            # As a lookup's (a closed plot's too: its save goes on): asked again after verification.
+            save.retried, save.unverified = True, dict(event)
+            self._unverified_saves.append(save)
+            self._wait_for_verification(save.verified)
+            return
+        self._save_ended(save, str(kind), event)
+
+    def _save_ended(self, save: Save, kind: str, event: Dict[str, Any]) -> None:
+        result = save.result
         if kind == "result_pending":
             # Doesn't fit the disk budget: the disk cache asks the user (Make room or Discard).
             self._waiting[str(event.get("pending_id"))] = (result, int(event.get("bytes") or 0))
@@ -309,5 +417,5 @@ class CachedRuns(QObject):
         else:
             logging.warning("%s: result not saved in the disk cache: %s", self.name, event.get("message"))
             self._note(f"not saved in the disk cache: {event.get('message') or 'the save failed'}")
-        if self._closed() and not self._saves:
+        if self._closed() and not self._saving():
             self.disconnect_all()
