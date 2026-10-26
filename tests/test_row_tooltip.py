@@ -184,11 +184,15 @@ CASES: dict[str, tuple[Case, list[str]]] = {
                   HEAD + ["Last check cancelled · showing earlier results", "Here: 2 shots, all converted",
                           "Subfolders: none"] + CHECKED_LINES + ["Use Retry / Refresh to try again."]),
 }
+STAMPED = time.time()  # When CASES' ages were taken.
 
 
 @pytest.mark.parametrize("case", CASES)
-def test_row_tooltip(model: SnapshotFileSystemModel, case: str) -> None:
+def test_row_tooltip(model: SnapshotFileSystemModel, case: str, monkeypatch: pytest.MonkeyPatch) -> None:
     build, expected = CASES[case]
+    # CASES' ages were stamped at import: the tooltip takes its ages then too, however late this runs
+    # (AFTER's "1h ago" reads "2h ago" from 10 minutes on: Windows CI runs this module that late).
+    monkeypatch.setattr(time, "time", lambda: STAMPED)
     node, operation = build(model)
     if operation:
         model._tree_requests[PATH] = IORequest("owner", 0, PATH, operation, {}, 60)

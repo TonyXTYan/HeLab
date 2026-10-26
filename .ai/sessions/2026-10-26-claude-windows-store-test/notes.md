@@ -72,3 +72,43 @@ Other tests that delete a store while HeLab runs don't share the pattern:
   the store still open. Its wait (`not in pending`) held as soon as the helper started. The
   test now waits for `IOService.cache_busy()` to clear (every cache helper's exit confirmed)
   first. Test only; the race was there since `78b8bad`. (`<commit>`, Tallow, 2026-10-26)
+
+## Job 2: `test_row_tooltip[cache outdated]` and `[checked, outdated]` on Windows CI
+
+Found on this branch's first push (run 40260907064). The store test above passed on its first
+attempt there (job 121372926050). But these two cases failed all 6 attempts. Their reruns
+(5 × 2, with a 5 s delay) took the Windows test step past its `timeout-minutes: 20`, and the
+step was cancelled at 99 % before the summary printed (so no rerun reasons in the log).
+
+### Cause
+
+The expectations in `CASES` are built at import, and `stamp(AFTER)` includes the age:
+`AFTER = NOW - 6600 s` reads "1h ago". The tooltip takes its ages when the test runs
+(`_stamp`: `relative_age(time.time() - timestamp)`, whole hours above an hour). Once
+`test_row_tooltip` runs 600 s or more after the module was collected, `AFTER` reads "2h ago" and
+the two cases with `stamp(AFTER)` in a module-level expectation fail. Here the session started
+at 02:50:38 and the module ran at 03:04, 14 minutes in. The earlier Windows runs reached it
+within 10 minutes. On macOS the whole suite takes about 1 minute. The other `stamp()` values
+(`SCANNED`, `BEFORE`: 2h and 2h 10m) would break the same way after 50 minutes.
+
+### Fix (test only)
+
+`test_row_tooltip` freezes `time.time` at `STAMPED`, the moment `CASES` finished stamping, so
+the tooltip's ages are the ones the expectations were taken with. Exactly `NOW` would be unsafe,
+since `NOW - (NOW - 7200)` can come out 1e-7 s short and floor to "1h". The other tests in the
+module stamp inside the test and are unaffected.
+
+### Checks
+
+- Simulated a late run with the module imported on a clock 700 s back: the original fails exactly
+  `[cache outdated]` and `[checked, outdated]`; the fixed one passes 38/38.
+- `tests/test_row_tooltip.py` ×10: all passed. Full suite (-n 12 --reruns 5): 4307 passed,
+  no RERUN. `mypy tests --strict`, `pyright tests`: clean (helab unchanged).
+
+### Proposed `roadmaps/known-issues.md` line (Fixed)
+
+- [x] `test_row_tooltip.py::test_row_tooltip[cache outdated]` / `[checked, outdated]` failed
+  whenever the module ran 10 minutes or more after collection (Windows CI, run 40260907064; their
+  reruns ran the step past 20 min). The cause: expectations stamped at import ("1h ago") against
+  ages taken at run time ("2h ago"). The test now freezes `time.time` at the moment the
+  expectations were stamped. (`<commit>`, Tallow, 2026-10-26)
