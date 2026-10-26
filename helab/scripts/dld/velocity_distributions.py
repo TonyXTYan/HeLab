@@ -65,7 +65,7 @@ from helab.analysis.stats import MAX_BINS, CropBox, crop_box, histogram, shortes
 from helab.analysis.velocity import VELOCITY_AXES, recoil_velocity, valid_velocities
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import group
-from helab.scripts.dld.basic_plots import OverlayView, overlay_newest, update_newest
+from helab.analysis.overlay import OverlayView, overlay_newest, update_newest
 from helab.scripts.dld.density_images import (DECADES, GAMMA, LINEAR, SCALE, automatic_bins, colour_map,
                                                    display_image, viridis_lut)
 

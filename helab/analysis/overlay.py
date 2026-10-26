@@ -1,5 +1,6 @@
 """The newest shot's counts drawn over a PyQtGraph histogram in a view of their own, its real
-counts read on the right axis (Basic plots v1's T/X/Y histograms and transfer fractions)."""
+counts read on the right axis (the T/X/Y histograms and transfer fractions of Basic plots v1 and
+the DLD port, and the port's velocity distributions)."""
 from __future__ import annotations
 
 import math
@@ -70,14 +71,33 @@ def overlay_newest(plot: Any, edges: npt.NDArray[np.float64], counts: npt.NDArra
     axis.setPen(pg.mkPen(colour))
     axis.setTextPen(pg.mkPen(colour))
     plot.setLabel("right", f"{name} events", color=hex_colour)
-    values = counts.astype(np.float64)
-    if log_y:
-        values[values <= 0] = np.nan
-    curve = pg.PlotDataItem(edges, values, stepMode="center", connect="finite", pen=pg.mkPen(colour, width=2),
-                            name=name)
+    curve = pg.PlotDataItem(edges, newest_values(counts, log_y), stepMode="center", connect="finite",
+                            pen=pg.mkPen(colour, width=2), name=name)
     if log_y:
         curve.setLogMode(False, True)
     view.addItem(curve)
     view.curve = curve
     view.follow()
     return view
+
+
+def newest_values(counts: npt.NDArray[np.int64], log_y: bool) -> npt.NDArray[np.float64]:
+    """The newest shot's counts as drawn: with log Y, empty bins left out."""
+    values = counts.astype(np.float64)
+    if log_y:
+        values[values <= 0] = np.nan
+    return values
+
+
+def update_newest(plot: Any, view: OverlayView, edges: npt.NDArray[np.float64], counts: npt.NDArray[np.int64],
+                  scale: float, colour: tuple[int, int, int], log_y: bool, name: str) -> None:
+    """A rerun's newest shot in the overlay already drawn (``overlay_newest``)."""
+    view.set_ratio(scale)
+    hex_colour = pg.mkColor(colour).name()
+    axis = plot.getAxis("right")
+    axis.setPen(pg.mkPen(colour))
+    axis.setTextPen(pg.mkPen(colour))
+    plot.setLabel("right", f"{name} events", color=hex_colour)
+    view.curve.setData(edges, newest_values(counts, log_y), stepMode="center", connect="finite",
+                       pen=pg.mkPen(colour, width=2), name=name)
+    view.follow()

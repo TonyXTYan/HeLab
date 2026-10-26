@@ -197,8 +197,8 @@ class AnalysisResult:
         return {"layers": layers, **self.resolved_constants.as_record(self.constant_keys or None)}
 
     def reuse_key(self) -> dict[str, Any]:
-        """What a later reuse of this result must match (result caching rule 5), as JSON values:
-        not used yet (R2 and R3 will). What the run decided beyond its parameters and input, which a
+        """What a later reuse of this result must match (result caching rule 5), as JSON values: a
+        saved result's lookup key (R2, ``result_cache.lookup_key``). What the run decided beyond its parameters and input, which a
         reuse must match too, comes from ``found["reuse"]`` when the script gives it
         (``DatasetAnalysis.result_found``; e.g. a box kept from an earlier run of the plot). The
         parameters are those in use (not ``unused``: a hidden setting never changes the key)."""
