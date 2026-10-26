@@ -80,8 +80,9 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   `views/plots`, the Qt-free analysis core, `PlotWorkspace`, `LiveController`; left: the
   explorer's load logic, `FolderCache`'s stores, `_on_event`.
 
-- [ ] Apply other tabs' finished status checks during Refresh without source
+- [x] Apply other tabs' finished status checks during Refresh without source
   I/O ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#cross-tab-status-results)) (2026-10-08).
+  Done 2026-10-26 (cache-only C1, `9c75340`).
 - [ ] Explain when disk-cache failure skips automatic status checks and offer
   a manual check (2026-10-08).
 - [ ] Add small anonymized TXY fixtures with known counts/arrays, including
@@ -174,9 +175,10 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   `agent/presets-reopen`): script and one-folder arrangement presets, plots
   reopening at start, Settings → Cache › Presets…; the full workspace file is
   still open.
-- [ ] Cache-only browsing: browse and analyse cached data while the source is
+- [x] Cache-only browsing: browse and analyse cached data while the source is
   unavailable; offline mode makes no network request
-  ([plan](cache-only-browsing.md)) (2026-10-08; revised 2026-10-14).
+  ([plan](cache-only-browsing.md)) (2026-10-08; revised 2026-10-14). Done 2026-10-26: File ›
+  Work Offline (C0–C3, merge `9bb1ff7`); on-screen and real-volume checks in MANUAL_TODO.
 - [ ] Compare folders or experimental runs using consistent settings
   ([plan](run-comparison-and-batch.md#run-comparison)) (2026-10-08).
 - [ ] Self-update button for source checkouts (git + uv) and frozen builds

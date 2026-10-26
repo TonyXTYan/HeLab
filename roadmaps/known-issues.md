@@ -37,9 +37,17 @@ How to use it:
 - [ ] An identity probe (`cache_admin identity`) waits its turn in the local lane (2 processes).
   Behind long local work it starts late, and only its no-progress timeout is capped, so quitting
   waits that long (Quit now skips it) (Result Cache R2, 2026-10-23).
+- [ ] Mixed versions: an older HeLab's Clear all and root clear don't remove saved listings or
+  bump `gen_listings`, and its re-key leaves them at the old key; the next listing re-saves them,
+  so harmless (cache-only, 2026-10-26).
 
 ## Tests and CI
 
+- [ ] `test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]`
+  reran once on macOS CI (2026-10-26, run 40279097363, `276e571`): `assert 'Cached data loaded ·
+  Cached just now · Freshness unknown' == 'Cached data loaded · Cached just now'` (line 413). Likely
+  a timing race: the second tab's row has no folder modified time yet when the save completes, so
+  its freshness is unknown. Passed on its retry and in 12 local runs (Cache Only handoff).
 - [ ] `test_plot_settings_panel.py::test_activation_sources` reran once on macOS CI; it didn't
   fail in 60 local runs under load (2026-10-21). The Windows rerun was the web-view crash
   (fixed, below); the macOS rerun (`f9faefd`) was a teardown failure, cause unknown, and 160 local
