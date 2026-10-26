@@ -88,7 +88,7 @@ def test_folder_cache_keeps_the_newest_measurement_and_drops_counts_with_a_clear
     assert changed == [[FolderCache.key("/r/a"), FolderCache.key("/r/b")]]
     cache._note_result_counts({"/r/a": counts(1, 1_000_000, 9)})  # Measured before: ignored.
     assert cache.analysis_cached("/r/a") == (2, 2_000_000)
-    cache._note_result_counts({"/r/a": counts(3, 3 << 20, 11)})
+    cache._note_result_counts({"/r/a": counts(3, 3 * 10**6, 11)})
     assert analysis_cached_text(cache, "/r/a") == "Cached analysis: 3 results, 3.0 MB"
     cache._note_result_counts({"/r/a": counts(1, 500, 1, store="other")})  # Another store: the folder is asked…
     assert analysis_cached_text(cache, "/r/a") == "Cached analysis: 3 results, 3.0 MB"
@@ -160,7 +160,7 @@ def test_the_row_shows_report_with_a_tooltip_line_and_folder_details_says_it(
         assert StatusIcons.ICONS_EXTRA["report"] not in icons(run)
         repainted: list[Any] = []
         model.dataChanged.connect(lambda first, last, roles=None: repainted.append(model.filePath(first)))
-        cache._note_result_counts({run: counts(2, 3 * 1024 * 1024, 5)})
+        cache._note_result_counts({run: counts(2, 3 * 10**6, 5)})
         assert run in repainted  # The row repaints at once.
         assert icons(run)[-1] is StatusIcons.ICONS_EXTRA["report"]
         assert StatusIcons.ICONS_EXTRA["report"] not in icons(other)

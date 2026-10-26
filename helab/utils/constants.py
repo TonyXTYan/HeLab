@@ -110,7 +110,7 @@ MAX_SIMULTANEOUS_IO = 32
 
 # The disk cache budget in bytes (Settings → Cache from S7). It counts live data only.
 DEFAULT_DISK_BUDGET: int = setting_default(DISK_BUDGET_SETTING)
-MIN_DISK_BUDGET = 1 << 30
+MIN_DISK_BUDGET = 10**9  # 1 GB: budgets are SI, as every size HeLab shows (Tony, 2026-10-26)
 
 
 def read_disk_budget(settings: QSettings) -> int:
@@ -127,7 +127,7 @@ def read_disk_budget(settings: QSettings) -> int:
 RAM_STEPS = 128
 DEFAULT_RAM_STEPS: int = setting_default(RAM_BUDGET_SETTING)
 MAX_RAM_STEPS = 64
-MIN_RAM_BUDGET = 1 << 30
+MIN_RAM_BUDGET = 10**9  # 1 GB (SI, as the disk budget)
 
 
 def total_ram() -> int:

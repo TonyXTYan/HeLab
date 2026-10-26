@@ -126,7 +126,7 @@ def test_without_a_disk_cache_the_budget_is_just_saved(qtbot: QtBot, tmp_path: P
     qtbot.addWidget(dialog)
     dialog.cache_tab.disk_budget.setValue(12.0)
     dialog.save_settings()
-    assert read_disk_budget(settings) == 12 << 30
+    assert read_disk_budget(settings) == 12 * 10**9
 
 
 @pytest.mark.parametrize("value, expected", [(None, 1), ("invalid", 1), (0, 1), (-2, 1), (1000, 32)])

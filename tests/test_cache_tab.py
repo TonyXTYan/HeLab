@@ -28,7 +28,7 @@ from helab.views.SettingsDialog import SettingsDialog
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.FolderExplorer import AUTO_LOAD_PAUSED, FolderExplorer
 
-GB = 1 << 30
+GB = 10**9
 DAY = 86400.0
 
 
@@ -53,7 +53,7 @@ def inventory(usage: int = 3 * GB, **changes: Any) -> dict[str, Any]:
     now = time.time()
     value: dict[str, Any] = {
         "layout_version": 2, "store_id": "s", "read_only": False, "root": "/cache", "usage": usage,
-        "budget": 8 * GB, "records_bytes": 1 << 20,
+        "budget": 8 * GB, "records_bytes": 1 * 10**6,
         "datasets": {"count": 3, "bytes": 3 * GB, "ram_bytes": 4 * GB, "last_used": now - 7200},
         "summaries": {"count": 445}, "subtrees": {"count": 33}, "histories": {"count": 10, "blocked": 3},
         "pending": [], "retired": {"count": 0, "bytes": 0}, "orphans": {"count": 0, "bytes": 0},
@@ -507,7 +507,7 @@ def test_80_percent_dialog_once_per_crossing_and_ignore_lasts_the_session(
         assert cache.auto_load_paused and warnings == [True]
         qtbot.waitUntil(lambda: dialogs.dialog is not None)
         box = dialogs.dialog
-        assert box is not None and "80% full (800 B of 1000 B)" in box.text()
+        assert box is not None and "80% full (800 B of 1.0 kB)" in box.text()
         # Still over 80%: no second dialog for this crossing.
         usage_event(cache, 850)
         assert warnings == [True]
@@ -554,9 +554,9 @@ def test_80_percent_dialog_once_per_crossing_and_ignore_lasts_the_session(
 
 def pending(pending_id: str, path: str, reason: str = "over_budget", **changes: Any) -> dict[str, Any]:
     entry = {"kind": "cache_full" if reason == "over_budget" else "cache_approval", "pending_id": pending_id,
-             "path": path, "reason": reason, "bytes": 420 << 20, "usage": 7900 << 20, "budget": 8 * GB,
-             "job_seq": 1, "replaces": 300 << 20, "usage_seq": ["s", 1], "created_at": time.time(),
-             "room": {"paths": ["/a", "/b"], "bytes": 1200 << 20, "oldest_last_used": 1.0,
+             "path": path, "reason": reason, "bytes": 420 * 10**6, "usage": 7900 * 10**6, "budget": 8 * GB,
+             "job_seq": 1, "replaces": 300 * 10**6, "usage_seq": ["s", 1], "created_at": time.time(),
+             "room": {"paths": ["/a", "/b"], "bytes": 1200 * 10**6, "oldest_last_used": 1.0,
                       "newest_last_used": time.mktime((2026, 8, 3, 12, 0, 0, 0, 0, -1)), "possible": True}}
     entry.update(changes)
     return entry
@@ -586,7 +586,7 @@ def test_one_cache_dialog_at_a_time_each_answering_its_own_save(
         qtbot.wait(10)  # The 80% warning (usage is 7.7 of 8 GB) waits for the saves' questions.
         box = dialogs.dialog
         assert box is not None and asking(dialogs) == ("p1", "over_budget")
-        assert box.text() == "Not enough room in the disk cache for first (420 MB, 7.7 GB of 8.0 GB used)."
+        assert box.text() == "Not enough room in the disk cache for first (420 MB, 7.9 GB of 8.0 GB used)."
         assert "cached data for 2 folders (1.2 GB) not used since 3 Aug" in box.informativeText()
         assert len(parent.findChildren(QMessageBox)) == 1
         next(b for b in box.buttons() if b.text() == "Make room").click()
@@ -624,7 +624,7 @@ def test_save_update_rechecks_and_turns_into_make_room(
         hold(service, cache, pending("p1", path, "needs_approval", room=None))
         box = dialogs.dialog
         assert box is not None
-        assert box.text() == "run changed: save the update to the disk cache (+120 MB, 7.8 GB of 100 GB)?"
+        assert box.text() == "run changed: save the update to the disk cache (+120 MB, 8.0 GB of 100 GB)?"
         assert cache.cache_status(path).error == "Cache update waiting for your answer"
         next(b for b in box.buttons() if b.text() == "Save update").click()
         adopt = admin_request(service, "adopt")
@@ -748,7 +748,7 @@ def test_make_room_asks_again_when_its_plan_or_the_budget_changes(
         adopt = admin_request(service, "adopt")
         assert adopt.payload["params"]["room_paths"] == ["/a", "/b"]
         # The store's plan differs from what was shown: nothing removed, asked again with it.
-        new_room = {"paths": ["/a", "/b", "/c"], "bytes": 1800 << 20, "oldest_last_used": 1.0,
+        new_room = {"paths": ["/a", "/b", "/c"], "bytes": 1800 * 10**6, "oldest_last_used": 1.0,
                     "newest_last_used": 2.0, "possible": True}
         finish(service, adopt, {"kind": "admin_result", "action": "adopt", "adopted": False, "path": path,
                                 "bytes": 1, "room": new_room, "next_deadline": None})

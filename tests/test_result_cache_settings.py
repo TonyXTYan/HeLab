@@ -19,8 +19,8 @@ from helab.views import DataRootsTab as tab_module
 from helab.views.CacheTab import CacheTab
 from helab.views.DataRootsTab import CLEAR, CLEAR_RESULTS, DataRootsTab
 
-GB = 1 << 30
-MB = 1 << 20
+GB = 10**9
+MB = 10**6
 DAY = 86400.0
 A = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
 
@@ -46,7 +46,7 @@ def inventory(**changes: Any) -> dict[str, Any]:
     now = time.time()
     value: dict[str, Any] = {
         "layout_version": 3, "store_id": "s", "read_only": False, "root": "/cache", "usage": 3 * GB,
-        "budget": 8 * GB, "records_bytes": 1 << 20,
+        "budget": 8 * GB, "records_bytes": 1 * 10**6,
         "datasets": {"count": 3, "bytes": 2 * GB, "ram_bytes": 4 * GB, "last_used": now - 7200},
         "results": {"count": 4, "bytes": 40 * MB, "last_used": now - 3600},
         "summaries": {"count": 1}, "subtrees": {"count": 1}, "histories": {"count": 0, "blocked": 0},

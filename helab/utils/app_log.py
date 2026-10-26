@@ -26,7 +26,7 @@ from helab.utils.cache_locks import other_instances
 # helab-<pid>.log.1 (and so on, LOG_BACKUPS of them). Old sessions' files go at startup: the oldest
 # beyond Settings → General → Log files to keep, and past ASK_BYTES the user is asked
 # (``helab.views.OldLogs``; Tony, 2026-10-22).
-MB = 1024 * 1024
+MB = 1000 * 1000  # SI, as every size HeLab shows (Tony, 2026-10-26)
 LOG_NAME = "helab-{pid}.log"
 LOG_FILE = re.compile(r"helab-(\d+)\.log(\.\d+)?")  # Rotated copies too; the group is the pid.
 LOG_BYTES = 1 * MB

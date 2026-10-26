@@ -51,7 +51,7 @@ def running(tmp_path: Path) -> Iterator[int]:
 
 
 def test_rotation_within_a_session_is_fixed_at_1_mb_and_10_older_files(tmp_path: Path) -> None:
-    assert (app_log.LOG_BYTES, app_log.LOG_BACKUPS) == (1024 * 1024, 10)
+    assert (app_log.LOG_BYTES, app_log.LOG_BACKUPS) == (1000 * 1000, 10)
     handler = app_log.start_log_file(str(tmp_path))
     assert handler is not None
     try:

@@ -137,7 +137,7 @@ def page(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
     qtbot.addWidget(settings)
     rows = [{"location": "smb://server/dld_output", "uuid": A, "kind": "smb", "label": "dld_output",
              "first_seen": 1.0e9, "last_seen": 1.7e9, "decision": "confirmed", "path": "",
-             "cached": {"folders": 12, "bytes": 3 * 1024 ** 3}},
+             "cached": {"folders": 12, "bytes": 3 * 10**9}},
             {"location": "vol://abc/data", "uuid": B, "kind": "vol", "label": "data",
              "first_seen": 1.0e9, "last_seen": 1.6e9, "decision": "confirmed", "path": "/data"}]
     cache.cacheAdminResult.emit("inventory", {"kind": "inventory", "inventory": {"roots": rows}})

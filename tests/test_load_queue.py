@@ -436,7 +436,7 @@ def test_folder_io_menu_and_settings_apply_to_existing_and_new_tabs(
     assert service.max_operations == 4
     # The store had the new disk budget before Settings saved it; the app uses it from now on.
     # Then an inventory, for room plans under the new budget.
-    assert store_options()["budget"] == 10 << 30 and admin[-2:] == ["budget", "inventory"]
+    assert store_options()["budget"] == 10 * 10**9 and admin[-2:] == ["budget", "inventory"]
     assert abs(store_options()["budget_set_at"] - time.time()) < 60
     # Reset saves the default budget at once; cancelled, the store is still told.
     def reset_and_cancel() -> None:
@@ -446,7 +446,7 @@ def test_folder_io_menu_and_settings_apply_to_existing_and_new_tabs(
         dialog.reject()
     QTimer.singleShot(0, reset_and_cancel)
     window.show_settings_dialog()
-    assert store_options()["budget"] == 8 << 30 and admin[-2:] == ["budget", "inventory"]
+    assert store_options()["budget"] == 8 * 10**9 and admin[-2:] == ["budget", "inventory"]
     assert not action.isChecked() and not first.auto_scan_visible and not second.auto_scan_visible
     action.trigger()
     window.add_new_folder_explorer_tab(target_path=str(tmp_path))

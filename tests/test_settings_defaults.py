@@ -36,7 +36,7 @@ def test_constants_defaults_are_the_tables() -> None:
     assert constants.DEFAULT_LOAD_MODE == setting_default(constants.LOAD_MODE_SETTING) == "finish"
     assert constants.DEFAULT_CHECK_LEVEL == setting_default(constants.CHECK_LEVEL_SETTING) == "medium"
     assert constants.DEFAULT_SIMULTANEOUS_IO == setting_default(constants.SIMULTANEOUS_IO_SETTING) == 1
-    assert constants.DEFAULT_DISK_BUDGET == setting_default(constants.DISK_BUDGET_SETTING) == 8 << 30
+    assert constants.DEFAULT_DISK_BUDGET == setting_default(constants.DISK_BUDGET_SETTING) == 8 * 10**9
     assert constants.DEFAULT_RAM_STEPS == setting_default(constants.RAM_BUDGET_SETTING) == 16
     assert constants.DEFAULT_LIVE_INTERVAL == setting_default(constants.LIVE_INTERVAL_SETTING) == 3.0
     assert constants.DEFAULT_LIVE_AUTOSAVE == setting_default(constants.LIVE_AUTOSAVE_SETTING) == 10
@@ -60,11 +60,11 @@ def test_a_key_not_in_the_table_cant_be_read(tmp_path: Path) -> None:
 
 
 def test_large_numbers_read_untyped(tmp_path: Path) -> None:
-    """PyQt's type=int reads 8 GiB as 0, so the disk budget is read as saved."""
+    """PyQt's type=int reads 8 GB wrong (a 32-bit int), so the disk budget is read as saved."""
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    assert settings.value("anything", 8 << 30, type=int) == 0  # (Why: PyQt's 32-bit int.)
-    settings.setValue(constants.DISK_BUDGET_SETTING, 20 << 30)
-    assert constants.read_disk_budget(settings) == 20 << 30
+    assert settings.value("anything", 8 * 10**9, type=int) != 8 * 10**9  # (Why: PyQt's 32-bit int.)
+    settings.setValue(constants.DISK_BUDGET_SETTING, 20 * 10**9)
+    assert constants.read_disk_budget(settings) == 20 * 10**9
 
 
 def test_unset_reads_give_the_tables_defaults(tmp_path: Path) -> None:
@@ -76,7 +76,7 @@ def test_unset_reads_give_the_tables_defaults(tmp_path: Path) -> None:
         else:
             with pytest.raises(ValueError, match="read it untyped"):
                 read_setting(settings, row.key, typed=True)
-    assert constants.read_disk_budget(settings) == 8 << 30
+    assert constants.read_disk_budget(settings) == 8 * 10**9
     assert constants.read_io_concurrency(settings) == 1
     assert constants.read_check_level(settings) == "medium" and constants.read_load_mode(settings) == "finish"
     assert constants.read_live_interval(settings) == 3.0 and constants.read_live_autosave(settings) == 10

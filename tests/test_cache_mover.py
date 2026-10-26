@@ -226,7 +226,7 @@ class Run:
 
     def checked(self, method: str = cache_move.COPY) -> IORequest:
         self.mover.change(self.target, self.parent)
-        self.send(self.request("check"), {"kind": "move_check", "problem": "", "method": method, "bytes": 706 << 20,
+        self.send(self.request("check"), {"kind": "move_check", "problem": "", "method": method, "bytes": 706 * 10**6,
                                           "free": 1 << 40})
         return self.request("move")
 
@@ -245,7 +245,7 @@ def test_the_mover_checks_confirms_holds_moves_and_switches_in_place(
         run.service.retired.append(stopping)
         run.mover.change(run.target, run.parent)
         run.send(run.request("check"), {"kind": "move_check", "problem": "", "method": cache_move.COPY,
-                                        "bytes": 706 << 20, "free": 1 << 40})
+                                        "bytes": 706 * 10**6, "free": 1 << 40})
         assert run.service.cache_hold and not any(r.payload["move"]["action"] == "move" for r in run.service.pending)
         run.service.retired.remove(stopping)
         run.mover._wait.timeout.emit()

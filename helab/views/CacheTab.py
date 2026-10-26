@@ -32,7 +32,7 @@ from helab.utils.number_format import byte_size
 from helab.utils.settings_defaults import RESULT_REUSE_SETTING, read_setting
 from helab.utils.time_format import relative_age
 
-GB = 1 << 30
+GB = 10**9  # SI, as every size HeLab shows: budgets typed and shown in GB (Tony, 2026-10-26)
 DAY = 86400.0
 DEFAULT_PURGE_DAYS = 90
 # The rows of the disk cache, by record kind: label and button.

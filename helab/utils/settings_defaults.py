@@ -62,8 +62,8 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(AUTO_SCAN_VISIBLE_SETTING, bool, False,
             "Check the status of visible folders without saved results automatically "
             "(Settings → General, View menu)."),
-    Setting(DISK_BUDGET_SETTING, int, 8 << 30,
-            "The disk cache budget in bytes, at least 1 GiB; live data only (Settings → Cache)."),
+    Setting(DISK_BUDGET_SETTING, int, 8 * 10**9,
+            "The disk cache budget in bytes (SI: 8 GB), at least 1 GB; live data only (Settings → Cache)."),
     Setting(RAM_BUDGET_SETTING, int, 16,
             "The RAM budget in steps of 1/128 of the computer's RAM, at least max(1 GB, 1 step), at "
             "most 64 (Settings → Cache)."),
@@ -130,7 +130,7 @@ def setting_default(key: str) -> Any:
 def read_setting(settings: QSettings, key: str, *, typed: bool = False) -> Any:
     """``key``'s saved value, else the table's default; ``typed`` converts it to the row's type
     (as ``QSettings.value(..., type=...)`` does), otherwise it comes as saved. Only bool and str
-    rows read typed: PyQt's ``type=int`` is a 32-bit int, so 8 GiB (saved or the default) reads
+    rows read typed: PyQt's ``type=int`` is a 32-bit int, so 8 GB (saved or the default) reads
     as 0; numbers are read as saved and converted by their reader."""
     row = setting(key)
     if typed:

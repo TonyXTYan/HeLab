@@ -26,9 +26,9 @@ def app() -> Any:
 def test_memory_usage_window_initialization(mock_summarize: MagicMock, mock_get_objects: MagicMock, app: Any) -> None:
     mock_get_objects.return_value = ['object1', 'object2', 'object3']
     mock_summarize.return_value = [
-        ('type1', 0, 1048576),
-        ('type2', 0, 524288),
-        ('type3', 0, 262144)
+        ('type1', 0, 1_000_000),
+        ('type2', 0, 500_000),
+        ('type3', 0, 250_000)
     ]
     window = MemoryUsageWindow()
     assert window.series.count() == 3
@@ -44,8 +44,8 @@ def test_memory_usage_window_initialization(mock_summarize: MagicMock, mock_get_
 def test_update_memory_usage_less_than_ten(mock_summarize: MagicMock, mock_get_objects: MagicMock, app: Any) -> None:
     mock_get_objects.return_value = ['object1', 'object2']
     mock_summarize.return_value = [
-        ('type1', 0, 1048576),
-        ('type2', 0, 524288)
+        ('type1', 0, 1_000_000),
+        ('type2', 0, 500_000)
     ]
     window = MemoryUsageWindow()
     assert window.series.count() == 2

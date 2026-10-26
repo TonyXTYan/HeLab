@@ -3,13 +3,14 @@ from typing import Optional
 
 
 def byte_size(num: int | float) -> str:
-    """Sizes in binary units, as budgets are set: ``850 B``, ``706 MB``, ``1.2 GB``, ``8.0 GB``."""
+    """Sizes in SI units (powers of 1000, as ``time_format.byte_rate``; Tony, 2026-10-26):
+    ``850 B``, ``706 MB``, ``1.2 GB``, ``8.6 GB``."""
     value = max(0.0, float(num))
     unit = "B"
     for unit in ("B", "kB", "MB", "GB", "TB"):
-        if value < 1023.5 or unit == "TB":
+        if value < 999.5 or unit == "TB":
             break
-        value /= 1024
+        value /= 1000
     return f"{value:.0f} {unit}" if unit == "B" or value >= 99.95 else f"{value:.1f} {unit}"
 
 
