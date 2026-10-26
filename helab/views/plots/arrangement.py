@@ -18,7 +18,7 @@ from uuid import uuid4
 
 from PyQt6 import sip
 from PyQt6.QtCore import QByteArray, QObject, QSettings, Qt, pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QDockWidget, QMessageBox
+from PyQt6.QtWidgets import QDockWidget, QMainWindow, QMessageBox
 
 from helab.analysis.dataset_view import DatasetView, view_of
 from helab.analysis.presets import Arrangement, RecordError, SavedPlot, parse
@@ -34,6 +34,8 @@ if TYPE_CHECKING:
     from helab.views.plots.workspace import PlotWorkspace
 
 DOCK_NAME = "helab-plot-{}"  # A plot dock's object name in a recorded ``saveState``, by its place in the record
+# The other docks' names while a ``saveState`` is taken (not in the record: no recorded name twice).
+OTHER_DOCK_NAME = "helab-unrecorded-{}"
 
 
 def folder_name(path: str) -> str:
@@ -240,7 +242,8 @@ def capture(plots: PlotWorkspace, instances: Sequence[AnalysisInstance], *, fold
     """The arrangement of ``instances`` (open plots) in the plot area: each plot's settings, in the
     Settings panel's order, its tab group (plots tabbed together share one, numbered in order),
     whether it floats and is the tab shown, and the area's ``saveState`` (each dock named by its
-    place, ``DOCK_NAME``)."""
+    place, ``DOCK_NAME``, while it is taken: docks keep their names, which ``open_arrangement``
+    gave them for its layout, and other docks, e.g. another folder's plots, are named apart then)."""
     area = plots.middle_mainwindow
     order = plots.panel_right_top_plot_settings.plots()
     by_dock = {id(instance.dock_widget): instance for instance in instances if instance.dock_widget is not None}
@@ -251,7 +254,6 @@ def capture(plots: PlotWorkspace, instances: Sequence[AnalysisInstance], *, fold
     groups: Dict[int, int] = {}  # id(first dock of a group) → its number
     saved: List[SavedPlot] = []
     for index, dock in enumerate(docks):
-        dock.setObjectName(DOCK_NAME.format(index))
         floating = dock.isFloating()
         together = [] if floating else [other for other in area.tabifiedDockWidgets(dock) if other in docks]
         first = min([dock, *together], key=docks.index)
@@ -261,9 +263,26 @@ def capture(plots: PlotWorkspace, instances: Sequence[AnalysisInstance], *, fold
         plot = by_dock[id(dock)].saved_plot()
         saved.append(SavedPlot(plot.script, plot.path, plot.root_key, plot.values, plot.backend, plot.live,
                                plot.instance_id, plot.title, plot.settings_open, plot.settings_width, floating,
-                               group, front, dock.objectName(), plot.preset, plot.preset_saved_at))
-    state = bytes(area.saveState().toBase64().data()).decode("ascii") if docks else ""
+                               group, front, DOCK_NAME.format(index), plot.preset, plot.preset_saved_at))
+    state = _named_state(area, docks) if docks else ""
     return Arrangement(tuple(saved), folder, root_key, live, state)
+
+
+def _named_state(area: QMainWindow, docks: Sequence[QDockWidget]) -> str:
+    """``area``'s ``saveState`` with ``docks`` named by their place (``DOCK_NAME``) and every other
+    dock apart (``OTHER_DOCK_NAME``), their own names given back after."""
+    names: List[Tuple[QDockWidget, str]] = []
+    others = [dock for dock in area.findChildren(QDockWidget) if dock not in docks and not sip.isdeleted(dock)]
+    try:
+        for name, dock in [*((DOCK_NAME.format(i), dock) for i, dock in enumerate(docks)),
+                           *((OTHER_DOCK_NAME.format(i), dock) for i, dock in enumerate(others))]:
+            names.append((dock, dock.objectName()))
+            dock.setObjectName(name)
+        return bytes(area.saveState().toBase64().data()).decode("ascii")
+    finally:
+        for dock, name in names:
+            if not sip.isdeleted(dock):
+                dock.setObjectName(name)
 
 
 def open_arrangement(scripts: TreePanelWidget, cache: FolderCache, arrangement: Arrangement, *,

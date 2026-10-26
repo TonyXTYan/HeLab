@@ -579,6 +579,63 @@ def test_placement_round_trips(qtbot: QtBot, cache: FolderCache, windows: Window
     assert again.scripts.instances()[-1].instance_id == "5"  # Numbering goes on after them.
 
 
+AREAS = (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea,
+         Qt.DockWidgetArea.BottomDockWidgetArea)
+
+
+def placed(window: Window, cache: FolderCache, paths: List[str]) -> List[AnalysisInstance]:
+    """A plot per path, the first at Left, the second at Right, the third at Bottom."""
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    plots = [waiting_plot(window, cache, ref, path) for path in paths]
+    area = window.plots.middle_mainwindow
+    for plot, where in zip(plots, AREAS):
+        dock = cast(AnalysisDock, plot.dock_widget)
+        area.removeDockWidget(dock)
+        area.addDockWidget(where, dock)
+        dock.show()
+    return plots
+
+
+def areas(window: Window, instances: List[AnalysisInstance]) -> List[Qt.DockWidgetArea]:
+    area = window.plots.middle_mainwindow
+    return [area.dockWidgetArea(cast(AnalysisDock, instance.dock_widget)) for instance in instances]
+
+
+def test_plots_opened_while_the_open_plots_are_recorded_keep_their_places(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-17: a preset at Left, Right and Bottom whose first plot's script isn't loaded. Each plot
+    opening records the open plots (``PlotReopen.record`` → ``capture``), which renamed the docks
+    by their index before the layout was restored by name: the two opened went to Left and Right."""
+    window = new_window(qtbot, cache, windows)
+    arrangement = capture(window.plots, placed(window, cache, [folder("run")] * 3))
+    gone = dataclass_replace(arrangement.plots[0], script=ScriptRef("tests.missing", "Plot", "1", "", "Missing"))
+    arrangement = dataclass_replace(arrangement, plots=(gone, *arrangement.plots[1:]))
+    again = new_window(qtbot, cache, windows)
+    PlotReopen(again.plots, again.scripts)  # (Records the open plots as each opens.)
+    opened, failed = open_arrangement(again.scripts, cache, parse(arrangement.dumps()))
+    assert len(failed) == 1 and len(opened) == 2
+    qtbot.wait(50)
+    assert areas(again, [instance for instance, _ in opened]) == list(AREAS[1:])
+
+
+def test_a_folders_preset_keeps_its_plots_places_beside_other_folders_plots(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-18: plots of folder a at Left and Bottom, of folder b at Right, all recorded once; folder
+    a's arrangement named its docks 0 and 1 while b's kept 1 from the record, so the saved layout
+    held that name twice and a's second plot came back at Right."""
+    window = new_window(qtbot, cache, windows)
+    plots = placed(window, cache, [folder("a"), folder("b"), folder("a")])
+    names = [cast(AnalysisDock, plot.dock_widget).objectName() for plot in plots]
+    capture(window.plots, plots)  # (As each record of the open plots does.)
+    mine = capture(window.plots, [plots[0], plots[2]], folder=folder("a"))
+    assert [cast(AnalysisDock, plot.dock_widget).objectName() for plot in plots] == names  # (Kept.)
+    again = new_window(qtbot, cache, windows)
+    opened, failed = open_arrangement(again.scripts, cache, parse(mine.dumps()), folder=folder("a"))
+    assert failed == [] and len(opened) == 2
+    qtbot.wait(50)
+    assert areas(again, [instance for instance, _ in opened]) == [AREAS[0], AREAS[2]]
+
+
 def test_reopened_plots_keep_every_bundled_scripts_settings_library_and_live_group(
         qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
     window = new_window(qtbot, cache, windows)
@@ -969,16 +1026,17 @@ def test_applying_can_add_beside_the_open_plots(qtbot: QtBot, cache: FolderCache
 
 
 def test_a_replaced_plots_dock_isnt_taken_for_a_new_one(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
-    """The plots an arrangement replaces are deleted later, with the names a recorded layout uses:
-    the layout places the new plots, never those."""
+    """The plots an arrangement replaces are deleted later, with the names a recorded layout uses
+    (an earlier arrangement's plots): the layout places the new plots, never those."""
     window = new_window(qtbot, cache, windows)
     ref = ScriptRef("tests.counted", "Plot", "1")
     first = waiting_plot(window, cache, ref, folder("a"))
-    first_dock = first.dock_widget
-    arrangement = capture(window.plots, [first], folder=folder("a"))
-    write_arrangement("same", arrangement)
+    write_arrangement("same", capture(window.plots, [first], folder=folder("a")))
+    presets = presets_for(window, Explorer(folder("b")), cache)
+    [earlier] = presets.apply("same")
+    first_dock = earlier.dock_widget
     assert first_dock is not None and first_dock.objectName() == "helab-plot-0"
-    [opened] = presets_for(window, Explorer(folder("b")), cache).apply("same")
+    [opened] = presets.apply("same")
     new_dock = cast(QDockWidget, opened.dock_widget)
     assert new_dock.objectName() == "helab-plot-0" and first_dock.objectName() == ""
     assert window.plots.middle_mainwindow.dockWidgetArea(new_dock) != Qt.DockWidgetArea.NoDockWidgetArea
