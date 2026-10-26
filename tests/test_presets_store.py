@@ -17,6 +17,7 @@ import pytest
 from PyQt6.QtCore import QSettings
 from pytestqt.qtbot import QtBot
 
+from conftest import store_free
 from helab.io_ops.admin import cache_admin
 from helab.utils import cache_store
 from helab.utils.cache_store import KINDS, CacheStore, StoreError, StoreReadOnly
@@ -520,6 +521,7 @@ def test_a_store_recreated_at_the_same_folder_is_read_as_itself(qtbot: QtBot, se
     settled(qtbot, cache)
     cache.set_presets([(ARR, "", "p", '"old"')])
     settled(qtbot, cache)
+    qtbot.waitUntil(lambda: store_free(service), timeout=30_000)  # (Windows deletes no open file.)
     directory = store_options()["directory"]
     shutil.rmtree(directory)
     with CacheStore(directory) as store:

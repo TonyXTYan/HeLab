@@ -1,8 +1,11 @@
 """The helper's event contract (``helab/io_ops/events.py``) matches the code on both sides.
 
-Every kind the helper sends is declared, every declared kind is sent, and every kind the app
-matches on is one the helper sends or one the app makes itself (``GUI_KINDS``): a typo on
-either side fails here. Strict type checking then checks each event's fields at its ``send``.
+Every kind the helper sends is declared, every declared kind is sent, every kind the app
+matches on is one the helper sends or one the app makes itself (``GUI_KINDS``), and the app
+matches every kind it is sent but the receipts (``RECEIPTS``): a typo on either side, or a new
+kind nothing handles, fails here. Strict type checking then checks each event's fields at its
+``send``. The app's side is every module of ``helab/views`` (its ``plots`` package too),
+``helab/utils``, ``helab/models`` and ``main.py``.
 """
 from __future__ import annotations
 
@@ -17,7 +20,7 @@ HELPER = [*sorted((ROOT / "helab" / "io_ops").glob("*.py")), ROOT / "helab" / "i
 # Not about helper events: a scan outcome's ``kind`` (its saved history).
 NOT_GUI = {"scan_history.py"}
 GUI = [path for path in [ROOT / "helab" / "main.py", *sorted((ROOT / "helab" / "utils").glob("*.py")),
-                         *sorted((ROOT / "helab" / "views").glob("*.py")),
+                         *sorted((ROOT / "helab" / "views").rglob("*.py")),
                          *sorted((ROOT / "helab" / "models").glob("*.py"))]
        if path.name not in NOT_GUI]
 
@@ -25,6 +28,13 @@ GUI = [path for path in [ROOT / "helab" / "main.py", *sorted((ROOT / "helab" / "
 NOT_EVENTS = {
     ("scanning.py", "'success'"),  # A basic scan's outcome for its saved history (``write_outcome``).
     ("loading.py", "file_kinds.TXY.name"),  # A cached dataset's ``info``: its file kind.
+}
+
+# Kinds sent for the record that the app needn't match (codebase review 2, C-11): what it needs
+# from them comes by another event.
+RECEIPTS = {
+    "root_rekeyed",  # A nested root's re-key: the app hears ``removed`` and ``root_found``/``root_changed``.
+    "subtree_saved",  # Its skipped paths come with a ``cache_warning``; ``done`` ends the job.
 }
 
 # Kinds the app makes itself (``IOService``; ``FolderCache`` also makes ``queued`` and ``cancelled``), never sent by a helper.
@@ -126,8 +136,14 @@ def test_every_kind_the_helper_sends_is_declared_and_every_declared_kind_is_sent
 def test_every_kind_the_app_matches_on_is_sent_or_its_own() -> None:
     unknown = {name: sorted(kinds - events.KINDS - GUI_KINDS) for name, kinds in matched(GUI).items()}
     assert {name: kinds for name, kinds in unknown.items() if kinds} == {}
-    # (The scan finds the app's matching at all.)
+    # (The scan finds the app's matching at all, in the plots package too.)
     assert {"loaded", "entries", "status", "done", "error", "cancelled"} <= matched(GUI)["folder_cache.py"]
+    assert {"result_found", "result_missing", "result_saved"} <= matched(GUI)["cached_results.py"]
+
+
+def test_the_app_matches_every_kind_it_is_sent_but_the_receipts() -> None:
+    handled = set().union(*matched(GUI).values())
+    assert events.KINDS - handled == RECEIPTS
 
 
 def test_the_apps_own_kinds_are_made_by_the_app_and_never_by_a_helper() -> None:

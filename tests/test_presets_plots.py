@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QMen
 from pytestqt.qtbot import QtBot
 
 from helab.analysis.backends import BACKEND, backend_specs
-from helab.analysis.dataset_view import DatasetView
+from helab.analysis.dataset_view import DatasetView, root_key, view_of
 from helab.analysis.follow import DELAY, EVERY, FOLLOW, live_specs
 from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
@@ -539,6 +539,19 @@ def test_an_unreadable_script_preset_is_named_and_replaced_only_when_asked(qtbot
     assert read_script_presets(ref).names() == ["broken", "new"]
 
 
+def test_a_store_problem_keeps_a_background_plots_note(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-21: a plot whose page isn't the Settings panel's current one isn't visible, so a store
+    problem replaced its note (e.g. "Reopened · ⚠ …") on any presetsChanged; only a hidden note is."""
+    window = new_window(qtbot, cache, windows)
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    presets = bar(waiting_plot(window, cache, ref))
+    presets.note.setText("Reopened · ⚠ 1 setting at the script's defaults")
+    presets.note.setVisible(True)
+    assert not presets.note.isVisible()  # (Its page isn't shown.)
+    preset_store().set_presets([(SCRIPT, script_scope(ref), "broken", "{broken")])
+    assert presets.note.text() == "Reopened · ⚠ 1 setting at the script's defaults"
+
+
 # Arrangements: placement, and reopening at start
 
 
@@ -579,6 +592,63 @@ def test_placement_round_trips(qtbot: QtBot, cache: FolderCache, windows: Window
     assert again.scripts.instances()[-1].instance_id == "5"  # Numbering goes on after them.
 
 
+AREAS = (Qt.DockWidgetArea.LeftDockWidgetArea, Qt.DockWidgetArea.RightDockWidgetArea,
+         Qt.DockWidgetArea.BottomDockWidgetArea)
+
+
+def placed(window: Window, cache: FolderCache, paths: List[str]) -> List[AnalysisInstance]:
+    """A plot per path, the first at Left, the second at Right, the third at Bottom."""
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    plots = [waiting_plot(window, cache, ref, path) for path in paths]
+    area = window.plots.middle_mainwindow
+    for plot, where in zip(plots, AREAS):
+        dock = cast(AnalysisDock, plot.dock_widget)
+        area.removeDockWidget(dock)
+        area.addDockWidget(where, dock)
+        dock.show()
+    return plots
+
+
+def areas(window: Window, instances: List[AnalysisInstance]) -> List[Qt.DockWidgetArea]:
+    area = window.plots.middle_mainwindow
+    return [area.dockWidgetArea(cast(AnalysisDock, instance.dock_widget)) for instance in instances]
+
+
+def test_plots_opened_while_the_open_plots_are_recorded_keep_their_places(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-17: a preset at Left, Right and Bottom whose first plot's script isn't loaded. Each plot
+    opening records the open plots (``PlotReopen.record`` → ``capture``), which renamed the docks
+    by their index before the layout was restored by name: the two opened went to Left and Right."""
+    window = new_window(qtbot, cache, windows)
+    arrangement = capture(window.plots, placed(window, cache, [folder("run")] * 3))
+    gone = dataclass_replace(arrangement.plots[0], script=ScriptRef("tests.missing", "Plot", "1", "", "Missing"))
+    arrangement = dataclass_replace(arrangement, plots=(gone, *arrangement.plots[1:]))
+    again = new_window(qtbot, cache, windows)
+    PlotReopen(again.plots, again.scripts)  # (Records the open plots as each opens.)
+    opened, failed = open_arrangement(again.scripts, cache, parse(arrangement.dumps()))
+    assert len(failed) == 1 and len(opened) == 2
+    qtbot.wait(50)
+    assert areas(again, [instance for instance, _ in opened]) == list(AREAS[1:])
+
+
+def test_a_folders_preset_keeps_its_plots_places_beside_other_folders_plots(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-18: plots of folder a at Left and Bottom, of folder b at Right, all recorded once; folder
+    a's arrangement named its docks 0 and 1 while b's kept 1 from the record, so the saved layout
+    held that name twice and a's second plot came back at Right."""
+    window = new_window(qtbot, cache, windows)
+    plots = placed(window, cache, [folder("a"), folder("b"), folder("a")])
+    names = [cast(AnalysisDock, plot.dock_widget).objectName() for plot in plots]
+    capture(window.plots, plots)  # (As each record of the open plots does.)
+    mine = capture(window.plots, [plots[0], plots[2]], folder=folder("a"))
+    assert [cast(AnalysisDock, plot.dock_widget).objectName() for plot in plots] == names  # (Kept.)
+    again = new_window(qtbot, cache, windows)
+    opened, failed = open_arrangement(again.scripts, cache, parse(mine.dumps()), folder=folder("a"))
+    assert failed == [] and len(opened) == 2
+    qtbot.wait(50)
+    assert areas(again, [instance for instance, _ in opened]) == [AREAS[0], AREAS[2]]
+
+
 def test_reopened_plots_keep_every_bundled_scripts_settings_library_and_live_group(
         qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
     window = new_window(qtbot, cache, windows)
@@ -607,6 +677,79 @@ def test_reopened_plots_keep_every_bundled_scripts_settings_library_and_live_gro
         assert instance.backend() == backend and instance.live_values() == live
         assert instance.waiting() and not instance.follow.on  # Follow Live off: pinned.
         assert bar(instance).note.text() == ""  # Everything restored: nothing to say.
+
+
+def test_a_waiting_reopened_plot_never_runs_on_a_live_revision_by_itself(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-19: a reopened plot recorded under one data root, still waiting, whose folder's tab
+    starts Live under another: the Live feed's revision (and Live ending) ran it at once, outside
+    ``run_reopened`` and past ``FolderWait``'s other-root rule. It looks for its data instead."""
+    window = new_window(qtbot, cache, windows)
+    path, top = folder("run"), FolderCache.key("/data/root")
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    made = window.scripts.reopen_plot(full(window, ref, path), FolderWait(cache, path, root_key(top, "old", path)))
+    assert isinstance(made, AnalysisInstance) and made.waiting()
+    cache.data_roots[top] = ("new", "root")
+    made._revised(view_of(dataset("run", range(1, 4)), cache.root_of(path)))
+    made._live_ended(path)
+    qtbot.wait(100)
+    assert made.waiting() and not made.job_id and made.result is None
+
+
+def test_the_not_reopened_question_closes_as_keep(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-20: "Plots not reopened" had no escape button, so Esc, the title bar's close and quit's
+    ``close()`` left it up. Closing it is Keep for later (the default): the plots stay kept."""
+    window = new_window(qtbot, cache, windows)
+    reopen = PlotReopen(window.plots, window.scripts)
+    kept = SavedPlot(ScriptRef("tests.missing", "Plot", "1", "", "Missing"), folder("run"))
+    reopen.kept = [kept]
+    reopen.ask(["Missing (not loaded)"])
+    box = reopen._question
+    assert box is not None and box.isVisible()
+    qtbot.keyClick(box, Qt.Key.Key_Escape)  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(lambda: sip.isdeleted(box) or not box.isVisible(), timeout=5_000)
+    assert reopen._question is None and reopen.kept == [kept]
+    reopen.ask(["Missing (not loaded)"])
+    again = reopen._question
+    assert again is not None
+    reopen.quit()
+    assert sip.isdeleted(again) or not again.isVisible()
+    assert reopen.kept == [kept]
+
+
+def test_a_plot_whose_settings_fail_to_open_isnt_reopened_but_kept(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-22: a reopened plot whose settings page failed to open was still returned, with no
+    settings, and the next record saved it so: its settings lost for good. It couldn't reopen."""
+    window = new_window(qtbot, cache, windows)
+    saved = full(window, ScriptRef("tests.counted", "Plot", "1", "", "Counted"), folder("run"), bins=7)
+
+    def broken(self: Counted, action_name: str) -> tuple[int, int]:
+        raise RuntimeError("no size today")
+    with monkeypatch.context() as patch:
+        patch.setattr(Counted, "minimum_size", broken)  # (Asked only as its settings page opens.)
+        made = window.scripts.reopen_plot(saved, FolderWait(cache, folder("run")))
+    assert made == "it failed: no size today" and window.scripts.instances() == []
+    reopen = PlotReopen(window.plots, window.scripts)
+    reopen.kept = [saved]
+    reopen.record()
+    assert parse(read_setting(app_settings(), OPEN_PLOTS_SETTING)).plots[0].values["bins"] == 7
+
+
+def test_a_reopened_plots_odd_number_and_width_are_taken_safely(
+        qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
+    """C-22: a saved number of digits ``int`` can't read ("²") aborted the whole reopen, and a
+    settings width had no upper bound."""
+    window = new_window(qtbot, cache, windows)
+    saved = full(window, ScriptRef("tests.counted", "Plot", "1", "", "Counted"), folder("run"))
+    made = window.scripts.reopen_plot(dataclass_replace(saved, instance_id="²"), FolderWait(cache, folder("run")),
+                                      keep_id=True)
+    assert isinstance(made, AnalysisInstance) and made.instance_id.isdecimal()
+    opened, _ = open_arrangement(window.scripts, cache, Arrangement((dataclass_replace(saved, settings_width=10**9),)))
+    screen = QApplication.primaryScreen()
+    assert screen is not None
+    dock = cast(AnalysisDock, opened[0][0].dock_widget)
+    assert dock.settings.open_width <= screen.availableGeometry().width()
 
 
 def test_reopen_runs_from_ram_without_any_request(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
@@ -969,16 +1112,17 @@ def test_applying_can_add_beside_the_open_plots(qtbot: QtBot, cache: FolderCache
 
 
 def test_a_replaced_plots_dock_isnt_taken_for_a_new_one(qtbot: QtBot, cache: FolderCache, windows: Windows) -> None:
-    """The plots an arrangement replaces are deleted later, with the names a recorded layout uses:
-    the layout places the new plots, never those."""
+    """The plots an arrangement replaces are deleted later, with the names a recorded layout uses
+    (an earlier arrangement's plots): the layout places the new plots, never those."""
     window = new_window(qtbot, cache, windows)
     ref = ScriptRef("tests.counted", "Plot", "1")
     first = waiting_plot(window, cache, ref, folder("a"))
-    first_dock = first.dock_widget
-    arrangement = capture(window.plots, [first], folder=folder("a"))
-    write_arrangement("same", arrangement)
+    write_arrangement("same", capture(window.plots, [first], folder=folder("a")))
+    presets = presets_for(window, Explorer(folder("b")), cache)
+    [earlier] = presets.apply("same")
+    first_dock = earlier.dock_widget
     assert first_dock is not None and first_dock.objectName() == "helab-plot-0"
-    [opened] = presets_for(window, Explorer(folder("b")), cache).apply("same")
+    [opened] = presets.apply("same")
     new_dock = cast(QDockWidget, opened.dock_widget)
     assert new_dock.objectName() == "helab-plot-0" and first_dock.objectName() == ""
     assert window.plots.middle_mainwindow.dockWidgetArea(new_dock) != Qt.DockWidgetArea.NoDockWidgetArea
@@ -1526,3 +1670,18 @@ def test_the_menu_says_no_presets_saved_only_after_a_successful_read(
     assert texts() == ["Save Folder and Plots as Preset…", "Reading saved presets…"]
     store.presets_error = "disk I/O error"
     assert texts() == ["Save Folder and Plots as Preset…", "⚠ Saved presets can't be read: disk I/O error"]
+
+
+def test_the_cache_tabs_presets_line_lets_go_of_the_store_with_its_label(qtbot: QtBot) -> None:
+    """C-23: each Cache tab built connected its Presets line to the app's lasting FolderCache and
+    never disconnected: the connections piled up per Settings shown."""
+    from PyQt6.QtCore import QEvent
+    from helab.views.PresetsInspector import show_summary
+    store = preset_store()
+    before = store.receivers(store.presetsChanged)
+    label = QLabel()
+    show_summary(label, store)
+    assert store.receivers(store.presetsChanged) == before + 1
+    label.deleteLater()
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    assert store.receivers(store.presetsChanged) == before

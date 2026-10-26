@@ -90,7 +90,9 @@ def _start_cache() -> str:
     message, instance = startup(app_folder(), recover, wait)
     for box in waiting:
         box.close()
-    QApplication.instance().aboutToQuit.connect(instance.unlock)  # type: ignore[union-attr]
+    app = QApplication.instance()
+    assert app is not None  # (main() makes it before starting the cache.)
+    app.aboutToQuit.connect(instance.unlock)
     _INSTANCE_LOCK.append(instance)
     return message
 

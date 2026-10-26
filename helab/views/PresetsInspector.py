@@ -126,6 +126,13 @@ def show_summary(label: QLabel, cache: Optional[FolderCache]) -> FolderCache:
             label.setText(presets_summary(store))
     shown()
     store.presetsChanged.connect(shown)
+
+    def gone() -> None:  # (The store outlives Settings: one connection per Cache tab shown, else.)
+        try:
+            store.presetsChanged.disconnect(shown)
+        except TypeError:
+            pass
+    label.destroyed.connect(gone)
     return store
 
 

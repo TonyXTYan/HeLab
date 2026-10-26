@@ -342,7 +342,7 @@ class PresetBar(QWidget):
                                       else "none saved")
         self.apply_button.setEnabled(bool(names))
         self.delete_button.setEnabled(bool(names))
-        if problems and not self.note.isVisible():
+        if problems and self.note.isHidden():  # (Not isVisible: false while its page isn't shown.)
             self._show_problems()
         conflicts = take_conflicts(SCRIPT, script_scope(self.ref))
         if conflicts:
@@ -573,14 +573,7 @@ class ArrangementPresets(QObject):
         QMessageBox.warning(self.parent_widget, title, text)
 
     def cache(self) -> FolderCache:
-        if self._given_cache is not None:
-            return self._given_cache
-        budget = self.plots.ram_budget
-        if budget is not None:
-            return budget.cache
-        from helab.utils.folder_cache import get_folder_cache
-        from helab.utils.io_service import get_io_service
-        return get_folder_cache(get_io_service())
+        return self._given_cache if self._given_cache is not None else self.plots.folder_cache()
 
     def fill_menu(self, menu: QMenu, read: bool = True) -> None:
         """The Presets menu, as it shows: Save…, then each preset (applies it), then Delete ▸; and,

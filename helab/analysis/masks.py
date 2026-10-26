@@ -2,8 +2,9 @@
 applied to the chosen shots' events before a plot bins them, crops them or counts them.
 
 A plot adds ``MASK_SPECS`` to its parameters (the Mask group: none, a preset, or custom circles
-typed as ``x, y, r[, keep|cut]`` in mm, separated by ";" or new lines), applies ``apply_mask``
-(or ``mask_keeps``) in ``compute`` and puts ``mask_brief`` in its settings line. The mask is
+typed as ``x, y, r[, keep|cut]`` in mm, separated by ";" or new lines), applies
+``mask_from(values).apply`` (or ``Mask.keeps``, ``masked_counts_per_shot``) in ``compute`` and puts
+``mask_brief`` in its settings line. The mask is
 part of the run's parameters, so it is in the result's ``reuse_key`` and record.
 
 **The rule** is the lab's ``masktxy_2d_circle`` (Core_BEC_Analysis ``lib/txy_tools``): an event
@@ -368,12 +369,6 @@ def mask_warnings(values: Mapping[str, Any]) -> tuple[str, ...]:
     if mask.source == CUSTOM and not mask.circles:
         return ("Mask: no circles typed: nothing masked",)
     return ()
-
-
-def apply_mask(events: Events, values: Mapping[str, Any]) -> tuple[Events, int]:
-    """``events`` with the parameters' mask applied, and how many it masked out (raises
-    ``MaskError`` for custom circles that can't be read)."""
-    return mask_from(values).apply(events)
 
 
 def masked_counts_per_shot(view: DatasetView, shots: Sequence[int], mask: Mask

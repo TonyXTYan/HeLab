@@ -7,7 +7,8 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QChe
     QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem, QDoubleSpinBox
 from PyQt6.QtCore import QSettings, QUrl
 
-from helab.utils.folder_cache import FolderCache, store_options
+from helab.utils import folder_cache
+from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import fnum
 from helab.utils.constants import (
     CHECK_LEVEL_LABELS, DIR_TEMPS, LOAD_MODE_LABELS, MAX_LIVE_INTERVAL, MAX_LOG_KEEP, MAX_SIMULTANEOUS_IO,
@@ -140,7 +141,7 @@ class SettingsDialog(QDialog):
 
         self.dir_temps_browse_btn.clicked.connect(self.browse_dir_temps)
         self.dir_caches_browse_btn.clicked.connect(self.change_cache_folder)
-        self.dir_caches_browse_btn.setEnabled(self.cache is not None and bool(store_options()))
+        self.dir_caches_browse_btn.setEnabled(self.cache is not None and bool(folder_cache.store_options()))
         self.dir_temps_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_temps_edit.text())))
         self.dir_caches_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_caches_edit.text())))
         # Reset shows the persistent default; it is saved (and created on next launch) with Save.

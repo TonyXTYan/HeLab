@@ -7,7 +7,7 @@ import time
 from typing import Any, cast
 
 from helab.io_ops import stores
-from helab.io_ops.events import AdminResultFields, MoveCheckFields, PresetRowFields, ResultCountField
+from helab.io_ops.events import AdminResultFields, PresetRowFields, ResultCountField
 from helab.io_ops.infra import Emit, Heartbeat, emit
 from helab.io_ops.markers import _location_path, _root_rows
 from helab.io_ops.stores import (_cache_info, _deadline, _removed_event, _results_removed_event, _store_fields,
@@ -248,7 +248,7 @@ def cache_move_job(move: dict[str, Any], send: Emit = emit) -> None:
     from helab.utils.cache_locks import cache_lock, held_with, move_lock
     action, app_dir = move["action"], move["app_dir"]
     if action == "check":
-        send({"kind": "move_check", **cast(MoveCheckFields, mover.check_target(move["from"], move["to"], app_dir))})
+        send({"kind": "move_check", **mover.check_target(move["from"], move["to"], app_dir)})
         return
     lock = move_lock(app_dir)
     if not lock.try_lock():

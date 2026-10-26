@@ -60,7 +60,7 @@ from helab.analysis.selection import (SHOT_SPECS, newest_brief, newest_colour, n
                                       selection_text, shots_brief, shots_text)
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import group
-from helab.scripts.dld.basic_plots import OverlayView, overlay_newest, update_newest
+from helab.analysis.overlay import OverlayView, overlay_newest, update_newest
 
 AUTO, MANUAL = "auto", "manual"
 ORDERS_GROUP = "Orders"

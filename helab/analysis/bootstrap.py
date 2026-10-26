@@ -14,7 +14,7 @@ Tibshirani 1993, ch. 6 and 13).
 - Seeded: the same seed, shots and statistic give the same result (``numpy.random.default_rng``),
   so Live reruns on unchanged data keep their error bars, and the seed goes in the record.
 - ``cancelled`` is polled between resamples (an ``AnalysisContext``'s ``cancelled``); it
-  raises ``results.Cancelled``, as ``stats.auto_crop`` does.
+  raises ``results.Cancelled``, as ``stats.crop_box`` does.
 - Fewer than ``MIN_SHOTS`` shots: the resamples can't show the spread well (with n shots
   there are only C(2n−1, n) distinct draws, and the bootstrap SE is √((n−1)/n) of the usual
   one); noted. Fewer than 2: no error at all, a failure. A statistic undefined on all shots,

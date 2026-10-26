@@ -13,7 +13,8 @@ from typing import Any, Callable
 from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QMessageBox, QWidget
 
-from helab.utils.folder_cache import FolderCache, store_options
+from helab.utils import folder_cache
+from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import byte_size
 
 
@@ -110,7 +111,7 @@ class CacheDialogs(QObject):
         if kind == "needs_approval":
             return kind
         paths = sorted(room.get("paths") or room.get("result_ids") or ()) if isinstance(room, dict) else None
-        return json.dumps([kind, paths, store_options().get("budget")])
+        return json.dumps([kind, paths, folder_cache.store_options().get("budget")])
 
     @staticmethod
     def kind(question: str) -> str:
@@ -187,7 +188,7 @@ class CacheDialogs(QObject):
         question = self.question(entry)
         kind = self.kind(question)
         # The budget in effect now (Settings may have changed it since the save was held).
-        budget = int(store_options().get("budget") or entry.get("budget") or 0)
+        budget = int(folder_cache.store_options().get("budget") or entry.get("budget") or 0)
         # The newest measurement: a save restored from the store (after a restart) has none of its own.
         usage = int(self.cache.disk_usage if self.cache.disk_usage is not None else entry.get("usage") or 0)
         box = QMessageBox(self.parent_widget)
@@ -280,7 +281,7 @@ class CacheDialogs(QObject):
 
     def _ask_nearly_full(self) -> None:
         self._warn_full = False
-        budget = int(store_options().get("budget") or 0)
+        budget = int(folder_cache.store_options().get("budget") or 0)
         usage = int(self.cache.disk_usage or 0)
         box = QMessageBox(self.parent_widget)
         box.setIcon(QMessageBox.Icon.Warning)

@@ -24,7 +24,8 @@ import sqlite3
 import time
 from typing import Any, Callable
 
-from helab.utils.cache_location import cache_location_problem
+from helab.io_ops.events import MoveCheckFields
+from helab.utils import cache_location
 from helab.utils.cache_store import LAYOUT_VERSION, RESULTS_DIRNAME, STORE_DIRNAME, store_root
 from helab.utils.number_format import byte_size
 
@@ -238,16 +239,16 @@ def same_disk(source: str, target: str) -> bool:
     return os.stat(source).st_dev == os.stat(_existing(target)).st_dev
 
 
-def check_target(source: str, target: str, app_dir: str = "") -> dict[str, Any]:
+def check_target(source: str, target: str, app_dir: str = "") -> MoveCheckFields:
     """Whether the cache in ``source`` can move to ``target``: ``problem`` ("" if it can, else
     why, in plain words), ``bytes`` to move, ``free`` space there and the ``method``.
     ``app_dir`` holds the move's record and locks, which must stay put: a cache folder
     containing it can't be moved."""
     size = folder_bytes(source)
-    result: dict[str, Any] = {"bytes": size, "free": None, "method": "", "problem": ""}
+    result: MoveCheckFields = {"bytes": size, "free": None, "method": "", "problem": ""}
     name = os.path.basename(os.path.normpath(target)) or target
 
-    def refuse(problem: str) -> dict[str, Any]:
+    def refuse(problem: str) -> MoveCheckFields:
         result["problem"] = problem
         return result
     if not os.path.isabs(target):
@@ -262,7 +263,7 @@ def check_target(source: str, target: str, app_dir: str = "") -> dict[str, Any]:
             return refuse(f"{target} is a file, not a folder.")
         if os.listdir(target):
             return refuse(f"'{name}' isn't empty. Choose an empty or new folder.")
-    if problem := cache_location_problem(target):
+    if problem := cache_location.cache_location_problem(target):
         return refuse(f"'{name}' is {problem}, where the cache can't work safely.")
     parent = _existing(target)
     probe = os.path.join(parent, f".helab-probe-{os.getpid()}")
@@ -530,8 +531,8 @@ def recover(app_dir: str, read_setting: Callable[[], str], write_setting: Callab
     source, target, store_id = record["from"], record["to"], record["store_id"]
     # A folder that is now somewhere the cache can't work (e.g. made a link into a synced
     # folder) is never opened, used or trusted: as if it held no store.
-    at_from = not cache_location_problem(source) and valid_at(source, store_id)
-    at_to = not cache_location_problem(target) and valid_at(target, store_id)
+    at_from = not cache_location.cache_location_problem(source) and valid_at(source, store_id)
+    at_to = not cache_location.cache_location_problem(target) and valid_at(target, store_id)
 
     def use(path: str) -> bool:
         return read_setting() == path or write_setting(path)

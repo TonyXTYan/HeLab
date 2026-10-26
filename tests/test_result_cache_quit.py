@@ -11,6 +11,7 @@ from typing import Any, Iterator, cast
 import pytest
 from pytestqt.qtbot import QtBot
 
+from conftest import store_free
 from helab.analysis.results import DISK_CACHED, AnalysisResult
 from helab.utils.cache_store import CacheStore
 from helab.utils.folder_cache import PRESETS_SAVING, FolderCache, store_options
@@ -145,8 +146,9 @@ def test_an_old_stores_answer_never_says_saved_in_the_recreated_one(
     script = Costly()
     second = open_plot(window, qtbot, folder_view(tmp_path), script)
     # The lookup sends result_found with the store still open: delete it only once no helper has it
-    # open, every exit confirmed, as a cache move does (Windows refuses to delete an open file).
-    qtbot.waitUntil(lambda: bool(held) and not cache.service.cache_busy(), timeout=WAIT)
+    # open, every exit confirmed, as a cache move does (Windows refuses to delete an open file), the
+    # app-wide service's too: the plots' Presets rows read through it (``store_free``).
+    qtbot.waitUntil(lambda: bool(held) and store_free(cache.service), timeout=WAIT)
     assert held[0][1]["exact"] and held[0][1]["store"]
     directory = store_options()["directory"]
     shutil.rmtree(directory)
@@ -162,4 +164,31 @@ def test_an_old_stores_answer_never_says_saved_in_the_recreated_one(
     qtbot.waitUntil(lambda: settled(second) and script.computed == 1, timeout=WAIT)
     assert cast(AnalysisResult, second.shown).policy != DISK_CACHED
     assert results_saved() == 0  # Nothing saved in B under A's guard.
+    close(window)
+
+
+def test_a_store_is_free_only_once_the_app_wide_services_helpers_have_exited(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The Windows rerun above (WinError 32 deleting records.sqlite): a plot's Presets row reads
+    presets through the app-wide service, which the test's own ``cache.service.cache_busy()`` never
+    counted. Its helper kept as not exited, the test's service is idle but the store isn't free."""
+    from helab.utils.io_service import get_io_service
+    app = get_io_service()
+    held: list[IORequest] = []
+    forget = app._forget
+
+    def keep(request: IORequest) -> None:
+        if app.uses_cache(request):
+            held.append(request)
+        else:
+            forget(request)
+    monkeypatch.setattr(app, "_forget", keep)
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    first = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: saved(first) and bool(held) and not cache.service.cache_busy(), timeout=WAIT)
+    assert app.cache_busy() and not store_free(cache.service)  # (The old wait would delete it now.)
+    monkeypatch.setattr(app, "_forget", forget)
+    for request in held:
+        forget(request)
+    qtbot.waitUntil(lambda: store_free(cache.service), timeout=WAIT)
     close(window)

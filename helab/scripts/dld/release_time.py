@@ -84,7 +84,6 @@ N_BOOT = ParameterSpec("n_boot", "Shot bootstrap resamples (0 = off)", "int", N_
 CONSTANT_KEYS = ("fall_distance", "fall_time", "g")
 CONSTANTS = tuple(constants_specs(CONSTANT_KEYS))
 PARAMETERS = (*SHOT_SPECS, SEARCH_MIN, SEARCH_MAX, N_BOOT, *CONSTANTS)
-FOLDER_KEYS = ("arrival_time", "trap_x", "trap_y")  # what Use for this folder saves
 LIVE_NOTE = ("Live rerun: shot bootstrap skipped, so the SE is the fit's alone (within run), without the "
              "shot-to-shot jitter; Rerun (or Live's end) runs it")
 

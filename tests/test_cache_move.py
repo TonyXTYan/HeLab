@@ -295,7 +295,7 @@ def test_recovery_never_trusts_a_folder_now_somewhere_unsafe(
     setting = Setting(source)
     cache_move.move(cache_move.start(source, target, app, COPY), app, no_progress, never)  # Verified.
     # Meanwhile the target became a link into a synced folder.
-    monkeypatch.setattr(cache_move, "cache_location_problem",
+    monkeypatch.setattr("helab.utils.cache_location.cache_location_problem",
                         lambda path: "in a synced folder (Dropbox)" if path == target else "")
     assert "kept using" in cache_move.recover(app, setting.read, setting.write)
     assert setting.value == source and cache_move.valid_at(source, store_id)  # The safe source survives.
@@ -472,7 +472,7 @@ def test_the_target_is_checked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert "isn't empty" in cache_move.check_target(str(source), str(full))["problem"]
     synced = tmp_path / "Dropbox" / "caches"
     assert "in a synced folder (Dropbox)" in cache_move.check_target(str(source), str(synced))["problem"]
-    monkeypatch.setattr(cache_move, "cache_location_problem", lambda path: "on a network drive (smbfs)")
+    monkeypatch.setattr("helab.utils.cache_location.cache_location_problem", lambda path: "on a network drive (smbfs)")
     assert "on a network drive (smbfs)" in cache_move.check_target(str(source), str(tmp_path / "net"))["problem"]
     monkeypatch.undo()
     fine = cache_move.check_target(str(source), str(tmp_path / "new" / "caches"))
