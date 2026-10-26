@@ -240,6 +240,33 @@ screen"):
   Load as it is now → start Live again: the mismatch clears with the new data and Live runs on
   it, never the old shots.
 
+## Saved analysis results (result cache R2, added 2026-10-23)
+
+From `.ai/sessions/2026-10-22-claude-result-cache-r2/handoff.md` ("What Tony should check on
+screen"), on the Mac and on a lab PC:
+
+- [ ] A Correlations plot (radial) on a folder below a `.helab-root`: after it draws, its record
+  (source line tooltip) ends "saved in the disk cache". Quit, start, load the folder, open
+  Correlations again: it draws at once, "from disk cache, computed …".
+- [ ] Change a setting and Rerun: computes; change it back and Rerun: shown at once.
+- [ ] Edit the script file (a comment) or bump its version, reopen the plot: the old result shows
+  with the amber "outdated (script file changed): rerunning" line until the run ends.
+- [ ] Settings → Cache: the Cached analysis row (count, size); Clear… asks first; Clear all says
+  cached analysis stays. Settings → Data roots: Clear cached analysis… (button and right-click)
+  asks first and leaves the Cached column's data; Clear cached data… leaves the saved results.
+- [ ] Release time with the default 1,000-replicate bootstrap: the second open is instant.
+- [ ] A folder without a `.helab-root`: plots work as before, nothing saved (RAM only).
+- [ ] After a plot saves, its folder's row shows the grey REPORT badge after the data cache's; the
+  row tooltip and Folder details' cache line say "Cached analysis: 1 result, <size>". Reuse saved
+  analysis results off: the badge and lines go; on: back. Clear cached analysis…: they go.
+- [ ] With a small budget, Make room for a result removes the least recently shown other results;
+  a plot that recomputes one of those right after saves its newer copy (or asks its own Make
+  room), never refused.
+- [ ] While HeLab runs, move the cache folder's `store-v3` aside by hand. Open a Correlations
+  plot: it computes, and nothing claims "saved in disk cache" until the new store has answered.
+  Presets show "Reading saved presets…" or their names again, never an old store's.
+- [ ] On a lab PC, the lookup's helper start (Windows, ~0.1–0.5 s) still beats the runs.
+
 ## DLD front panel port (added 2026-10-20)
 
 Built and tested offscreen only, on `agent/dld-front-panel-port`

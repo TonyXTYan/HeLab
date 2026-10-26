@@ -100,7 +100,7 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   ([plan](analysis-workflow.md)) (2026-10-08; revised 2026-10-14).
 - [ ] Analysis result caching: RAM results (R1), then disk-cached one-off
   results with exact-match reuse (R2); Live stages follow
-  ([plan](result-caching.md)) (2026-10-15). R1 done (2026-10-19).
+  ([plan](result-caching.md)) (2026-10-15). R1 done (2026-10-19), R2 done (2026-10-23).
 - [x] Open plots count toward the RAM budget: 50 % status bar, 75 % window, 80 % release
   least recently shown plots (never closed; a picture with Reload from RAM or the
   local disk cache only) (Tony, 2026-10-19/20; landed 2026-10-20).

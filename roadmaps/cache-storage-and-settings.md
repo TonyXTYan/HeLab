@@ -596,6 +596,24 @@ found it removable with low to medium risk. The only visible change is one Debug
   to `dev/plotting-prototypes/` as unmaintained reference, not loaded by the app.
 - Docs: AGENTS.md's Threading, Caching and "earlier `HelabFileSystemModel`" paragraphs.
 
+## Saved analysis results (result caching R2, 2026-10-23)
+
+The result cache's own rules are in [result caching](result-caching.md); what it adds here:
+
+- **Store layout:** `results` (one row per folder `root://` key and exact lookup key, a new
+  `result_id` every save, `last_used`), `pending_results` (results waiting for Make room or
+  Discard) and `gen_results` in `meta`; data in `results/<uuid>.npz` (NumPy arrays and a JSON
+  tree, never a pickle). Older `store-v3` stores gain them on a writable open (`_migrate`).
+- **Settings → Cache:** a Cached analysis row (count, size, Clear…, purge by `last_used`) and
+  **Reuse saved analysis results** (`result_reuse`, on by default). Clear all leaves results.
+- **Settings → Data roots:** Clear cached analysis… per root (button and menu), beside Clear
+  cached data…, which leaves results.
+- **Budget:** results count toward the one disk budget; one that doesn't fit asks Make room
+  (least recently shown other results, never datasets) or Discard.
+- **Store identity:** presets and saved results follow one rule, `FolderCache.store_answer`: the
+  cache folder decides which store is in use, answers from another store wait for an identity
+  probe, and writes name their store ([AGENTS.md › Caching](../AGENTS.md)).
+
 ## Sessions
 
 Each row is one agent session ending in one or two commits (ask Tony first). Start a session by

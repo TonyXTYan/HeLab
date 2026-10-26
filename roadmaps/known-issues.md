@@ -37,40 +37,67 @@ How to use it:
   listing (FAT and some shares keep 2 s) isn't seen by the quick check until the folder's next
   change (the next shot) or a Retry / Refresh (R-1's residual, agreed with the reviewer)
   (2026-10-22).
+- [ ] `cache_move.verify` doesn't check saved results' files: they are copied with the cache
+  folder but not verified. Add `SELECT file, bytes FROM results` beside datasets (Result Cache R2,
+  2026-10-23).
+- [ ] A folder whose data root is forgotten while HeLab runs keeps its last saved-result count in
+  memory, hidden, until a listing says otherwise (Result Cache R2, 2026-10-23).
+- [ ] An identity probe (`cache_admin identity`) waits its turn in the local lane (2 processes).
+  Behind long local work it starts late, and only its no-progress timeout is capped, so quitting
+  waits that long (Quit now skips it) (Result Cache R2, 2026-10-23).
 
 ## Tests and CI
 
-- [ ] `test_presets_window.py::test_a_live_off_preset_turns_live_off_in_a_real_tab` reran once on
-  Ubuntu CI (2026-10-23, run 39814028933, its first CI run): "worker 'gw2' crashed" ("node down:
-  Not properly terminated"), no traceback and no faulthandler output, so a native crash or the
-  process killed. It passed on the rerun and in 8 local runs (macOS, `-n 4`). It builds the real
-  `HelabMainWindow` offscreen with two arrangement presets. Cause unknown.
+- [ ] `test_result_cache_quit.py::test_an_old_stores_answer_never_says_saved_in_the_recreated_one`
+  failed on Windows CI in all 6 attempts (2026-10-23, run 39906031010, dev at `5617381`): its
+  `shutil.rmtree` of `store-v3` (line 150, "recreating" the store) raised WinError 32, since
+  `records.sqlite` was still open in another process. It passed on Windows at `8794d82` (run
+  39899355683). Probably the test deleting the store while a helper still holds it (Windows can't
+  delete open files); being fixed on the Windows Store Test floor.
 - [ ] `test_plot_settings_panel.py::test_activation_sources` reran once on macOS CI; it didn't
   fail in 60 local runs under load (2026-10-21). The Windows rerun was the web-view crash
   (fixed, below); the macOS rerun (`f9faefd`) was a teardown failure, cause unknown, and 160 local
-  runs passed. CI now prints rerun reasons: read them at its next rerun (2026-10-22).
-- [ ] `test_cache_first.py::test_a_folder_changed_within_its_mtime_tick_is_listed[cached]` reran
-  in 2 of the 9 CI runs that have it (2026-10-22: run 39731793369, Ubuntu once and Windows twice;
-  39734271694, Windows once): `assert <mtime> is None` at line 841. Probable cause, unconfirmed
-  (no traceback of the first attempt): the test sets the folder's mtime to the start of the
-  current 2 s step, spending 0 to 2 s of `RACY_SECONDS` before the first load, so a slow runner
-  records a real mtime. A test-only fix (a wider `RACY_SECONDS` in this test) is saved, not
-  applied (Codebase Review findings, R-23).
-- [ ] `test_live_plots.py::test_a_following_scatter_updates_its_page_in_place` reran once on
+  runs passed. CI now prints rerun reasons: read them at its next rerun (2026-10-22). No rerun
+  in the 23 CI runs to 2026-10-23; a frameless Qt exception there now names where the event
+  loop ran (`e326fdf`).
+- [ ] `test_live_plots.py::test_a_following_scatter_updates_its_page_in_place` reran on
   Ubuntu CI (2026-10-22, run 39731793369): teardown error "Exceptions caught in Qt event loop:
-  TypeError: 'NoneType' object is not callable". Cause unknown.
-- [ ] `test_live_io.py::test_a_live_check_pauses_background_work_only_while_it_reads` reran once
-  on Windows CI (2026-10-22, run 39731793369): `waitUntil` timed out in 10 s at line 102. Cause
-  unknown.
-- [ ] `test_io_service_run.py::test_a_helper_that_dies_leaves_what_it_said_in_the_log` reran twice
-  on macOS CI (2026-10-22, run 39734426913): the helper's error was "[Errno 32] Broken pipe", not
-  the expected "I/O helper exited unexpectedly" (line 79). Cause unknown.
+  TypeError: 'NoneType' object is not callable", again in run 39880474971 (2 of 23 Ubuntu jobs).
+  No traceback, so raised by Qt from C. Not reproduced (12 module runs and 11 full suites in a
+  Linux container, Quick Fixes 2026-10-23). Such an exception now gets a note naming the code
+  that was running Qt's event loop (`e326fdf`): read it in the next rerun's reasons.
 
-Tony (2026-10-22): note these four, no fixes for now; raise them again only if they keep
+Tony (2026-10-22): note these, no fixes for now; raise them again only if they keep
 happening. Counted over the last 12 CI runs from `gh api repos/TonyXTYan/HeLab/actions/jobs/<id>/logs`
-(whose Windows logs include the test output; `gh run view --log` can return nothing).
+(whose Windows logs include the test output; `gh run view --log` can return nothing). The Quick
+Fixes floor (2026-10-23) fixed four (below). A "worker crashed" on CI with no traceback is usually
+CI's 120 s timeout, whose stacks `faulthandler_timeout` now prints.
 
 ## Fixed
+
+Landed in `dev/v0.0.6` from the Quick Fixes floor (2026-10-23; notes:
+`.ai/sessions/2026-10-23-claude-quick-fixes/notes.md`):
+
+- [x] `test_presets_window.py::test_a_live_off_preset_turns_live_off_in_a_real_tab` "worker
+  crashed" on Ubuntu and Windows CI was a hang killed by CI's 120 s timeout (whose stacks xdist
+  drops): an earlier test closed its window while a preset was being written, leaving the app-wide
+  FolderCache quitting for the next test, whose preset was refused and whose `apply` waited on a
+  modal warning. Reproduced in a Linux container. Tests wait for the window to quit, conftest shuts
+  a quitting cache's service down after each test, and `faulthandler_timeout = 100` dumps the
+  stacks of any later hang (`66b771a`).
+- [x] `test_io_service_run.py::test_a_helper_that_dies_leaves_what_it_said_in_the_log`'s macOS
+  reruns ("[Errno 32] Broken pipe"): a helper that exited before its request was written made the
+  write raise, so the error named the pipe and its stderr wasn't logged. The app now treats that
+  as the helper having exited (its stderr logged); the test covers both orders (`6597740`).
+- [x] `test_cache_first.py::test_a_folder_changed_within_its_mtime_tick_is_listed[cached]` (7
+  reruns in 4 CI jobs, mostly Windows): the test's 2 s tick spent up to all of the 2 s
+  `RACY_SECONDS` margin before its first listing; it now uses 30 s while the mtime is the tick
+  (R-23; `73ec41b`).
+- [x] (watch) `test_live_io.py::test_a_live_check_pauses_background_work_only_while_it_reads`'s
+  Windows rerun was at `finished()`'s 10 s wait for a Live check's `done` (line 102): probably the
+  check's 201 reads on a slow Windows runner (this test takes 4.7 to 11.9 s there, 1.7 to 3.9 s on
+  Ubuntu). The wait now fails only after 10 s without an event from the check, naming what it had
+  done (`6dcf8f2`); a failure after that is a stall, and says where.
 
 Landed in `dev/v0.0.6` from the Presets Reopen floor (merge `c204d4b`, 2026-10-23):
 
