@@ -370,8 +370,9 @@ class CachedRuns(QObject):
         if not isinstance(kinds, list) or "results" not in kinds:
             return
         for entry in self._lookups.values():
-            # A run started before its guard (``late``): this removal came after the run began.
-            if entry.late and not entry.answered and (
+            # A run that started before its guard (``late``, or a script holding state: its run starts
+            # with the lookup; Sextant's review): this removal came after the run began.
+            if not entry.wait and not entry.answered and (
                     paths is None or self.cache.key(entry.view.identity.source_path) in paths):
                 entry.fenced = True
         if not self._closed():
@@ -436,7 +437,9 @@ class CachedRuns(QObject):
         elif kind == "error":
             message = str(event.get("message") or "unknown error")
             logging.warning("%s: the disk cache's saved results couldn't be read: %s", self.name, message)
-            self._note(f"the disk cache couldn't be read ({message}): computing")
+            # (A run already going, a late lookup's or a script's holding state, computes anyway.)
+            self._note(f"the disk cache couldn't be read ({message}): "
+                       + ("computing" if entry.wait else "this result isn't saved"))
         if entry.wait and not shown:
             self._run(entry.context)
         if entry.waiting is not None:

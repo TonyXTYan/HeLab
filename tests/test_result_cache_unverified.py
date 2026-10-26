@@ -161,6 +161,33 @@ def test_a_clear_after_the_run_started_voids_its_late_save(
     close(window)
 
 
+class Holding(Costly):
+    """A script that keeps state for its plot: its run starts with the lookup, before the guard."""
+
+    def cache_holds_state(self, action_name: str, owner: str) -> bool:
+        return True
+
+    def cache_result(self, action_name: str, result: AnalysisResult) -> bool:
+        return True
+
+
+def test_a_clear_voids_the_late_save_of_a_script_holding_state(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Sextant's review of item 9: a holds-state run starts before its guard whether or not the
+    lookup was refused, so a Clear after it started fences its late guard too."""
+    waits(monkeypatch, 30.0, 60.0)
+    refuse_first(cache, monkeypatch, "result_find")
+    script = Holding()
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    plot = open_plot(window, qtbot, folder_view(tmp_path), script)
+    qtbot.waitUntil(lambda: settled(plot) and script.computed == 1, timeout=WAIT)
+    cache.cacheRemoved.emit(None, ["results"])
+    cache.volumesVerified.emit()
+    qtbot.wait(1500)
+    assert results_saved() == 0 and not saved(plot)
+    close(window)
+
+
 def test_a_refused_save_left_unsaved_says_so_in_the_amber_line(
         qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     waits(monkeypatch, 0.2, 0.6)
