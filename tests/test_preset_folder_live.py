@@ -5,17 +5,30 @@ as "another folder was selected"."""
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Iterator
 
 import pytest
 from PyQt6 import QtWebEngineWidgets  # noqa: F401
 from pytestqt.qtbot import QtBot
 
 from helab.analysis.presets import Arrangement, SavedPlot, ScriptRef
+from helab.utils import folder_cache, io_service
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import get_io_service
 from helab.views.plots.presets import write_arrangement
 from test_live import write_shot
 from test_presets_window import quit_window
+
+
+@pytest.fixture(autouse=True)
+def back_online() -> Iterator[None]:
+    """Every test ends online: the app's IOService and FolderCache last the worker's run, and one
+    left working offline made the worker's next real-window tests offline (CI, e35df6f)."""
+    yield
+    service = io_service._service
+    if service is not None and service.folder_cache is not None and service.folder_cache.offline:
+        service.folder_cache.set_offline(False)
+    folder_cache._offline = False
 
 
 def window_and_tab(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> tuple[object, object, list[str]]:
@@ -63,11 +76,14 @@ def test_offline_a_folder_never_listed_is_named_as_such(qtbot: QtBot, tmp_path: 
     window, explorer, notices = window_and_tab(qtbot, monkeypatch)
     assert isinstance(window, HelabMainWindow) and isinstance(explorer, FolderExplorer)
     window.set_work_offline(True)
-    assert get_folder_cache(get_io_service()).offline
-    window.arrangement_presets.apply("p")
-    qtbot.waitUntil(lambda: any(notice.startswith("Preset “p”") for notice in notices), timeout=30_000)
-    said = [notice for notice in notices if notice.startswith("Preset “p”")]
-    assert said == ["Preset “p”: run can't be opened while working offline (not listed while online): "
-                    "its plots wait for its data"], notices
-    assert explorer.live is None
+    try:
+        assert get_folder_cache(get_io_service()).offline
+        window.arrangement_presets.apply("p")
+        qtbot.waitUntil(lambda: any(notice.startswith("Preset “p”") for notice in notices), timeout=30_000)
+        said = [notice for notice in notices if notice.startswith("Preset “p”")]
+        assert said == ["Preset “p”: run can't be opened while working offline (not listed while online): "
+                        "its plots wait for its data"], notices
+        assert explorer.live is None
+    finally:
+        window.set_work_offline(False)
     quit_window(qtbot, window)

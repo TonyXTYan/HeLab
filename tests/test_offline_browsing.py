@@ -255,7 +255,9 @@ def test_a_source_request_left_queued_is_refused_as_it_starts(
         service.offline = True  # (As if queued in a gap: set_offline cancels queued ones itself.)
         service.pending.append(request)
         service._dispatch()
-        assert request.cancelled.is_set() and request not in service.active and not no_source_io
+        # (Only this request: the app's own IOService, which lasts the worker's run, may start its
+        # local-lane work meanwhile, and no_source_io sees every service's starts.)
+        assert request.cancelled.is_set() and request not in service.active and request not in no_source_io
     finally:
         service.shutdown()
 
