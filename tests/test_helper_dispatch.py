@@ -20,6 +20,7 @@ from helab import io_helper
 from helab.io_ops import infra, stores
 from helab.io_ops.fingerprints import DEFAULT_CHECK_LEVEL
 from helab.utils.data_roots import VolumeUnverified
+from helab.utils.io_service import IOService
 
 Call = tuple[str, tuple[Any, ...], dict[str, Any]]
 
@@ -244,6 +245,32 @@ def test_cache_only_operations_are_refused_without_the_cache(
     events = send(monkeypatch, capsys, request)
     assert events == [{"kind": "error", "message": "The disk cache is off for this session"}]
     assert not calls
+
+
+def test_the_helpers_cache_only_operations_are_the_apps_cache_operations() -> None:
+    """Every operation the app counts as opening the disk cache (a cache move holds it) is refused
+    without it; the helper's other two, the marker writes, carry the cache in their payload, which
+    the app counts too (``IOService.uses_cache``)."""
+    assert set(IOService.CACHE_OPERATIONS) <= set(io_helper.CACHE_ONLY)
+    assert set(io_helper.CACHE_ONLY) - set(IOService.CACHE_OPERATIONS) == {"root_reassign", "root_remove"}
+
+
+@pytest.mark.parametrize(("request_", "handler", "args", "kwargs"),
+                         [route for route in ROUTES if "cache" in route[0]],
+                         ids=[f"{route[0]['operation']}-{index}" for index, route in enumerate(ROUTES)
+                              if "cache" in route[0]])
+def test_an_operation_sent_without_the_cache_is_refused_or_runs_without_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], calls: list[Call],
+    request_: dict[str, Any], handler: str, args: tuple[Any, ...], kwargs: dict[str, Any],
+) -> None:
+    """Never a vague ``KeyError: 'cache'`` from a handler's arguments."""
+    request = {key: value for key, value in request_.items() if key != "cache"}
+    events = send(monkeypatch, capsys, request)
+    if request["operation"] in io_helper.CACHE_ONLY:
+        assert events == [{"kind": "error", "message": "The disk cache is off for this session"}]
+        assert not calls
+    else:
+        assert events == [{"kind": "done"}] and [call[0] for call in calls] == [handler]
 
 
 def test_an_unknown_operation_is_an_error(
