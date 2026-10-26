@@ -304,6 +304,11 @@ transparent.
       checks the inverted rule: a share hinted at a folder of the system drive (`C:\shares\lab`)
       stays usable offline, and a drive attached now (`D:`) wins over a hint below it.
     - Local full suite: 4428 passed, 2 skipped, no RERUN.
+- **40281098149 (`6d1c434`, with the test fix and the flaky-test entry): success, no RERUN on any
+  OS.** Builds passed on all three.
+  - **macOS:** 4428 passed, 2 skipped.
+  - **Ubuntu:** 4426 passed, 4 skipped.
+  - **Windows:** 4401 passed, 25 skipped (the usual 18 plus the 7 POSIX-only mount tests).
 
 Proposed AGENTS.md addition: "Work Offline stops a finished load's cache write, which re-reads the
 folder; its data stays in RAM and its next online load saves it."
