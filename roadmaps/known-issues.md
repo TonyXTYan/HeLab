@@ -48,12 +48,6 @@ How to use it:
 
 ## Tests and CI
 
-- [ ] `test_result_cache_quit.py::test_an_old_stores_answer_never_says_saved_in_the_recreated_one`
-  failed on Windows CI in all 6 attempts (2026-10-23, run 39906031010, dev at `5617381`): its
-  `shutil.rmtree` of `store-v3` (line 150, "recreating" the store) raised WinError 32, since
-  `records.sqlite` was still open in another process. It passed on Windows at `8794d82` (run
-  39899355683). Probably the test deleting the store while a helper still holds it (Windows can't
-  delete open files); being fixed on the Windows Store Test floor.
 - [ ] `test_plot_settings_panel.py::test_activation_sources` reran once on macOS CI; it didn't
   fail in 60 local runs under load (2026-10-21). The Windows rerun was the web-view crash
   (fixed, below); the macOS rerun (`f9faefd`) was a teardown failure, cause unknown, and 160 local
@@ -74,6 +68,21 @@ Fixes floor (2026-10-23) fixed four (below). A "worker crashed" on CI with no tr
 CI's 120 s timeout, whose stacks `faulthandler_timeout` now prints.
 
 ## Fixed
+
+Landed in `dev/v0.0.6` from the Windows Store Test floor (fast-forward to `8a4049d`, 2026-10-26;
+notes: `.ai/sessions/2026-10-26-claude-windows-store-test/notes.md`):
+
+- [x] `test_result_cache_quit.py::test_an_old_stores_answer_never_says_saved_in_the_recreated_one`
+  failed on Windows CI in every attempt (run 39906031010; WinError 32 deleting `store-v3`). The test
+  deleted the store as soon as the lookup's `result_found` arrived, which is sent with the store
+  still open, and its wait (not in `pending`) held as soon as the helper started. It now waits for
+  `IOService.cache_busy()` to clear first. Test only; the race was there since `78b8bad`
+  (`8195fc7`).
+- [x] `test_row_tooltip.py::test_row_tooltip[cache outdated]` / `[checked, outdated]` failed
+  whenever the module ran 10+ min after collection (Windows CI run 40260907064, whose reruns ran
+  the step past its 20 min limit): expectations stamped at import ("1h ago") against ages taken at
+  run time ("2h ago"). The test now freezes `time.time` at the moment they were stamped
+  (`5a63fd5`).
 
 Landed in `dev/v0.0.6` from the Quick Fixes floor (2026-10-23; notes:
 `.ai/sessions/2026-10-23-claude-quick-fixes/notes.md`):
