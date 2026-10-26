@@ -322,6 +322,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
     # what the disk cache said of the last run (not saved, couldn't be read) for the status line.
     _cache_note = ""
     _cache_status = ""
+    # What applying saved settings did, for a script with no parameters (``note_saved``): on the
+    # status line, after each run too.
+    _reopen_note = ""
     # The amber line's note when the last run's result couldn't be saved because its drive
     # couldn't be checked (``CachedRuns``' ``warn``); a new run or a save clears it.
     _save_note = ""
@@ -539,7 +542,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
                 return
             content = self._message(f"{self.name} failed: {error}")
         else:
-            self.status_label.setText(" · ".join(filter(None, (f"⚠ {warnings}" if warnings else "",
+            self.status_label.setText(" · ".join(filter(None, (self._reopen_note,
+                                                               f"⚠ {warnings}" if warnings else "",
                                                                self._cache_status and f"⚠ {self._cache_status}"))))
         assert content is not None
         self.error = ""
@@ -677,12 +681,25 @@ class AnalysisInstance(LinkedAnalysisInstance):
         for spec in live_specs(self.policy):
             if spec.name in check.live:
                 parameter_of(root, spec).setValue(check.live[spec.name])
-        if self.presets is not None:
-            if isinstance(saved, ScriptPreset):
-                self.presets.set_note(f"Preset “{saved.name}”", check, kept)
-            else:  # Reopened: said only if a setting wasn't restored, or the script changed.
-                self.presets.set_note("Reopened", check, kept, quiet=True)
+        if isinstance(saved, ScriptPreset):
+            self.note_saved(f"Preset “{saved.name}”", check, kept)
+        else:  # Reopened: said only if a setting wasn't restored, or the script changed.
+            self.note_saved("Reopened", check, kept, quiet=True)
         return check
+
+    def note_saved(self, what: str, check: PlotCheck, kept: str, quiet: bool = False) -> None:
+        """Say what applying saved settings did (``PresetBar.set_note``) in the Presets row, or, for a
+        script with no parameters (no Presets row), on the plot's status line (Tony, 2026-10-26):
+        e.g. "Reopened · Library not restored", kept there after its runs."""
+        if self.presets is not None:
+            self.presets.set_note(what, check, kept, quiet=quiet)
+            return
+        summary = check.summary(kept)
+        if quiet and not summary:
+            return
+        self._reopen_note = " · ".join(filter(None, (f"{what} applied" if not quiet else what, summary)))
+        self.status_label.setText(self._reopen_note)
+        self.status_label.setToolTip(check.details() or self._reopen_note)
 
     def saved_plot(self) -> SavedPlot:
         """The plot as an arrangement records it (its place is added by ``arrangement.capture``)."""
@@ -723,7 +740,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         message = self._waiting_message
         if message is not None and not sip.isdeleted(message) and self.waiting():
             message.setText(text)
-            self.status_label.setText(text)
+            self.status_label.setText(" · ".join(filter(None, (self._reopen_note, text))))
         self._show_follow()
 
     def _end_wait(self) -> None:

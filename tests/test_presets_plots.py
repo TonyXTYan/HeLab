@@ -1685,3 +1685,44 @@ def test_the_cache_tabs_presets_line_lets_go_of_the_store_with_its_label(qtbot: 
     label.deleteLater()
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
     assert store.receivers(store.presetsChanged) == before
+
+
+def test_the_inspector_names_a_refused_or_ram_only_change(qtbot: QtBot, cache: FolderCache, windows: Windows,
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-23 (Tony, 2026-10-26): as PresetBar does, the inspector's note line names a change refused
+    (HeLab quitting: nothing changed) or kept in RAM only for now; one saved says nothing."""
+    from helab.views.PresetsInspector import PresetsInspector
+    ref = ScriptRef("tests.counted", "Plot", "1", "", "Counted")
+    write_script_preset(ScriptPreset("fast", ref, {"bins": 5}, "", 1.0))
+    store = preset_store()
+    inspector = PresetsInspector(store)
+    qtbot.addWidget(inspector)
+    choose(inspector, "fast")
+    inspector.ask_name = lambda *_: "quick"
+    monkeypatch.setattr(store, "quitting", True)
+    inspector.rename()
+    assert inspector.note.text().startswith("⚠ “fast” not renamed: HeLab is quitting")
+    assert read_script_presets(ref).names() == ["fast"]
+    monkeypatch.setattr(store, "quitting", False)
+    set_presets = store.set_presets
+    monkeypatch.setattr(store, "set_presets", lambda rows: (set_presets(rows), "RAM only: the disk cache is off")[1])
+    choose(inspector, "fast")
+    inspector.rename()
+    assert inspector.note.text().startswith("Renamed “fast” to “quick” (RAM only: the disk cache is off)")
+    monkeypatch.setattr(store, "set_presets", set_presets)
+    choose(inspector, "quick")
+    inspector.ask_name = lambda *_: "quick copy"
+    inspector.duplicate()
+    assert "quick copy" not in inspector.note.text()  # Saved: nothing to say.
+
+
+def test_a_parameterless_scripts_reopen_note_is_on_its_status_line(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-23 (Tony, 2026-10-26): a script with no parameters has no Presets row, so what its reopen
+    couldn't restore (here: saved with another version of the script) goes on its status line."""
+    monkeypatch.setattr(Counted, "parameters", lambda self, action_name: [])
+    window = new_window(qtbot, cache, windows)
+    saved = full(window, ScriptRef("tests.counted", "Plot", "0", "", "Counted"), folder("run"))
+    made = window.scripts.reopen_plot(saved, FolderWait(cache, folder("run")))
+    assert isinstance(made, AnalysisInstance) and made.presets is None
+    assert made.status_label.text().startswith("Reopened · saved with v0, now v1")  # (Then its waiting.)

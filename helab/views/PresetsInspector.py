@@ -30,9 +30,9 @@ from helab.analysis.presets import (Arrangement, PlotCheck, RecordError, SavedPl
                                     check_plot, check_value, parse)
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.colours import AMBER
-from helab.utils.folder_cache import FolderCache
+from helab.utils.folder_cache import QUITTING, FolderCache
 from helab.views.plots.arrangement import folder_name
-from helab.views.plots.presets import ARRANGEMENT, SCRIPT, ask_name, confirm, preset_store
+from helab.views.plots.presets import ARRANGEMENT, SCRIPT, ask_name, confirm, preset_store, saved_note
 
 Found = Union[Tuple[ScriptMetadata, DatasetAnalysis], str]
 ScriptFinder = Callable[[ScriptRef], Found]
@@ -192,6 +192,9 @@ class PresetsInspector(QDialog):
         layout.addLayout(buttons)
         self.entries: dict[int, Entry] = {}
         self._items: dict[int, QTreeWidgetItem] = {}
+        # What the last rename, duplicate or delete came to, when it was refused or kept in RAM
+        # only (as ``PresetBar`` says; Tony, 2026-10-26): before the store's own note.
+        self._said = ""
         self.cache.presetsChanged.connect(self.refresh)
         self.refresh()
         self.cache.read_presets()  # Another HeLab may have changed them; listed again when it answers.
@@ -203,8 +206,9 @@ class PresetsInspector(QDialog):
         if sip.isdeleted(self):
             return
         chosen = self.selected()
-        self.note.setText(self.cache.presets_note())
-        self.note.setStyleSheet(f"color: {AMBER};" if self.cache.presets_note().startswith("⚠") else "")
+        store_note = self.cache.presets_note()
+        self.note.setText(" · ".join(filter(None, (self._said, store_note))))
+        self.note.setStyleSheet(f"color: {AMBER};" if (self._said or store_note).startswith("⚠") else "")
         self.note.setVisible(bool(self.note.text()))
         self.tree.clear()
         self.entries.clear()
@@ -315,8 +319,9 @@ class PresetsInspector(QDialog):
         name = self.ask_name(self, "Rename preset", f"Rename “{entry.name}” to:", entry.name)
         if not name or name == entry.name or self._taken(entry, name):
             return
-        self.cache.set_presets([(entry.kind, entry.scope, entry.name, None),
-                                (entry.kind, entry.scope, name, entry.text)])
+        why = self.cache.set_presets([(entry.kind, entry.scope, entry.name, None),
+                                      (entry.kind, entry.scope, name, entry.text)])
+        self._say(why, f"“{entry.name}” not renamed", f"Renamed “{entry.name}” to “{name}”")
 
     def duplicate(self) -> None:
         entry = self.selected()
@@ -325,7 +330,8 @@ class PresetsInspector(QDialog):
         name = self.ask_name(self, "Duplicate preset", f"Save a copy of “{entry.name}” as:", f"{entry.name} copy")
         if not name or name == entry.name or self._taken(entry, name):
             return
-        self.cache.set_presets([(entry.kind, entry.scope, name, entry.text)])
+        why = self.cache.set_presets([(entry.kind, entry.scope, name, entry.text)])
+        self._say(why, f"“{entry.name}” not duplicated", f"Duplicated “{entry.name}” as “{name}”")
 
     def delete(self) -> None:
         entry = self.selected()
@@ -333,4 +339,11 @@ class PresetsInspector(QDialog):
                 self, "Delete preset?", f"Delete the preset “{entry.name}”? Open plots keep their settings.",
                 "Delete"):
             return
-        self.cache.set_presets([(entry.kind, entry.scope, entry.name, None)])
+        why = self.cache.set_presets([(entry.kind, entry.scope, entry.name, None)])
+        self._say(why, f"“{entry.name}” not deleted", f"Deleted “{entry.name}”")
+
+    def _say(self, why: str, refused: str, done: str) -> None:
+        """The change's outcome on the note line when there is something to say: refused (HeLab
+        quitting: nothing changed), or kept in RAM only for now (``saved_note``)."""
+        self._said = (f"⚠ {refused}: {why}" if why == QUITTING else f"{done}{saved_note(why)}" if why else "")
+        self.refresh()

@@ -702,9 +702,9 @@ class ArrangementPresets(QObject):
             # Its values are the arrangement's own; the script preset they came from may have changed.
             note = preset_note(saved, presets.get(saved.script))
             check = instance.reopen_check
-            if note and instance.presets is not None and check is not None:
-                instance.presets.set_note(f"Preset “{name}”", dataclasses.replace(check, notes=(*check.notes, note)),
-                                          "at the script's defaults", quiet=True)
+            if note and check is not None:
+                instance.note_saved(f"Preset “{name}”", dataclasses.replace(check, notes=(*check.notes, note)),
+                                    "at the script's defaults", quiet=True)
         if arrangement.layout_error:
             self.plots.notice(f"Preset “{name}”: its plots are in their tab groups: {arrangement.layout_error}")
         missing = [f"{saved.script.label()} ({why})" for saved, why in failed]
