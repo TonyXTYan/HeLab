@@ -175,21 +175,21 @@ def test_a_store_is_free_only_once_the_app_wide_services_helpers_have_exited(
     from helab.utils.io_service import get_io_service
     app = get_io_service()
     held: list[IORequest] = []
-    forget = app._forget
+    reap = app._reap
 
-    def keep(request: IORequest) -> None:
+    def keep(request: IORequest) -> None:  # (Its exit not confirmed: the reaper hasn't seen it.)
         if app.uses_cache(request):
             held.append(request)
         else:
-            forget(request)
-    monkeypatch.setattr(app, "_forget", keep)
+            reap(request)
+    monkeypatch.setattr(app, "_reap", keep)
     window = make_window(qtbot, cache, tmp_path, monkeypatch)
     first = open_plot(window, qtbot, folder_view(tmp_path), Costly())
     qtbot.waitUntil(lambda: saved(first) and bool(held) and not cache.service.cache_busy(), timeout=WAIT)
     assert app.cache_busy() and not store_free(cache.service)  # (The old wait would delete it now.)
-    monkeypatch.setattr(app, "_forget", forget)
+    monkeypatch.setattr(app, "_reap", reap)
     for request in held:
-        forget(request)
+        reap(request)
     qtbot.waitUntil(lambda: store_free(cache.service), timeout=WAIT)
     close(window)
 

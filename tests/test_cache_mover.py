@@ -90,6 +90,22 @@ def test_a_hold_stops_and_holds_every_helper_that_opens_the_cache(monkeypatch: p
         service.shutdown()
 
 
+def test_a_closed_service_is_free_once_its_helpers_have_exited() -> None:
+    """Shutting down stops the timer that frees a stopped helper's slot (``_forget``), so the
+    request stays retired: the reaper's exit flag alone says the cache is free. The app-wide
+    service shut down by one test with a presets read running stayed busy for the worker's whole
+    run, and the next test waiting for ``store_free`` timed out on every attempt."""
+    service = IOService()
+    service.timer.stop()
+    request = IORequest("a", 0, "/x", "cache_admin", {"cache": {"directory": "/old"}, "action": "presets"}, 60.0)
+    request.process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], text=True)
+    service.active.append(request)
+    assert service.cache_busy()
+    service.shutdown()  # (As a test's main window quitting does, to the app-wide one.)
+    qtbot_wait(request.exited.is_set)
+    assert request in service.retired and not service.cache_busy()
+
+
 # The locks
 
 HOLD = "import sys, time\nfrom helab.utils.cache_locks import FileLock\nlock = FileLock(sys.argv[1])\n" \

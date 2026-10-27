@@ -403,8 +403,10 @@ class IOService(QObject):
         self.activityChanged.emit()
 
     def cache_busy(self) -> bool:
-        """Whether a helper that opens the disk cache is still running or not yet confirmed exited."""
-        return any(self.uses_cache(request) for request in (*self.active, *self.retired))
+        """Whether a helper that opens the disk cache is still running or not yet confirmed exited:
+        by the reaper's exit flag, not by its slot, which a shut-down service never frees."""
+        return any(self.uses_cache(request) and not request.exited.is_set()
+                   for request in (*self.active, *self.retired))
 
     def release_cache(self) -> None:
         self.cache_hold = False
