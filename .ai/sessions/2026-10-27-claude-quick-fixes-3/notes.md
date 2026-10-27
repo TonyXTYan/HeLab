@@ -53,7 +53,11 @@ never updates, still held them.
 - `helab/utils/io_service.py`, `IOService.cache_busy()`: counts a request only while
   `request.exited` isn't set (set by `_reap` after `process.wait()`, or by `_run` when no process
   started). A helper still running or not yet reaped still counts, so `store_free` keeps
-  `5607182`'s Windows protection (no store deleted while a helper has it open). In the app, the
+  `5607182`'s rule (no store deleted before every helper's exit is confirmed). It can't promise
+  more than that rule did: on a Windows venv install the process waited for can be the
+  `python.exe` redirector, whose interpreter child may hold store files a moment after the parent
+  exits (already listed in known-issues, "Windows cache moves on a venv install"; Feeler's review,
+  P2). In the app, the
   cache mover's wait (`CacheMover._start_when_stopped`) may go on up to one timer tick sooner, once
   the process has been waited for; slots are still freed only by `_forget`, unchanged.
 - `tests/test_cache_mover.py::test_a_closed_service_is_free_once_its_helpers_have_exited`: a shut
@@ -66,7 +70,8 @@ never updates, still held them.
 
 Alternatives not taken: clearing the closed service from `store_free` (would drop the Windows
 protection for a closed service's still-running helpers), or making `get_io_service` / a fixture
-replace a closed service (hides the wrong answer `cache_busy()` gives rather than fixing it).
+replace a closed service (hides the wrong answer `cache_busy()` gives rather than fixing it, and
+would forget helpers still running against the store).
 
 ### Checks
 
@@ -86,3 +91,13 @@ At `12338a3`, macOS, `--basetemp=.ai/temp/pytest`:
   `cache_busy()` counted them though their exit was confirmed, so `store_free()` stayed False for
   the rest of that worker's run. `cache_busy()` now goes by the reaper's `exited` flag
   (`agent/quick-fixes-3` `12338a3`, 2026-10-27).
+
+### Proposed follow-up line (open, Tests and CI; Feeler's review, P3; not fixed here)
+
+- [ ] A test that closes a real main window leaves the app-wide IOService closed in
+  `io_service._service`, its retired requests never forgotten (timer stopped), until the next
+  `get_io_service()` replaces it; and a live app-wide service (and its FolderCache) lasts the
+  worker's run, so its timers and helpers can work against later tests' private stores. Tests
+  should start each with a fresh or quiesced app-wide service, but a closed one must not simply be
+  reset: wait for its old helpers' exits first (`cache_busy()`), or their store may still be open
+  (found by `agent/quick-fixes-3`, 2026-10-27).
