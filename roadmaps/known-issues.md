@@ -48,12 +48,13 @@ How to use it:
 
 ## Tests and CI
 
-- [ ] `test_store_identity.py::test_a_store_in_the_folder_whatever_its_age_ends_quit` failed all
-  6 attempts in 2 of 3 local full runs on Ground at `797cd02` (macOS, `-n 12`; 2026-10-26):
-  `waitUntil` timed out in 30 s at line 317, waiting for `presets_read`, no preset jobs and
-  `store_free(service)`. CI (`-n 4`) and the floor's runs passed. Suspect: `store_free` also counts
-  the app-wide IOService (`5607182`), which under more workers can stay busy past 30 s with
-  another test's helpers. Not yet investigated.
+- [ ] A test that closes a real main window leaves the app-wide IOService closed in
+  `io_service._service`, its retired requests never forgotten (timer stopped), until the next
+  `get_io_service()` replaces it; and a live app-wide service (and its FolderCache) lasts the
+  worker's run, so its timers and helpers can work against later tests' private stores. Tests
+  should start each with a fresh or quiesced app-wide service, but a closed one must not simply be
+  reset: wait for its old helpers' exits first (`cache_busy()`), or their store may still be open
+  (found by `agent/quick-fixes-3`, Feeler's review, 2026-10-27).
 - [ ] `test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]`
   reran once on macOS CI (2026-10-26, run 40279097363, `276e571`): `assert 'Cached data loaded ·
   Cached just now · Freshness unknown' == 'Cached data loaded · Cached just now'` (line 413). Likely
@@ -76,6 +77,16 @@ Fixes floor (2026-10-23) fixed four (below). A "worker crashed" on CI with no tr
 CI's 120 s timeout, whose stacks `faulthandler_timeout` now prints.
 
 ## Fixed
+
+Landed in `dev/v0.0.6` from the Quick Fixes 3 floor (fast-forward to `4a63827`, 2026-10-28;
+notes: `.ai/sessions/2026-10-27-claude-quick-fixes-3/notes.md`):
+
+- [x] `test_store_identity.py::test_a_store_in_the_folder_whatever_its_age_ends_quit` timed out
+  on every attempt at `-n 12` (2026-10-26): a test closing a real main window shuts down the
+  app-wide IOService, whose stopped timer never frees its retired helpers' slots, and
+  `cache_busy()` counted them though their exit was confirmed, so `store_free()` stayed False for
+  the rest of that worker's run. `cache_busy()` now goes by the reaper's `exited` flag
+  (`12338a3`, 2026-10-27).
 
 Landed in `dev/v0.0.6` from the Codebase Review 2 floor (merge `7327808` at `9e88874`, then
 fast-forward to `797cd02`, 2026-10-26; findings, notes and handoff:
