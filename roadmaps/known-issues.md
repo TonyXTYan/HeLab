@@ -46,6 +46,23 @@ How to use it:
   rename could hit WinError 32 now and then (lab PCs, CI). The move's verify and recovery catch it,
   but the user sees a failed move. Frozen builds don't have this (Codebase Review 2, 2026-10-26).
 
+- [ ] From the computer-use smoke pass on Tony's Mac (built app at `41a6a7d`, 2026-10-28;
+  [results](../.ai/sessions/2026-10-28-claude-smoke-mac/results.md)):
+  - HeLab exited without a crash report while loading 20260727-RingBEC (1,007 TXY, 22.5 M
+    rows) from the share, at about 14:04–14:06 (pid 79750). Its log is on that Mac,
+    `~/Library/Caches/HeLab/logs/helab-79750.log` (last line "Disk cache cleanup" at 14:04:22);
+    the retry loaded fine. Cause unknown.
+  - Release time took 932.8 s on that folder (35 s on a 519-shot folder), and the process
+    reached ~7.3 GB RSS with Velocity distributions running beside it. It needs progress or an
+    ETA, or a cap on the bootstrap for big folders.
+  - File › Quit sometimes left the process running, so two instances ran at once. It was seen
+    when the click landed before the menu opened; cause unknown.
+  - In the plot settings panel, Return doesn't commit a typed value (the editor stays open);
+    Tab does.
+  - A plot tab's "x" didn't respond to computer-use clicks (the dock title's "x" did). It may
+    be only an accessibility gap.
+  - Saving an arrangement preset kept plot 19's unsaved Log Y. Possibly intended; Tony to judge.
+
 ## Tests and CI
 
 - [ ] A test that closes a real main window leaves the app-wide IOService closed in

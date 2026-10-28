@@ -16,13 +16,24 @@ How to use it:
 - Keep each item to one or two lines; link substantial features to a document
   in this folder. Keep priority/completion here rather than duplicating task lists.
 
-## Now: v0.0.6
+## Now: v0.0.7
 
-v0.0.5a1 merged to `main` as `5a8ae6f` (2026-10-19); its items are under
-**Done**. Work for v0.0.6 branches from `dev/v0.0.6` (agents: `agent/<task>`,
-[workflow](agent-workflow.md)) and lands back there; `dev/v0.0.6` goes to
-`main` by PR, with the version bump on that branch. Priorities for v0.0.6 are
-still to choose (Tony, with the coordinator's proposal).
+v0.0.6a1 went to `main` by PR on 2026-10-28 (Tony: released on his own use of HeLab on his
+Mac and the lab PCs through v0.0.6, plus the Mac smoke pass; Q6.1). Work for v0.0.7 branches
+from `dev/v0.0.7` (agents: `agent/<task>`, [workflow](agent-workflow.md)) and lands back
+there; `dev/v0.0.7` goes to `main` by PR, with the version bump on that branch.
+
+**Focus for v0.0.7 (Tony, 2026-10-28):**
+
+- [ ] The TXY converter port (`tdc_autoconverter`, Live L4): raw → TXY inside HeLab, written
+  to a temporary name and renamed, checked against existing `_txy_forc` files (the item under
+  Near term; [Live L4](live-monitoring.md#stages)). Inputs and where it runs: Q6.3 (2026-10-28).
+- [ ] Distributed results compute: one machine computes analysis results and other HeLabs use
+  them without repeating the work. It builds on the [headless runner](headless-analysis.md)
+  and the [network extension](network-runners-and-web.md#cross-machine-result-sharing). The
+  first slice is Q6.2 (2026-10-28).
+
+**Carried over from v0.0.6:**
 
 - [ ] Parallel agent workflow on Maestri floors (cloud agents kept open): pilot
   the first floor with the setup hook ([setup](../.ai/maestri-setup.md)), then
@@ -34,11 +45,11 @@ still to choose (Tony, with the coordinator's proposal).
   table with `read_setting` (`0f4df65`) landed from `agent/ci-robustness-2` (merge
   `51c0ee2`, 2026-10-22). Left: Restore default and default tooltips, the profiles.
 
-- [ ] Release v0.0.6a1 (Tony, 2026-10-28: Q1.1–Q1.3). The gate is the release smoke pass
-  ([M1.1–M1.8](../.ai/MANUAL_TODO.md#release-smoke-pass)) on a Mac and a lab PC, plus CI green
-  with no RERUN. The other native checks become lab validation after the release. The
-  `v0.0.5a1` draft stays unpublished. Then comes the version bump, the PR to `main` and
-  publishing the draft.
+- [ ] Release v0.0.6a1 (Tony, 2026-10-28: Q1.1–Q1.3, Q6.1). The smoke pass ran on a Mac by
+  computer use ([results](../.ai/sessions/2026-10-28-claude-smoke-mac/results.md)). Tony
+  released on that and on his own use through v0.0.6, so the lab PC pass and Live (M1.3) are
+  the first checks of v0.0.7. Version bumped and PR to `main` opened 2026-10-28. Left: CI green
+  with no RERUN, the merge, and publishing the draft. The `v0.0.5a1` draft stays unpublished.
 
 - [ ] Unsupervised smoke runs: menu-bar actions, an in-app save-screenshot command,
   accessibility labels, a debug/smoke menu, then a `--smoke` control channel (design first),

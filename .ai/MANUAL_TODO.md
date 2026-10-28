@@ -17,6 +17,11 @@ cover are lab validation, and don't gate a release (Tony, 2026-10-28: Q1.1).
 
 ## Release smoke pass
 
+**v0.0.6a1 (2026-10-28):** the Mac pass ran by computer use
+([results](sessions/2026-10-28-claude-smoke-mac/results.md)): all passed except M1.3 (skipped,
+no run acquiring) and M1.7's plots, which need Tony's look. Tony released on it and on his own
+use (Q6.1). The lab PC pass and M1.3 Live are the first checks of v0.0.7.
+
 These checks gate a release (Tony, 2026-10-28: Q1.1, [DECISIONS_TODO](DECISIONS_TODO.md#recently-decided)). Run the pass once
 on a Mac and once on a lab PC (Windows), on the release candidate. Steps marked **Lab PC**
 matter most there. Each machine takes about 45 min, and step 3 needs a run acquiring.

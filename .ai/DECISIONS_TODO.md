@@ -31,6 +31,16 @@ How to use this list:
 
 ## Recently decided
 
+Tony in Chat, 2026-10-28, wrapping up v0.0.6 (block 6):
+
+- **Q6.1 Release v0.0.6a1 now:** "I've tried helab on my mac and lab machines across the
+  development of v0.0.6". The Mac smoke pass (computer use) plus his own use stand in for the
+  lab PC pass. The lab PC pass and Live (M1.3) become the first checks of v0.0.7. This amends
+  Q1.1's gate; CI green with no RERUN still holds.
+- **v0.0.7's focus:** the TXY converter port (`tdc_autoconverter`) and distributed results
+  compute. This replaces Q1.9's order; its other items stay on the roadmap. The scope
+  questions are Q6.2 and Q6.3 below.
+
 Tony's answers in Chat, 2026-10-28, after the first dry run of the smoke runbook (block 5):
 
 - **Q5.2 yes, all of it:** the build changes for unsupervised smoke runs become a roadmap item
@@ -121,6 +131,28 @@ Finding numbers refer to the
   existing Debug menu, or a separate "Smoke" menu shown only with a flag? Proposed: a "Smoke"
   menu behind `HELAB_SMOKE=1`, so release users never see it.
 
+## v0.0.7 scope (block 6)
+
+- **Q6.2 Distributed results compute: what comes first?** The roadmap already has the parts:
+  the [headless runner](../roadmaps/headless-analysis.md) and
+  [cross-machine result sharing](../roadmaps/network-runners-and-web.md#cross-machine-result-sharing).
+  Options:
+  - (a) One machine (e.g. the acquisition PC) runs a headless HeLab that computes chosen
+    results as shots settle, and other HeLabs read its completed results, read-only.
+  - (b) A HeLab sends a heavy job (e.g. Release time on 22.5 M rows, 15.5 min on a Mac) to a
+    faster machine and gets the result back.
+  - (c) Split one job across several machines or processes.
+
+  Also: how results travel (over SSH from the computing machine, or files on the share beside
+  `.helab-root`), and which machines take part. Proposed: (a) first, over SSH, with results
+  keyed by data root and input snapshot. It pairs with the converter on the same machine.
+  (b) follows on the same runner; (c) is not planned.
+- **Q6.3 The converter port's inputs.**
+  - Q6.3.1: sample raw files with their `_txy_forc` outputs, for both variants (2019, and the
+    2023 lab edit with an x1 dead time of 0.5 µs). Where can agents find them, read-only?
+  - Q6.3.2: where it runs. Proposed: on the acquisition PC beside MATLAB's converter first,
+    writing to a separate folder so the outputs can be compared, and then replacing it.
+
 ## After the release (not blocking)
 
 ### Q1.6 Lab numbers only Tony can give
@@ -141,7 +173,7 @@ first 3D scatter opens. Before turning the same fix on for the lab PCs, check (M
 Shot trends' Notify during Live shows a system notification through a tray icon. Is the icon
 acceptable, or should notifications use the status bar only?
 
-### Q1.9 After the release (agreed order, still to confirm)
+### Q1.9 After the release (replaced by v0.0.7's focus, Q6.1; kept for the record)
 1. Export with provenance, together with the analysis worker in the activity panel.
 2. The `folder_cache.py` split (it should run alone).
 3. The headless runner and CLI.

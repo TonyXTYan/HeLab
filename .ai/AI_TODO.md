@@ -57,7 +57,8 @@ The usual rules still apply:
   - a source folder removed mid-load.
 
   Most of these already have offscreen tests, so first list which ones.
-- **A1.5 Release record** (Ground, after Q1.1 and Q1.2). It covers MANUAL_TODO's "Record the
+- [x] **A1.5 Release record** (Ground, after Q1.1 and Q1.2; done 2026-10-28 with the version
+  bump, results in the PR to `main`). It covers MANUAL_TODO's "Record the
   required Python 3.13 suite/type-check and build results":
   - the version bump;
   - the full suite at `-n 12` and the three type checks on the release commit, with any RERUN
