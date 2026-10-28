@@ -724,10 +724,7 @@ class LiveController:
             self._live_changed()
 
     def _convert_on(self, session: LiveSession) -> None:
-        cache = self.explorer.model.cache
         session.convert = AutoConvert(time.time())
-        if session.path not in cache.convert_prefs and folder_cache.store_options():
-            cache.read_convert_prefs(session.path)  # Whether its TXY go beside the raw files (Q9.7).
 
     def _convert_off(self, session: LiveSession) -> None:
         convert, session.convert = session.convert, None
@@ -760,6 +757,11 @@ class LiveController:
             convert.output, convert.fallback = str(event["output"]), str(event.get("fallback") or "")
             convert.txy_folder = str(event["txy_folder"])
             convert.profile, convert.backend = dict(event["profile"]), str(event["backend"])
+            cache = self.explorer.model.cache
+            if event.get("key") and session.path not in cache.convert_prefs:
+                # Whether its TXY go beside the raw files (Q9.7; saved with its data root): asked once
+                # a conversion found the root (the first only records; the helper checks the store too).
+                cache.read_convert_prefs(session.path)
         elif kind == "convert_progress":
             convert.done, convert.todo = int(event["done"]), int(event["todo"])
         elif kind == "shot_converted":

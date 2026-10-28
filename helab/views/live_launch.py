@@ -166,13 +166,15 @@ class LaunchFolder(QObject):
             self.finish()  # Turned on already (by the user).
             return
         reason = explorer.live_unavailable(self.folder)
+        # Done before Live starts: starting shows its data, whose signals would start it again here.
+        self.done = True
         if not reason and explorer.start_live():
             self._notice(f"Live and auto-convert on for {name} (set to start when HeLab launches)")
         else:
             why = explorer.load_error.removesuffix(" — Retry") if explorer.load_error else reason
             _notify(f"Live and auto-convert not started for {name}: {why or 'Live could not start'}. "
                     f"{self.folder}", self.folder)
-        self.finish()
+        self._disconnect()
 
     def _shown(self) -> bool:
         explorer = self.explorer
@@ -190,6 +192,9 @@ class LaunchFolder(QObject):
         if self.done:
             return
         self.done = True
+        self._disconnect()
+
+    def _disconnect(self) -> None:
         for signal in self._signals:
             try:
                 signal.disconnect(self.check)
