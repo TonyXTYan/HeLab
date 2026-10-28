@@ -69,8 +69,25 @@ How to use it:
 
 - [ ] `test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such` reran once
   on Windows CI (2026-10-29, run 40713926667, `09a0711` on `agent/txy-reference`): `pytestqt.exceptions.TimeoutError:
-  waitUntil timed out in 30000 milliseconds` (line 82); passed on its retry. The branch doesn't touch
-  the test or the code it exercises; cause not found yet.
+  waitUntil timed out in 30000 milliseconds` (line 82); passed on its retry. Again on macOS and
+  Windows CI (run 40722925594, `agent/txy-rust` `a44ec77`, jobs 122938617220 and 122938617543),
+  same reason. None of the branches touch the test or the code it exercises; cause not found yet.
+- [ ] `test_helabMainWindow.py::test_the_view_menu_has_no_thread_status_item_and_its_setting_is_retired`
+  (line 533) reran on the numba floor (2026-10-29, Kite's runs at `7ef5935`, `430df26` and `f89c276`,
+  workers gw2 and gw3): "Tests never touch real data, but this test's I/O asked for:
+  [.../popen-gw2/test_window_icon_is_found_from0]". I/O from the window the previous test built
+  (`test_window_icon_is_found_from_any_launch_folder`, line 500: chdir to `tmp_path`, `window.close()`)
+  reaches the next test. It shows only when `--basetemp` is outside the checkout (inside it the guard
+  allows the path). Not from the converter branches. A Quick Fixer job.
+- [ ] `test_folder_summary.py::test_scan_metadata_survives_restart_without_reading_txy_contents`
+  reran on macOS CI (2026-10-29, run 40722845197, `agent/txy-mlx` `848abf0`, job 122938251377) and
+  once locally on the mlx floor: `assert [..., 41] == [.../source]` (line 725). Its process-wide
+  `os.scandir` patch recorded an `os.scandir(<fd>)` that wasn't the test's own call, likely another
+  thread's `shutil.rmtree`. Fix: record only `str` paths under the test's root, or patch the module
+  the scan uses rather than `os`.
+- [ ] `test_io_trace.py::test_tracing_changes_no_event_and_no_source_call` reran on Windows CI
+  (2026-10-29, run 40725480099, `agent/txy-numpy` `c1c2172`, job 122947593152): the event lists differ
+  at index 2 (a `scan_summary` event). Not from the branch; cause not found yet.
 - [ ] A test that closes a real main window leaves the app-wide IOService closed in
   `io_service._service`, its retired requests never forgotten (timer stopped), until the next
   `get_io_service()` replaces it; and a live app-wide service (and its FolderCache) lasts the

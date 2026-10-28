@@ -128,7 +128,8 @@ Finding numbers refer to the [planning-docs audit](sessions/2026-10-28-claude-do
 
 - **A9.1 Remove unused converter backends from the build** (Q9.2): every backend ships while the
   converter is tested; once the default and the optional fast ones are settled, drop the rest
-  from `requirements.txt`, the lock and `HeLab.spec`, and note the size saved.
+  from `requirements.txt`, the lock and `HeLab.spec`, and note the size saved. Input: the stage 2
+  results (`sessions/2026-10-29-claude-txy-bench/results.md`) and Q11.2.
 
 ## Converter stage 1 (block 10)
 
@@ -151,6 +152,30 @@ From the `agent/txy-reference` handoffs ([builder](sessions/2026-10-29-claude-tx
   `0o666` under the umask, fsync, rename, folder fsync) for `d_txy_helab_<N>.txy`, which matters
   once they go beside raw files on a share (Q9.7).
 - **A10.5 A conversion with no hits writes an empty HeLab TXY** (stage 4; Q10.3, Side overnight).
+
+## Converter stage 2 (block 11)
+
+From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-txy-*/handoff.md`).
+
+- **A11.1 Packaging the backends** (stage 4, `agent/txy-packaging`): build cython and rust in CI on
+  all three OSes (MSVC from VS 2022 17.0+, never `/arch:AVX2` with an older toolset; GCC/clang with
+  `-ffp-contract=off`; maturin abi3-py311, no `target-cpu=native` for the Sandy Bridge lab PC), make
+  their tests required there (a missing extension fails, not skips) and check each built kernel
+  equals the reference on `tests/data/convert/`; numba (with llvmlite) in the lock if it ships;
+  mlx's GPU tests only where Metal exists (print `mx.metal.is_available()` first); `hiddenimports`
+  for every `_MODULES` backend and mlx's `collect_*`.
+- **A11.2 In the helper** (stage 4, `agent/txy-helab-core`): `numba_backend.set_cache_folder(<cache_dir()>/numba)`
+  before first use, and after a cache-folder move restart helpers that loaded the kernels (or accept
+  a stray old folder); a lock in `reconstruct._load`; convert across shots in long-lived processes,
+  no within-shot splitting for the fast backends.
+- **A11.3 A conftest-wide numba cache fixture**: a session-scoped autouse fixture calling
+  `numba_backend.set_cache_folder(<session temp>/numba-cache)`, replacing the numba tests' own (which
+  would raise if another file's in-process numba test loaded the kernels first on a worker).
+- **A11.4 Faster text I/O** (optional, after stage 4): reading (~560 MB/s) and writing (~340 MB/s)
+  are 80-83 % of a compiled conversion and hold the GIL. The rust floor's `parse_strict` (1,910 MB/s)
+  and `format_txy` (596 MB/s) are byte-identical on all samples (report only today); wired in behind
+  the same checks they'd take rust to ~300 MB/s per core and let threads scale. A vectorised exact
+  `%.8g` in NumPy was ~1.5x slower per value than `%` (not worth it while conversions run in processes).
 
 ## Not AI work (stays in MANUAL_TODO)
 

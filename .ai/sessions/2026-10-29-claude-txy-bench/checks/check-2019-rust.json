@@ -1,0 +1,2805 @@
+{
+ "profile": "matlab-2019",
+ "profile_hash": "fbaf472897b0745fd5eca1249862e37ab43dc553adcf0dc6122648dfdfd414d0",
+ "backend": "rust",
+ "positions": "all",
+ "sets": {
+  "2019-halos-old-plates": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 3423,
+    "reference_hits": 3423,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 95,
+    "identical": true,
+    "ours_hits": 4550,
+    "reference_hits": 4550,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 189,
+    "identical": true,
+    "ours_hits": 5766,
+    "reference_hits": 5766,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 283,
+    "identical": true,
+    "ours_hits": 4869,
+    "reference_hits": 4869,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 377,
+    "identical": true,
+    "ours_hits": 4901,
+    "reference_hits": 4901,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 471,
+    "identical": true,
+    "ours_hits": 6492,
+    "reference_hits": 6492,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 565,
+    "identical": true,
+    "ours_hits": 6037,
+    "reference_hits": 6037,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 659,
+    "identical": true,
+    "ours_hits": 5551,
+    "reference_hits": 5551,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 753,
+    "identical": true,
+    "ours_hits": 7428,
+    "reference_hits": 7428,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 847,
+    "identical": true,
+    "ours_hits": 5989,
+    "reference_hits": 5989,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 941,
+    "identical": true,
+    "ours_hits": 5811,
+    "reference_hits": 5811,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1035,
+    "identical": true,
+    "ours_hits": 6663,
+    "reference_hits": 6663,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1129,
+    "identical": true,
+    "ours_hits": 5519,
+    "reference_hits": 5519,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1223,
+    "identical": true,
+    "ours_hits": 5706,
+    "reference_hits": 5706,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1317,
+    "identical": true,
+    "ours_hits": 7392,
+    "reference_hits": 7392,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1411,
+    "identical": true,
+    "ours_hits": 6034,
+    "reference_hits": 6034,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1505,
+    "identical": true,
+    "ours_hits": 5884,
+    "reference_hits": 5884,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1599,
+    "identical": true,
+    "ours_hits": 6747,
+    "reference_hits": 6747,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1693,
+    "identical": true,
+    "ours_hits": 5636,
+    "reference_hits": 5636,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1787,
+    "identical": true,
+    "ours_hits": 5936,
+    "reference_hits": 5936,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1881,
+    "identical": true,
+    "ours_hits": 7455,
+    "reference_hits": 7455,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1937,
+    "identical": true,
+    "ours_hits": 19,
+    "reference_hits": 19,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1975,
+    "identical": true,
+    "ours_hits": 5738,
+    "reference_hits": 5738,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2069,
+    "identical": true,
+    "ours_hits": 6466,
+    "reference_hits": 6466,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2134,
+    "identical": true,
+    "ours_hits": 15,
+    "reference_hits": 15,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2163,
+    "identical": true,
+    "ours_hits": 5104,
+    "reference_hits": 5104,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2227,
+    "identical": true,
+    "ours_hits": 20,
+    "reference_hits": 20,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2257,
+    "identical": true,
+    "ours_hits": 6345,
+    "reference_hits": 6345,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2351,
+    "identical": true,
+    "ours_hits": 5013,
+    "reference_hits": 5013,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2445,
+    "identical": true,
+    "ours_hits": 4972,
+    "reference_hits": 4972,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2539,
+    "identical": true,
+    "ours_hits": 6654,
+    "reference_hits": 6654,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2633,
+    "identical": true,
+    "ours_hits": 5550,
+    "reference_hits": 5550,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2727,
+    "identical": true,
+    "ours_hits": 1,
+    "reference_hits": 1,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2821,
+    "identical": true,
+    "ours_hits": 6585,
+    "reference_hits": 6585,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2915,
+    "identical": true,
+    "ours_hits": 6045,
+    "reference_hits": 6045,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 3009,
+    "identical": true,
+    "ours_hits": 12974,
+    "reference_hits": 12974,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 3103,
+    "identical": true,
+    "ours_hits": 8346,
+    "reference_hits": 8346,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 3197,
+    "identical": true,
+    "ours_hits": 5899,
+    "reference_hits": 5899,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 3291,
+    "identical": true,
+    "ours_hits": 14373,
+    "reference_hits": 14373,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 3385,
+    "identical": true,
+    "ours_hits": 7522,
+    "reference_hits": 7522,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 3479,
+    "identical": true,
+    "ours_hits": 7296,
+    "reference_hits": 7296,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 3573,
+    "identical": true,
+    "ours_hits": 13474,
+    "reference_hits": 13474,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 3667,
+    "identical": false,
+    "ours_hits": 7221,
+    "reference_hits": 7203,
+    "line": 7204,
+    "ours_line": "3.9709048,0.024381774,-0.033763428",
+    "reference_line": "(ended)"
+   }
+  ],
+  "2020-halos-weak-trap": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 4644,
+    "reference_hits": 4644,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 4,
+    "identical": true,
+    "ours_hits": 4118,
+    "reference_hits": 4118,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 7,
+    "identical": true,
+    "ours_hits": 4648,
+    "reference_hits": 4648,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 58,
+    "identical": true,
+    "ours_hits": 4591,
+    "reference_hits": 4591,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 115,
+    "identical": true,
+    "ours_hits": 4473,
+    "reference_hits": 4473,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 172,
+    "identical": true,
+    "ours_hits": 2260,
+    "reference_hits": 2260,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 229,
+    "identical": true,
+    "ours_hits": 2393,
+    "reference_hits": 2393,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 286,
+    "identical": true,
+    "ours_hits": 2403,
+    "reference_hits": 2403,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 343,
+    "identical": true,
+    "ours_hits": 2539,
+    "reference_hits": 2539,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 400,
+    "identical": false,
+    "ours_hits": null,
+    "reference_hits": 0,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 457,
+    "identical": true,
+    "ours_hits": 2435,
+    "reference_hits": 2435,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 514,
+    "identical": true,
+    "ours_hits": 2598,
+    "reference_hits": 2598,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 571,
+    "identical": true,
+    "ours_hits": 2388,
+    "reference_hits": 2388,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 628,
+    "identical": true,
+    "ours_hits": 3160,
+    "reference_hits": 3160,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 685,
+    "identical": true,
+    "ours_hits": 3068,
+    "reference_hits": 3068,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 742,
+    "identical": true,
+    "ours_hits": 2964,
+    "reference_hits": 2964,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 799,
+    "identical": true,
+    "ours_hits": 3138,
+    "reference_hits": 3138,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 856,
+    "identical": true,
+    "ours_hits": 3100,
+    "reference_hits": 3100,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 913,
+    "identical": true,
+    "ours_hits": 3282,
+    "reference_hits": 3282,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 970,
+    "identical": true,
+    "ours_hits": 3041,
+    "reference_hits": 3041,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1027,
+    "identical": true,
+    "ours_hits": 2968,
+    "reference_hits": 2968,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1084,
+    "identical": true,
+    "ours_hits": 2903,
+    "reference_hits": 2903,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1141,
+    "identical": true,
+    "ours_hits": 3245,
+    "reference_hits": 3245,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1198,
+    "identical": true,
+    "ours_hits": 2995,
+    "reference_hits": 2995,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1255,
+    "identical": true,
+    "ours_hits": 1,
+    "reference_hits": 1,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1312,
+    "identical": true,
+    "ours_hits": 2945,
+    "reference_hits": 2945,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1369,
+    "identical": true,
+    "ours_hits": 3143,
+    "reference_hits": 3143,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1426,
+    "identical": true,
+    "ours_hits": 2916,
+    "reference_hits": 2916,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1483,
+    "identical": true,
+    "ours_hits": 3068,
+    "reference_hits": 3068,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1540,
+    "identical": true,
+    "ours_hits": 2696,
+    "reference_hits": 2696,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1597,
+    "identical": true,
+    "ours_hits": 3001,
+    "reference_hits": 3001,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1654,
+    "identical": true,
+    "ours_hits": 2966,
+    "reference_hits": 2966,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1711,
+    "identical": true,
+    "ours_hits": 2975,
+    "reference_hits": 2975,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1768,
+    "identical": true,
+    "ours_hits": 3284,
+    "reference_hits": 3284,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1825,
+    "identical": true,
+    "ours_hits": 2975,
+    "reference_hits": 2975,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1882,
+    "identical": true,
+    "ours_hits": 2954,
+    "reference_hits": 2954,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1939,
+    "identical": true,
+    "ours_hits": 2965,
+    "reference_hits": 2965,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1996,
+    "identical": true,
+    "ours_hits": 2967,
+    "reference_hits": 2967,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2053,
+    "identical": true,
+    "ours_hits": 2621,
+    "reference_hits": 2621,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2110,
+    "identical": true,
+    "ours_hits": 2945,
+    "reference_hits": 2945,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2167,
+    "identical": true,
+    "ours_hits": 2738,
+    "reference_hits": 2738,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2224,
+    "identical": true,
+    "ours_hits": 2830,
+    "reference_hits": 2830,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2022-07-old-plates-he3he4": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 27346,
+    "reference_hits": 27346,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2,
+    "identical": false,
+    "ours_hits": 27051,
+    "reference_hits": 7606,
+    "line": 195,
+    "ours_line": "0.23375604,-0.023408082,-0.032013414",
+    "reference_line": "0.23480259,0.037118718,0.02078964"
+   },
+   {
+    "shot": 3,
+    "identical": false,
+    "ours_hits": 28367,
+    "reference_hits": 7922,
+    "line": 237,
+    "ours_line": "0.35428037,0.037381878,-0.020908062",
+    "reference_line": "0.35442002,0.00631584,0.018394884"
+   },
+   {
+    "shot": 6,
+    "identical": true,
+    "ours_hits": 18876,
+    "reference_hits": 18876,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 11,
+    "identical": true,
+    "ours_hits": 17525,
+    "reference_hits": 17525,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 16,
+    "identical": true,
+    "ours_hits": 7252,
+    "reference_hits": 7252,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 21,
+    "identical": true,
+    "ours_hits": 10637,
+    "reference_hits": 10637,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 26,
+    "identical": true,
+    "ours_hits": 3468,
+    "reference_hits": 3468,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 31,
+    "identical": true,
+    "ours_hits": 3883,
+    "reference_hits": 3883,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 36,
+    "identical": true,
+    "ours_hits": 3690,
+    "reference_hits": 3690,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 41,
+    "identical": true,
+    "ours_hits": 3390,
+    "reference_hits": 3390,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 46,
+    "identical": true,
+    "ours_hits": 4411,
+    "reference_hits": 4411,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 51,
+    "identical": true,
+    "ours_hits": 4320,
+    "reference_hits": 4320,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 56,
+    "identical": true,
+    "ours_hits": 4791,
+    "reference_hits": 4791,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 61,
+    "identical": true,
+    "ours_hits": 4360,
+    "reference_hits": 4360,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 66,
+    "identical": true,
+    "ours_hits": 4582,
+    "reference_hits": 4582,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 71,
+    "identical": true,
+    "ours_hits": 4805,
+    "reference_hits": 4805,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 76,
+    "identical": true,
+    "ours_hits": 4792,
+    "reference_hits": 4792,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 81,
+    "identical": true,
+    "ours_hits": 4526,
+    "reference_hits": 4526,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 86,
+    "identical": true,
+    "ours_hits": 4771,
+    "reference_hits": 4771,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 91,
+    "identical": true,
+    "ours_hits": 4894,
+    "reference_hits": 4894,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 96,
+    "identical": true,
+    "ours_hits": 4767,
+    "reference_hits": 4767,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 101,
+    "identical": true,
+    "ours_hits": 4334,
+    "reference_hits": 4334,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 106,
+    "identical": true,
+    "ours_hits": 5521,
+    "reference_hits": 5521,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 111,
+    "identical": true,
+    "ours_hits": 4319,
+    "reference_hits": 4319,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 116,
+    "identical": true,
+    "ours_hits": 1208,
+    "reference_hits": 1208,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 121,
+    "identical": true,
+    "ours_hits": 4748,
+    "reference_hits": 4748,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 126,
+    "identical": true,
+    "ours_hits": 4860,
+    "reference_hits": 4860,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 131,
+    "identical": true,
+    "ours_hits": 4579,
+    "reference_hits": 4579,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 136,
+    "identical": true,
+    "ours_hits": 4550,
+    "reference_hits": 4550,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 141,
+    "identical": true,
+    "ours_hits": 4407,
+    "reference_hits": 4407,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 146,
+    "identical": true,
+    "ours_hits": 4310,
+    "reference_hits": 4310,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 151,
+    "identical": true,
+    "ours_hits": 4456,
+    "reference_hits": 4456,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 156,
+    "identical": true,
+    "ours_hits": 4345,
+    "reference_hits": 4345,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 161,
+    "identical": true,
+    "ours_hits": 3937,
+    "reference_hits": 3937,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 166,
+    "identical": true,
+    "ours_hits": 4486,
+    "reference_hits": 4486,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 171,
+    "identical": true,
+    "ours_hits": 4163,
+    "reference_hits": 4163,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 176,
+    "identical": true,
+    "ours_hits": 4331,
+    "reference_hits": 4331,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 181,
+    "identical": true,
+    "ours_hits": 4456,
+    "reference_hits": 4456,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 186,
+    "identical": true,
+    "ours_hits": 4207,
+    "reference_hits": 4207,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 191,
+    "identical": true,
+    "ours_hits": 4059,
+    "reference_hits": 4059,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 196,
+    "identical": true,
+    "ours_hits": 3923,
+    "reference_hits": 3923,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2022-07-old-plates-large-he3": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 4806,
+    "reference_hits": 4806,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 40,
+    "identical": true,
+    "ours_hits": 4575,
+    "reference_hits": 4575,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 79,
+    "identical": true,
+    "ours_hits": 1812,
+    "reference_hits": 1812,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 118,
+    "identical": true,
+    "ours_hits": 1,
+    "reference_hits": 1,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 157,
+    "identical": true,
+    "ours_hits": 4918,
+    "reference_hits": 4918,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 196,
+    "identical": true,
+    "ours_hits": 7891,
+    "reference_hits": 7891,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 235,
+    "identical": true,
+    "ours_hits": 8195,
+    "reference_hits": 8195,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 274,
+    "identical": true,
+    "ours_hits": 2656,
+    "reference_hits": 2656,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 313,
+    "identical": true,
+    "ours_hits": 2974,
+    "reference_hits": 2974,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 352,
+    "identical": true,
+    "ours_hits": 1,
+    "reference_hits": 1,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 391,
+    "identical": true,
+    "ours_hits": 11615,
+    "reference_hits": 11615,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 430,
+    "identical": true,
+    "ours_hits": 13813,
+    "reference_hits": 13813,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 469,
+    "identical": true,
+    "ours_hits": 12036,
+    "reference_hits": 12036,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 508,
+    "identical": true,
+    "ours_hits": 6771,
+    "reference_hits": 6771,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 547,
+    "identical": true,
+    "ours_hits": 1,
+    "reference_hits": 1,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 586,
+    "identical": true,
+    "ours_hits": 7369,
+    "reference_hits": 7369,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 625,
+    "identical": true,
+    "ours_hits": 13907,
+    "reference_hits": 13907,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 664,
+    "identical": true,
+    "ours_hits": 9787,
+    "reference_hits": 9787,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 703,
+    "identical": true,
+    "ours_hits": 2,
+    "reference_hits": 2,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 742,
+    "identical": true,
+    "ours_hits": 6100,
+    "reference_hits": 6100,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 781,
+    "identical": true,
+    "ours_hits": 6999,
+    "reference_hits": 6999,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 820,
+    "identical": true,
+    "ours_hits": 17740,
+    "reference_hits": 17740,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 859,
+    "identical": true,
+    "ours_hits": 23022,
+    "reference_hits": 23022,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 898,
+    "identical": true,
+    "ours_hits": 15128,
+    "reference_hits": 15128,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 937,
+    "identical": true,
+    "ours_hits": 16468,
+    "reference_hits": 16468,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 976,
+    "identical": true,
+    "ours_hits": 19457,
+    "reference_hits": 19457,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1015,
+    "identical": true,
+    "ours_hits": 20335,
+    "reference_hits": 20335,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1017,
+    "identical": true,
+    "ours_hits": 26892,
+    "reference_hits": 26892,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1025,
+    "identical": true,
+    "ours_hits": 23852,
+    "reference_hits": 23852,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1028,
+    "identical": true,
+    "ours_hits": 22205,
+    "reference_hits": 22205,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1054,
+    "identical": true,
+    "ours_hits": 17004,
+    "reference_hits": 17004,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1093,
+    "identical": true,
+    "ours_hits": 17856,
+    "reference_hits": 17856,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1132,
+    "identical": true,
+    "ours_hits": 1032,
+    "reference_hits": 1032,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1171,
+    "identical": true,
+    "ours_hits": 1042,
+    "reference_hits": 1042,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1210,
+    "identical": true,
+    "ours_hits": 969,
+    "reference_hits": 969,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1249,
+    "identical": true,
+    "ours_hits": 1036,
+    "reference_hits": 1036,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1288,
+    "identical": true,
+    "ours_hits": 1028,
+    "reference_hits": 1028,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1327,
+    "identical": true,
+    "ours_hits": 1152,
+    "reference_hits": 1152,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1366,
+    "identical": true,
+    "ours_hits": 1198,
+    "reference_hits": 1198,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1405,
+    "identical": true,
+    "ours_hits": 1067,
+    "reference_hits": 1067,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1444,
+    "identical": true,
+    "ours_hits": 1198,
+    "reference_hits": 1198,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1483,
+    "identical": true,
+    "ours_hits": 1148,
+    "reference_hits": 1148,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1522,
+    "identical": true,
+    "ours_hits": 1211,
+    "reference_hits": 1211,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2022-11-ghost-counts-mcp": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 12152,
+    "reference_hits": 12152,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2,
+    "identical": true,
+    "ours_hits": 8131,
+    "reference_hits": 8131,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 3,
+    "identical": true,
+    "ours_hits": 9884,
+    "reference_hits": 9884,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 4,
+    "identical": true,
+    "ours_hits": 6788,
+    "reference_hits": 6788,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 5,
+    "identical": false,
+    "ours_hits": null,
+    "reference_hits": 0,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 6,
+    "identical": true,
+    "ours_hits": 5123,
+    "reference_hits": 5123,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 7,
+    "identical": true,
+    "ours_hits": 6186,
+    "reference_hits": 6186,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 8,
+    "identical": true,
+    "ours_hits": 6673,
+    "reference_hits": 6673,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 9,
+    "identical": true,
+    "ours_hits": 7007,
+    "reference_hits": 7007,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 10,
+    "identical": true,
+    "ours_hits": 8517,
+    "reference_hits": 8517,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2023-02-new-plates-he3he4": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 6228,
+    "reference_hits": 6228,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 6,
+    "identical": true,
+    "ours_hits": 41524,
+    "reference_hits": 41524,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 32,
+    "identical": true,
+    "ours_hits": 5293,
+    "reference_hits": 5293,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 63,
+    "identical": true,
+    "ours_hits": 2766,
+    "reference_hits": 2766,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 94,
+    "identical": true,
+    "ours_hits": 6311,
+    "reference_hits": 6311,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 125,
+    "identical": true,
+    "ours_hits": 5284,
+    "reference_hits": 5284,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 156,
+    "identical": true,
+    "ours_hits": 6596,
+    "reference_hits": 6596,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 187,
+    "identical": false,
+    "ours_hits": null,
+    "reference_hits": 0,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 218,
+    "identical": true,
+    "ours_hits": 3245,
+    "reference_hits": 3245,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 249,
+    "identical": true,
+    "ours_hits": 5767,
+    "reference_hits": 5767,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 280,
+    "identical": true,
+    "ours_hits": 4782,
+    "reference_hits": 4782,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 311,
+    "identical": true,
+    "ours_hits": 6087,
+    "reference_hits": 6087,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 342,
+    "identical": true,
+    "ours_hits": 1804,
+    "reference_hits": 1804,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 373,
+    "identical": true,
+    "ours_hits": 3611,
+    "reference_hits": 3611,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 404,
+    "identical": true,
+    "ours_hits": 2222,
+    "reference_hits": 2222,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 435,
+    "identical": true,
+    "ours_hits": 9265,
+    "reference_hits": 9265,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 440,
+    "identical": true,
+    "ours_hits": 10443,
+    "reference_hits": 10443,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 442,
+    "identical": true,
+    "ours_hits": 9528,
+    "reference_hits": 9528,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 466,
+    "identical": true,
+    "ours_hits": 6182,
+    "reference_hits": 6182,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 497,
+    "identical": true,
+    "ours_hits": 3181,
+    "reference_hits": 3181,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 528,
+    "identical": true,
+    "ours_hits": 928,
+    "reference_hits": 928,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 559,
+    "identical": true,
+    "ours_hits": 201,
+    "reference_hits": 201,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 590,
+    "identical": true,
+    "ours_hits": 186,
+    "reference_hits": 186,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 621,
+    "identical": true,
+    "ours_hits": 189,
+    "reference_hits": 189,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 652,
+    "identical": true,
+    "ours_hits": 211,
+    "reference_hits": 211,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 683,
+    "identical": true,
+    "ours_hits": 221,
+    "reference_hits": 221,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 714,
+    "identical": true,
+    "ours_hits": 193,
+    "reference_hits": 193,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 745,
+    "identical": true,
+    "ours_hits": 213,
+    "reference_hits": 213,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 776,
+    "identical": true,
+    "ours_hits": 198,
+    "reference_hits": 198,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 807,
+    "identical": true,
+    "ours_hits": 198,
+    "reference_hits": 198,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 838,
+    "identical": true,
+    "ours_hits": 193,
+    "reference_hits": 193,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 869,
+    "identical": true,
+    "ours_hits": 215,
+    "reference_hits": 215,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 900,
+    "identical": true,
+    "ours_hits": 207,
+    "reference_hits": 207,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 931,
+    "identical": true,
+    "ours_hits": 198,
+    "reference_hits": 198,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 962,
+    "identical": true,
+    "ours_hits": 222,
+    "reference_hits": 222,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 993,
+    "identical": true,
+    "ours_hits": 173,
+    "reference_hits": 173,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1024,
+    "identical": true,
+    "ours_hits": 200,
+    "reference_hits": 200,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1055,
+    "identical": true,
+    "ours_hits": 210,
+    "reference_hits": 210,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1086,
+    "identical": true,
+    "ours_hits": 170,
+    "reference_hits": 170,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1117,
+    "identical": true,
+    "ours_hits": 201,
+    "reference_hits": 201,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1148,
+    "identical": true,
+    "ours_hits": 218,
+    "reference_hits": 218,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1179,
+    "identical": true,
+    "ours_hits": 190,
+    "reference_hits": 190,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1210,
+    "identical": true,
+    "ours_hits": 168,
+    "reference_hits": 168,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2023-03-momentum-bells": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 3979,
+    "reference_hits": 3979,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 52,
+    "identical": true,
+    "ours_hits": 4576,
+    "reference_hits": 4576,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 103,
+    "identical": true,
+    "ours_hits": 2714,
+    "reference_hits": 2714,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 154,
+    "identical": true,
+    "ours_hits": 4704,
+    "reference_hits": 4704,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 205,
+    "identical": true,
+    "ours_hits": 4277,
+    "reference_hits": 4277,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 256,
+    "identical": true,
+    "ours_hits": 4003,
+    "reference_hits": 4003,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 307,
+    "identical": true,
+    "ours_hits": 2606,
+    "reference_hits": 2606,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 358,
+    "identical": true,
+    "ours_hits": 3837,
+    "reference_hits": 3837,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 409,
+    "identical": true,
+    "ours_hits": 4707,
+    "reference_hits": 4707,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 460,
+    "identical": true,
+    "ours_hits": 3639,
+    "reference_hits": 3639,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 511,
+    "identical": true,
+    "ours_hits": 5158,
+    "reference_hits": 5158,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 562,
+    "identical": true,
+    "ours_hits": 3090,
+    "reference_hits": 3090,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 613,
+    "identical": true,
+    "ours_hits": 4047,
+    "reference_hits": 4047,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 664,
+    "identical": true,
+    "ours_hits": 3748,
+    "reference_hits": 3748,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 715,
+    "identical": true,
+    "ours_hits": 5222,
+    "reference_hits": 5222,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 766,
+    "identical": true,
+    "ours_hits": 2419,
+    "reference_hits": 2419,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 817,
+    "identical": true,
+    "ours_hits": 3541,
+    "reference_hits": 3541,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 868,
+    "identical": true,
+    "ours_hits": 2444,
+    "reference_hits": 2444,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 919,
+    "identical": true,
+    "ours_hits": 4741,
+    "reference_hits": 4741,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 970,
+    "identical": true,
+    "ours_hits": 3929,
+    "reference_hits": 3929,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1021,
+    "identical": true,
+    "ours_hits": 4850,
+    "reference_hits": 4850,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1072,
+    "identical": true,
+    "ours_hits": 1848,
+    "reference_hits": 1848,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1123,
+    "identical": true,
+    "ours_hits": 4440,
+    "reference_hits": 4440,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1174,
+    "identical": true,
+    "ours_hits": 4703,
+    "reference_hits": 4703,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1225,
+    "identical": true,
+    "ours_hits": 3084,
+    "reference_hits": 3084,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1276,
+    "identical": true,
+    "ours_hits": 3080,
+    "reference_hits": 3080,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1327,
+    "identical": true,
+    "ours_hits": 3852,
+    "reference_hits": 3852,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1378,
+    "identical": true,
+    "ours_hits": 1579,
+    "reference_hits": 1579,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1429,
+    "identical": true,
+    "ours_hits": 3224,
+    "reference_hits": 3224,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1480,
+    "identical": true,
+    "ours_hits": 3239,
+    "reference_hits": 3239,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1531,
+    "identical": true,
+    "ours_hits": 4357,
+    "reference_hits": 4357,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1582,
+    "identical": true,
+    "ours_hits": 8762,
+    "reference_hits": 8762,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1633,
+    "identical": true,
+    "ours_hits": 1625,
+    "reference_hits": 1625,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1675,
+    "identical": true,
+    "ours_hits": 9216,
+    "reference_hits": 9216,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1684,
+    "identical": true,
+    "ours_hits": 3823,
+    "reference_hits": 3823,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1735,
+    "identical": true,
+    "ours_hits": 6832,
+    "reference_hits": 6832,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1786,
+    "identical": true,
+    "ours_hits": 6345,
+    "reference_hits": 6345,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1837,
+    "identical": true,
+    "ours_hits": 7335,
+    "reference_hits": 7335,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1888,
+    "identical": true,
+    "ours_hits": 8248,
+    "reference_hits": 8248,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1939,
+    "identical": true,
+    "ours_hits": 5949,
+    "reference_hits": 5949,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1990,
+    "identical": true,
+    "ours_hits": 7995,
+    "reference_hits": 7995,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2047,
+    "identical": true,
+    "ours_hits": 10602,
+    "reference_hits": 10602,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 2049,
+    "identical": true,
+    "ours_hits": 10432,
+    "reference_hits": 10432,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2024-11-rt-low-occupancy": [
+   {
+    "shot": 1111,
+    "identical": true,
+    "ours_hits": 588,
+    "reference_hits": 588,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1384,
+    "identical": true,
+    "ours_hits": 898,
+    "reference_hits": 898,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1656,
+    "identical": true,
+    "ours_hits": 962,
+    "reference_hits": 962,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 12063,
+    "identical": true,
+    "ours_hits": 989,
+    "reference_hits": 989,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 12336,
+    "identical": true,
+    "ours_hits": 1052,
+    "reference_hits": 1052,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 12609,
+    "identical": true,
+    "ours_hits": 1004,
+    "reference_hits": 1004,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 12881,
+    "identical": true,
+    "ours_hits": 1010,
+    "reference_hits": 1010,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 13183,
+    "identical": true,
+    "ours_hits": 629,
+    "reference_hits": 629,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 13455,
+    "identical": true,
+    "ours_hits": 798,
+    "reference_hits": 798,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 13727,
+    "identical": true,
+    "ours_hits": 889,
+    "reference_hits": 889,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 13999,
+    "identical": true,
+    "ours_hits": 708,
+    "reference_hits": 708,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 14271,
+    "identical": true,
+    "ours_hits": 778,
+    "reference_hits": 778,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 14654,
+    "identical": true,
+    "ours_hits": 748,
+    "reference_hits": 748,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 14927,
+    "identical": true,
+    "ours_hits": 714,
+    "reference_hits": 714,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 15199,
+    "identical": true,
+    "ours_hits": 728,
+    "reference_hits": 728,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 15471,
+    "identical": true,
+    "ours_hits": 674,
+    "reference_hits": 674,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 15743,
+    "identical": true,
+    "ours_hits": 685,
+    "reference_hits": 685,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 16015,
+    "identical": true,
+    "ours_hits": 788,
+    "reference_hits": 788,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 16287,
+    "identical": true,
+    "ours_hits": 782,
+    "reference_hits": 782,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 16559,
+    "identical": true,
+    "ours_hits": 638,
+    "reference_hits": 638,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 16831,
+    "identical": true,
+    "ours_hits": 725,
+    "reference_hits": 725,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 17103,
+    "identical": true,
+    "ours_hits": 660,
+    "reference_hits": 660,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 17375,
+    "identical": true,
+    "ours_hits": 736,
+    "reference_hits": 736,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 17647,
+    "identical": true,
+    "ours_hits": 529,
+    "reference_hits": 529,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 17919,
+    "identical": true,
+    "ours_hits": 703,
+    "reference_hits": 703,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 18191,
+    "identical": true,
+    "ours_hits": 683,
+    "reference_hits": 683,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 18463,
+    "identical": true,
+    "ours_hits": 703,
+    "reference_hits": 703,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 18735,
+    "identical": true,
+    "ours_hits": 658,
+    "reference_hits": 658,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 19007,
+    "identical": true,
+    "ours_hits": 548,
+    "reference_hits": 548,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 19279,
+    "identical": true,
+    "ours_hits": 623,
+    "reference_hits": 623,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 19551,
+    "identical": true,
+    "ours_hits": 608,
+    "reference_hits": 608,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 19823,
+    "identical": true,
+    "ours_hits": 532,
+    "reference_hits": 532,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 20101,
+    "identical": true,
+    "ours_hits": 779,
+    "reference_hits": 779,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 20373,
+    "identical": true,
+    "ours_hits": 743,
+    "reference_hits": 743,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 25874,
+    "identical": true,
+    "ours_hits": 877,
+    "reference_hits": 877,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 26146,
+    "identical": true,
+    "ours_hits": 85,
+    "reference_hits": 85,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 26418,
+    "identical": true,
+    "ours_hits": 656,
+    "reference_hits": 656,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 26690,
+    "identical": true,
+    "ours_hits": 87,
+    "reference_hits": 87,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 27786,
+    "identical": true,
+    "ours_hits": 690,
+    "reference_hits": 690,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 27975,
+    "identical": true,
+    "ours_hits": 1500,
+    "reference_hits": 1500,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 27978,
+    "identical": true,
+    "ours_hits": 1477,
+    "reference_hits": 1477,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 28014,
+    "identical": true,
+    "ours_hits": 1444,
+    "reference_hits": 1444,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 28068,
+    "identical": true,
+    "ours_hits": 1162,
+    "reference_hits": 1162,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ]
+ }
+}

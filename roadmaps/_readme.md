@@ -37,7 +37,8 @@ compute is postponed until the converter works well (Q6.2).
   [legacy notes](../.ai/sessions/2026-10-20-claude-dld-front-panel-review/core-update.md#import-and-reconstruction)).
   Stages: a reference port cross-checked against MATLAB run headless (**done 2026-10-29**,
   `d26e196`), a benchmark spike, then one builder per backend (NumPy, Numba, Cython/C, Rust, MLX)
-  (Q6.5). Open: detector profiles and
+  (Q6.5; **done 2026-10-29**, `3bd791c`: NumPy the default, Q11.2 on which fast backend to keep);
+  stage 4 (in HeLab) started. Open: detector profiles and
   calibration (Q6.10, Q6.11), which TXY a folder uses (Q6.6), how other HeLabs get it (Q6.7),
   store or cache only (Q6.9). Building decisions: Q9.1–Q9.9 (MATLAB's converter gets no
   temp-name change, Q9.8); v0.0.7 ships with stages 1, 2 and 4 (Q9.9).

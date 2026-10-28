@@ -20,15 +20,22 @@ Nothing in the app calls it yet (stage 4).
 
 | Module | What |
 |---|---|
-| `raw` | `parse_raw`/`read_raw` → `RawPulses` (float64 channels and times in file order), as MATLAB's `textscan` reads them; a fast path for uniform `\r\n` or uniform `\n` files, a general reader for everything else. A marked place for stage 4's done-writing checks. |
+| `raw` | `parse_raw`/`read_raw` → `RawPulses` (float64 channels and times in file order), as MATLAB's `textscan` reads them; the fast path is `fastio.parse_strict` for uniform `\r\n` or uniform `\n` plain `int,int` files (acceptance tested equal to `_STRICT_CRLF`/`_STRICT_LF`; a field over 16 digits takes the general reader, so one over 309 digits reads as Inf, as textscan does), the general reader for everything else. A marked place for stage 4's done-writing checks. |
 | `profile` | `DetectorProfile` (frozen, `kw_only`): every constant MATLAB hard-codes; JSON (`SCHEMA`, `_MIGRATIONS`); `content_hash`; built-ins `matlab-2019` (default, Q6.10) and `matlab-2023-lab-edit`. |
 | `reconstruct` | `reconstruct(pulses, profile, backend="reference")`; the registry (`register_backend`, `get_backend`, `available_backends`, `Backend.unavailable(profile)`, `releases_gil`, `_MODULES`); `NoRowsError`. |
 | `backends/reference` | The port, loop for loop, with the MATLAB line numbers (`L…` 2019, `L2023:…`); `MatchStats` for the x2 report. Readable, not fast. |
-| `txy` | `format_txy` (`%.8g`, `NaN`/`Inf`/`-Inf`, `\n` after every row on every platform); `write_txy`/`write_atomic`. |
+| `txy` | `format_txy` (`%.8g`, `NaN`/`Inf`/`-Inf`, `\n` after every row on every platform) through `fastio`; it refuses anything but a 2-D float64 array (`ValueError`, any size, any memory layout), since hits are float64 by contract and the fast formatter reads bit patterns; `format_txy_by_value` is the general path; `write_txy`/`write_atomic`. |
+| `fastio` | The fast strict parse (SWAR digits, GIL-free in NumPy) and the TXY formatter; `raw` and `txy` use them. |
+| `split` | Within-shot pieces at safe gaps for any backend, merged byte for byte (`reconstruct_split`); see Backends. |
 | `pipeline` | `convert_raw(bytes, profile, backend) -> bytes | None` (None: no file, as the 2019 wrapper for no hits). |
 | `samples` | The sample manifest (`~/HeLab-samples/txy-v1/manifest.json`, SHA-256 checked on read); held-in/held-out positions. |
 | `check` | `check_txy(ours, reference)`: identical, or the first differing line (`ENDED`, `NO_FINAL_NEWLINE`) and both hit counts; `ReferenceFault` and `prove_fault`. |
-| `timing` | `time_shot`/`time_shots` with `Parallelism` (serial, processes, threads, within-shot); `summarise` (SI MB/s per stage, latency). |
+| `timing` | `time_shot`/`time_shots` with `Parallelism` (serial, processes, threads, within-shot through `split`); `summarise` (SI MB/s per stage, latency). |
+| `backends/numpy_backend` | `numpy`, the default (stage 2): vectorised match, an exact sequential pass only for interfering x1s. |
+| `backends/numba_backend`, `numba_kernels` | `numba` (optional): the loops under `@njit`, no fastmath, nogil; kernels imported only with numba; their cache folder set by the caller (`set_cache_folder`, absolute). |
+| `backends/cython` | `cython` (optional): the loops compiled from `native/cython/_kernel.pyx` by `native/cython/build.py` (never committed); GIL released; unavailable until built or when stale (the source's SHA-256 is compiled in). |
+| `backends/rust` | `rust` (optional): `native/rust/` (PyO3, maturin, abi3); GIL released; `reconstruct_rust(threads, piece_rows)` splits one shot itself. |
+| `backends/mlx_gpu` | `mlx` (optional; Apple Silicon, macOS ≥ 14): first choices on the GPU in int32 differences, the greedy check and float64 output on the CPU. |
 
 `dev/txy/` holds the scripts that read the sample set (tests never do): `check_samples.py` (exit 1
 on any unexplained mismatch, or when nothing was checked), `reference_exceptions.py`,
@@ -82,15 +89,52 @@ and version. To extend the schema without changing existing profiles' hashes or 
   fails if the output changes while the hash doesn't. The built-ins' hashes are pinned in a test.
 - `__post_init__` refuses NaN/Inf, negative sums and tolerances, and repeated corner channels.
 
-## Backends (stage 2)
+## Backends (stage 2, landed 2026-10-29)
 
-A backend is a module in `backends/` that calls `register_backend` on import **and** a line in
-`_MODULES` (a spawned process-pool worker imports only those). It must give `reference`'s output
-byte for byte: every case in `tests/data/convert/`, both built-ins, the quirks above, and every
-sample shot through `check_samples.py`. `Backend.unavailable(profile)` says why it can't run (a
-package missing, no GPU), so HeLab and the tests work without it. Splitting one shot must keep the
-global `t_zero`, the first-row skip (first piece only), the whole-file `floor(N/4)`, the 2023 cuts
-(only at gaps over 20,000 bins, or before splitting) and one final stable sort by T.
+`_MODULES`: `reference`, `numpy`, `cython`, `mlx`, `numba`, `rust`. A backend is a module in
+`backends/` that calls `register_backend` on import **and** a line in `_MODULES` (a spawned
+process-pool worker imports only those). It must give `reference`'s output byte for byte: every
+case in `tests/data/convert/`, both built-ins, the quirks above, and every sample shot through
+`check_samples.py` (all five do, whole and split, with everything built together:
+`.ai/sessions/2026-10-29-claude-txy-bench/results.md`). Rules every backend follows:
+
+- **Optional and lazy.** `Backend.unavailable(profile)` says why it can't run (package missing,
+  extension not built or stale, no Metal); any error while loading (not only `ImportError`) leaves
+  it unavailable with the reason, logged, never raised out of `available_backends()`. The loader is
+  thread-safe (the timing harness's threads all make their first call at once). Its tests skip with
+  an explicit reason (e.g. "cython extension not built (stage 4 packaging)") until CI builds it.
+  An optional package's import carries a targeted pyright ignore, since pyright runs in the suite
+  where the package isn't installed.
+- **Exact bits.** No FMA contraction or fast-math (`-ffp-contract=off`, `/fp:precise`, no `mul_add`,
+  numba without fastmath); T/X/Y in the reference's operation order; stable sorts, NaN last (an
+  insertion pre-pass is fine if it hands over to a stable sort: raw files are nearly in time order).
+- **Facts the backends use.** Marks only remove candidates: an x1's first choice ignoring used
+  pulses is MATLAB's choice unless an earlier hit marked one of its pulses, so a parallel search
+  plus a sequential pass over contested x1s is exact (numpy, mlx). The phantom row is the row after
+  the last hit, written by the last x pair with no y after it, surviving when past `floor(N/4)`.
+- **Within one shot** (`split.reconstruct_split`, rust's and cython's own `threads`): cut only
+  between two finite sorted times more than max(window, dead times in bins) apart (every candidate
+  test checks the window before the channel, so nothing across a cut is examined); global `t_zero`,
+  the first-row skip in piece 0 only, the dead-time cuts per piece (safe because the gap exceeds
+  the tolerance); when hits + 1 > N//4 the tail is rerun with the phantom row on; one stable sort
+  by T. Proofs: the numpy, rust and cython session notes.
+
+**Measured standing** (`.ai/sessions/2026-10-29-claude-txy-bench/results.md`; serial, all 309 shots, load 4-5): end to end per core numpy 119,
+numba 171, cython 170, rust 178, mlx 72, reference 13 MB/s; reconstruction alone 279/869/915/
+1056/111/14. Compiled backends then spend 80-83 % of a conversion reading and writing text.
+Parallelise across shots in long-lived processes (numpy x12 warm 1,049 MB/s, rust 1,466); threads
+stop at ~400 MB/s because the text I/O, `parse_raw` as well as `format_txy`, holds the GIL in
+practice; within-shot splitting helps only slow backends or shots much denser than the samples (a
+dense 25 MB shot: rust 144 ms, numpy 305 ms, Live's worst case). Recommendation (Q11.2): `numpy`
+the default everywhere (meets both targets on one core); one optional compiled backend (rust, or
+cython); drop numba (+145 MB) and mlx (+240 MB, slower than numpy).
+
+**Frozen builds:** backends are imported by name from `_MODULES`, so `HeLab.spec` needs
+`hiddenimports` for every backend module, the reference included (without it a frozen app can't
+find `helab.convert.backends`); mlx also needs `collect_submodules('mlx')` and
+`collect_data_files('mlx')`; numba ignores `NUMBA_CACHE_DIR` when frozen (its cache folder is set
+through `set_cache_folder`, under `cache_dir()`, Q11.1). Compiled sources and build scripts live
+in `native/` (`cython/`, `rust/`); binaries are never committed.
 
 ## Writing TXY
 

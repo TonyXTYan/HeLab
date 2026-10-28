@@ -149,6 +149,19 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   and lacks the shot's end). Others would show as a TXY modified within a few seconds of its raw
   file. Worth knowing before stage 5 compares HeLab with MATLAB on every shot.
 
+- [ ] **M11.1 Time the converter on the lab PCs** (Tony, at each PC, not over SSH: an elevated SSH
+  session has poisoned HeLab's cache settings on the Main PC before): numpy, and the chosen compiled
+  backend once CI builds it (numba too if it still ships: first compile, cache location, identical
+  output), with `sessions/2026-10-29-claude-txy-bench/bench.py --mode serial` and `processes-warm`
+  at x2 and x4 on a copy of the sample set. Decides whether one core there keeps up with gigabit
+  (Q11.2). Optional: repeat the Mac's x12/x16 rows with Safari closed.
+- [ ] **M11.2 A CI-built rust (or cython) wheel on a lab PC** (Windows, Sandy Bridge): install it and
+  convert one shot with that backend, to see it load there.
+- [ ] **M11.3 Keep the MATLAB 2023 reference outputs**: the 32 files in the TXY Reference floor's
+  `.ai/temp/txy/matlab-2023/` are the only 2023-variant reference set on this Mac. Proposed: copy
+  them beside the sample set (e.g. `~/HeLab-samples/txy-v1-matlab-2023/`, read-only) before that
+  floor is deleted; the floor stays until then.
+
 ## Data roots (v0.0.5a1, added 2026-10-18)
 
 Native checks of the data-roots stages D1–D4 ([plan](sessions/2026-10-16-claude-data-roots/plan.md)).
