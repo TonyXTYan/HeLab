@@ -139,7 +139,9 @@ register note which machine owns which task.
    > (`Q~1`, `A~1`, `M~1`): give them the next block in `.ai/ID_BLOCKS.md`
    > and copy them into `.ai/DECISIONS_TODO.md`, `.ai/AI_TODO.md` and
    > `.ai/MANUAL_TODO.md` with their final IDs. Never delete agent branches,
-   > locally or on GitHub. Tony and other agents may edit Ground for small
+   > locally or on GitHub: delete a floor only with `maestri floor delete
+   > --keep-branch`, and never pass `--delete-branch` to `floor land`. Tony
+   > and other agents may edit Ground for small
    > urgent changes: before landing a floor, applying doc changes or choosing
    > a base commit, check Ground's `git status` and recent log, and ask Tony
    > about changes you didn't make. Never stash, reset, check out over or
@@ -205,7 +207,9 @@ register note which machine owns which task.
    > starts in a Maestri role folder (`.maestri/roles/<id>/`): run every
    > command from the floor's root (`cd "$(git rev-parse --show-toplevel)"`
    > first, then `source venv/bin/activate` and `source
-   > .ai/local/floor-env.sh`; prefix each command). Read `AGENTS.md`,
+   > .ai/local/floor-env.sh`; prefix each command). Check that the root is
+   > the floor (under `.maestri/floors`), not Ground; if it is Ground, stop
+   > and tell the Coordinator. Read `AGENTS.md`,
    > `roadmaps/agent-workflow.md`, the brief and the worker's handoff. Review
    > the actual diff against the brief's base commit (`git diff
    > <base>...HEAD`), not the handoff's account of it: correctness, the
@@ -268,8 +272,8 @@ register note which machine owns which task.
    >   `roadmaps/known-issues.md` line). Never edit `AGENTS.md`,
    >   `.ai/architecture/`, `roadmaps/`, `.ai/MANUAL_TODO.md`,
    >   `.ai/DECISIONS_TODO.md`, `.ai/AI_TODO.md` or `.ai/memory/`; put
-   >   questions for Tony and follow-ups in notes.md, numbered provisionally
-   >   (`Q~1`, `A~1`). Launch the HeLab GUI only when
+   >   questions for Tony and follow-ups in your handoff (notes.md), numbered
+   >   provisionally (`Q~1`, `A~1`, `M~1`). Launch the HeLab GUI only when
    >   `$HELAB_TEST_SETTINGS_FILE` is set (floor-env.sh).
    > - Keep `maestri floor status` current (a line per job; `--state review`
    >   when the batch is done). Report each job to whoever gave it with

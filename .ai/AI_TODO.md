@@ -95,7 +95,7 @@ Finding numbers (#N) refer to the [audit](sessions/2026-10-28-claude-v0.0.6-chec
   - handoff follow-ups that were never carried over, into known-issues, `refactoring.md` and the
     DLD plan (#16);
   - the Maestri note's decisions into `_readme.md`, and the "v0.0.6 changes" note (#7).
-- **A2.2 Small app fixes** (a Quick Fixes floor, after the release, or before it if Tony wants):
+- **A2.2 Small app fixes** (a Quick Fixes floor, now that v0.0.6a1 is out):
   - set werkzeug's logger to WARNING (#20);
   - write the watchdog's stall stacks into the log (#19);
   - name the cause in "Disk cache unavailable" (#21);
@@ -123,6 +123,12 @@ Finding numbers refer to the [planning-docs audit](sessions/2026-10-28-claude-do
   `helab/views/HelabMainWindow.py` imports `store_options` by value and
   `tests/test_helabMainWindow.py` patches only `helab.utils.folder_cache.store_options`; once it
   is called as `folder_cache.store_options()`, drop the exception from `io-and-browsing.md`.
+
+## Building the TXY converter (block 9)
+
+- **A9.1 Remove unused converter backends from the build** (Q9.2): every backend ships while the
+  converter is tested; once the default and the optional fast ones are settled, drop the rest
+  from `requirements.txt`, the lock and `HeLab.spec`, and note the size saved.
 
 ## Not AI work (stays in MANUAL_TODO)
 

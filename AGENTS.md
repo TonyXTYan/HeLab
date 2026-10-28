@@ -73,7 +73,7 @@ Python 3.13 is required (CI gates on it). Use uv, as in the README's "Setup (any
 ```bash
 uv python install 3.13
 uv venv --seed --python 3.13 venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-uv pip install -r requirements.lock -e .   # pinned; requirements.txt lists direct deps (README: refreshing the lock)
+uv pip install -r requirements.lock -e .   # pinned; requirements.txt lists direct deps (README: updating dependencies)
 git submodule update --init legacy/tdc_autoconverter   # DLD_front_panel, Momentum_Bells_test: cloned by hand (README)
 ```
 
@@ -126,6 +126,9 @@ Each rule names the area file with the detail.
   work runs in isolated `helab/io_helper.py` processes (operation modules in `helab/io_ops/`),
   started by `IOService` (`helab/utils/io_service.py`). The GUI has no worker pools besides the
   one analysis worker thread (`AnalysisRunner`, no source I/O) and the short startup log tidy.
+- HeLab writes nothing into source folders except the user's `.helab-root` markers and, where
+  the user turns it on per folder, converted `d_txy_helab_<N>.txy` (temporary name, then rename;
+  Q9.7). Never modify raw `d*.txt` or an existing TXY.
 - Rendering never reads disk or submits I/O: models, badges, tooltips and summaries read memory
   only (`SnapshotFileSystemModel`).
 - Never let the GUI thread wait on cancellation, deadlines or a helper. Queues and concurrency

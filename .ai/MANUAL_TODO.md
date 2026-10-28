@@ -34,7 +34,9 @@ Afterwards, an agent ticks the items below that the pass covered
 (A1.8, [AI_TODO](AI_TODO.md)).
 
 A small model can drive most of it through computer use, with Tony reviewing the screenshots:
-see the [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) (A5.1, Q5.1).
+see the [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) (Q5.1). Its dry run on the
+Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
+[results](sessions/2026-10-28-claude-smoke-mac/results.md).
 
 **Setup:**
 - A checkout of the release candidate, with its venv: `source venv/bin/activate` (Windows

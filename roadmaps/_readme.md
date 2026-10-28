@@ -38,8 +38,9 @@ compute is postponed until the converter works well (Q6.2).
   Stages: a reference port cross-checked against MATLAB run headless, a benchmark spike, then one
   builder per backend (NumPy, Numba, Cython/C, Rust, MLX) (Q6.5). Open: detector profiles and
   calibration (Q6.10, Q6.11), which TXY a folder uses (Q6.6), how other HeLabs get it (Q6.7),
-  store or cache only (Q6.9). Until HeLab replaces it, whether MATLAB's converter still gets the
-  temp-name `movefile` (Tony, 2026-10-19) is open. [Plan](txy-converter.md) (2026-10-29; focus 2026-10-28).
+  store or cache only (Q6.9). Building decisions: Q9.1–Q9.9 (MATLAB's converter gets no
+  temp-name change, Q9.8); v0.0.7 ships with stages 1, 2 and 4 (Q9.9).
+  [Plan](txy-converter.md) (2026-10-29; focus 2026-10-28).
 - [ ] Distributed results compute: one machine computes analysis results and other HeLabs use
   them without repeating the work. It builds on the [headless runner](headless-analysis.md)
   and the [network extension](network-runners-and-web.md#cross-machine-result-sharing).

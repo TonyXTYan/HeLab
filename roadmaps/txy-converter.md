@@ -31,6 +31,24 @@ replace the constants MATLAB hard-codes, and a parameter scan tunes them on real
   backend per floor; the backend stays switchable (lab PCs differ: Apple Silicon, CUDA of unknown
   version, Intel iGPU only).
 - **Samples** (Q8.6): a fixed set copied once from X to a local folder; floors read only that.
+- **Which TXY a folder uses** (Q6.6): the plot settings offer all three: MATLAB's with HeLab's
+  filling missing shots, HeLab's wherever they exist, or both as two datasets for comparing.
+  Every dataset and saved result records its source, so caches never mix them.
+- **Default profile** (Q6.10): `matlab-2019`. Plate profiles may change every parameter below.
+  Plate swaps: 2017-03-17, ~2022 (between 2022-08-22 and 2022-11-03 on X; 2022-11-03 for now),
+  2025-06-18. The 2022-11 ghost-counts run is on the new plates.
+- **Calibrated** (Q6.11): with halos, the parameters that maximise the correlation across halos
+  (the back-to-back pair correlation); plus hotspot maps and efficiency by region. Tony approves
+  each calibration; the first, provisional ones are made in stage 3 from the data on X (copied
+  to `~/HeLab-samples/calib-v1/`), once the converter is built.
+- **Building** (Q9.1–Q9.9, 2026-10-29): the acquisition PC (`TDC_User`) already runs HeLab and
+  has MATLAB. Every backend ships for now (A9.1 removes the unused ones). HeLab's TXY go to the
+  temp folder while testing, then a setting defaulting to the disk cache; writing them beside the
+  raw files is a per-folder option (with auto-convert at launch). Alerts use system
+  notifications only. The headless converter starts as `helab convert --watch <folder>`. Live
+  auto-convert resets each session, except in folders the user sets to start Live and
+  auto-convert at launch. MATLAB's converter isn't changed; HeLab must be careful about raw
+  files still being written. v0.0.7 ships with stages 1, 2 and 4 and the smoke pass.
 - **Postponed:** distributed compute until the converter works well (Q6.2).
 
 ## What the MATLAB converter does
@@ -59,10 +77,19 @@ off by a few percent per axis if v⊥ was never recalibrated.
   - `reconstruct`: `reconstruct(pulses, profile) -> txy` behind one backend interface;
     `backends/` holds the reference and the chosen fast backend(s);
   - `txy`: write TXY exactly as `dlmwrite` precision 8 does, to a temporary name, then rename.
+- **Profile parameters** (all may be calibrated; `matlab-2019` fixes them at MATLAB's values):
+  - per axis: the time sum (a constant, plus a correction across the plate, as the unused
+    3-corner code's cubic once did), the match tolerances, v⊥ (scale), and a non-linearity map;
+  - geometry: centre, rotation (the front panel's 0.61 rad), active-area radius;
+  - timing: the trigger offset (the 25 ps bin is the TDC's and fixed);
+  - per channel: dead time and ringing window, and the channel map (trigger channel 5 or 4);
+  - matching: search depth, the x−y sum tolerance, retrying the other x2 or y candidate,
+    3-corner reconstruction (MATLAB has it, switched off), MCP matching where recorded;
+  - maps: hotspot mask and efficiency by region.
 - **Built-in profiles:** `matlab-2019` (the exact MATLAB constants: the default while the
   comparison runs), `matlab-2023-lab-edit`, and the plate profiles `plates-2017`,
   `plates-2022`, `plates-2025` (uncalibrated), which start from `matlab-2019` and change only
-  through calibration (stage 3). Which one a folder uses by default is Q6.10.
+  through calibration (stage 3). The default is `matlab-2019` (Q6.10).
 - **Provenance:** every HeLab TXY records the raw file's fingerprint and the profile's name,
   version and hash, so shots can be converted again when a profile improves.
 - **In HeLab:** a helper operation (`helab/io_ops/`) converts settled raw files; it is source I/O,
@@ -120,14 +147,25 @@ connected to all).
 - From raw pulses: time sums per axis (absolute ones need MCP pulses) and across the plate;
   the x−y difference; pulse spacing (ringing and dead time per channel); hotspot and efficiency
   maps from a dark run and a large thermal cloud.
-- Geometry: X/Y scale and roundness from Momentum Bells halos (spheres of known radius), and the
-  plate's edge in a flat field (the diameter hasn't changed; no mask or grid).
+- Geometry: the profile that maximises the back-to-back correlation across halos (a distortion
+  smears the peak), checked against halo roundness and radius; and the plate's edge in a flat
+  field (the diameter hasn't changed; no mask or grid).
+- Data: the 2017 plates from the 2019–2021 halo runs; the 2022 plates from X's
+  `dld_output_cheerypicked` (`20221212_new_plates_halo_test_4`, 2,423 shots;
+  `20230130_new_plates_halo_3_halos`, 797; 2023–2024 halo runs) and the 2022-11 ghost counts,
+  the only set with MCP pulses (time sums x 3367, y 3294 bins). The 2025 plates' calibration data
+  exists but isn't reachable yet.
 - A calibration panel proposes a profile; Tony checks it on known physics before saving it.
 - The 2025 plates need a calibration set (a dark run, a large thermal cloud, a halo, ideally
   with the MCP channel recorded); until then `plates-2025` stays uncalibrated.
 
-**Stage 4, in HeLab.** The helper operation, the file kind, Live's auto-convert toggle (Q6.8),
-the headless converter ([headless analysis](headless-analysis.md)), the profile manager (import,
+**Stage 4, in HeLab.** The helper operation (raw files read only once settled: unchanged for
+5 s, size stable between checks, ending in a newline, starting with the trigger channel), the
+file kind, Live's auto-convert toggle (Q6.8), folders set to start Live and auto-convert at
+launch (Q9.6), the output location (temp, then a setting defaulting to the cache; beside the raw
+files as a per-folder option, Q9.7), low-count alerts through system notifications (Q9.4), the
+TXY source choice in the plot settings (Q6.6), `helab convert --watch <folder>` (Q9.5; the
+[headless service](headless-analysis.md) can take it over later), the profile manager (import,
 export, tweak), provenance, and docs.
 
 **Stage 5, replacing MATLAB on the acquisition PC.** Run beside MATLAB, compare their output on
@@ -138,12 +176,9 @@ over profiles scored on real signals, launch configurations that start Live and 
 
 ## Open decisions
 
-- Q6.6: which TXY a folder uses when both MATLAB's and HeLab's exist.
 - Q6.7: how other HeLabs get the acquisition PC's TXY (postponed with Q6.2).
 - Q6.9: store HeLab's TXY, or only cache them (after the benchmark).
-- Q6.10: which profile is the default, and which shots came from which plates.
-- Q6.11: the calibration set for the 2025 plates; whether the MCP channel was recorded in 2025.
-- Whether MATLAB's converter still gets the temp-name `movefile` until HeLab replaces it
-  (Tony, 2026-10-19).
+- Q6.10: the exact 2022 plate swap date.
+- Q6.11: the 2025 plates' data (reachable within days; whether it has MCP pulses).
 - Which channel starts a raw file in each era (`start_channel` was switched between `5` and `4`
   in 2023).

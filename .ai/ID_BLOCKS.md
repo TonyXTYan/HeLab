@@ -41,3 +41,4 @@ number.
 | 6 | 2026-10-28 | Side (claude), Ground | wrapping up v0.0.6, v0.0.7's scope (Tony in Chat) | dev/v0.0.6 → dev/v0.0.7 | Q6.1–Q6.12 (Q6.12 numbered later, by block 7) |
 | 7 | 2026-10-28 | Side (claude) subagent, Ground | planning-docs audit fixes (`sessions/2026-10-28-claude-docs-audit/planning.md`) | dev/v0.0.7 | A7.1, A7.2 |
 | 8 | 2026-10-28 | Side (claude) + 3 subagents, Ground | docs and Maestri audit (`sessions/2026-10-28-claude-docs-audit/`), Tony's answers in Chat | dev/v0.0.7 | Q8.1–Q8.6, A8.1, M8.1 |
+| 9 | 2026-10-29 | Side (claude), Ground | what building the converter needs (Tony in Chat) | dev/v0.0.7 | Q9.1–Q9.9, A9.1 |

@@ -61,6 +61,29 @@ Tony's answers in Chat, 2026-10-28, on the [docs audit](sessions/2026-10-28-clau
 - **Q2.1.1** the orphaned pytest was killed; **Q2.1.2** `.ai/temp` stays; **Q2.2.3** the six agent
   branches were pushed (2026-10-28); **Q2.5 yes:** floors run HeLab with their own settings file.
 
+Tony's answers in Chat, 2026-10-29, on what building the converter needs (block 9;
+[plan](../roadmaps/txy-converter.md)):
+
+- **Q9.1 The acquisition PC** (the one with `TDC_User`) already runs HeLab and has MATLAB.
+- **Q9.2 Backends in the build:** ship every backend for now, with a note to remove the unused
+  ones (A9.1).
+- **Q9.3 Where HeLab's TXY go:** the temp folder while testing; then a setting, defaulting to the
+  disk cache.
+- **Q9.4 Alerts:** the system notification API only; none of MATLAB's other alerts (sounds, plot,
+  email).
+- **Q9.5 Headless converter:** a small command for now (`helab convert --watch <folder>`).
+- **Q9.6 Live auto-convert:** resets each session by default; the user can pick folders that
+  remember Live and auto-convert and start them when HeLab launches.
+- **Q9.7 Writing beside the raw files:** by default HeLab converts into its temp folder or cache;
+  writing `d_txy_helab_<N>.txy` beside the raw files is an option the user turns on per folder
+  (with auto-convert at launch). This amends Q8.2 (HeLab still writes nothing else to source
+  folders).
+- **Q9.8 MATLAB's converter gets no temp-name change:** once HeLab converts, no `d_txy_forc` is
+  being written; HeLab keeps its checks for half-written TXY anyway, and must be careful about
+  raw `d` files still being written.
+- **Q9.9 v0.0.7 ships** with stages 1, 2 and 4 done (Live auto-convert and the headless command
+  working) and the smoke pass; calibration (stage 3) and replacing MATLAB (stage 5) may follow.
+
 Applied as proposed on 2026-10-28, after "proper fix AGENTS.md and Maestri roles setup"; each
 needs Tony's confirmation:
 
@@ -106,7 +129,9 @@ Finding numbers refer to the
 ## Automating the smoke pass (block 5)
 
 - **Q5.1 Which model drives the smoke pass** ([runbook](sessions/2026-10-28-claude-smoke-automation/plan.md))?
-  Proposed: Haiku 5.5. Use Sonnet 5.5 if Haiku misreads the screen in the dry run (A5.1).
+  Proposed: Haiku 5.5, with Sonnet 5.5 if Haiku misreads the screen. The dry run (A5.1, done
+  2026-10-28) used Sonnet 5.5 ([results](sessions/2026-10-28-claude-smoke-mac/results.md)), so
+  Haiku is still untried.
   Also: which computer-use tool runs it on each machine (the Claude desktop app's computer use
   on the Mac; check a lab PC can run it)?
 - **Q5.2.5 Shape of the debug/smoke menu** (from Q5.2, approved: [plan](../roadmaps/smoke-automation.md)): extend the
@@ -172,8 +197,14 @@ Finding numbers refer to the
   NumPy, Numba, Cython/C, Rust (PyO3), Apple GPU (MLX); not Julia, PyTorch or JAX (packaging).
   Findings: [session notes](sessions/2026-10-28-claude-txy-converter-plan/findings.md).
 - **Q6.6 Which TXY a folder uses when both `d_txy_forc*.txt` and HeLab's `d_txy_helab_*.txy`
-  exist.** Proposed: the MATLAB files by default until the comparison passes, with a per-folder
-  choice; HeLab's are shown as their own file kind.
+  exist** (side by side on the acquisition PC, old archives re-converted with a better profile,
+  folders where MATLAB missed shots). Options: (a) MATLAB's by default, HeLab's filling only the
+  shots MATLAB lacks, with a per-folder "TXY from: MATLAB / HeLab (profile)" switch; (b) HeLab's
+  whenever they exist; (c) both, as two datasets of the same folder, for comparing. Either way
+  every dataset and saved result records its source (MATLAB, or HeLab's profile and version) so
+  caches never mix them, and Folder details and each plot's source line say which is shown.
+  Proposed: (a) now, (c) later as a comparison mode; the default flips to HeLab's after stage 5.
+  **Decided** (Tony, 2026-10-29): offer all three, (a), (b) and (c), in the plot settings.
 - **Q6.7 How other HeLabs get the acquisition PC's TXY** (Q6.2, as Tony framed it: the
   acquisition PC watches the raw files, converts them, maybe runs analysis; other HeLabs on the
   network fetch the TXY from its HeLab store). Options:
@@ -207,7 +238,20 @@ Finding numbers refer to the
   shots came from which detector is Tony's to say. Tony, 2026-10-28: the MCP plates changed in ~2022 and in 2025
   (on X, the He3/He4 folders' `old_plates` end 2022-07 and `new_plates` start 2023-02); look into
   the x2 handling while building. Probe results (old vs new plates, MCP-measured time sums
-  x 3367 / y 3294 bins in 2022-11) are in the notes.
+  x 3367 / y 3294 bins in 2022-11) are in the notes. Detailed for Tony, 2026-10-29: profiles
+  `matlab-2019` (exact), `matlab-2023-lab-edit`, and `plates-2017/2022/2025` (copies of
+  `matlab-2019` until calibrated). Proposed: new conversions use `matlab-2019` until a plate
+  profile is calibrated and approved, then the plate profile valid on the shot's date (the raw
+  file's time, as D7 reads it), with a per-folder override; MATLAB's quirks stay only in
+  `matlab-2019`. Needed from Tony: the plate swap dates (2017; ~2022, between 2022-07-29 and
+  2023-02-04 on X; 2025) and whether the 2022-11 ghost-counts run was on the old or new plates.
+  **Answered** (Tony, 2026-10-29): the default is `matlab-2019`; the 2022-11 ghost-counts run was
+  on the new plates (so the ~2022 swap falls between 2022-07-29 and 2022-11-23, and the
+  MCP-measured time sums x 3367 / y 3294 are the 2022 plates'); a plate profile may change every
+  parameter we might want to calibrate (listed in the [plan](../roadmaps/txy-converter.md)).
+  Swap dates (Tony, 2026-10-29): 2017-03-17 and 2025-06-18; the 2022 date is unknown. On X the
+  last old-plate run is 2022-08-22 and the first named for the new plates is
+  `20221103_bragg_beam_tests_new_plates`, so provisionally 2022-11-03 until a closer date is found.
 - **Q6.11 Detector calibration in the converter plan.** Tony, 2026-10-28: the 2025 plates have
   not been calibrated yet; plan for calibrating. Proposed: a calibration stage after the
   byte-identical reference, built on D11's raw-pulse diagnostics (time sums from MCP pulses and
@@ -222,7 +266,21 @@ Finding numbers refer to the
   tweak them; the 2025 profile is marked uncalibrated. The MCP diameter hasn't changed; there is
   no mask or grid. The file server with post-2025 data is offline for now; Tony will say when it
   is back. Still open: whether the lab can take a calibration set, and whether the MCP channel
-  was recorded in 2025.
+  was recorded in 2025. Detailed for Tony, 2026-10-29: the 2017 and 2022 plates can probably be
+  calibrated from data on X (2019–2021 halos; 2023 halos in `2020_Momentum_Bells/Full_S_RT`;
+  the 2022-11 ghost counts with MCP pulses if on the right plates); only 2025 needs new data.
+  Also open: when a profile counts as calibrated (proposed: halo roundness and radius within 1 %,
+  time sums measured with their spread, a hotspot map) and who approves (proposed: Tony, from a
+  calibration report HeLab shows before saving). **Answered** (Tony, 2026-10-29): with halos,
+  calibrated means the parameters that maximise the correlation across halos (the back-to-back
+  pair correlation); also hotspot maps and efficiency, by region, with the other parameters
+  listed. Calibration data for the 2025 plates exists but isn't reachable now; meanwhile use the
+  old data in X's `dld_output_cheerypicked` (2022 plates: `20221212_new_plates_halo_test_4`,
+  2,423 shots; `20230130_new_plates_halo_3_halos`, 797; many 2023–2024 halo runs; none of those
+  checked has MCP pulses). Tony approves calibrations (2026-10-29). Provisional calibrations
+  from the data on X come after the converter is built (stage 3), not before; the halo runs are
+  copied to `~/HeLab-samples/calib-v1/` for then. The 2025 data should be reachable within a few
+  days.
 
 ## After the v0.0.6 release (not blocking)
 
@@ -251,3 +309,28 @@ acceptable, or should notifications use the status bar only?
 4. The TXY converter port (needs sample raw and `_txy_forc` files from Tony).
 5. The DLD port's D13 (halo centring per shot).
 6. The `--upgrade` lock refresh (python-dateutil 3.0), in its own CI run (A7.2).
+
+## Open decisions inside plans
+
+Plans keep their own design questions; they are indexed here so none is missed (proposed after
+the docs audit; Tony, 2026-10-29: "keep fixing docs as proposed"). When work on a plan starts, the ones
+that block it become Q items here, as the converter's did (Q6.6–Q6.11).
+
+- [DLD front panel port](../roadmaps/dld-front-panel-port.md#open-decisions): 33 (some overlap
+  Q1.6).
+- [Analysis job runner](../roadmaps/analysis-job-runner.md#open-decisions): 7.
+- [Network runners and web](../roadmaps/network-runners-and-web.md#open-decisions): 7.
+- [Live monitoring](../roadmaps/live-monitoring.md#open-decisions): 6.
+- [Headless analysis](../roadmaps/headless-analysis.md#open-decisions): 5.
+- [Run comparison and batch](../roadmaps/run-comparison-and-batch.md#open-decisions): 5.
+- 4 each: [agent workflow](../roadmaps/agent-workflow.md),
+  [analysis workflow](../roadmaps/analysis-workflow.md#open-decisions),
+  [cache-only browsing](../roadmaps/cache-only-browsing.md#open-decisions),
+  [presets and workspaces](../roadmaps/presets-and-workspaces.md#open-decisions),
+  [refactoring](../roadmaps/refactoring.md#open-decisions),
+  [result caching](../roadmaps/result-caching.md#open-decisions).
+- [App updates](../roadmaps/app-updates.md#open-decisions): 3.
+- In prose: [quality control and repair](../roadmaps/quality-control-and-repair.md#acceptance-and-open-decisions),
+  [reproducible workflows](../roadmaps/reproducible-workflows.md#dependencies-and-open-decisions).
+- [TXY converter](../roadmaps/txy-converter.md#open-decisions): already Q6.6–Q6.11, plus two
+  smaller ones there.
