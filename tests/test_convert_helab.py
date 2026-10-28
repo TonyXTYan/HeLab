@@ -795,7 +795,6 @@ def test_the_partial_pattern_is_exactly_write_atomics_names(tmp_path: Path) -> N
         assert not pattern.match(name), name
 
 
-
 RECORD_PARTIAL = ".d_txy_helab_1.json.0123456789abcdef.partial"
 FOLDER_PARTIAL = ".folder.json.0123456789abcdef.partial"
 
@@ -825,6 +824,7 @@ def test_the_own_folder_pattern_adds_exactly_the_records_temporary_names(tmp_pat
                  ".Folder.json.0123456789abcdef.partial", ".folder.jsonl.0123456789abcdef.partial",
                  ".folderxjson.0123456789abcdef.partial", ".notes.json.0123456789abcdef.partial"):
         assert not pattern.match(name), name
+
 
 def test_a_beside_conversion_removes_only_its_own_old_leftovers(source: Path, tmp_path: Path) -> None:
     write_raw(source, 1, raw_bytes(10_000))

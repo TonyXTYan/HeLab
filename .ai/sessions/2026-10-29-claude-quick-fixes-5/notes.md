@@ -191,3 +191,6 @@ rerun (if listed). The converter architecture file's leftover paragraph should n
 reruns. Full suite `-n 4 --reruns 5 --reruns-delay 1`, inside (`.ai/temp/pytest`) and outside the
 checkout: 8040 passed and 669 skipped each, no reruns. mypy --strict helab/ and tests, pyright helab tests,
 mypy --platform win32 --strict (both), pyright --pythonplatform Windows: clean.
+
+**Review (Sandpiper, job 4 cleared at 2b9435a, no blocker).** PEP 8 blank lines around the new pattern test
+(three before `RECORD_PARTIAL`, one before the next test) made two each.
