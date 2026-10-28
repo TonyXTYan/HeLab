@@ -84,22 +84,8 @@ Tony's answers in Chat, 2026-10-29, on what building the converter needs (block 
 - **Q9.9 v0.0.7 ships** with stages 1, 2 and 4 done (Live auto-convert and the headless command
   working) and the smoke pass; calibration (stage 3) and replacing MATLAB (stage 5) may follow.
 
-Applied as proposed on 2026-10-28, after "proper fix AGENTS.md and Maestri roles setup"; each
-needs Tony's confirmation:
-
-- **Q3.2, Q3.1, Q2.8:** AGENTS.md went from 92 KB to 15.5 KB of rules and a map. Its detail moved
-  word for word to `.ai/architecture/` (10 area files and an index), so Codex reads all of it.
-- **Q2.3:** CodeGraph is optional, in AGENTS.md, the Cursor rule and the setup guide.
-- **Q3.3:** the "nothing removed without asking" wording, with its housekeeping list, is in
-  AGENTS.md (Codebase rules, The disk cache).
-- **Q3.4:** agents offer roadmap and known-issues items, and do AI_TODO items without asking.
-- **Q3.6.3:** "🎓Tony" is used in direct answers only.
-- **Q2.2.1:** agent branches are never deleted (AGENTS.md, workflow, setup guide §7).
-- **Q2.2.2:** the Quick Fixer pushes once when its jobs are done, or earlier when the
-  Coordinator asks.
-- **Q4.1:** short IDs `<letter><block>.<item>[.<sub>]`, given at merge; provisional `Q~1` on
-  floors and in cloud sessions; `Q` for questions so they don't clash with the DLD port's
-  D-numbers (Tony, 2026-10-28).
+Confirmed by Tony, 2026-10-29 ("confirm all"), and recorded where each lives (AGENTS.md, the
+setup guide, the roles): Q3.1, Q3.2, Q2.8, Q2.3, Q3.3, Q3.4, Q3.6.3, Q2.2.1, Q2.2.2, Q4.1.
 
 ## From the audit (block 2)
 

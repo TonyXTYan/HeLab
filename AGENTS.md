@@ -166,7 +166,7 @@ Each rule names the area file with the detail.
   - session-only lists drop their oldest entries;
   - the RAM budget evicts datasets and releases plots (never closes them).
 
-  Any other removal is the user's choice, asked first, and sends `removed` (Q3.3, to confirm).
+  Any other removal is the user's choice, asked first, and sends `removed` (Q3.3).
 - Read the cache folder with `cache_dir()`, never `DIR_CACHES`: it can move while HeLab runs.
 - Every byte size shown is SI (kB/MB/GB, powers of 1000) (Tony, 2026-10-26).
 
