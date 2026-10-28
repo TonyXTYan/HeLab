@@ -49,6 +49,35 @@ No build files: MLX ships wheels. Nothing in `pyproject.toml` or `HeLab.spec`.
 - With MLX hidden (`sys.modules['mlx'] = None`): `tests/test_convert_backend_mlx.py` 98 passed,
   105 skipped, each with the reason.
 
+## Review round 1 (Osprey, on `848abf0`; CoCo's additions), all fixed
+
+Osprey confirmed the correctness argument line by line, with a fuzz of 7,500 raw files × 2 profiles
+including 245k contested x1 and cascades: 0 mismatches.
+
+| Item | Fix |
+|---|---|
+| **Blocker: pyright fails where mlx isn't installed** (`reportMissingImports` on the 5 `import mlx.core`; `tests/test_typing.py` runs pyright, so CI would fail on every OS) | `# pyright: ignore[reportMissingImports]` on each import. It is harmless when mlx is installed, because `reportUnnecessaryTypeIgnoreComment` is off. mypy needs nothing: `mypy.ini` has `ignore_missing_imports`. **Proved without mlx:** with a pyright config on Ground's venv (no mlx) and this floor's `helab` and `tests` (`.ai/temp/pyr-nomlx/pyrightconfig.json`, extraPaths = the floor and `tests/`), there were exactly Osprey's 5 errors before the fix and 0 after. `mypy --python-executable <Ground's python> helab --strict` and the same for `tests` are clean. (`pyright --pythonpath` is no proof: the repo's `pyrightconfig.json` `venv` overrides it.) |
+| Dead-time tolerance capped at 2^30 (`_not_above`), while dead-time differences reach 2^51 | `_dead_time_bins`: `floor(dead_time / bin_time)`, capped at `DEAD_TIME_CAP` = 2^52. Osprey's repro (`matlab-2023-lab-edit`, `dead_time_x1=0.05`, two hits 1.5e9 bins apart; reference 1 row, the old code 2) is a test, together with dead times at and past the cap. |
+| (found while fixing it) Two finite limits whose sum overflows to inf made `limits_of` raise `OverflowError` | `_below` and `_not_above` cap before `ceil`/`floor`; tested against the reference with every limit 1e308. |
+| One `mx.eval` per shot kept every batch's pair tensor alive | `mx.eval` and the copy back after each batch. Peak GPU memory at 400k x1: **1,753 MB → 188 MB**, same time (71 vs 83 ms, noise); a test bounds it at 600 MB. |
+| A lock around the GPU part | `_GPU` around `first_choices_mlx`'s MLX work: free, since the backend holds the GIL for the rest (`releases_gil=False`), and MLX's default stream is never used by two threads at once. |
+| CoCo: any error while loading mlx leaves it unavailable | `_platform_unavailable` catches any `Exception` from `find_spec`, the import or the device check, and gives `MLX can't start: <type>: <message>`. A test injects OSError, RuntimeError, ValueError and ImportError for `mlx` and for `mlx.core` in a fresh process: `available_backends()` lists `reference` and not `mlx`, nothing propagates. |
+| CoCo: PURE | `backends.mlx_gpu` added to `PURE` in `tests/test_headless_imports.py` (the line wrapped to stay within 120 columns). |
+
+After the fixes: `check_samples.py --backend mlx --positions all` gives 303 identical + 6 proved faults;
+`compare_backends.py` gives 309/309 under both profiles. `tests/test_convert_backend_mlx.py` has 216
+tests (108 run without mlx; the other 108 skip with the reason).
+
+**Full run after round 1:** `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`
+gave **6295 passed, 4 skipped, 1 RERUN** (load 20–30), outside the converter:
+`tests/test_folder_summary.py::test_scan_metadata_survives_restart_without_reading_txy_contents`. Its
+rerun reason: `AssertionError: assert [25, '/Users/...s_re0/source'] == ['/Users/tony...s_re0/source']`
+at `test_folder_summary.py:725`. The test patches the process-wide `os.scandir` and expects only its
+own calls, but it recorded an `os.scandir(25)`: a call by file descriptor from something else in the
+process, most likely another thread's `shutil.rmtree`, which scans by fd. It isn't in known-issues;
+proposed entry below. Type checks: `mypy helab/ --strict`, `mypy tests --strict` and `pyright helab tests`
+are clean, and so is pyright against the no-mlx venv.
+
 ## Notes for the Coordinator and the final run
 
 - **Cut for within-shot parallelism:** the backend parallelises within the shot itself (all x1
@@ -101,4 +130,9 @@ No build files: MLX ships wheels. Nothing in `pyproject.toml` or `HeLab.spec`.
   around `_load` makes the first load explicit and safe for every backend, with a test in which many
   threads load a backend at once in a fresh process (this floor's `FIRST_LOAD` test is the pattern).
   It is a shared-file change, so this floor left it alone.
+- **Known issue (proposed, for `roadmaps/known-issues.md`):**
+  `test_folder_summary.py::test_scan_metadata_survives_restart_without_reading_txy_contents` reran
+  once here: its process-wide `os.scandir` patch recorded an `os.scandir(25)` (by fd) that wasn't the
+  test's own call. The likely cause is a concurrent `shutil.rmtree` in another thread. A fix would
+  record only `str` paths under the test's root, or patch the module the scan uses rather than `os`.
 - **M~1:** none. The tests use synthetic data and `tests_sample_data/`; nothing needs a screen.

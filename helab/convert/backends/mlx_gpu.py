@@ -57,7 +57,7 @@ from helab.convert.raw import RawPulses
 from helab.convert.reconstruct import Backend, Hits, NoRowsError, register_backend
 
 if TYPE_CHECKING:
-    import mlx.core
+    import mlx.core  # pyright: ignore[reportMissingImports]
 
 Ints = npt.NDArray[np.int64]
 Codes = npt.NDArray[np.int8]
@@ -69,6 +69,8 @@ EXACT_LIMIT = 2.0 ** 50
 # profile with a window of WINDOW_LIMIT bins or more goes to the reference).
 CLAMP = 2 ** 28
 WINDOW_LIMIT = CLAMP // 4
+# Above every difference of two corner times (both below EXACT_LIMIT).
+DEAD_TIME_CAP = 2 ** 52
 # x1 rows per GPU batch: the pair search holds rows × depth² int32 values (~5 kB per row at 36).
 GPU_BATCH = 8192
 NONE = -1
@@ -114,13 +116,22 @@ class Choices:
 
 def _below(limit: float) -> int:
     """The largest integer ``|d|`` with ``|d| < limit`` (``-1``: none), at most ``4·CLAMP``: the
-    candidates' differences, sums of three of them included, stay below ``3·CLAMP``."""
-    return min(math.ceil(limit) - 1, 4 * CLAMP)
+    candidates' differences, sums of three of them included, stay below ``3·CLAMP``. (A sum of
+    two finite profile values can overflow to inf; the cap comes first.)"""
+    return 4 * CLAMP if limit > 4 * CLAMP else min(math.ceil(limit) - 1, 4 * CLAMP)
 
 
 def _not_above(limit: float) -> int:
     """The largest integer ``|d|`` with ``not |d| > limit``, at most ``4·CLAMP``."""
-    return min(math.floor(limit), 4 * CLAMP)
+    return 4 * CLAMP if limit > 4 * CLAMP else math.floor(limit)
+
+
+def _dead_time_bins(dead_time: float, bin_time: float) -> int:
+    """The dead-time tolerance in bins as an integer test (``|d| <= tol`` is ``|d| <=
+    floor(tol)``). Not the match limits' cap: dead-time differences are between any two times of
+    one corner, up to 2^51 (times below 2^50), so the cap is 2^52, past every difference."""
+    tolerance = dead_time / bin_time
+    return DEAD_TIME_CAP if tolerance >= DEAD_TIME_CAP else math.floor(tolerance)
 
 
 def limits_of(profile: DetectorProfile) -> Limits:
@@ -187,7 +198,7 @@ def prepare(pulses: RawPulses, profile: DetectorProfile) -> Prepared | None:
                             (Y2, profile.dead_time_y2)):
         if dead_time > 0:
             rows = np.flatnonzero(snapshot == code)
-            keep = _dead_time_keep(times[rows], _not_above(dead_time / profile.bin_time))
+            keep = _dead_time_keep(times[rows], _dead_time_bins(dead_time, profile.bin_time))
             codes[rows[~keep]] = 0
     first = 1 if profile.skip_first_sorted_row else 0
     x1_rows = np.flatnonzero(codes[first:] == X1).astype(np.int64) + first
@@ -233,29 +244,30 @@ def first_choices_mlx(prep: Prepared) -> Choices:
     """Step 2 on the GPU: the same search as ``first_choices_numpy``, in MLX (int64 gathers and
     differences, int32 tests). Only the chosen offsets come back."""
     _start_mlx()
-    import mlx.core as mx
+    import mlx.core as mx  # pyright: ignore[reportMissingImports]
 
     lim, search_np, n = prep.limits, prep.search, prep.rows
     width = search_np.shape[0]
     count = prep.x1_rows.shape[0]
     if count == 0:
         return first_choices_numpy(prep)
-    times = mx.array(prep.times)
-    codes = mx.array(prep.codes)
-    search = mx.array(search_np)
-    flat = mx.arange(width * width, dtype=mx.int32)
-    x2k_parts: list[mlx.core.array] = []
-    pk_parts: list[mlx.core.array] = []
-    for start in range(0, count, GPU_BATCH):
-        rows = mx.array(prep.x1_rows[start:start + GPU_BATCH])
-        x2k, pk = _gpu_batch(times, codes, rows, search, flat, n, width, lim)
-        x2k_parts.append(x2k)
-        pk_parts.append(pk)
-    x2k_all = mx.concatenate(x2k_parts)
-    pk_all = mx.concatenate(pk_parts)
-    mx.eval(x2k_all, pk_all)
-    x2k_np = np.array(x2k_all, dtype=np.int64)
-    pk_np = np.array(pk_all, dtype=np.int64)
+    x2k_parts: list[Ints] = []
+    pk_parts: list[Ints] = []
+    with _GPU:
+        times = mx.array(prep.times)
+        codes = mx.array(prep.codes)
+        search = mx.array(search_np)
+        flat = mx.arange(width * width, dtype=mx.int32)
+        for start in range(0, count, GPU_BATCH):
+            rows = mx.array(prep.x1_rows[start:start + GPU_BATCH])
+            x2k, pk = _gpu_batch(times, codes, rows, search, flat, n, width, lim)
+            # Evaluate each batch before building the next: one graph for the whole shot keeps
+            # every batch's pair tensor alive (1.7 GB at 400k x1; 0.36 GB this way).
+            mx.eval(x2k, pk)
+            x2k_parts.append(np.array(x2k, dtype=np.int64))
+            pk_parts.append(np.array(pk, dtype=np.int64))
+    x2k_np = np.concatenate(x2k_parts)
+    pk_np = np.concatenate(pk_parts)
     rows_np = prep.x1_rows
     has_x2 = x2k_np < width
     hit = has_x2 & (pk_np < width * width)
@@ -271,7 +283,7 @@ def _gpu_batch(times: mlx.core.array, codes: mlx.core.array, rows: mlx.core.arra
                lim: Limits) -> tuple[mlx.core.array, mlx.core.array]:
     """One batch of x1 rows: the first x2 offset (``width`` for none) and the first y pair as
     ``k2·width + k3`` (``width²`` for none)."""
-    import mlx.core as m
+    import mlx.core as m  # pyright: ignore[reportMissingImports]
 
     near = rows[:, None] + search[None, :]
     inside = (near >= 0) & (near < n)
@@ -425,26 +437,31 @@ def reconstruct_mlx(pulses: RawPulses, profile: DetectorProfile, gpu: bool = Tru
 # converting their first shots at the same time (the timing harness's thread mode, a helper's
 # pool) must not start MLX twice or see it half started.
 _START = threading.Lock()
+# One shot's GPU work at a time: threads gain nothing on the GPU (the backend holds the GIL for the
+# rest anyway, releases_gil=False), and MLX's default stream is then never used by two at once.
+_GPU = threading.Lock()
 
 
 def _start_mlx() -> None:
     with _START:
-        import mlx.core  # noqa: F401
+        import mlx.core  # pyright: ignore[reportMissingImports]  # noqa: F401
 
 
 @functools.cache
 def _platform_unavailable() -> str | None:
+    """Why MLX can't run here, or None. Never raises: any failure while looking for, importing or
+    starting MLX (a broken install, a library that won't load, no device) is the reason."""
     if sys.platform != "darwin" or platform.machine() != "arm64":
         return f"MLX needs Apple Silicon (this is {sys.platform} {platform.machine()})"
-    if importlib.util.find_spec("mlx") is None:
-        return "MLX isn't installed (pip install mlx)"
     with _START:
         try:
-            import mlx.core as mx
+            if importlib.util.find_spec("mlx") is None:
+                return "MLX isn't installed (pip install mlx)"
+            import mlx.core as mx  # pyright: ignore[reportMissingImports]
             if not mx.metal.is_available():
                 return "MLX finds no Metal GPU"
-        except Exception as error:  # noqa: BLE001 - any import or device failure means "can't run"
-            return f"MLX can't start: {error}"
+        except Exception as error:  # noqa: BLE001 - any failure means "can't run", with the reason
+            return f"MLX can't start: {type(error).__name__}: {error}"
     return None
 
 

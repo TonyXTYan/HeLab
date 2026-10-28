@@ -332,3 +332,84 @@ def test_a_contested_x2_is_recomputed_in_order() -> None:
     final = mlx_gpu.resolve(prep, first)
     assert final.x2.tolist() != first.x2.tolist() or final.y1.tolist() != first.y1.tolist()
     np.testing.assert_array_equal(prep.x1_rows, _ints([1, 2]))
+
+
+def corner_hits(*starts: float) -> RawPulses:
+    """A trigger, then one clean hit (x1, x2, y1, y2) at each start, in bins."""
+    channels, times = [5.0], [1000.0]
+    for start in starts:
+        for channel, delay in ((0.0, 1500.0), (1.0, 1700.0), (2.0, 1550.0), (3.0, 1650.0)):
+            channels.append(channel)
+            times.append(start + delay)
+    return RawPulses(channels=np.array(channels), times=np.array(times))
+
+
+@pytest.mark.parametrize("gpu", [pytest.param(True, marks=needs_gpu), False], ids=["gpu", "cpu"])
+def test_a_dead_time_longer_than_the_match_limits_cap(gpu: bool) -> None:
+    """Osprey's repro: 0.05 s is 2e9 bins, past the 2^30 cap on the match limits; dead-time
+    differences reach 2^51, so the second x1 (1.5e9 bins later) must still be cut."""
+    profile = MATLAB_2023_LAB_EDIT.replace(dead_time_x1=0.05)
+    pulses = corner_hits(10_000.0, 10_000.0 + 1.5e9)
+    reference = txy_or_error(pulses, profile, None)
+    assert reference.count(b"\n") == 1
+    assert txy_or_error(pulses, profile, gpu) == reference
+    for dead_time in (2 ** 51 * 25e-12, 1e300):        # at and past the 2^52 cap, and overflowing
+        huge = MATLAB_2023_LAB_EDIT.replace(dead_time_x1=dead_time)
+        assert txy_or_error(pulses, huge, gpu) == txy_or_error(pulses, huge, None)
+
+
+@pytest.mark.parametrize("gpu", [pytest.param(True, marks=needs_gpu), False], ids=["gpu", "cpu"])
+def test_limits_whose_sum_overflows_match_the_reference(gpu: bool) -> None:
+    profile = MATLAB_2019.replace(match_time_sum_x=1e308, match_tolerance_x=1e308, match_time_sum_y=1e308,
+                                  match_tolerance_y=1e308, xy_sum_tolerance=1e308)
+    assert mlx_gpu.limits_of(profile).x2 == 4 * mlx_gpu.CLAMP
+    for seed in range(5):
+        pulses = fuzz_pulses(200 + seed, rows=200)
+        assert txy_or_error(pulses, profile, gpu) == txy_or_error(pulses, profile, None)
+
+
+BROKEN_LOAD = """
+import json, sys
+kind, name = sys.argv[1], sys.argv[2]
+class Broken:
+    def find_spec(self, fullname, path, target=None):
+        if fullname == name:
+            raise {"oserror": OSError("dlopen: library not loaded"), "runtime": RuntimeError("no device"),
+                   "value": ValueError("bad spec"), "import": ImportError("broken")}[kind]
+        return None
+sys.meta_path.insert(0, Broken())
+from helab.convert.reconstruct import available_backends, get_backend
+print(json.dumps([available_backends(), get_backend("mlx").unavailable(None)]))
+"""
+
+
+@pytest.mark.parametrize("name", ["mlx", "mlx.core"])
+@pytest.mark.parametrize("kind", ["oserror", "runtime", "value", "import"])
+def test_any_error_loading_mlx_leaves_it_unavailable_with_the_reason(kind: str, name: str) -> None:
+    """Any failure while finding, importing or starting MLX is the reason; nothing propagates
+    out of ``unavailable`` or ``available_backends``."""
+    done = subprocess.run([sys.executable, "-c", BROKEN_LOAD, kind, name], capture_output=True, text=True,
+                          timeout=120, env=dict(os.environ), cwd=ROOT)
+    assert done.returncode == 0, done.stderr
+    available, reason = json.loads(done.stdout.splitlines()[-1])
+    assert "reference" in available and "mlx" not in available
+    assert isinstance(reason, str) and reason
+    if REASON is None:          # MLX would run here, so the reason is the injected failure
+        assert reason.startswith("MLX can't start: ")
+
+
+@needs_gpu
+def test_gpu_memory_stays_bounded_on_a_large_shot() -> None:
+    """Each batch is evaluated before the next is built (Osprey: one graph per shot held 1.7 GB
+    at 400k x1)."""
+    import mlx.core as mx  # pyright: ignore[reportMissingImports]
+
+    rows = 1_600_000
+    channels = np.concatenate([[5.0], np.tile([0.0, 1.0, 2.0, 3.0], rows // 4)])
+    starts = np.repeat(np.arange(rows // 4) * 6000.0, 4) + np.tile([1500.0, 1700.0, 1550.0, 1650.0], rows // 4)
+    prep = mlx_gpu.prepare(RawPulses(channels=channels, times=np.concatenate([[0.0], starts])), MATLAB_2019)
+    assert prep is not None and prep.x1_rows.size == 400_000
+    mx.reset_peak_memory()
+    first = mlx_gpu.first_choices_mlx(prep)
+    assert mx.get_peak_memory() < 600e6
+    assert int(np.count_nonzero(first.y1 != mlx_gpu.NONE)) == 400_000
