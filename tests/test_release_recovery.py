@@ -294,6 +294,30 @@ def test_api_lists_drafts_across_pages_and_peels_annotated_tags(monkeypatch: pyt
     assert any("page=2" in call for call in calls)
 
 
+def test_a_draft_listed_as_untagged_is_found_by_its_name(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GitHub lists a draft as "untagged-<hash>", not its tag: v0.0.5a1's and v0.0.6a1's CI created
+    their draft, failed to find it again and stopped before uploading. Another draft or a
+    published release with that name isn't taken for it."""
+    api = GitHubReleases("owner/repo")
+    listed = [{"tag_name": "untagged-0855e2edbc65d73ef84f", "id": 7, "draft": True, "body": "Notes",
+               "name": f"Automated Release {TAG}"},
+              {"tag_name": "untagged-1111", "id": 8, "draft": True, "name": "Automated Release v0.0.4a"},
+              {"tag_name": "v0.0.3b", "id": 9, "draft": False, "name": f"Automated Release {TAG}"}]
+
+    def request(method: str, endpoint: str, payload: dict[str, object] | None = None,
+                file: Path | None = None) -> object:
+        if endpoint.endswith("releases?per_page=100&page=1"):
+            return listed
+        if endpoint.endswith("assets?per_page=100&page=1"):
+            return []
+        raise AssertionError(endpoint)
+    monkeypatch.setattr(api, "_request", request)
+    assert api.get_release(TAG) == Draft(7, True, "Notes", ())
+    listed.append(dict(listed[0], id=10))
+    with pytest.raises(ValueError, match="Multiple releases"):
+        api.get_release(TAG)
+
+
 def test_duplicate_or_missing_digest_assets_do_not_count_as_complete(tmp_path: Path) -> None:
     api = MemoryReleases()
     publish_draft(api, TAG, SHA, True, archives(tmp_path), "Notes")
