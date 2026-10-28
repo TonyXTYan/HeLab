@@ -18,9 +18,7 @@ is 6× faster than the same search in NumPy, but each shot pays ~2.5 ms of fixed
 the backend this fast, stage 1's reader (66 MB/s) and writer (160 MB/s) are the bottleneck: 32.6 MB/s
 per core end to end; 108 MB/s with 4 processes and 172 MB/s with 8. Threads plateau at ~40 MB/s
 (GIL). It adds **240 MB** to a PyInstaller build (the Metal kernel library) and runs only on Apple
-Silicon with macOS 14 or later. Whether it beats the NumPy floor's own algorithm is for the final
-serial run to say. My guess: it is worth shipping only as an optional fast backend on lab Macs, if
-at all, given the size.
+Silicon with macOS 14 or later. Whether it beats the NumPy floor's own algorithm is for the final serial run to say. Every backend ships in the build for now (Q9.2); the size and platform figures here are input to A9.1, which removes the unused ones after the final timings.
 
 ## What changed
 
@@ -59,7 +57,7 @@ No build files: MLX ships wheels. Nothing in `pyproject.toml` or `HeLab.spec`.
 - **Thread safety (Anvil's note):** MLX starts once under `_START`. The first-load test was stressed
   25 times in fresh processes with no failure. The registry's own `_load` relies on Python's
   per-module import lock, which serialises a concurrent import of the same module. That held here,
-  but `reconstruct.py` is shared, so a lock there is a question for CoCo (Q~2).
+  but `reconstruct.py` is shared, so the lock there is A~3, for stage 4's helab-core floor.
 - **FMA (Anvil's note):** every float operation is a separate NumPy float64 ufunc on the CPU, in the
   reference's order; nothing runs in float on the GPU.
 - `mx.compile` would halve the search but costs ~560 ms of Metal compilation on its first call
@@ -93,11 +91,14 @@ No build files: MLX ships wheels. Nothing in `pyproject.toml` or `HeLab.spec`.
   `hiddenimports=['helab.convert.backends.reference', …]` for every backend it ships. If it ships
   mlx, it also needs `collect_submodules('mlx')` and `collect_data_files('mlx')`, and a frozen smoke
   test that converts one case with each backend.
-- **Q~1 (Tony / Side): ship the mlx backend?** It adds 240 MB to the macOS build (80 MB
-  compressed), runs only on Apple Silicon with macOS ≥ 14, and only the search runs on the GPU.
-  Proposed answer: **no, not in the default build**. Keep it as an optional install for lab Macs, and
-  revisit after the final serial run against the NumPy floor's backend.
-- **Q~2 (CoCo): a lock in `reconstruct._load`?** Python's import lock already serialises concurrent
-  imports of one backend module; a `threading.Lock` around `_load` would make that explicit for
-  every backend. That is a shared-file change, so I left it alone.
+- **Input to A9.1 (not a new question; Q9.2 settled it: every backend ships for now).** The mlx
+  backend adds 240 MB to the macOS build (80 MB compressed), runs only on Apple Silicon with
+  macOS ≥ 14 (no wheels for 13 or Intel; never on Windows or Linux), and only its search runs on the
+  GPU. If the final serial run shows the NumPy floor's backend close to it, A9.1 can remove it for a
+  large saving in size.
+- **A~3 (stage 4's helab-core floor; CoCo agreed 2026-10-29): a lock in `reconstruct._load`.** Python's
+  import lock already serialises concurrent imports of one backend module; a `threading.Lock`
+  around `_load` makes the first load explicit and safe for every backend, with a test in which many
+  threads load a backend at once in a fresh process (this floor's `FIRST_LOAD` test is the pattern).
+  It is a shared-file change, so this floor left it alone.
 - **M~1:** none. The tests use synthetic data and `tests_sample_data/`; nothing needs a screen.
