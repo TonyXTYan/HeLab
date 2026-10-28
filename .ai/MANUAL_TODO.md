@@ -11,12 +11,13 @@ New confirmed bugs go in `roadmaps/known-issues.md`, new features in `roadmaps/_
 The v0.0.5a checks below were added on 2026-10-08 and remain pending.
 
 Decisions only Tony can make are in [DECISIONS_TODO](DECISIONS_TODO.md), and work agents
-may do without asking in [AI_TODO](AI_TODO.md). Items below the smoke pass that it doesn't
+may do without asking in [AI_TODO](AI_TODO.md). Items here have `M` IDs ([ID_BLOCKS](ID_BLOCKS.md)): the
+smoke pass is M1.1–M1.8, and older items get IDs as they're touched. Items below the smoke pass that it doesn't
 cover are lab validation, and don't gate a release (proposed, 2026-10-28).
 
 ## Release smoke pass
 
-These checks gate a release ([decision A](DECISIONS_TODO.md#a-release-gate)). Run the pass once
+These checks gate a release (Q1.1, [DECISIONS_TODO](DECISIONS_TODO.md#q11-release-gate)). Run the pass once
 on a Mac and once on a lab PC (Windows), on the release candidate. Steps marked **Lab PC**
 matter most there. Each machine takes about 45 min, and step 3 needs a run acquiring.
 
@@ -25,7 +26,7 @@ what he saw. Results go to a session file per machine
 (`sessions/<date>-<tool>-smoke-<machine>/results.md`: the machine, OS, commit, trace folder
 and each step's result), and problems go to [known-issues](../roadmaps/known-issues.md).
 Afterwards, an agent ticks the items below that the pass covered
-([AI_TODO](AI_TODO.md#after-the-pass)).
+(A1.8, [AI_TODO](AI_TODO.md)).
 
 **Setup:**
 - A checkout of the release candidate, with its venv: `source venv/bin/activate` (Windows
@@ -34,12 +35,12 @@ Afterwards, an agent ticks the items below that the pass covered
 - Optional: turn on Help › Record I/O trace (this session) for the whole pass, so an agent
   can summarise the share traffic afterwards.
 
-### 1. Start-up
+### M1.1 Start-up
 - **Do:** Help › About HeLab.
 - **Expect:** version 0.0.5a1 (until the bump), the commit you checked out, the branch.
   Settings → Cache shows the inventory. A first start on this machine starts an empty `store-v3`.
 
-### 2. Browse and cache first
+### M1.2 Browse and cache first
 - **Do:** browse the share two levels into a data root (a folder with a `.helab-root` at or
   above it). Select a run folder and let it load. Select another folder, then go back to the
   first one.
@@ -50,7 +51,7 @@ Afterwards, an agent ticks the items below that the pass covered
 - **Expect:** data from the disk cache at once, then the check. Counts agree with before.
 - **Lab PC:** the same, and note how long selecting a cached folder takes.
 
-### 3. Live during a run (needs an acquisition)
+### M1.3 Live during a run (needs an acquisition)
 - **Do:** select the run folder being written. Open Counts per shot, a T histogram and the
   3D scatter. Turn Live on.
 - **Expect:** new shots within a few seconds of their last write. A shot being written
@@ -63,7 +64,7 @@ Afterwards, an agent ticks the items below that the pass covered
   shots come from the cache.
 - **Lab PC:** the same; the GUI stays responsive with the plots open.
 
-### 4. Presets and reopened plots
+### M1.4 Presets and reopened plots
 - **Do:** open two plots of one script. In one, change a setting and save a preset from its
   Presets row. In the other plot, the preset is listed at once. Apply it, then change one
   setting.
@@ -76,7 +77,7 @@ Afterwards, an agent ticks the items below that the pass covered
 - **Expect:** the plots come back in place, waiting until their folder is selected (or
   running at once if it's cached). The startup tab's own selection is unchanged.
 
-### 5. Saved analysis results
+### M1.5 Saved analysis results
 - **Do:** on a folder below a `.helab-root`, open a DLD port Correlations plot (radial), or
   Release time. Wait for it to draw, and look at the source line's tooltip.
 - **Expect:** the record ends "saved in the disk cache". The folder's row gets the grey
@@ -86,7 +87,7 @@ Afterwards, an agent ticks the items below that the pass covered
 - **Do:** Settings → Data roots › Clear cached analysis… on that root.
 - **Expect:** it asks first; afterwards the badge goes, and the cached data stays.
 
-### 6. Work Offline
+### M1.6 Work Offline
 - **Do:** File › Work Offline.
 - **Expect:** the check mark and "Offline · cached data only" in the status bar. Refresh,
   Check folder status and Live are greyed, with the reason.
@@ -98,7 +99,7 @@ Afterwards, an agent ticks the items below that the pass covered
 - **Do:** the status-bar button › Yes (Work Online).
 - **Expect:** every tab relists, the selection is checked, the controls come back.
 
-### 7. DLD plots on real data (a quick look)
+### M1.7 DLD plots on real data (a quick look)
 - **Do:** on a BEC or thermal run, open each DLD Front Panel Port plot in a narrow (~560 px)
   dock: T, X, Y histograms (turn on a fit), Density images, Mean X, Y, T spectrum, Shot
   times, Shot trends, Release time, Velocity distributions, Correlations, Transfer
@@ -109,7 +110,7 @@ Afterwards, an agent ticks the items below that the pass covered
 - **Note anything that looks physically wrong.** The detailed physics checks are after the
   release (MANUAL_TODO, "On real data").
 
-### 8. Plot settings panel and floating plots
+### M1.8 Plot settings panel and floating plots
 - **Do:** three plots tabbed. Click each tab, click inside each plot (including the 3D
   scatter's web view), then float one plot and click between it and the main window.
 - **Expect:** the Settings panel follows the plot clicked. A floating plot's settings
@@ -117,7 +118,7 @@ Afterwards, an agent ticks the items below that the pass covered
 - **Do:** in a T box, type `20,450.5`, `20.45 s` and `abc`.
 - **Expect:** the first two are read; `abc` stays red.
 - **Lab PC:** the 3D scatter's first open: does the main window close and reopen
-  ([decision G](DECISIONS_TODO.md#g-windows-3d-scatter-window-flicker))? If the pane is black, Open in
+  (Q1.7, [DECISIONS_TODO](DECISIONS_TODO.md#q17-windows-3d-scatter-window-flicker))? If the pane is black, Open in
   browser works.
 
 ## Data roots (v0.0.5a1, added 2026-10-18)

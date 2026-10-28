@@ -6,8 +6,8 @@ documentation, and logs and CI. The Assistant merged their findings and checked 
 claims (the stray pytest process, the symlink, the branch-deletion line).
 
 Each finding is tagged:
-- **[Tony]**: a decision, now also listed in [1-decisions.md](../../DECISIONS_TODO.md#from-the-audit).
-- **[AI]**: mechanical work, now also listed in [3-ai-tasks.md](../../AI_TODO.md#from-the-audit).
+- **[Tony]**: a decision, now also listed in [DECISIONS_TODO](../../DECISIONS_TODO.md#from-the-audit-block-2).
+- **[AI]**: mechanical work, now also listed in [AI_TODO](../../AI_TODO.md#from-the-audit-block-2).
 
 ## Agents and Maestri roles
 

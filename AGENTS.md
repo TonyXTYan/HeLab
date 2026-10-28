@@ -56,6 +56,11 @@ mechanics go in its architecture file.
 | Investigations, evidence, briefs, handoffs | `.ai/sessions/YYYY-MM-DD-<tool>-<title>/` (search, don't auto-load; raw transcripts in `.ai/session-export-*/` if present) |
 | Scratch | `.ai/temp/`, `.ai/local/` (gitignored) |
 
+**IDs:** items in the three `.ai/*_TODO.md` lists are `Q`/`A`/`M` + `<block>.<item>[.<sub>]` (e.g.
+`Q1.2`); refer to them by ID in commits, briefs and Chat. On a floor or in a cloud session, number
+proposals provisionally in your handoff (`Q~1`, `A~1`, `M~1`); the Coordinator or the Assistant
+merges them under the next block in [`.ai/ID_BLOCKS.md`](.ai/ID_BLOCKS.md), which has the rules.
+
 Read `.ai/memory/MEMORY.md` first (Claude Code loads it by itself; Codex should read it), and
 open individual memory files only when relevant. `.ai/coding-workspace.md` holds Tony's
 cross-repo conventions; it is a link into his `ai-common` folder and is missing on other machines.
@@ -157,8 +162,7 @@ Each rule names the area file with the detail.
   - session-only lists drop their oldest entries;
   - the RAM budget evicts datasets and releases plots (never closes them).
 
-  Any other removal is the user's choice, asked first, and sends `removed` (proposed wording,
-  DECISIONS_TODO T).
+  Any other removal is the user's choice, asked first, and sends `removed` (Q3.3, to confirm).
 - Read the cache folder with `cache_dir()`, never `DIR_CACHES`: it can move while HeLab runs.
 - Every byte size shown is SI (kB/MB/GB, powers of 1000) (Tony, 2026-10-26).
 

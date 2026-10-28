@@ -133,7 +133,7 @@ or [AI] (mechanical, also in [AI_TODO](../../AI_TODO.md)).
     [AI, once Tony agrees to the lists]
 18. **The branch rule is in no role.** The Coordinator lands floors, but "keep agent branches
     on GitHub" lives only in memory, and `maestri-setup.md:459` says to delete them. [Tony,
-    DECISIONS_TODO K]
+    DECISIONS_TODO Q2.2]
 19. **The Assistant role names `dev/v0.0.6`.** It goes stale at the next version. Say "the
     current dev branch (roadmap's Now)". [AI]
 20. **The Assistant role says "edit docs and this guide".** It doesn't say which guide;
@@ -142,7 +142,7 @@ or [AI] (mechanical, also in [AI_TODO](../../AI_TODO.md)).
     Chat posts don't use it. The Assistant hasn't either. Proposed: apply it to direct replies to
     Tony (Chat answers), not to progress lines or agent-to-agent messages. [Tony]
 22. **Worker's and Quick Fixer's "Don't launch the HeLab GUI"** can go if floors get their own
-    settings file (DECISIONS_TODO N). [Tony]
+    settings file (DECISIONS_TODO Q2.5). [Tony]
 23. **Reviewer:** "check the codebase rules in AGENTS.md" fails for a Codex reviewer until
     item 1 is fixed. Until then, the brief should paste the rules block. [AI, stopgap]
 

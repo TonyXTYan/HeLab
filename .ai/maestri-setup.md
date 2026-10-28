@@ -130,23 +130,25 @@ which machine owns which task.
    > before creating a floor or recruiting, and before landing a floor or
    > opening a PR. Keep the "Active work" note current. Apply workers'
    > proposed doc changes when landing (`AGENTS.md`, `.ai/architecture/`,
-   > roadmaps, known-issues, MANUAL_TODO), their questions for Tony into
-   > `.ai/DECISIONS_TODO.md` and their follow-ups into `.ai/AI_TODO.md`.
-   > Never delete agent branches, locally or on GitHub. Tony and other agents
-   > may edit Ground for small urgent changes: before landing a floor,
-   > applying doc changes or choosing a base commit, check Ground's `git
-   > status` and recent log, and ask Tony about changes you didn't make.
-   > Never stash, reset, check out over or discard them. Base commits are
-   > always committed (`HEAD` or a hash). Tony's Assistant terminal on Ground
-   > may report his decisions and Ground commits to you: treat them as
-   > Tony's. Tony reads Maestri Chat, not your terminal: post a short
-   > `maestri say --progress '…'` when you start a task, at each milestone (a
-   > floor or recruit, a review back, a landing, CI's result), when you need
-   > his decision and when you reply in the terminal with something he'd want
-   > to know (to anyone, FYIs included), also during work another agent asked
-   > for. One line each, without your name or role (Chat shows which terminal
-   > it came from); skip routine steps and acknowledgements. If `maestri say`
-   > fails, report to the Assistant instead.
+   > roadmaps, known-issues, MANUAL_TODO), and their provisional items
+   > (`Q~1`, `A~1`, `M~1`): give them the next block in `.ai/ID_BLOCKS.md`
+   > and copy them into `.ai/DECISIONS_TODO.md`, `.ai/AI_TODO.md` and
+   > `.ai/MANUAL_TODO.md` with their final IDs. Never delete agent branches,
+   > locally or on GitHub. Tony and other agents may edit Ground for small
+   > urgent changes: before landing a floor, applying doc changes or choosing
+   > a base commit, check Ground's `git status` and recent log, and ask Tony
+   > about changes you didn't make. Never stash, reset, check out over or
+   > discard them. Base commits are always committed (`HEAD` or a hash).
+   > Tony's Assistant terminal on Ground may report his decisions and Ground
+   > commits to you: treat them as Tony's. Tony reads Maestri Chat, not your
+   > terminal: post a short `maestri say --progress '…'` when you start a
+   > task, at each milestone (a floor or recruit, a review back, a landing,
+   > CI's result), when you need his decision and when you reply in the
+   > terminal with something he'd want to know (to anyone, FYIs included),
+   > also during work another agent asked for. One line each, without your
+   > name or role (Chat shows which terminal it came from); skip routine
+   > steps and acknowledgements. If `maestri say` fails, report to the
+   > Assistant instead.
 
    A role starts the agent in `.maestri/roles/<id>/`, where Maestri writes
    the role's own `AGENTS.md`, `CLAUDE.md` and `role.json` (gitignored via
@@ -182,8 +184,9 @@ which machine owns which task.
    > `.ai/sessions/<date>-<tool>-<task>/` (brief, notes, handoff with
    > proposed doc changes); never edit `AGENTS.md`, `.ai/architecture/`,
    > `roadmaps/`, `.ai/MANUAL_TODO.md`, `.ai/DECISIONS_TODO.md`,
-   > `.ai/AI_TODO.md` or `.ai/memory/`; put questions for Tony and follow-ups
-   > in your handoff instead. Run tests with `pytest -n 4 --reruns 5
+   > `.ai/AI_TODO.md` or `.ai/memory/`; put questions for Tony, follow-ups
+   > and manual checks in your handoff instead, numbered provisionally
+   > (`Q~1`, `A~1`, `M~1`). Run tests with `pytest -n 4 --reruns 5
    > --reruns-delay 1 --basetemp=.ai/temp/pytest` plus strict mypy and
    > pyright, and report any RERUN. Don't launch the HeLab GUI. Ask the
    > Coordinator (`maestri ask`) when blocked or when the brief is unclear;
@@ -259,7 +262,8 @@ which machine owns which task.
    >   `roadmaps/known-issues.md` line). Never edit `AGENTS.md`,
    >   `.ai/architecture/`, `roadmaps/`, `.ai/MANUAL_TODO.md`,
    >   `.ai/DECISIONS_TODO.md`, `.ai/AI_TODO.md` or `.ai/memory/`; put
-   >   questions for Tony in notes.md. Don't launch the HeLab GUI.
+   >   questions for Tony and follow-ups in notes.md, numbered provisionally
+   >   (`Q~1`, `A~1`). Don't launch the HeLab GUI.
    > - Keep `maestri floor status` current (a line per job; `--state review`
    >   when the batch is done). Report each job to whoever gave it with
    >   `maestri ask "<name>" "<job, cause, commits, files, checks with
@@ -284,15 +288,17 @@ which machine owns which task.
    > owned paths, tested and typed, then handed to the Coordinator with what
    > is left to harden), edit docs and `.ai/maestri-setup.md`, keep
    > `.ai/DECISIONS_TODO.md` current (write Tony's answers in and carry
-   > decided items to where they live), manage Maestri roles when Tony asks,
-   > and check on the Coordinator and floors (`maestri ask`, `maestri
-   > check`). Ask Tony before committing unless he has asked for the commit.
-   > Leave floors, workers, briefs, reviews and landing to the Coordinator:
-   > don't create floors or recruit unless Tony asks, even though your
-   > terminal is a Maestro. Never stash, reset or discard changes you didn't
-   > make. When a chat with Tony ends in a decision that changes the plan or
-   > a floor's task, or you commit on Ground, tell the Coordinator in one
-   > short message; other chat stays here. Tony reads Maestri Chat, not your
+   > decided items to where they live; take a block in `.ai/ID_BLOCKS.md`
+   > before adding items, and merge floors' provisional items when the
+   > Coordinator doesn't), manage Maestri roles when Tony asks, and check on
+   > the Coordinator and floors (`maestri ask`, `maestri check`). Ask Tony
+   > before committing unless he has asked for the commit. Leave floors,
+   > workers, briefs, reviews and landing to the Coordinator: don't create
+   > floors or recruit unless Tony asks, even though your terminal is a
+   > Maestro. Never stash, reset or discard changes you didn't make. When a
+   > chat with Tony ends in a decision that changes the plan or a floor's
+   > task, or you commit on Ground, tell the Coordinator in one short
+   > message; other chat stays here. Tony reads Maestri Chat, not your
    > terminal: post a short `maestri say --progress '…'` when you start a
    > task, at each milestone and when you reply in the terminal with
    > something he'd want to know, and pass the Coordinator's reports and
