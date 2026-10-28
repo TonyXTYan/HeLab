@@ -208,13 +208,29 @@ class CacheTab(QWidget):
         prefs = QHBoxLayout()
         prefs.addWidget(QLabel("Folder preferences"))
         self.prefs_label = QLabel("Checking…")
-        self.prefs_label.setToolTip("Folders you chose not to cache or not to auto-load (right-click a folder). "
-                                    "Clear all and purges keep them.")
+        self.prefs_label.setToolTip("Folders you chose not to cache, not to auto-load, or to have HeLab's converted "
+                                    "TXY written beside their raw files (right-click a folder). Clear all and purges "
+                                    "keep them.")
         prefs.addWidget(self.prefs_label, 1)
         self.prefs_button = QPushButton("Clear…")
         self.prefs_button.clicked.connect(self.clear_prefs)
         prefs.addWidget(self.prefs_button)
         layout.addLayout(prefs)
+
+        # HeLab's own TXY under the cache folder (converted-txy/): not in the store, outside the budget,
+        # removed only by this Clear (Q12.3), through a helper.
+        converted = QHBoxLayout()
+        converted.addWidget(QLabel("HeLab's converted TXY"))
+        self.converted_label = QLabel("Checking…")
+        self.converted_label.setToolTip(
+            "TXY files HeLab converted from raw files, with their records, in the cache folder's converted-txy "
+            "folder. They don't count toward the budget, and nothing removes them but this Clear. Those written "
+            "beside the raw files aren't here (their records are, and stay).")
+        converted.addWidget(self.converted_label, 1)
+        self.converted_button = QPushButton("Clear…")
+        self.converted_button.clicked.connect(self.clear_converted)
+        converted.addWidget(self.converted_button)
+        layout.addLayout(converted)
 
         # Presets (helab/views/PresetsInspector.py): the user's too, kept by Clear all and purges.
         presets = QHBoxLayout()
@@ -431,11 +447,28 @@ class CacheTab(QWidget):
             return
         prefs = inventory.get("prefs") or {}
         if not self.confirm("Clear folder preferences?",
-                            f"Forgets your choices: {plural(int(prefs.get('no_cache', 0)), 'folder')} not cached and "
-                            f"{plural(int(prefs.get('no_auto_load', 0)), 'folder')} not auto-loaded. Those folders "
-                            "are cached and auto-loaded again. Cached data is kept.", "Clear"):
+                            f"Forgets your choices: {plural(int(prefs.get('no_cache', 0)), 'folder')} not cached, "
+                            f"{plural(int(prefs.get('no_auto_load', 0)), 'folder')} not auto-loaded and "
+                            f"{plural(int(prefs.get('write_beside', 0)), 'folder')} with HeLab's TXY written beside "
+                            "their raw files. Those folders are cached and auto-loaded again, and HeLab's TXY of them "
+                            "go to the cache or temp folder. Cached data, and TXY already written, are kept.", "Clear"):
             return
         self._run("Clear folder preferences", "clear_prefs")
+
+    def clear_converted(self) -> None:
+        """Clear HeLab's converted TXY under the cache folder (asks first)."""
+        inventory = self.inventory
+        if inventory is None or self.busy:
+            return
+        converted = inventory.get("converted_txy") or {"files": 0, "bytes": 0}
+        if not self.confirm("Clear HeLab's converted TXY?",
+                            f"Removes {plural(int(converted['files']), 'TXY file')} HeLab converted, with their "
+                            f"records ({byte_size(int(converted['bytes']))}), from the cache folder. Raw files, "
+                            "MATLAB's TXY and HeLab's TXY written beside raw files are kept. Data loaded stays open; "
+                            "plots on HeLab's TXY keep what they show, and shots are converted again when converting "
+                            "is on.", "Clear"):
+            return
+        self._run("Clear HeLab's converted TXY", "clear_converted_txy")
 
     def clear(self, kinds: list[str]) -> None:
         inventory = self.inventory
@@ -556,6 +589,7 @@ class CacheTab(QWidget):
         for button in (*self.kind_buttons.values(), self.clear_all_button):
             button.setEnabled(writable)
         self.prefs_button.setEnabled(False)
+        self.converted_button.setEnabled(False)
         self.results_button.setEnabled(False)
         self.refresh_button.setEnabled(self.enabled and not self.busy and not self._inventory_owner)
         self.disk_budget.setEnabled(not self.applying)
@@ -563,7 +597,7 @@ class CacheTab(QWidget):
                   "Changing the disk budget…" if self._budget_job else f"{self._job_label}…" if self.busy else "Checking…" if self._inventory_owner and inventory is None
                   else "")
         if inventory is None:
-            for label in (*self.kind_labels.values(), self.prefs_label, self.results_label):
+            for label in (*self.kind_labels.values(), self.prefs_label, self.results_label, self.converted_label):
                 label.setText(status or "Not checked")
             self.usage_label.setText(status or "Not checked")
             self.checked_label.setText(self.message or status)
@@ -603,10 +637,17 @@ class CacheTab(QWidget):
             text += f" · last shown {relative_age(time.time() - results['last_used'])}"
         self.results_label.setText(text)
         self.results_button.setEnabled(writable and bool(results["count"]))
-        prefs = inventory.get("prefs") or {"no_cache": 0, "no_auto_load": 0}
+        prefs = {"no_cache": 0, "no_auto_load": 0, "write_beside": 0, **(inventory.get("prefs") or {})}
         self.prefs_label.setText(f"{plural(prefs['no_cache'], 'folder')} not cached · "
-                                 f"{plural(prefs['no_auto_load'], 'folder')} not auto-loaded")
-        self.prefs_button.setEnabled(writable and bool(prefs["no_cache"] or prefs["no_auto_load"]))
+                                 f"{plural(prefs['no_auto_load'], 'folder')} not auto-loaded" + (
+                                     f" · {plural(prefs['write_beside'], 'folder')} with HeLab's TXY beside"
+                                     if prefs["write_beside"] else ""))
+        self.prefs_button.setEnabled(writable and bool(prefs["no_cache"] or prefs["no_auto_load"]
+                                                       or prefs["write_beside"]))
+        converted = inventory.get("converted_txy") or {"files": 0, "bytes": 0}
+        self.converted_label.setText(f"{plural(int(converted['files']), 'file')} · "
+                                     f"{byte_size(int(converted['bytes']))}")
+        self.converted_button.setEnabled(writable and bool(converted["files"] or converted["bytes"]))
         checked = f"Checked {datetime.fromtimestamp(inventory['checked_at']):%H:%M}"
         self.checked_label.setText(" · ".join(filter(None, (status or checked, self.message))))
         self._show_estimates()

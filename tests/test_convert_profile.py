@@ -33,7 +33,8 @@ def test_the_2023_lab_edit_differs_only_where_matlab_does() -> None:
     assert changed == {"name", "notes", "dead_time_x1", "time_sum_t_x", "time_sum_t_y", "position_formula",
                        "write_empty_txy"}
     assert MATLAB_2023_LAB_EDIT.dead_time_x1 / MATLAB_2023_LAB_EDIT.bin_time == 20000.0
-    assert sorted(BUILTIN_PROFILES) == ["matlab-2019", "matlab-2023-lab-edit"]
+    assert sorted(BUILTIN_PROFILES) == ["matlab-2019", "matlab-2023-lab-edit", "plates-2017", "plates-2022",
+                                        "plates-2025"]
 
 
 def test_json_round_trips_and_refuses_unknown_or_missing_fields() -> None:
@@ -133,4 +134,4 @@ def test_invalid_values_are_refused(changes: dict[str, object]) -> None:
 
 def test_unknown_builtin_is_refused() -> None:
     with pytest.raises(ProfileError):
-        builtin_profile("plates-2025")
+        builtin_profile("plates-2030")

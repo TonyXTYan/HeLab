@@ -68,6 +68,7 @@ class UnverifiedField(TypedDict, total=False):
 
 class LiveState(TypedDict):
     """What the next Live check compares with (``live.live_check``'s ``state``)."""
+    live_helab: NotRequired[dict[str, Any]]  # HeLab's folders' state, the profile hash and root key asked for
     live_since: int | None
     live_listed: bool
     live_seconds: float
@@ -107,6 +108,7 @@ class AdminResultFields(TypedDict, total=False):
     result_id: str  # an adopted result's saved row (R2)
     folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
     store: str  # the store an adoption answered from (its ``store_id``)
+    converted_txy: dict[str, int]  # HeLab's TXY under the cache folder after a Clear (files, bytes, folders)
 
 
 # Process and progress
@@ -382,6 +384,18 @@ class TooLargeEvent(TypedDict):
     refused: bool
 
 
+class TxyRecord(TypedDict):
+    """Which TXY a dataset is made of (Q6.6, ``helab_txy.record``): the source asked for
+    (``txy_sources.SOURCES``), HeLab's shots' origins (``{shot: "helab:<profile hash>"}``), those
+    profiles' name/version/calibrated by hash, the profile hash asked for ("" any) and HeLab's
+    folders' ``[[folder, mtime_ns]]`` as the listing found them."""
+    source: str
+    origins: dict[str, str]
+    profiles: dict[str, dict[str, Any]]
+    profile_hash: str
+    folders: list[list[Any]]
+
+
 class _LoadedBase(TypedDict):
     kind: Literal["loaded"]
     rows: int
@@ -399,7 +413,8 @@ class _LoadedBase(TypedDict):
     cache_reason: str
     fingerprint: list[Any]
     memory_shots: list[int]
-    signature: str
+    signature: str  # The folder's, as a scan computes it: its settled MATLAB TXY (``helab_txy.matlab_signature``).
+    txy: NotRequired[TxyRecord | dict[str, Any]]
 
 
 class CachedLoadedEvent(_LoadedBase):

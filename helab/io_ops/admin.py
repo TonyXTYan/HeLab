@@ -6,7 +6,7 @@ import os
 import time
 from typing import Any
 
-from helab.io_ops import stores
+from helab.io_ops import helab_txy, stores
 from helab.io_ops.events import AdminResultFields
 from helab.io_ops.infra import Emit, Heartbeat, emit
 from helab.io_ops.markers import _location_path, _root_rows
@@ -21,7 +21,7 @@ NO_ROOT_CONSTANTS = "no .helab-root found here or above"
 UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs",
-                 "convert_prefs", "clear_prefs",
+                 "convert_prefs", "clear_prefs", "clear_converted_txy",
                  "constants", "presets", "forget_root", "root_same", "clear_root", "clear_results",
                  "clear_root_results", "adopt_result", "discard_result", "identity")
 
@@ -71,6 +71,8 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                     with contextlib.suppress(SaveRejected, StoreError):
                         entry["room"] = asdict(store.result_room_plan(entry["pending_id"], int(budget)))
             inventory["roots"] = _root_rows(store, send)
+            # HeLab's own TXY under the cache folder: not in the store, outside the budget (Q12.3).
+            inventory["converted_txy"] = helab_txy.converted_usage(helab_txy.converted_root(root))
             send({"kind": "inventory", "inventory": inventory})
         elif action == "sweep":
             try:
@@ -185,6 +187,12 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             else:
                 send({"kind": "presets", "saved": written, "rows": stored.value or [],
                       "store": store.store_id})
+        elif action == "clear_converted_txy":
+            # The user asked (Settings → Cache's Clear, confirmed): HeLab's TXY under the cache folder.
+            gone = helab_txy.clear_converted(helab_txy.converted_root(root))
+            send({"kind": "removed", "kinds": ["converted_txy"], "paths": None, "datasets": 0,
+                  "bytes": gone["bytes"]})
+            result["converted_txy"] = helab_txy.converted_usage(helab_txy.converted_root(root))
         elif action == "clear_prefs":
             cleared_at = time.time()
             send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})

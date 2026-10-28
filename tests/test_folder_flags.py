@@ -466,7 +466,7 @@ def test_the_cache_tab_lists_and_clears_folder_preferences_apart_from_clear_all(
         service.pending.clear()
         tab._job = ""
         tab.clear_prefs()
-        assert "2 folders not cached and 1 folder not auto-loaded" in asked[-1]
+        assert "2 folders not cached, 1 folder not auto-loaded and 0 folders with HeLab's TXY written beside" in asked[-1]
         assert admin(service, "clear_prefs").payload["params"] == {}
         tab.detach()
         with CacheStore(store_options()["directory"]) as store:
