@@ -299,6 +299,19 @@ def test_smoothing_keeps_the_area_and_sets_bins_of_a_fifth_of_sigma() -> None:
     assert operator.apply(spike[:60]) == pytest.approx(smooth(spike[:60], 4.0))
 
 
+def test_a_sigma_far_wider_than_the_histogram_smooths_it_flat_without_a_huge_kernel() -> None:
+    """A 1 ns range takes one bin, and a 10 s σ is then 10¹⁰ bins: the kernel was that long (~640 GB;
+    review on PR #9). Reflected at the edges, a σ beyond twice the histogram's length smooths it flat,
+    so the kernel stops there."""
+    count, _ = smoothing_bins(20.0, 20.000000001, 10.0)
+    assert count == 1
+    assert smooth(np.array([7.0]), 10.0 / 1e-9) == pytest.approx([7.0])
+    assert len(Smoothing(4, 1e10).matrix.data) <= 4 * (2 * 4 * 8 + 1)
+    step = np.array([4.0, 0.0, 0.0, 0.0])
+    assert smooth(step, 1e10) == pytest.approx(np.full(4, 1.0), rel=1e-4)
+    assert smooth(step, 1e10) == pytest.approx(smooth(step, 2.0 * len(step)))
+
+
 def test_fits_use_the_unsmoothed_counts_by_default(qtbot: QtBot) -> None:
     """Smoothing changes what is drawn, not the fit (unless Fit to says the smoothed curve:
     then the model is smoothed too, so its parameters are the unsmoothed profile's)."""

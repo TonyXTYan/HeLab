@@ -64,6 +64,7 @@ def value_label(axis: str, units: str, every: bool = False) -> str:
 SMOOTH_BIN_FACTOR = 5  # bins of σ/5
 SMOOTH_MAX_BINS = 5000  # more would be needed: the bins are widened to fit, and the plot says so
 KERNEL_HALF_WIDTH = 4.0  # the kernel is cut at ±4 σ (and normalised)
+SMOOTH_WIDEST = 2.0  # σ, in histogram lengths, past which ``Smoothing`` caps it (the result is flat)
 
 
 def smoothing_bins(low: float, high: float, sigma: float, axis: str = "T") -> tuple[int, str]:
@@ -94,7 +95,10 @@ class Smoothing:
     is drawn and, in a fit of the smoothed curve, the model (``fit_axis``)."""
 
     def __init__(self, bins: int, sigma_bins: float) -> None:
-        kernel = gaussian_kernel(sigma_bins)
+        # Reflected at the edges, a σ beyond SMOOTH_WIDEST times the histogram's length smooths it
+        # flat (to ~10⁻⁵), so the kernel stops there: a 1-bin range under a wide σ asked for
+        # 10¹⁰ kernel bins (review on PR #9).
+        kernel = gaussian_kernel(min(sigma_bins, SMOOTH_WIDEST * bins))
         half = len(kernel) // 2
         source = np.pad(np.arange(bins), half, mode="symmetric")  # padded position → bin
         rows = np.repeat(np.arange(bins), len(kernel))
