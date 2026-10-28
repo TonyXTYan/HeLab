@@ -281,7 +281,7 @@ the largest sample.
 - **Live, a shot every ~30 s:** met by every backend, the reference included. The worst sample shot
   is 0.46 s with the reference and 54–72 ms with the others; that shot is sparse and mostly reading.
   The dense 25 MB shot takes 118–144 ms (compiled), 305 ms (numpy), 493 ms (mlx) and ~3 s
-  (reference, extrapolated from 5 MB) to reconstruct and format. That is still 100× under 30 s for
+  (reference, extrapolated from 5 MB) to reconstruct and format. That is still 60× or more under 30 s for
   every backend but the reference. Live doesn't decide the backend.
 - **Bulk, faster than raw files cross gigabit (~100 MB/s, at most ~117 MB/s of payload):**
 
