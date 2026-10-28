@@ -686,7 +686,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           "cache_info": cache_info, "load_counts": load_counts,
           "cache_reason": cache_reason, "raw_times": _raw_list(raw_times, current),
           "fingerprint": fingerprint, "memory_shots": sorted(in_memory), "base_signature": base_signature,
-          "signature": helab_txy.matlab_signature(fingerprint, origins), "txy": txy_record,
+          # The folder's, as its scan computes it (every source's dataset of it has this one).
+          "signature": str(summary["signature"]), "txy": txy_record,
           # For a quick check of this data held in RAM (``_unchanged_since_memory``).
           "listed_at": listed_at, "names": names, "identity": _location_identity(path, "load: identity"),
           "folder_mtime_ns": folder_mtime_ns})
@@ -725,7 +726,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             raise ValueError("Folder changed before cache could be saved")
         _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, load_counts,
                        unsettled, bool(had_dataset), budget, budget_set_at, send, raw_times, folder_mtime_ns,
-                       txy_record)
+                       txy_record, str(summary["signature"]))
     except Exception as exc:
         _save_failed(store, exc, send)
 
@@ -735,18 +736,20 @@ def _write_dataset(store: CacheStore, path: str, guard: SaveGuard, data: dict[in
                    listed_at: float, counts: dict[str, int], unsettled: int, had_dataset: bool,
                    budget: int | None, budget_set_at: float | None, send: Emit,
                    raw_times: dict[int, int] | None = None, folder_mtime_ns: int | None = None,
-                   txy_record: dict[str, Any] | None = None) -> None:
+                   txy_record: dict[str, Any] | None = None, signature: str = "") -> None:
     """Save a folder's dataset to the disk cache within the budget (a pending save that doesn't fit),
     under the guard its job took when it started; ``cache_saved`` and ``disk_cached``, or the pending
     event. ``raw_times``: its shots' times, where known. ``folder_mtime_ns``: the folder's mtime before
     the listing (``_quick_mtime``; None: no quick check until a listing records one). ``txy_record``:
-    which TXY it is made of (``helab_txy.record``; None: MATLAB's alone). Raises on failure
+    which TXY it is made of (``helab_txy.record``; None: MATLAB's alone); ``signature`` the folder's (default:
+    from its MATLAB TXY in ``fingerprint``). Raises on failure
     (``_save_failed``)."""
     from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
     file = store.write_dataset_file(pack_dataset(data))
     record = txy_record or helab_txy.default_record()
     info = {"saved_at": time.time(), "snapshot_at": listed_at,
-            "signature": helab_txy.matlab_signature(fingerprint, helab_txy.origins_from(record.get("origins"))),
+            "signature": signature or helab_txy.matlab_signature(fingerprint,
+                                                                 helab_txy.origins_from(record.get("origins"))),
             "action": "updated" if had_dataset else "created", txy_sources.TXY_FIELD: record,
         "counts": counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT,
         # Its TXY files' names, in fingerprint order, for the quick check's samples.

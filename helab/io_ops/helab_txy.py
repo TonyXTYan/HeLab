@@ -21,7 +21,7 @@ import re
 from typing import Any, Mapping
 
 from helab.io_ops.fingerprints import _quick_mtime
-from helab.io_ops.infra import _entry_stat, _scandir, _stat
+from helab.io_ops.infra import _entry_stat
 
 # The app's options in a load's payload (``txy``): ``source`` (txy_sources.SOURCES), ``profile_hash``
 # ("": any), ``cache_base`` (the cache folder's parent, as convert's base; "" when the cache is off)
@@ -64,8 +64,8 @@ def folder_state(candidates: list[str], listed_at: float) -> list[list[Any]]:
     state: list[list[Any]] = []
     for folder in candidates:
         try:
-            info = _stat(folder, "helab txy: folder")
-        except FileNotFoundError:
+            info = os.stat(folder)  # (HeLab's own folder, not a source folder: not traced as one.)
+        except (FileNotFoundError, NotADirectoryError):
             continue
         state.append([folder, _quick_mtime(info, listed_at)])
     return state
@@ -113,13 +113,14 @@ def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, o
         records: dict[int, str] = {}
         txy_stats: dict[str, tuple[int, int]] = {}
         try:
-            with _scandir(folder, "helab txy: listing") as directory:
+            # HeLab's own folder (under the cache or temp folder), not a source folder: plain calls.
+            with os.scandir(folder) as directory:
                 for entry in directory:
                     if matched := PROVENANCE_PATTERN.fullmatch(entry.name):
                         records[int(matched.group(1))] = entry.path
                     elif entry.name.startswith("d_txy_helab_") and entry.name.endswith(".txy"):
                         try:
-                            info = _entry_stat(entry, "helab txy: file")
+                            info = entry.stat()
                         except OSError:
                             continue
                         txy_stats[entry.name] = (info.st_size, info.st_mtime_ns)
