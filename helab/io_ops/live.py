@@ -64,7 +64,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     by Tony's decision): one of those that changed (its writer paused longer than the settle age, so
     Live read it unfinished) is read again like a new file, once settled and unchanged a check apart,
     and replaces the held one (``live_reread``: its old and new size and mtime) instead of stopping
-    the check. Until then it is waiting (``live_seen``), and listings look at it besides the sample.
+    the check. Every listing stats the ``recent`` shots besides the sample, so a change to one the
+    sample leaves out is still found; until it is read it is waiting (``live_seen``).
     Other held shots that changed still stop it (a change long after reading suggests a remount or a
     copy).
     """
@@ -161,8 +162,9 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     ordered = sorted(held)
     indices = _sample_indices(len(ordered), check_level)
     sampled = [ordered[index] for index in (range(len(ordered)) if indices is None else indices)]
-    # Held shots the previous check saw changed (to read again once unchanged): looked at again.
-    sampled += sorted((set(previous) & set(held)) - set(sampled))
+    # Held shots Live read recently (a writer may resume one after a newer shot arrived) and those the
+    # previous check saw changed (to read again once unchanged): looked at besides the sample.
+    sampled += sorted(((set(previous) & set(held)) | rereadable) - set(sampled))
     changed: list[int] = []
     rereads: list[tuple[int, int, int]] = []  # Recently read held shots that changed, as stat'ed now.
     for shot in sampled:

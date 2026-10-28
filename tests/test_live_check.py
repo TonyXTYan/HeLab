@@ -243,6 +243,31 @@ def test_a_shot_live_read_recently_that_changes_is_read_again(folder: Path, tmp_
     assert loaded["unsettled_files"] == 0 and "read again" in loaded["cache_reason"]
 
 
+def test_a_recent_shot_outside_the_sample_that_changes_is_read_again(folder: Path, tmp_path: Path) -> None:
+    """Codex review on PR #9: Swift samples only the newest held shot, so a writer resuming shot 2
+    after shot 3 arrived was never seen and Live kept the unfinished shot. Every listing stats the
+    ``recent`` shots too."""
+    write_shot(folder, 3)
+    partial = folder / "d_txy_forc2.txt"
+    partial.write_text("2,2,3\n2,4")
+    old = time.time() - 60
+    os.utime(partial, (old, old))
+    age_folder(folder)
+    memory = held(folder, tmp_path)  # (Shot 2 held as Live read it: unfinished.)
+    partial.write_text("2,2,3\n2,4,5\n")  # The writer finishes it.
+    os.utime(partial, (old + 10, old + 10))
+    age_folder(folder, 30)
+    first = check(folder, tmp_path, memory, recent=[2, 3], check_level="swift")
+    waiting = last(first, "live_unchanged")
+    after = [2, partial.stat().st_size, partial.stat().st_mtime_ns]
+    assert waiting["live_seen"] == [after] and waiting["live_since"] is None
+    events = check(folder, tmp_path, memory, recent=[2, 3], check_level="swift", seen=waiting["live_seen"])
+    assert [event["shot"] for event in events if event["kind"] == "shot"] == [2]
+    loaded = last(events, "loaded")
+    assert loaded["memory_shots"] == [1, 3] and after in loaded["fingerprint"]
+    assert [entry["shot"] for entry in loaded["live_reread"]] == [2]
+
+
 def test_an_older_held_shot_that_changes_still_stops_the_check(folder: Path, tmp_path: Path) -> None:
     """Not read by Live recently (only shot 1 is ``recent``): a change long after reading suggests a
     remount or a copy, so the check stops as mismatched, as before."""
