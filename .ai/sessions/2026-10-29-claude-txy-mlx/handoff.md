@@ -43,6 +43,14 @@ No build files: MLX ships wheels. Nothing in `pyproject.toml` or `HeLab.spec`.
   reference matched it on 184 shots in stage 1.)
 - Full suite and type checks: see "Final run" below.
 
+## Final run (on `a46c150` plus these docs)
+
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: **6282 passed, 4 skipped,
+  no RERUN**, 197 s (load 24.7 at the end).
+- `mypy helab/ --strict` (174 files), `mypy tests --strict` (145 files), `pyright helab tests`: clean.
+- With MLX hidden (`sys.modules['mlx'] = None`): `tests/test_convert_backend_mlx.py` 98 passed,
+  105 skipped, each with the reason.
+
 ## Notes for the Coordinator and the final run
 
 - **Cut for within-shot parallelism:** the backend parallelises within the shot itself (all x1
