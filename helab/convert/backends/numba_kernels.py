@@ -85,18 +85,29 @@ def _locator_from_function(cls: Any, py_func: Any, py_file: str) -> Any:
     return locator
 
 
-# numba's _SourceFileBackedLocatorMixin gives the stamp (the file's SHA-256; the executable's when
-# frozen) and the line number as disambiguator; the folder is ours.
-_FolderLocator: Any = type("_FolderLocator", (_caching._SourceFileBackedLocatorMixin, _caching._CacheLocator), {
-    "__init__": _locator_init, "get_cache_path": _locator_cache_path,
-    "from_function": classmethod(_locator_from_function)})
-if CACHE_FOLDER is not None:
-    _caching.CacheImpl._locator_classes.insert(0, _FolderLocator)
+def _folder_locator() -> Any:
+    """Our locator, first in numba's list, or None when this numba's private names have changed
+    (the kernels then compile without a cache rather than use another folder)."""
+    try:
+        # numba's _SourceFileBackedLocatorMixin gives the stamp (the file's SHA-256; the
+        # executable's when frozen) and the line number as disambiguator; the folder is ours.
+        locator = type("_FolderLocator", (_caching._SourceFileBackedLocatorMixin, _caching._CacheLocator), {
+            "__init__": _locator_init, "get_cache_path": _locator_cache_path,
+            "from_function": classmethod(_locator_from_function)})
+        _caching.CacheImpl._locator_classes.insert(0, locator)
+    except (AttributeError, TypeError):
+        return None
+    return locator
+
+
+_FolderLocator: Any = _folder_locator() if CACHE_FOLDER is not None else None
 
 
 def _compile(function: F, parallel: bool) -> F:
     global cached
     try:
+        if CACHE_FOLDER is not None and _FolderLocator is None:
+            raise RuntimeError("numba's cache locators have changed; the kernels can't cache in the given folder")
         return cast(F, _numba.njit(cache=True, nogil=True, parallel=parallel)(function))
     except RuntimeError:
         # No folder numba can write its cache to (the one given, or a read-only checkout and user

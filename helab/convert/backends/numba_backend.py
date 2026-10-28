@@ -69,11 +69,13 @@ def take_cache_folder() -> Path | None:
 
 @functools.cache
 def import_problem() -> str | None:
-    """Why numba can't be imported here, or None."""
+    """Why numba can't be imported here, or None. Any error while numba loads (not only an
+    ImportError: numba raises others, e.g. for a NumPy it doesn't support or a broken llvmlite)
+    leaves the backend unavailable with the reason; it never reaches ``available_backends``."""
     try:
         importlib.import_module("numba")
-    except ImportError as error:
-        return f"numba can't be imported ({error})"
+    except Exception as error:
+        return f"numba can't be imported ({type(error).__name__}: {error})"
     return None
 
 

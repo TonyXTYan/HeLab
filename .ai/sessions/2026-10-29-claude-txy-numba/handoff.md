@@ -43,7 +43,7 @@ rows used).
 ## Checks
 
 - `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` (numba installed, at load
-  ~10 from the other floors): after the cache seam **6286 passed, 8 skipped, no RERUN**; at the
+  ~10 from the other floors): latest **6290 passed, 8 skipped, no RERUN**; after the cache seam 6286; at the
   pushed `7ef5935` 6284 passed; earlier 6282; no RERUN in any run. The 8 skips: 4 in my file and 2 in
   `test_convert_profile.py` are the single-value fields `x2_handling`/`y_handling`; 2 predate this floor.
 - `mypy helab/ --strict` (175 files), `mypy tests --strict` (145), `pyright helab tests`: clean.
@@ -53,6 +53,19 @@ rows used).
   folder; read-only cache folder → uncached fallback works; after the seam, with
   `set_cache_folder` launched from a neutral folder: every cache file in the given folder, none in
   numba's, compile 1.3 s then load 0.07 s, identical bytes.
+
+**Without numba, typing (MLX review's check):** `pyright helab tests` with a temporary config
+whose venv is Ground's (no numba; `.ai/temp/pyright-ground/pyrightconfig.json`, the floor's root
+and `tests/` in `extraPaths` so the floor's code is what's checked): **0 errors** over 318 files;
+the same config flags a planted `import numba` (`reportMissingImports`), so the check can see the
+problem. numba is reached only through `importlib`. mypy can't fail this way (`mypy.ini`:
+`ignore_missing_imports = True`); `mypy --strict --python-executable` Ground's Python: clean.
+
+**Errors while numba loads** (Rust review's gap): `import_problem` catches any `Exception`, not
+only `ImportError`, so `unavailable()` and `available_backends()` never raise; tested with a planted
+`numba` package raising `RuntimeError`, `ValueError` and `OSError`. If this numba's private cache
+names change, the kernels compile without a cache instead of failing at import (tested by deleting
+one).
 
 ## Proposed doc changes (for the Coordinator)
 
@@ -103,8 +116,8 @@ rows used).
   numba's own folders. The housekeeping list in AGENTS.md may want a line: the numba folder holds
   only compiled code, safe to delete (recompiled on next use; stale entries are overwritten, not
   accumulated: one `.nbi` and one `.nbc` per kernel).
-- **A~2**: `tests/test_headless_imports.py` `PURE`: add `backends.numba_backend` (it imports no
-  heavy module; tested in my file meanwhile). `numba_kernels` can't be listed: it needs numba.
+- **A~2**: done on this branch at CoCo's request: `backends.numba_backend` is in
+  `tests/test_headless_imports.py`'s `PURE`. `numba_kernels` can't be listed: it needs numba.
 - **A~3**: if the NumPy floor's shared `split.py` lands, `reconstruct_numba_pieces` can take its
   cut instead of `choose_bounds` (same rule), and `timing`'s `WITHIN_SHOT` can drive it.
 - **M~1** (lab PCs, if numba ships): run the numba backend (or the frozen probe) on the Lab Side

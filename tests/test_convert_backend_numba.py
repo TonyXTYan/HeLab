@@ -71,6 +71,47 @@ print("ok")
     assert done.returncode == 0 and done.stdout.strip() == "ok", done.stderr
 
 
+@pytest.mark.parametrize("error", ["RuntimeError", "ValueError", "OSError"])
+def test_any_error_while_numba_loads_leaves_the_backend_unavailable(tmp_path: Path, error: str) -> None:
+    # A numba that raises something other than ImportError as it loads (as numba does for a NumPy
+    # it doesn't support): the backend says why, and listing the backends doesn't fail.
+    (tmp_path / "numba").mkdir()
+    (tmp_path / "numba" / "__init__.py").write_text(f"raise {error}('broken numba')\n")
+    script = """
+from helab.convert.profile import MATLAB_2019
+from helab.convert.reconstruct import available_backends, get_backend
+assert "numba" not in available_backends(MATLAB_2019) and "reference" in available_backends()
+print(get_backend("numba").unavailable(None))
+"""
+    env = dict(os.environ, PYTHONPATH=os.pathsep.join([str(tmp_path), str(ROOT)]))
+    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=120, env=env,
+                          cwd=ROOT)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.strip() == f"numba can't be imported ({error}: broken numba)"
+
+
+@needs_numba
+def test_changed_numba_cache_internals_compile_without_a_cache(tmp_path: Path) -> None:
+    script = """
+import sys
+import numba.core.caching as caching
+del caching._SourceFileBackedLocatorMixin
+from helab.convert.backends import numba_backend
+numba_backend.set_cache_folder(sys.argv[1])
+from helab.convert.profile import MATLAB_2019
+from helab.convert.raw import parse_raw
+from helab.convert.reconstruct import reconstruct
+from helab.convert.backends import numba_kernels
+data = b"5,1000\\r\\n0,10000\\r\\n1,10400\\r\\n2,10100\\r\\n3,10300\\r\\n"
+assert (reconstruct(parse_raw(data), MATLAB_2019, "numba") == reconstruct(parse_raw(data), MATLAB_2019)).all()
+print(numba_kernels.cached)
+"""
+    done = subprocess.run([sys.executable, "-c", script, str(tmp_path / "numba")], capture_output=True, text=True,
+                          timeout=300, env=dict(os.environ), cwd=ROOT)
+    assert done.returncode == 0 and done.stdout.strip() == "False", done.stderr
+    assert not (tmp_path / "numba").exists() or not any((tmp_path / "numba").iterdir())
+
+
 def test_registering_the_backend_imports_no_numba_or_heavy_module() -> None:
     script = """
 import json, sys
