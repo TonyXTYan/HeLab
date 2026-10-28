@@ -33,7 +33,22 @@ def test_the_window_icon_is_bundled_where_the_window_looks_for_it() -> None:
 
 def test_every_bundled_file_exists() -> None:
     for source, _ in spec_datas():
-        assert (ROOT / source).is_file(), source
+        if any(mark in source for mark in "*?["):
+            # A glob (PyInstaller takes one): it must match files.
+            matches = sorted(ROOT.glob(source))
+            assert matches and all(path.is_file() for path in matches), source
+        else:
+            assert (ROOT / source).is_file(), source
+
+
+def test_the_builtin_profiles_are_bundled_and_packaged() -> None:
+    """``profile.builtin_files`` reads them from the package (A10.3): the frozen app's and a wheel's."""
+    from fnmatch import fnmatch
+    assert ("helab/convert/builtin_profiles/*.json", "helab/convert/builtin_profiles") in spec_datas()
+    files = sorted((ROOT / "helab" / "convert" / "builtin_profiles").glob("*.json"))
+    assert len(files) == 5
+    patterns = setup_package_data()["helab.convert"]
+    assert all(any(fnmatch(f"builtin_profiles/{path.name}", pattern) for pattern in patterns) for path in files)
 
 
 def setup_package_data() -> dict[str, list[str]]:

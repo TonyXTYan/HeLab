@@ -105,18 +105,17 @@ Settings rendered offscreen with the floor's settings file (`floor-env.sh`), syn
   Note: `helab convert` (the command line) ignores the `convert_profile` setting (`--profile` takes a
   built-in's name or a file), so TXY it makes with another output than the chosen profile's are hidden
   from the app until converted again with that profile.
-- **Known issue (for `roadmaps/known-issues.md`):** a plot on another TXY source than the default that
-  was released to free RAM can't be reloaded once its dataset was evicted: reloads never read the folder,
-  and only the default source's dataset is disk cached (Q~5). It says so ("choose its TXY source again
-  to load it"); choosing the source again loads it.
 - **Q~4** (Tony): the folder's status (ok / fixable…) and counts still come from MATLAB's TXY alone;
   a folder with only HeLab's TXY shows its raw files without TXY. Proposed: count current HeLab TXY in
   the status once scans can see HeLab's folders cheaply.
 - **Q~5** (Tony): datasets of a non-default source are RAM only. Proposed: keep it so until (b) or
   (c) are used much; caching them needs their own store key (a store change).
-- **A~1** (packaging floor): add `helab/convert/builtin_profiles/*.json` to `HeLab.spec` `datas`
-  (`builtin_files()` and A10.3's test read them; the app itself uses the definitions, so a build
-  without them still converts).
+- **A~1** (done here, by the order change: this floor lands before packaging): `HeLab.spec` `datas`
+  has `helab/convert/builtin_profiles/*.json` → `helab/convert/builtin_profiles`. Checked frozen: a
+  PyInstaller 6.22.3 onedir build of a script calling `builtin_files()` with that same datas entry
+  found all five profiles, equal to their definitions (the full app wasn't built here: that is the
+  packaging floor's build). `tests/test_spec_datas.py` accepts a glob entry (it must match files) and
+  checks the profiles are in both the spec and `setup.py`'s package data. Crate merges the spec line.
 - **A~2**: the plot's TXY row is checked by unit tests and offscreen rendering only; an end-to-end
   GUI test of a plot switching sources on a folder with real helpers (convert, load, Live) would
   catch wiring that the unit tests stub.
@@ -146,6 +145,21 @@ Checks after the review fixes: full suite **8116 passed, 669 skipped, no RERUN**
 `mypy --strict` helab and tests and `pyright helab tests` clean on darwin, win32 and linux; the
 reviewer's repros (`.ai/temp/review-txy-ui/test_review_repro.py`) now give no `shots_missing`, the Live
 signature equal to the scan's, and no trusted shot of another profile. `dev/v0.0.7` had nothing new.
+
+## Review round 2 (Egret, on `e4d6358`: no blocker)
+
+| Finding | Fix |
+|---|---|
+| A Live's signature/summary covered MATLAB TXY it hadn't read (waiting, young) | `helab_txy.folder_print`: the data's own MATLAB shots plus the settled MATLAB TXY of shots held from HeLab's; a MATLAB-only Live revision has the signature it had before this floor (the hash of its fingerprint). Test. |
+| B `save_held`'s signature left out the MATLAB TXY of HeLab-held shots | The same rule for its signature and summary. Test (equals a MATLAB-only load's). |
+| C Live opened the store every check with no root anywhere | `live_helab.key_asked`; FolderCache sends `txy.key_asked` for that folder for the session, and Live doesn't open the store again. Test. |
+| D "choose its TXY source again" didn't work | A released plot on another source reloads on the user's Reload or Rerun (`reload(deliberate=True)`): its source is loaded again (RAM only data), then it draws on exactly its shots; a reload on showing it still never reads the folder, and says Reload will. The released plot's tooltip says so. Test. (The known issue filed in round 1 is withdrawn.) |
+
+Plus the order change: `HeLab.spec` datas for the built-in profiles (A~1 above).
+
+Checks after round 2: full suite **8121 passed, 669 skipped, no RERUN**, twice (basetemp in the
+checkout and outside it); `mypy --strict` helab and tests and `pyright helab tests` clean on darwin,
+win32 and linux; the reviewer's round-2 repros all as expected. `dev/v0.0.7` had nothing new.
 
 ## Proposed doc changes (for the Coordinator)
 

@@ -27,6 +27,8 @@ a = Analysis(
     datas=[(str(ROOT / 'helab/resources/menu-right.svg'), 'helab/resources'),
            # The window's icon, which HelabMainWindow looks for beside the package (R-12).
            (str(ROOT / 'helab/resources/ai-icon.icns'), 'helab/resources'),
+           # The built-in detector profiles as JSON (A10.3; read by ``profile.builtin_files``).
+           (str(ROOT / 'helab/convert/builtin_profiles/*.json'), 'helab/convert/builtin_profiles'),
            (str(metadata_path), 'helab')],
     hiddenimports=["helab.io_helper"],
     hookspath=[],
