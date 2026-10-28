@@ -141,6 +141,12 @@ Settings rendered offscreen with the floor's settings file (`floor-env.sh`), syn
 | #8 profiles of one hash named as one | `record` keeps every name per hash (`names`); `describe` shows them all (`matlab-2019 v1 / plates-2017 v1`). Test. |
 | #9 wording | Settings rows say "Settings → TXY converter"; the plate note says "(uncalibrated)" for plates-2025; the CLI's profile in Q~3. |
 
+Checks after the review fixes: full suite **8116 passed, 669 skipped, no RERUN**, twice: with
+`--basetemp=.ai/temp/pytest` and with a basetemp outside the checkout (the session's scratchpad);
+`mypy --strict` helab and tests and `pyright helab tests` clean on darwin, win32 and linux; the
+reviewer's repros (`.ai/temp/review-txy-ui/test_review_repro.py`) now give no `shots_missing`, the Live
+signature equal to the scan's, and no trusted shot of another profile. `dev/v0.0.7` had nothing new.
+
 ## Proposed doc changes (for the Coordinator)
 
 ### `.ai/architecture/converter.md`, "In HeLab (stage 4)"
