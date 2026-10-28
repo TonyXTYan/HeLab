@@ -15,7 +15,7 @@ from typing import Callable, Optional
 from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from helab.analysis.dataset_view import DatasetView
-from helab.convert.profile import suggested_plates
+from helab.convert.profile import UNCALIBRATED, suggested_plates
 from helab.utils import txy_sources
 
 
@@ -32,7 +32,7 @@ def plate_note(view: DatasetView, profile_name: str) -> str:
     suggested = suggested_plates(day) if day else None
     if suggested is None or suggested == profile_name:
         return ""
-    return f"{suggested} suggested for this folder's date ({day})"
+    return f"{suggested}{' (uncalibrated)' if suggested in UNCALIBRATED else ''} suggested for this folder's date ({day})"
 
 
 class TxySourceRow(QWidget):

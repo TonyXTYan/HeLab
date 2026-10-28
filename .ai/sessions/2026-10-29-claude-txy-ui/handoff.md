@@ -102,6 +102,13 @@ Settings rendered offscreen with the floor's settings file (`floor-env.sh`), syn
   `analysis/presets.py`'s; adding a field there is a format change).
 - **Q~3** (Tony): HeLab TXY of another profile than the one conversions use are not loaded (built).
   Alternative: load any current HeLab TXY whatever its profile (the identity records it per shot).
+  Note: `helab convert` (the command line) ignores the `convert_profile` setting (`--profile` takes a
+  built-in's name or a file), so TXY it makes with another output than the chosen profile's are hidden
+  from the app until converted again with that profile.
+- **Known issue (for `roadmaps/known-issues.md`):** a plot on another TXY source than the default that
+  was released to free RAM can't be reloaded once its dataset was evicted: reloads never read the folder,
+  and only the default source's dataset is disk cached (Q~5). It says so ("choose its TXY source again
+  to load it"); choosing the source again loads it.
 - **Q~4** (Tony): the folder's status (ok / fixable…) and counts still come from MATLAB's TXY alone;
   a folder with only HeLab's TXY shows its raw files without TXY. Proposed: count current HeLab TXY in
   the status once scans can see HeLab's folders cheaply.
@@ -119,6 +126,20 @@ Settings rendered offscreen with the floor's settings file (`floor-env.sh`), syn
 - **M~2** (Tony): Settings → TXY converter: duplicate plates-2022, edit a time sum, set it as the
   conversion profile, Save; convert a folder; check its provenance names the new profile and the
   plots load those TXY (and not the old ones).
+
+## Review fixes (Egret, on `ff2a971`)
+
+| Finding | Fix |
+|---|---|
+| #1 BLOCKER: held HeLab shots went through the mismatch flow (Clear converted TXY, a shot converted again, Live without the app's root key) | Only MATLAB's TXY feed the mismatch rule. `live_check`: a held HeLab shot whose TXY the source takes now is the one it was read from, unchanged, is kept; another (converted again, now MATLAB's) is read again like a new file (seen a check apart, `live_reread`); none left: dropped (`load_counts.removed`). `load`: held or cached HeLab shots never stop it with `shots_missing` (read anew or removed). `save_held`: saved as held and counted unsettled. Live finds the root key itself when the app sends none: `FolderCache.with_txy` falls back to the data's `txy.key` (loads record it) or the last Live check's, and `live_check` asks the store (`txy.cache_directory`). Tests: Clear then Live/load/cached load; reconverted with another profile; Live without the app's key. |
+| #2 a held or cached HeLab shot of another profile was trusted; Live's shortcut ignored a profile change | `find` trusts a held shot only when its origin is the wanted profile's hash; `live_helab` is `{folders, profile_hash, key}` and the shortcut needs the same profile. Test. (A trusted shot's raw file isn't stat'ed again: raw files are never rewritten, Tony 2026-10-20.) |
+| #3 Live's summary/signature left out a MATLAB TXY of a held HeLab shot | Live and `save_held` build the folder's summary from all its settled MATLAB TXY (stat'ing the few the data doesn't hold), and the loaded signature is that summary's; `load` takes one settle cutoff for both. Test (equals a MATLAB-only load's signature). |
+| #4 every record read on every listing | `find(..., only=could_take(...))`: by default only shots MATLAB lacks (and those held from HeLab's). Test counts the records read. |
+| #5 a released plot of another source can't come back | `_in_ram` takes only its own source's datasets; the plot says why and what to do; filed as a known issue (above). |
+| #6 `cache_saved` marked other sources' RAM datasets cached | Only the default source's. Test. |
+| #7 deleting the profile in use, then Cancel | The setting falls back to matlab-2019 at once (and FolderCache's profile). The tab says profile changes save at once, the choices with Save. Test. |
+| #8 profiles of one hash named as one | `record` keeps every name per hash (`names`); `describe` shows them all (`matlab-2019 v1 / plates-2017 v1`). Test. |
+| #9 wording | Settings rows say "Settings → TXY converter"; the plate note says "(uncalibrated)" for plates-2025; the CLI's profile in Q~3. |
 
 ## Proposed doc changes (for the Coordinator)
 

@@ -103,7 +103,8 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
             helab_state = helab_txy.folder_state(helab_txy.folders(path, txy, helab_key), listed_at)
             by_shot = {shot: (size, modified) for shot, size, modified in fingerprint}
             trusted = {shot: (*by_shot[shot], origin) for shot, origin in held_origins.items()}
-            helab_found = helab_txy.find(path, txy, helab_key, beside_entries, raw_entries, trusted)
+            helab_found = helab_txy.find(path, txy, helab_key, beside_entries, raw_entries, trusted,
+                                         helab_txy.could_take(txy_source, raw_entries, matlab, held_origins))
         # Each shot's TXY as the source asks; a held one is checked against the kind it was read from.
         chosen = helab_txy.compose(txy_source, matlab, helab_found, held_origins)
         origins = {shot: origin for shot, (_, origin) in chosen.items() if origin}
@@ -114,7 +115,13 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         def mismatch(reason: str, shots: list[int]) -> None:
             send({"kind": "shots_missing", "reason": reason, "missing": shots[:20], "missing_count": len(shots),
                   "known_count": len(known), "listed_count": len(listed)})
-        if missing := sorted(known - set(listed)):
+        # Held shots read from HeLab's TXY (Q6.6) aren't written once like MATLAB's: one gone or changed
+        # (cleared, converted again) is no mismatch; it is saved as held and counts as unsettled, so the
+        # next check reads it anew (or finds it removed).
+        held_helab = set(held_origins)
+        helab_off = {shot for shot, size, modified in fingerprint
+                     if shot in held_helab and listed.get(shot) != (size, modified)}
+        if missing := sorted(known - set(listed) - held_helab):
             mismatch("missing", missing)
             return
         if identity:
@@ -122,14 +129,15 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
             if current and current != identity:
                 mismatch("root", sorted(known))
                 return
-        changed = [shot for shot, size, modified in fingerprint if listed[shot] != (size, modified)]
+        changed = [shot for shot, size, modified in fingerprint
+                   if shot not in held_helab and listed[shot] != (size, modified)]
         rereadable = {int(shot) for shot in recent or ()} if output else set()
         if stale := [shot for shot in changed if shot not in rereadable]:
             mismatch("changed", stale)
             return
         data = {shot: np.load(os.path.join(held_dir, f"{shot}.npy"), allow_pickle=False)
                 for shot in sorted(known) if os.path.exists(os.path.join(held_dir, f"{shot}.npy"))}
-        unsettled = len(set(listed) - known)
+        unsettled = len(set(listed) - known) + len(helab_off)
         problematic = sorted(set(problematic) & known)
         # Recently read by Live and changed since: read again, once settled (else saved as held).
         was = {shot: (size, modified) for shot, size, modified in fingerprint}
@@ -204,7 +212,8 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         if replaced:
             # A new fingerprint: the folder's summary as of this listing, before ``loaded``, as a Live
             # check sends it (the app adopts it as Live's, so the folder's status matches the data).
-            matlab_print = [entry for entry in fingerprint if entry[0] not in data_origins]
+            # The folder's status as a scan computes it: all of its settled MATLAB TXY.
+            matlab_print = _settled([(shot, *matlab_stats[shot]) for shot in sorted(matlab_stats)])
             summary = _summary(path, found, {file_kinds.TXY.name: sum(entry[1] for entry in matlab_print)}, has_dirs,
                                False, matlab_print, listed_at)
             summary["unsettled"] = unsettled

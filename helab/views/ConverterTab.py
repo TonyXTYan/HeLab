@@ -183,6 +183,7 @@ class ConverterTab(QWidget):
                  folder: Optional[str] = None) -> None:
         super().__init__(parent)
         self.cache = cache
+        self.settings = settings
         self.library = ProfileLibrary(folder or profiles_folder())
         self.user: dict[str, DetectorProfile] = {}
         self.unreadable: list[Unreadable] = []
@@ -208,7 +209,8 @@ class ConverterTab(QWidget):
         grid.addWidget(self.output_combo, 2, 1)
         grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
-        layout.addWidget(QLabel("Profiles"))
+        profiles_label = QLabel("Profiles (changes to profiles are saved at once; the choices above with Save)")
+        layout.addWidget(profiles_label)
         self.list = QListWidget()
         self.list.currentItemChanged.connect(self._selected)
         layout.addWidget(self.list, 1)
@@ -356,6 +358,12 @@ class ConverterTab(QWidget):
             self.library.delete(name)
         except OSError as error:
             self.say(f"Couldn't delete {name}: {error}")
+            return
+        if in_use:
+            # Deleted at once, so the setting follows at once (not with Save): it never names a deleted profile.
+            self.settings.setValue(CONVERT_PROFILE_SETTING, DEFAULT_PROFILE)
+            if self.cache is not None:
+                self.cache.set_convert_profile(BUILTIN_PROFILES[DEFAULT_PROFILE])
         self.refresh(DEFAULT_PROFILE if in_use else "")
 
     def import_file(self, path: str = "") -> None:

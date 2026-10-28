@@ -68,7 +68,7 @@ class UnverifiedField(TypedDict, total=False):
 
 class LiveState(TypedDict):
     """What the next Live check compares with (``live.live_check``'s ``state``)."""
-    live_helab: NotRequired[list[list[Any]]]  # HeLab's folders' state (``helab_txy.folder_state``)
+    live_helab: NotRequired[dict[str, Any]]  # HeLab's folders' state, the profile hash and root key asked for
     live_since: int | None
     live_listed: bool
     live_seconds: float

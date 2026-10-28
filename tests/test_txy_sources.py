@@ -25,7 +25,7 @@ from helab.io_ops.loading import load
 from helab.io_ops.save_held import save_held
 from helab.utils import txy_sources
 from helab.utils.cache_store import store_root
-from helab.utils.folder_cache import Dataset
+from helab.utils.folder_cache import Dataset, FolderCache
 from test_convert_helab import OLD, raw_bytes, write_raw
 from test_folder_cache import service_for_test
 
@@ -109,7 +109,8 @@ def test_the_default_takes_matlabs_and_fills_with_helabs(tmp_path: Path, private
     assert data[1][0, 0] == 1.5  # MATLAB's (the fixture's values), not HeLab's conversion.
     assert result["txy"]["source"] == "matlab"
     assert result["txy"]["origins"] == {"3": f"helab:{PROFILE}", "4": f"helab:{PROFILE}"}
-    assert result["txy"]["profiles"] == {PROFILE: {"name": "matlab-2019", "version": 1, "calibrated": False}}
+    assert result["txy"]["profiles"] == {PROFILE: {"name": "matlab-2019", "version": 1, "calibrated": False,
+                                                   "names": ["matlab-2019 v1"]}}
     # The folder's signature, as a scan computes it: its MATLAB TXY alone.
     assert result["signature"] == summary_signature(events)
     matlab_only = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.MATLAB_ONLY)))
@@ -382,7 +383,6 @@ def test_a_revision_or_reload_never_crosses_sources() -> None:
 def test_folder_cache_keeps_each_sources_datasets_apart(qtbot: Any, monkeypatch: pytest.MonkeyPatch,
                                                          tmp_path: Path) -> None:
     from helab.utils import constants
-    from helab.utils.folder_cache import FolderCache
     service = service_for_test(monkeypatch)
     cache = FolderCache(service)
     path = RUN
@@ -403,3 +403,161 @@ def test_folder_cache_keeps_each_sources_datasets_apart(qtbot: Any, monkeypatch:
     cache.set_convert_profile(MATLAB_2023_LAB_EDIT)
     assert cache.with_txy(str(tmp_path), {})["txy"]["profile_hash"] == MATLAB_2023_LAB_EDIT.content_hash()
     service.shutdown()
+
+
+# Review (Egret) fixes: held HeLab shots are never a mismatch; trust needs the profile; Live's summary is
+# the folder's; records only for shots HeLab could give.
+
+
+def kinds_of(events: list[dict[str, Any]]) -> list[str]:
+    return [event["kind"] for event in events]
+
+
+def test_clearing_helabs_never_makes_a_mismatch(tmp_path: Path, private_store: str) -> None:
+    source = make_run(tmp_path, private_store)
+    first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store)))
+    origins = first["txy"]["origins"]
+    helab_txy.clear_converted(helab_txy.converted_root(store_root(private_store)))
+    # Live: shots 3 and 4 (HeLab's, no MATLAB TXY) are dropped, not "another folder".
+    events = live(source, tmp_path, private_store, first["fingerprint"], memory_origins=origins)
+    assert "shots_missing" not in kinds_of(events)
+    result = loaded(events)
+    assert result["memory_shots"] == [1, 2] and [entry[0] for entry in result["fingerprint"]] == [1, 2]
+    assert result["load_counts"]["removed"] == 2 and result["txy"]["origins"] == {}
+    # A load holding them, and one finding them in the cache: removed, not a mismatch.
+    events = run_load(source, tmp_path, None, options(tmp_path, private_store), memory=first["fingerprint"],
+                      memory_origins=origins, base_signature=first["signature"])
+    assert "shots_missing" not in kinds_of(events) and loaded(events)["memory_shots"] == [1, 2]
+    source2 = tmp_path / "second"
+    source2.mkdir()
+    for shot in (1, 2, 3):
+        write_raw(source2, shot, raw_bytes(10_000 * shot))
+    matlab_txy(source2, 1)
+    convert(source2, tmp_path, private_store)
+    cached = loaded(run_load(source2, tmp_path, private_store, options(tmp_path, private_store)))
+    assert cached["txy"]["origins"] == {"2": f"helab:{PROFILE}", "3": f"helab:{PROFILE}"}
+    helab_txy.clear_converted(helab_txy.converted_root(store_root(private_store)))
+    events = run_load(source2, tmp_path, private_store, options(tmp_path, private_store))
+    assert "shots_missing" not in kinds_of(events) and sorted(shots_read(events)) in ([], [1])
+    assert [entry[0] for entry in loaded(events)["fingerprint"]] == [1]
+
+
+def test_a_held_shot_converted_again_is_read_again(tmp_path: Path, private_store: str) -> None:
+    source = make_run(tmp_path, private_store)
+    first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store)))
+    origins = first["txy"]["origins"]
+    convert(source, tmp_path, private_store, profile=MATLAB_2023_LAB_EDIT)  # The profile changed.
+    other = MATLAB_2023_LAB_EDIT.content_hash()
+    txy = {**options(tmp_path, private_store), "profile_hash": other, "key": _key(source, private_store)}
+
+    def check(**kwargs: Any) -> list[dict[str, Any]]:
+        output = tmp_path / f"live-{time.monotonic_ns()}"
+        output.mkdir()
+        events: list[dict[str, Any]] = []
+        live_check(str(source), str(output), events.append, first["fingerprint"], txy=txy,  # type: ignore[arg-type]
+                   memory_origins=origins, check_level="full", **kwargs)
+        return events
+    look = check()
+    assert "shots_missing" not in kinds_of(look)
+    seen = last(look, "live_unchanged")["live_seen"]
+    assert sorted(entry[0] for entry in seen) == [3, 4]  # Read again once seen unchanged a check apart.
+    result = loaded(check(seen=seen))
+    assert sorted(entry["shot"] for entry in result["live_reread"]) == [3, 4]
+    assert result["txy"]["origins"] == {"3": f"helab:{other}", "4": f"helab:{other}"}
+
+
+def test_live_finds_the_store_key_itself(tmp_path: Path, private_store: str) -> None:
+    """With no root known to the app (FolderCache sends key ""), Live asks the store as a load does."""
+    source = make_run(tmp_path, private_store)
+    first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store)))
+    assert first["txy"]["key"].startswith("root://")  # (FolderCache sends it back from the data's record.)
+    output = tmp_path / "out"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    txy = {**options(tmp_path, private_store), "key": "", "cache_directory": store_root(private_store)}
+    write_raw(source, 5, raw_bytes(10_000))
+    convert(source, tmp_path, private_store, shots=[5])
+    live_check(str(source), str(output), events.append, first["fingerprint"], txy=txy,  # type: ignore[arg-type]
+               memory_origins=first["txy"]["origins"])
+    assert "shots_missing" not in kinds_of(events)
+    assert [entry[0] for entry in last(events, "live_unchanged")["live_seen"]] == [5]
+
+
+def test_a_held_shot_of_another_profile_isnt_trusted(tmp_path: Path, private_store: str) -> None:
+    source = make_run(tmp_path, private_store)
+    first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store)))
+    other = {**options(tmp_path, private_store), "profile_hash": MATLAB_2023_LAB_EDIT.content_hash(),
+             "key": _key(source, private_store)}
+    held = loaded(run_load(source, tmp_path, None, other, memory=first["fingerprint"],
+                           memory_origins=first["txy"]["origins"], full_check=True))
+    assert held["txy"]["origins"] == {} and held["memory_shots"] == [1, 2]
+    # Live's shortcut is the profile's too: the same folders with another profile asked for list again.
+    steady = last(live(source, tmp_path, private_store, first["fingerprint"], memory_origins=first["txy"]["origins"]),
+                  "live_unchanged")["live_helab"]
+    assert steady["profile_hash"] == PROFILE
+    output = tmp_path / "out"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    live_check(str(source), str(output), events.append, first["fingerprint"], txy=other,  # type: ignore[arg-type]
+               memory_origins=first["txy"]["origins"], since=os.stat(source).st_mtime_ns, helab_since=steady)
+    assert last(events, "live_unchanged" if "live_unchanged" in kinds_of(events) else "loaded")["live_listed"]
+
+
+def test_lives_summary_is_the_folders_when_matlab_arrives_for_a_held_shot(tmp_path: Path, private_store: str) -> None:
+    source = make_run(tmp_path, private_store)
+    first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store)))
+    origins = first["txy"]["origins"]
+    matlab_txy(source, 3)  # MATLAB's TXY of held HeLab shot 3,
+    matlab_txy(source, 9)  # and a new MATLAB shot.
+    seen = last(live(source, tmp_path, private_store, first["fingerprint"], memory_origins=origins),
+                "live_unchanged")["live_seen"]
+    result = loaded(live(source, tmp_path, private_store, first["fingerprint"], memory_origins=origins, seen=seen))
+    scan = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.MATLAB_ONLY)))
+    assert result["signature"] == scan["signature"]  # As the next scan computes it: the tab doesn't reload.
+    assert result["txy"]["origins"]["3"] == f"helab:{PROFILE}"  # (Still held from HeLab's.)
+
+
+def test_records_are_read_only_for_shots_helab_could_give(tmp_path: Path, private_store: str,
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.convert import provenance
+    source = make_run(tmp_path, private_store)  # MATLAB's TXY for 1 and 2; HeLab's for 1-4.
+    read: list[int] = []
+    original = provenance.Provenance.from_json.__func__  # type: ignore[attr-defined]
+
+    def counting(cls: Any, text: Any) -> Any:
+        record = original(cls, text)
+        read.append(record.shot)
+        return record
+    monkeypatch.setattr(provenance.Provenance, "from_json", classmethod(counting))
+    run_load(source, tmp_path, None, options(tmp_path, private_store))
+    assert sorted(read) == [3, 4]
+    read.clear()
+    run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.HELAB))
+    assert sorted(read) == [1, 2, 3, 4]
+
+
+def test_profiles_of_one_output_are_all_named() -> None:
+    shots = {1: helab_txy.HelabShot(1, "f", 1, 1, "h", {"name": "matlab-2019", "version": 1}, 0.0),
+             2: helab_txy.HelabShot(2, "g", 1, 1, "h", {"name": "plates-2017", "version": 1}, 0.0)}
+    record = helab_txy.record("matlab", {1: "helab:h", 2: "helab:h"}, shots, None, {}, [])
+    assert record["profiles"]["h"]["names"] == ["matlab-2019 v1", "plates-2017 v1"]
+    assert txy_sources.describe("helab-only", {1: "helab:h", 2: "helab:h"}, record["profiles"], 2) == \
+        "TXY: HeLab's (matlab-2019 v1 / plates-2017 v1)"
+
+
+def test_a_cache_save_marks_only_the_default_sources_dataset(monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils.io_service import IORequest
+    service = service_for_test(monkeypatch)
+    cache = FolderCache(service)
+    try:
+        tab, plot = dataset({}, signature="sig"), dataset({"1": "helab:h", "2": "helab:h"}, source="helab")
+        for entry in (tab, plot):
+            cache.datasets[cache.dataset_key(entry)] = entry
+        cache._finishing["saver"] = RUN
+        cache._finishing_epochs["saver"] = 0
+        cache._finishing_created["saver"] = time.monotonic()
+        cache._on_finishing_event(IORequest("saver", 0, RUN, "load", {}, 60.0),
+                                  {"kind": "cache_saved", "cache_info": {"signature": "sig", "saved_at": 1.0}})
+        assert tab.metadata.get("disk_cached") is True and "disk_cached" not in plot.metadata
+    finally:
+        service.shutdown()

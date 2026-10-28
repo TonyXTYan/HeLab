@@ -44,7 +44,7 @@ LOG_KEEP_SETTING = "log_files_keep"
 # the raw files is a per-folder flag (Q9.7, the store's ``convert_prefs.write_beside``), not this.
 CONVERT_OUTPUT_SETTING = "converted_txy_output"
 CONVERT_OUTPUTS = ("cache", "temp")
-# Which detector profile and backend HeLab's conversions use (Settings → Profiles; Q6.11). The
+# Which detector profile and backend HeLab's conversions use (Settings → TXY converter; Q6.11). The
 # profile is a built-in's name or a user profile's (``helab.convert.user_profiles``).
 CONVERT_PROFILE_SETTING = "convert_profile"
 CONVERT_BACKEND_SETTING = "convert_backend"
@@ -99,11 +99,11 @@ SETTINGS: tuple[Setting, ...] = (
             "the folder's data root; a folder without one goes to temp) or temp (HeLab's temp folder). "
             "Folders set to write them beside the raw files do that instead."),
     Setting(CONVERT_PROFILE_SETTING, str, "matlab-2019",
-            "The detector profile HeLab's conversions use (Settings → Profiles): a built-in's name or a user "
+            "The detector profile HeLab's conversions use (Settings → TXY converter): a built-in's name or a user "
             "profile's; one that no longer exists reads as matlab-2019. HeLab's TXY of another profile aren't "
             "loaded until converted again."),
     Setting(CONVERT_BACKEND_SETTING, str, "numpy",
-            "The converter backend HeLab's conversions use (Settings → Profiles): numpy (always there), or an "
+            "The converter backend HeLab's conversions use (Settings → TXY converter): numpy (always there), or an "
             "optional compiled one; a conversion with a backend that can't run says why."),
     # The plots that reopen at start (keep these rows together).
     Setting(REOPEN_PLOTS_SETTING, bool, True,

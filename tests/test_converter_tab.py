@@ -282,3 +282,26 @@ def test_a_plot_loads_its_own_source_and_goes_back_to_the_tabs(qtbot: QtBot, mon
         instance.close()
     finally:
         service.shutdown()
+
+
+def test_deleting_the_profile_in_use_falls_back_at_once(qtbot: QtBot, tmp_path: Path,
+                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    service, cache = frozen(monkeypatch)
+    try:
+        ini = settings(tmp_path)
+        ProfileLibrary(str(tmp_path / "profiles")).save(MATLAB_2019.replace(name="mine", search_depth=40))
+        ini.setValue(constants.CONVERT_PROFILE_SETTING, "mine")
+        tab = tab_for(qtbot, tmp_path, cache, ini)
+        tab.confirm = lambda title, text, verb: True  # type: ignore[method-assign]
+        select(tab, "mine")
+        tab.delete_selected()
+        # Even if Settings is then cancelled, the setting never names the deleted profile.
+        assert ini.value(constants.CONVERT_PROFILE_SETTING) == "matlab-2019"
+        assert cache.convert_profile() is MATLAB_2019 and tab.profile_combo.currentData() == "matlab-2019"
+    finally:
+        service.shutdown()
+
+
+def test_the_plate_note_says_uncalibrated(qtbot: QtBot) -> None:
+    assert plate_note(view_dated("2025-07-01"), "matlab-2019") == (
+        "plates-2025 (uncalibrated) suggested for this folder's date (2025-07-01)")

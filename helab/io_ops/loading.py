@@ -371,7 +371,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         helab_state = helab_txy.folder_state(helab_txy.folders(path, txy, helab_key), listed_at)
         trusted = {int(shot): (int(size), int(modified), held_origins[int(shot)])
                    for shot, size, modified in memory or () if int(shot) in held_origins}
-        helab_found = helab_txy.find(path, txy, helab_key, beside_entries, raw_entries, trusted)
+        helab_found = helab_txy.find(path, txy, helab_key, beside_entries, raw_entries, trusted,
+                                     helab_txy.could_take(txy_source, raw_entries, matlab))
     chosen = helab_txy.compose(txy_source, matlab, helab_found)
     origins = {shot: origin for shot, (_, origin) in chosen.items() if origin}
     for shot, (filename, origin) in chosen.items():
@@ -403,7 +404,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     txy_bytes = sum(size for _, size, _ in matlab_print)
     # Files another computer may still be writing are left out entirely (not in
     # the fingerprint), so the next load sees them as new and reads them whole.
-    young = {item[0] for item in fingerprint} - {item[0] for item in _settled(fingerprint)}
+    # One settle cutoff for this load's TXY and the folder's MATLAB TXY (its status, below).
+    settled = set(_settled(sorted(set(fingerprint) | set(matlab_print))))
+    young = {item[0] for item in fingerprint if item not in settled}
     _clock_ahead(path, fingerprint, send)  # (Dated in the future: still being written, and the app warns.)
     if young:
         files = [item for item in files if item[0] not in young]
@@ -414,7 +417,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # browsing skips its details scan (step 2) while this load runs, unless the
     # folder has subfolders (their dates come from step 2). Sent and saved before any
     # file is read; a basic scan's success is still needed to clear a failure.
-    matlab_settled = _settled(matlab_print)
+    matlab_settled = [item for item in matlab_print if item in settled]
     summary = _summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, False, matlab_settled, listed_at,
                        folder)
     summary["unsettled"] = len(matlab_print) - len(matlab_settled)
@@ -441,6 +444,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # another folder now sits at this path, or files were deleted. Stop before reading anything,
     # or unpacking the cache; the user decides (``allow_missing``: load the folder as it is now).
     listed = set(chosen)
+    # Only MATLAB's TXY, written once, feed the mismatch rule (Q6.6): a shot held or cached from HeLab's TXY
+    # may go (cleared) or change (converted again) legitimately; it is then read anew, or removed.
+    from_helab = set(held_origins)
     held = {int(entry[0]) for entry in memory or ()}
     missing_checked = False
     # Shot times (raw files' mtimes): the caller's or the cache's, else stat'ed from the listing
@@ -459,8 +465,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         if shot not in raw_times and (found_time := fingerprints._raw_mtime(raw_entries.get(shot), "load: shot time")) is not None:
             raw_times[shot] = found_time
 
-    def stop_if_missing(known: set[int]) -> bool:
-        missing = sorted(known - listed)
+    def stop_if_missing(known: set[int], helab: set[int] | None = None) -> bool:
+        missing = sorted(known - listed - from_helab - (helab or set()))
         if not missing or allow_missing:
             return False
         send({"kind": "shots_missing", "missing": missing[:20], "missing_count": len(missing),
@@ -478,11 +484,12 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 raise StoreError(row_read.error)
             row = row_read.value
             missing_checked = True
-            if stop_if_missing(held | ({int(entry[0]) for entry in row["fingerprint"]} if row is not None else set())):
-                return
-            packed: bytes | None = None
             saved_origins = helab_txy.origins_from(_txy_record(_cache_info(row["info"])).get("origins")) \
                 if row is not None else {}
+            if stop_if_missing(held | ({int(entry[0]) for entry in row["fingerprint"]} if row is not None else set()),
+                               set(saved_origins)):
+                return
+            packed: bytes | None = None
             same_kind = {shot for shot in current if saved_origins.get(shot, "") == origins.get(shot, "")}
             if row is not None and not (_saved_fingerprint(row) == fingerprint and saved_origins == origins
                                         and in_memory >= set(current)):

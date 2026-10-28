@@ -340,7 +340,7 @@ class FolderCache(QObject):
         # settings, ``convert_profile``), and each folder's HeLab folders as its last Live check
         # found them (sent back as ``helab_since``).
         self._convert_profile: DetectorProfile | None = None
-        self._live_helab: dict[str, list[list[Any]]] = {}
+        self._live_helab: dict[str, dict[str, Any]] = {}
         # The RAM budget for datasets no tab shows (Settings → Cache; ``set_ram_budget``).
         self.max_data_bytes = DEFAULT_RAM_STEPS * ram_step_bytes()
         # What else counts against it: the open plots' data (``helab.analysis.budget.RamBudget``),
@@ -858,8 +858,19 @@ class FolderCache(QObject):
         txy.update({"source": source if source in txy_sources.SOURCES else txy_sources.DEFAULT_SOURCE,
                     "profile_hash": str(txy.get("profile_hash") or self.convert_profile_hash()),
                     "cache_base": os.path.dirname(os.path.abspath(options["directory"])) if options else "",
-                    "temps": DIR_TEMPS, "key": root_key(root[0], root[1], path) if root else ""})
+                    "cache_directory": str(options.get("directory") or ""),
+                    "temps": DIR_TEMPS, "key": root_key(root[0], root[1], path) if root else self._helab_key(path)})
         return {**payload, txy_sources.TXY_FIELD: txy}
+
+    def _helab_key(self, path: str) -> str:
+        """The root key a helper found HeLab's folders by when this session knows no root of ``path``: from
+        its data's ``txy`` record or its last Live check ("": none; Live then asks the store)."""
+        key = self.key(path)
+        for metadata in ((entry.metadata.get(txy_sources.TXY_FIELD) or {}) for entry in self.datasets.values()
+                         if entry.path == key):
+            if isinstance(metadata, Mapping) and metadata.get("key"):
+                return str(metadata["key"])
+        return str((self._live_helab.get(key) or {}).get("key") or "")
 
     @staticmethod
     def payload_source(payload: Mapping[str, Any]) -> str:
@@ -3455,7 +3466,9 @@ class FolderCache(QObject):
             state = self._cache_states.setdefault(path, CacheStatus())
             state.info, state.error = dict(event["cache_info"]), ""
             for entry in self.datasets.values():
-                if entry.path == path and entry.signature == state.info.get("signature"):
+                # (Another TXY source's dataset of the folder, RAM only, isn't the one saved.)
+                if (entry.path == path and entry.signature == state.info.get("signature")
+                        and self.dataset_source(entry) == txy_sources.DEFAULT_SOURCE):
                     entry.metadata.update(cache_info=state.info, disk_cached=True, disk_cache_pending=False)
             self._set_disk_cached(path, True, notify=True)
         elif valid and kind == "disk_cached":
@@ -3784,7 +3797,7 @@ class FolderCache(QObject):
                 if event.get("problematic"):
                     job.problematic.add(event["shot"])
                 return
-            if kind in ("live_unchanged", "loaded") and isinstance(event.get("live_helab"), list):
+            if kind in ("live_unchanged", "loaded") and isinstance(event.get("live_helab"), dict):
                 self._live_helab[job.path] = event["live_helab"]
             if kind == "live_unchanged" and job.epoch != self._epochs.get(job.path, 0):
                 # A Live check from before a mismatch (the folder's epoch moved): fenced like a ``loaded``.

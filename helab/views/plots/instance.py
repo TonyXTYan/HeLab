@@ -1235,6 +1235,10 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._reload_found = None
         if found is not None:
             self._reload_from(found, "RAM")
+        elif self.txy_source != txy_sources.DEFAULT_SOURCE:
+            # Another TXY source's data is RAM only (not disk cached), and a reload never reads the folder.
+            self._reload_failed(f"its TXY source's data ({txy_sources.SHORT[self.txy_source]}) isn't in RAM, and "
+                                "only the default source's is disk cached; choose its TXY source again to load it")
         else:
             self._reload_failed("its data isn't in RAM or in the disk cache")
 
@@ -1242,7 +1246,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def _in_ram(cache: FolderCache, view: DatasetView, shots: Optional[Tuple[int, ...]]) -> Optional[Restored]:
         """The folder's dataset held in RAM (shown in a tab or not) with most of the shots wanted."""
         path = cache.key(view.identity.source_path)
-        held = {id(entry): entry for entry in (*cache.pins.values(), *cache.datasets.values()) if entry.path == path}
+        source = view.identity.source or txy_sources.DEFAULT_SOURCE  # (Only its own TXY source's data.)
+        held = {id(entry): entry for entry in (*cache.pins.values(), *cache.datasets.values())
+                if entry.path == path and cache.dataset_source(entry) == source}
         found = [restore(view, entry, shots) for entry in held.values()]
         return max(found, key=lambda item: (len(item.kept), -len(item.changed)), default=None)
 

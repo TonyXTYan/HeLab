@@ -78,10 +78,13 @@ def state_unchanged(saved: Any, now: list[list[Any]]) -> bool:
 
 def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, os.DirEntry[str]],
          raw: Mapping[int, os.DirEntry[str]], trusted: Mapping[int, tuple[int, int, str]] | None = None,
-         ) -> dict[int, HelabShot]:
+         only: set[int] | None = None) -> dict[int, HelabShot]:
     """This folder's current HeLab TXY by shot. ``beside``: the source listing's ``d_txy_helab_<N>.txy``
     entries; ``raw``: its ``d<N>.txt`` entries (a shot needs its raw file to be current);
-    ``trusted``: shot → (size, mtime, origin) the caller holds."""
+    ``trusted``: shot → (size, mtime, origin) the caller holds: the same TXY of the profile asked for (its
+    record isn't read again: a TXY and its record are written once, and raw files are never rewritten,
+    Tony 2026-10-20); ``only``: the shots the source could take from HeLab (``could_take``; None: all),
+    so a check reads no record of a shot MATLAB's TXY wins."""
     from helab.convert.provenance import Provenance, ProvenanceError, stale
     from helab.utils.txy_sources import HELAB_ORIGIN
     wanted = str(options.get("profile_hash") or "")
@@ -127,6 +130,8 @@ def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, o
         except (FileNotFoundError, NotADirectoryError):
             continue
         for shot, record_path in records.items():
+            if only is not None and shot not in only:
+                continue
             name = f"d_txy_helab_{shot}.txy"
             here = (os.path.join(folder, name), *txy_stats[name]) if name in txy_stats else None
             there = beside_stats.get(shot)
@@ -134,7 +139,8 @@ def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, o
             # Held from this very TXY: written once, its record unchanged.
             for candidate in (here, there):
                 if (candidate is not None and held is not None and held[:2] == candidate[1:]
-                        and held[2].startswith(HELAB_ORIGIN) and shot not in found):
+                        and held[2].startswith(HELAB_ORIGIN) and shot not in found
+                        and (not wanted or held[2] == HELAB_ORIGIN + wanted)):
                     found[shot] = HelabShot(shot, candidate[0], candidate[1], candidate[2],
                                             held[2][len(HELAB_ORIGIN):], {}, 0.0)
             if shot in found and not found[shot].profile:
@@ -161,6 +167,16 @@ def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, o
     return found
 
 
+def could_take(source: str, raw: Mapping[int, Any], matlab: Mapping[int, Any],
+               held: Mapping[int, str] | None = None) -> set[int] | None:
+    """The shots ``source`` could take from HeLab's TXY, for ``find``'s ``only``: by default those MATLAB's
+    lack, and those held from HeLab's (kept while there); every shot for the other sources (None)."""
+    from helab.utils.txy_sources import MATLAB
+    if source != MATLAB:
+        return None
+    return (set(raw) - set(matlab)) | set(held or {})
+
+
 def compose(source: str, matlab: Mapping[int, str], helab: Mapping[int, HelabShot],
             held: Mapping[int, str] | None = None) -> dict[int, tuple[str, str]]:
     """Each shot's TXY for ``source``: shot → (file, origin). ``matlab``: MATLAB's TXY by shot;
@@ -184,11 +200,17 @@ def record(source: str, origins: Mapping[int, str], helab: Mapping[int, HelabSho
     profiles = {str(key): dict(value) for key, value in (known or {}).items() if isinstance(value, Mapping)}
     for shot in helab.values():
         if shot.profile:
-            profiles[shot.profile_hash] = dict(shot.profile)
+            # Profiles of one output share a hash (matlab-2019 and the plates today): every name is kept.
+            entry = profiles.setdefault(shot.profile_hash, dict(shot.profile))
+            text = f"{shot.profile.get('name', '?')} v{shot.profile.get('version', '?')}"
+            names = [str(name) for name in entry.get("names") or [f"{entry.get('name', '?')} v{entry.get('version', '?')}"]]
+            entry["names"] = sorted({*names, text})
     used = {origin.split(":", 1)[1] for origin in origins.values()}
     return {"source": source, "origins": {str(shot): origin for shot, origin in sorted(origins.items())},
             "profiles": {key: value for key, value in profiles.items() if key in used},
-            "profile_hash": str(options.get("profile_hash") or ""), "folders": state}
+            "profile_hash": str(options.get("profile_hash") or ""), "folders": state,
+            # The root key HeLab's folders were found by (FolderCache sends it back when it knows no root).
+            "key": str(options.get("key") or "")}
 
 
 def matlab_signature(fingerprint: Any, origins: Mapping[int, str]) -> str:

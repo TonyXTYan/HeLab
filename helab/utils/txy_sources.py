@@ -121,4 +121,7 @@ def _profile_text(profile_hash: str, profiles: Mapping[str, Mapping[str, Any]]) 
     profile = profiles.get(profile_hash)
     if not profile:
         return f"profile {profile_hash[:8]}"
+    names = profile.get("names")
+    if isinstance(names, list) and len(names) > 1:
+        return " / ".join(str(name) for name in names)  # Profiles of one output: their TXY are alike.
     return f"{profile.get('name', '?')} v{profile.get('version', '?')}"
