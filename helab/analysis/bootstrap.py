@@ -128,6 +128,13 @@ def _fit_shape(values: Array, shape: tuple[int, ...], where: str) -> Array:
     raise ValueError(f"the statistic returned shape {values.shape} on {where}, {shape} elsewhere")
 
 
+def resamples(value: Any) -> int:
+    """A "shot bootstrap resamples" setting as ``bootstrap_shots`` takes it: 0 (off), else at least
+    2, since one resample has no spread (a setting of 1 runs 2; Codex review on PR #9)."""
+    count = int(value)
+    return 0 if count <= 0 else max(2, count)
+
+
 def bootstrap_shots(shots: Sequence[Any], statistic: Statistic, n_boot: int = DEFAULT_N_BOOT,
                     seed: int | None = DEFAULT_SEED, confidence: float = DEFAULT_CONFIDENCE,
                     cancelled: Callable[[], bool] | None = None) -> BootstrapResult:

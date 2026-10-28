@@ -40,6 +40,7 @@ from PyQt6.QtCore import Qt, pyqtSlot
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QMessageBox, QPushButton, QVBoxLayout, QWidget
 
 from helab.analysis import result_types
+from helab.analysis.bootstrap import resamples
 from helab.analysis.result_codec import Declared
 from helab.analysis.constant_layers import (clean_layer, constants_specs, describe_constants, origin_text,
                                            resolve_for_run, value_and_origin)
@@ -80,7 +81,7 @@ N_BOOT = ParameterSpec("n_boot", "Shot bootstrap resamples (0 = off)", "int", N_
                        tip="The error over shots: the detection rerun on this many resamples of whole shots, so it "
                            "includes the shot-to-shot jitter of the release and the trap. Each resample is a "
                            "detection: 100 take about 5 s on 40,000 events, 30 s on 500,000. 0: the fit's own SE "
-                           "only, within run, which leaves the jitter out.")
+                           "only, within run, which leaves the jitter out. 1 runs 2: one resample has no spread.")
 CONSTANT_KEYS = ("fall_distance", "fall_time", "g")
 CONSTANTS = tuple(constants_specs(CONSTANT_KEYS))
 PARAMETERS = (*SHOT_SPECS, SEARCH_MIN, SEARCH_MAX, N_BOOT, *CONSTANTS)
@@ -528,7 +529,7 @@ class ReleaseTimePlot(DatasetAnalysis):
 
     def describe_run(self, action_name: str, values: Mapping[str, Any], view: DatasetView) -> tuple[str, str]:
         lower, upper, _ = search_range(values)
-        boots = int(values.get(N_BOOT.name, N_BOOT.default))
+        boots = resamples(values.get(N_BOOT.name, N_BOOT.default))
         search = search_text(lower, upper)
         settings = (shots_brief(values), f"search {search}" if search else "",
                     f"bootstrap {boots:,}" if boots else "fit SE only")
@@ -568,7 +569,7 @@ class ReleaseTimePlot(DatasetAnalysis):
         constants = context.resolved_constants
         if constants is None:  # Run without the runner: resolved here, the same way.
             constants = resolve_for_run(values, context.constants.get("lab"), context.constants.get("folder"))
-        boots = int(values.get(N_BOOT.name, N_BOOT.default))
+        boots = resamples(values.get(N_BOOT.name, N_BOOT.default))
         per_shot = [txy(view.shots[shot]) for shot in shots]
         events = np.concatenate(per_shot) if per_shot else np.empty((0, 3))
         data = ReleaseData(tuple(shots), len(view.shots), len(events), constants, boots, search=(lower, upper),

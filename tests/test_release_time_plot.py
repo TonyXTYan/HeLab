@@ -243,6 +243,14 @@ def test_more_jitter_more_error() -> None:
     assert any("bootstrap off" in note for note in alone.all_notes())
 
 
+def test_one_resample_runs_two() -> None:
+    """Codex review on PR #9: a setting of 1 (within the limits) raised in ``bootstrap_shots``."""
+    view, _ = cloud_view(shots=4, count=400, seed=2)
+    found = run(view, {"n_boot": 1}).data.release
+    assert found is not None and found.ok and found.error == "shot bootstrap"
+    assert found.bootstrap is not None and found.bootstrap.n_boot == 2
+
+
 def test_titles_and_record_read_in_ms_and_mm(jittered: tuple[AnalysisResult, list[float]]) -> None:
     result, _ = jittered
     lines = release_time.titles(result, result.data)

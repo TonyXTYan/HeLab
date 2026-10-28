@@ -268,6 +268,13 @@ def counting_in_shot(monkeypatch: pytest.MonkeyPatch) -> list[int]:
     return calls
 
 
+def test_one_resample_runs_two() -> None:
+    """Codex review on PR #9: a setting of 1 (within the limits) raised in ``bootstrap_shots``."""
+    view = txy_view(thermal_velocities(5, shots=6, events=300))
+    result = data_of(run(view, {"corr_range": 0.4 * SCALE, "corr_window": 0.05 * SCALE, "n_boot": 1}))
+    assert result.result is not None and result.result.se_method == "shot bootstrap"
+
+
 def test_live_adds_a_shot_without_counting_the_old_ones_again(monkeypatch: pytest.MonkeyPatch) -> None:
     velocities = thermal_velocities(3, shots=13, events=300)
     view = txy_view(velocities[:12])

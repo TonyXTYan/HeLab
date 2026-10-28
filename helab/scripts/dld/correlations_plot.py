@@ -43,6 +43,7 @@ import pyqtgraph as pg
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from helab.analysis import result_types, trends
+from helab.analysis.bootstrap import resamples
 from helab.analysis.result_codec import Declared
 from helab.analysis.constant_layers import constants_specs, describe_constants, resolve_for_run
 from helab.analysis.correlations import (Baseline, CacheKey, CorrelationResult, CorrelationSpec, InShot, PairCounts,
@@ -172,7 +173,7 @@ BASELINE = ParameterSpec("baseline", "Fit baseline", "choice", FREE, choices=(FR
 N_BOOT = ParameterSpec("n_boot", "Shot bootstrap resamples (0 = off)", "int", 200, (0, 5000), group=REFERENCE_GROUP,
                        page=G2_PAGE,
                        tip="Errors from resampling whole shots (no pairs recounted). 0: pair-counting errors, which "
-                           "are too small (pairs share events).")
+                           "are too small (pairs share events). 1 runs 2: one resample has no spread.")
 BUDGET = ParameterSpec("budget", "Time budget (0 = none)", "float", 30.0, (0.0, 3600.0), " s", group=REFERENCE_GROUP,
                        page=G2_PAGE,
                        tip="Stop counting pairs after this long: g² then covers the shots counted (said so), and "
@@ -590,7 +591,7 @@ def compute_correlations(context: AnalysisContext) -> CorrelationData:
     budget = float(values[BUDGET.name])
     started = time.monotonic()
     baseline: Baseline = "fixed" if values.get(BASELINE.name) == FIXED else "free"
-    boots = int(values[N_BOOT.name])
+    boots = resamples(values[N_BOOT.name])
     skipped = context.live and boots > 0  # Live reruns skip the costly bootstrap, as the Release time plot does.
     result = correlate(shot_events, spec, cache=state.cache, state=state.counts, cancelled=context.cancelled,
                        budget=budget if budget > 0 else None, clock=CLOCK, n_boot=0 if skipped else boots,
@@ -851,7 +852,7 @@ class Correlations(DatasetAnalysis):
             parts.append(f"reference ± {int(values[PARTNERS_K.name]):,} shots")
         if values.get(BASELINE.name) == FIXED:
             parts.append("baseline 1")
-        boots = int(values[N_BOOT.name])
+        boots = resamples(values[N_BOOT.name])
         parts.append(f"bootstrap {boots:,}" if boots else "no bootstrap")
         budget = float(values[BUDGET.name])
         parts.append(f"budget {budget:g} s" if budget else "no budget")

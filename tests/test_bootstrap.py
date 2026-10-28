@@ -10,7 +10,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
-from helab.analysis.bootstrap import DEFAULT_N_BOOT, bootstrap_shots, shot_means
+from helab.analysis.bootstrap import DEFAULT_N_BOOT, bootstrap_shots, resamples, shot_means
 from helab.analysis.estimates import sewm
 from helab.analysis.results import Cancelled
 
@@ -192,3 +192,11 @@ def test_shot_means_per_bin_match_the_bootstrap_of_the_pooled_mean() -> None:
     assert one.value[0] == 1.0 and math.isnan(one.se[0]) and math.isnan(one.value[1])
     with pytest.raises(ValueError):
         shot_means(np.ones((3, 2)), np.ones((3, 3)))
+
+
+def test_a_resamples_setting_is_off_or_at_least_two() -> None:
+    """Codex review on PR #9: a setting of 1 passed the plots' limits but ``bootstrap_shots`` refuses
+    it (one resample has no spread): it runs 2, and 0 stays off."""
+    assert [resamples(value) for value in (0, -1, 1, 2, 100, 1.0)] == [0, 0, 2, 2, 100, 2]
+    with pytest.raises(ValueError):
+        bootstrap_shots([1.0, 2.0], mean_of_shot_means, n_boot=1)
