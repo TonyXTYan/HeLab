@@ -123,6 +123,25 @@ no backend test skipped. **The Windows test job took 23:24** (backends step 1:14
 inside its 30 min limit. Build jobs: macOS 6:28, Windows 8:20, Ubuntu 4:21, each with the
 packaged-app check passing for all backends (about 20 s).
 
+**Run 40763808196** (`0e163d1`, the backends in their own job, Side's request): every job green,
+no RERUN. The test jobs install the prebuilt backends in 7-8 s (the build had taken 0:28-1:14).
+**Windows test job 22:06** (tests 20:01; it was 23:24); Ubuntu 8:56; macOS 11:00. The backends
+jobs took 0:50-1:44.
+
+**Run 40765484151** (`e2f3e14`, Puffin's fixes), attempt 1: every build and backends job green,
+Ubuntu and Windows tests green with no RERUN. But the **Windows test job took 25:11** (tests
+23:09), with the split, and the **macOS test job was cancelled at its 20 min limit**. Its suite
+reached 99 % (8677 passed) at 16 min, against 4:33-10:46 in the three earlier runs. The runner was
+slow: a 100 s faulthandler dump caught matplotlib still building its font cache
+(`font_manager._get_macos_fonts`). Two tests reran before the cut, and their reasons were lost
+with the summary: `tests/test_convert_helab.py::test_heartbeats_while_computing_stop_after_the_budget`
+(helab-core's) and `tests/test_analysis_gui.py::test_another_library_draws_the_plot_again_without_a_rerun`.
+Neither is in my files. Attempt 2 of the macOS job: below.
+
+The split saves about 1 min of the Windows test job. The same suite varies by 3-5 min between
+runs, so the split alone doesn't keep Windows clear of 30 min, and macOS can now come near 20:
+**Q~2**.
+
 Locally after the merge: full suite with every backend required, **8708 passed, 8 skipped, no
 RERUN**. `mypy --strict` for helab and tests with `--platform` darwin, win32 and
 linux, and `pyright --pythonplatform` Darwin, Windows and Linux: all clean.
@@ -179,6 +198,14 @@ linux, and `pyright --pythonplatform` Darwin, Windows and Linux: all clean.
 - **M~2** (Tony): in a release build's `HeLab.app`, check that macOS signing and Gatekeeper accept
   the new `.so` and `.dylib` files (`helab_convert_rs.abi3.so`, the cython `_kernel`, libmlx,
   libllvmlite).
+- **Q~2** (Tony; Side asked, no limit changed tonight): **CI test-job time limits.** The Windows
+  test job ran 22:06, 23:24 and 25:11 on this branch (limit 30, Q2.6), and one macOS test job hit
+  its 20 min limit on a slow runner (normally 4:33-11:00). The compiled backends' tests add about
+  1 min; building them is no longer in the test job. Options: (a) raise the limits (Windows 40,
+  others 30); (b) split the test job into two shards per OS (e.g. the GUI tests and the rest),
+  each with today's limit, which costs one more runner per OS; (c) leave them and re-run a job
+  that hits the limit. Proposed: (a) now, as it changes nothing else; (b) when the suite grows
+  again.
 - **Q~1** (Tony; proposed: no): should `setup.py` gain an extra (`pip install -e .[fast]`) for
   numba, or build the extensions during `pip install`? Proposed: no. It would need a compiler
   and Rust on every lab PC, and `native/build.py` already does it for developers and CI.
