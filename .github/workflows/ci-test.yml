@@ -25,18 +25,40 @@ permissions:
   contents: read
 
 jobs:
-  # The converter's compiled backends (Q9.2), built once in a job of their own so the test job
-  # (closest to its time limit on Windows) doesn't pay for the compilers: cython's kernel for this
-  # Python and rust's abi3 wheel, passed on as an artifact.
+  # The converter's backends (Q9.2): cython's kernel and rust's module built for this Python,
+  # numba and mlx installed, all of them required (HELAB_REQUIRE_BACKENDS: one that can't load
+  # fails, as does a test that skips naming one), checked against the reference, and the
+  # converter's tests run with them. In a job of its own: the main test job runs without them, as
+  # before the backends shipped, so its time is what it was (their tests skip there).
   backends:
     name: Converter backends
     if: inputs.enabled
     runs-on: ${{ inputs.os }}-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     continue-on-error: ${{ inputs.experimental }}
+    env:
+      QT_QPA_PLATFORM: offscreen
     steps:
       - name: Checkout code
         uses: actions/checkout@v7
+
+      - name: Install dependencies on Ubuntu
+        if: inputs.os == 'ubuntu'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libegl1 \
+            libxcb-icccm4 \
+            libxcb-image0 \
+            libxcb-keysyms1 \
+            libxcb-randr0 \
+            libxcb-render-util0 \
+            libxcb-shape0 \
+            libxcb-xinerama0 \
+            libxcb-xkb1 \
+            xvfb \
+            x11-utils \
+            libopengl0
 
       - name: Set up Python
         uses: actions/setup-python@v7
@@ -44,36 +66,51 @@ jobs:
           python-version: 3.${{ inputs.python-minor }}
           cache: 'pip'
 
-      - name: Build the cython kernel and the rust wheel
+      - name: Install dependencies
         shell: bash
         run: |
-          python -m pip install --upgrade pip
-          # Only the build tools, at the lock's versions where the lock applies.
-          if [ "${{ inputs.python-minor }}" = "13" ] && [ -f requirements.lock ]; then
-            pip install -c requirements.lock Cython maturin setuptools
+          python -m venv venv
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
           else
-            pip install Cython maturin setuptools
+            source venv/bin/activate
           fi
-          python native/build.py --out native-built
+          python -m pip install --upgrade pip
+          if [ "${{ inputs.python-minor }}" = "13" ] && [ -f requirements.lock ]; then
+            pip install -r requirements.lock
+          else
+            pip install -r requirements.txt
+          fi
+          pip install -e .
 
-      - name: Keep them for the test job
-        uses: actions/upload-artifact@v7
-        with:
-          name: converter-backends-${{ inputs.os }}-py3${{ inputs.python-minor }}
-          path: native-built/
-          if-no-files-found: error
-          overwrite: true
-          retention-days: 1
+      - name: Build and check the converter backends
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
+          else
+            source venv/bin/activate
+          fi
+          python native/build.py --ci
+
+      - name: Run the converter's tests with every backend
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
+          else
+            source venv/bin/activate
+          fi
+          pytest tests/test_convert_*.py -n 4 -rR --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
 
   test:
-    needs: backends
     # Skipped jobs may leave input expressions unevaluated in their names.
     # The caller's matrix name identifies the OS and Python version.
     name: Tests
     if: inputs.enabled
     runs-on: ${{ inputs.os }}-latest
-    # The suite takes about 5-10 min by OS and runner (Windows 20-24, the converter backends'
-    # tests included); the limit catches a hang: 30 min on Windows (Q2.6), 20 elsewhere.
+    # The suite takes about 5-10 min by OS and runner (Windows 20-24); the limit catches a hang:
+    # 30 min on Windows (Q2.6), 20 elsewhere.
     timeout-minutes: ${{ inputs.os == 'windows' && 30 || 20 }}
     continue-on-error: ${{ inputs.experimental }}
     env:
@@ -136,17 +173,9 @@ jobs:
           fi
           pip install -e .
 
-      - name: Get the converter backends built for this job
-        uses: actions/download-artifact@v8
-        with:
-          name: converter-backends-${{ inputs.os }}-py3${{ inputs.python-minor }}
-          path: native-built
-
-      # The backends job's kernel copied into place and its wheel installed; then
-      # HELAB_REQUIRE_BACKENDS (cython, rust, numba; mlx where Metal exists) makes a backend that
-      # can't load fail the tests instead of skipping them, and each backend's bytes are checked
-      # against the reference on tests/data/convert/.
-      - name: Install and check the converter backends
+      # The converter's optional packages out again (requirements.lock has them for the build):
+      # the backends job tests them, and this suite runs as before they shipped.
+      - name: Leave out the converter's optional backends
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -154,7 +183,7 @@ jobs:
           else
             source venv/bin/activate
           fi
-          python native/build.py --ci --prebuilt native-built
+          pip uninstall -y numba llvmlite mlx mlx-metal
 
       - name: Run Tests
         shell: bash

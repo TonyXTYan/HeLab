@@ -23,7 +23,7 @@ identically to the reference with all six backends.
 | `native/check_build.py` (new) | Each backend against `reference` on every `tests/data/convert/cases` case × both built-ins (`pipeline.convert_shot` bytes, or the same error). It runs in this Python, or with `--frozen APP` through a packaged app's `convert --watch … --once --output temp --workers 1`: one run per backend and profile, each with its own app, cache and temp folders and its own settings file. Files HeLab leaves waiting (`raw.not_done`) or can't convert are expected to give no TXY. `reference` and `numpy` are always required. A backend that says why it can't run (`unavailable()`, or "Backend 'x' can't run:" from the app) is "unavailable", which passes unless required. A difference or a crash (`unavailable()` raising, any other non-zero exit, a timeout) is "failed", which always fails. In-process, the reference must convert at least half the cases, or every backend's errors would "match" a broken one. It prints each reason and exits 1 on any failure. |
 | `native/pyinstaller-hooks/hook-mlx.py` (new) | mlx's submodules, its dylibs and `mlx.metallib` in `mlx/lib`; no headers or CMake files. |
 | `HeLab.spec` | `hiddenimports`: every `_MODULES` backend (the reference too), plus each optional package present in the build Python (cython `_kernel`; `helab_convert_rs` and `helab_convert_rs.helab_convert_rs`; `numba`, `numba.core.caching`, `numba_kernels`; `mlx`, `mlx.core`). The first module of each is the one probed, and a missing one is printed and left out, so the app still builds without it. `hookspath` points at the mlx hook. `excludes`: `Cython`, `cython`, `pyximport` (only optional imports in pyarrow's conftest, scipy's test utils and pydantic.v1 would collect them: 5.6 MB). The `datas` list stays a literal, as `test_spec_datas` reads it. |
-| `.github/workflows/ci-test.yml` | A **"Converter backends" job** per OS and Python (Side's request): only the build tools (Cython, maturin, setuptools at the lock's versions), `build.py --out native-built`, uploaded as `converter-backends-<os>-py3<minor>` (1 day, `overwrite: true` for job re-runs; its own 15 min limit). The test job `needs` it, downloads the artifact and runs "Install and check the converter backends" (`build.py --ci --prebuilt native-built`) before "Run Tests", so the tests run with `HELAB_REQUIRE_BACKENDS` set and pay for no compiler. The suite-time comment is updated (Windows 20-24 min). No time limit changed. |
+| `.github/workflows/ci-test.yml` | Two jobs (CoCo's layout, after the macOS test job hit its limit twice). **"Converter backends"** (20 min limit of its own): the full environment, `build.py --ci` (both built, `HELAB_REQUIRE_BACKENDS` set, `check_build.py`), then `pytest tests/test_convert_*.py` with every backend required, so a missing or wrong backend still fails CI. **"Tests"**: the main suite as before the backends shipped. It installs the lock, then uninstalls numba, llvmlite, mlx and mlx-metal; nothing is built, the backend tests skip as before, and `HELAB_REQUIRE_BACKENDS` is unset. No time limit changed. (`build.py --out`/`--prebuilt`, from the artifact version, stay but CI no longer uses them.) |
 | `.github/workflows/ci-build.yml` | "Build and check the converter backends" (`build.py --ci`, building in that job: PyInstaller needs them in its venv) before PyInstaller (skipped for a recovery build of a tag from before `native/build.py`). After PyInstaller, "Check every converter backend in the packaged app" (`check_build.py --frozen`, then `du -sh dist/HeLab`). Timeout raised from 15 to 25 min. |
 | `tests/conftest.py` | `HELAB_REQUIRE_BACKENDS` (comma-separated). In `pytest_configure`, each named backend must load, or the run stops with a `UsageError` listing the reasons. A `pytest_runtest_makereport` wrapper (`trylast`, so it's inside pytest-rerunfailures') turns a skip whose reason names a required backend (as a word) into a failure. `pytest_configure` adds a `--rerun-except` pattern for those skips, so the failure is final, not rerun 5 times. All of this runs only when the variable is set. |
 | `tests/test_convert_required_backends.py` (new) | Tests both halves of the flag (nested pytest runs with this conftest, as `test_left_widgets` does), the name matching, and `check_build` in this Python, including a planted difference and a reference that converts nothing; that a skip-turned failure isn't rerun (a nested `--reruns 2` run, checked to fail without the `--rerun-except` line). |
@@ -138,6 +138,20 @@ with the summary: `tests/test_convert_helab.py::test_heartbeats_while_computing_
 (helab-core's) and `tests/test_analysis_gui.py::test_another_library_draws_the_plot_again_without_a_rerun`.
 Neither is in my files. Attempt 2 of the macOS job: below.
 
+**Where the time went** (CoCo's ask). Locally (M4 Max, load 13-80, so noisy): mypy strict on
+helab 9.9 s with numba and mlx installed vs 9.2 s without, on tests 9.1 vs 8.3; pyright 35 vs 30 s.
+The full suite was 2:55 with every backend (8710 tests) vs 3:18 without (8049). The converter
+files alone, with every backend required, take 47 s (4220 tests). Nothing here explains a macOS
+doubling. On CI, per test file (the gap between a worker's consecutive results), the slow macOS
+job used 3,739 worker-seconds against 1,695 in the green `0e163d1` job, which also had every
+backend installed and required. The extra time is spread over unrelated files (live plots +246 s,
+result lifecycle +176, correlations +176, store identity +113, bose fits +112; numba +113, mlx
++48), about 2.2× each. So it isn't the backend tests or mypy. It is either the runner, or
+something that slows every test while the backends are loaded in each of the 4 workers (memory on
+the 3-core, 7 GB VM is a candidate; not proved). Earlier green runs varied too: macOS 4:33
+(`a6a5de4`) and 9:14 (`0e163d1`) on the same setup. The new layout makes the main test job's
+setup exactly what it was before this branch, whatever the cause.
+
 The split saves about 1 min of the Windows test job. The same suite varies by 3-5 min between
 runs, so the split alone doesn't keep Windows clear of 30 min, and macOS can now come near 20:
 **Q~2**.
@@ -162,9 +176,11 @@ linux, and `pyright --pythonplatform` Darwin, Windows and Linux: all clean.
     where `mx.metal.is_available()`), so there a backend that can't load stops the run and a skip
     naming one fails (`tests/conftest.py`)."
   - Module table, `backends/cython` and `backends/rust`: "built by `native/build.py`".
-- **`.ai/architecture/release-and-ci.md`**: `ci-test.yml` has two jobs: "Converter backends"
-  (`build.py --out`, artifact `converter-backends-<os>-py3<minor>`, 15 min) and "Tests", which
-  needs it and installs that artifact (`build.py --ci --prebuilt`) before the suite. The build
+- **`.ai/architecture/release-and-ci.md`**: `ci-test.yml` has two independent jobs per OS and
+  Python. "Converter backends" (20 min) builds and requires every backend (`build.py --ci`) and
+  runs `tests/test_convert_*.py`. "Tests" runs the whole suite without the optional backends:
+  numba, llvmlite, mlx and mlx-metal are uninstalled after the lock, nothing is built, and their
+  tests skip. The build
   job builds its own (`build.py --ci`) before PyInstaller and checks the app after
   (`check_build.py --frozen`); **its timeout is 25 min** (was 15). `HELAB_REQUIRE_BACKENDS` reaches
   later steps **through `$GITHUB_ENV`**, so in the build job it also applies to "Test the older
