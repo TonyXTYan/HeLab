@@ -459,8 +459,14 @@ def test_launch_folders_open_and_the_first_starts_live_with_auto_convert(
         assert explorer.live_control.auto_converting() and main.action_tab_live.isChecked()
         other = main.tab_widget.widget(main.tab_widget.currentIndex() - 1)
         assert isinstance(other, FolderExplorer) and other.selected_path_globally == str(second)
-        assert other.live is None and "started in first's tab only" in main.tab_widget.tabToolTip(
+        # Live runs in one tab at a time (switching tabs turns it off): the other launch tab says so.
+        assert other.live is None and "Live runs in one tab at a time" in main.tab_widget.tabToolTip(
             main.tab_widget.currentIndex() - 1)
+        other._update_activity()
+        assert other.folder_freshness_label.text().endswith("set to start at launch; Live started in first's tab")
+        assert "Turn Live on here to watch this folder instead" in other.folder_freshness_label.toolTip()
+        explorer._update_activity()
+        assert "set to start at launch" not in explorer.folder_freshness_label.text()
         cache = explorer.model.cache
         assert {str(first), str(second)} <= cache.auto_convert
         assert notifier.sent == []
@@ -468,6 +474,7 @@ def test_launch_folders_open_and_the_first_starts_live_with_auto_convert(
     finally:
         app_settings().remove(LIVE_LAUNCH_FOLDERS_SETTING)
         folder_cache.get_folder_cache(io_service.get_io_service()).auto_convert.clear()
+        live_launch._elsewhere.clear()
 
 
 def test_a_launch_folder_that_cant_be_opened_notifies_once_and_isnt_retried(

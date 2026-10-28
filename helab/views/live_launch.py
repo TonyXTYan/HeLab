@@ -35,6 +35,11 @@ if TYPE_CHECKING:
     from helab.views.HelabMainWindow import HelabMainWindow
 
 LIVE_LAUNCH = "live_launch"  # The events' ``source``: a folder set to start Live at launch.
+# This session's launch: each launch folder that opened without Live, and the folder Live started in.
+_elsewhere: dict[str, str] = {}
+# Why Live starts in one launch folder only: switching tabs turns Live off (Tony, 2026-10-19).
+ONE_TAB = ("Live runs in one tab at a time (switching tabs turns it off), so of the folders set to start "
+           "at launch it started in the first one only")
 
 
 def launch_folders() -> list[str]:
@@ -69,6 +74,16 @@ def set_starts_at_launch(path: str, on: bool) -> None:
     logging.info("Start Live and auto-convert at launch %s: %s", "on" if on else "off", path)
 
 
+def not_started_here(path: str) -> tuple[str, str] | None:
+    """For a launch folder opened at launch without Live: the Live line's note and its tooltip line."""
+    first = _elsewhere.get(FolderCache.key(path))
+    if first is None:
+        return None
+    return (f"set to start at launch; Live started in {_name(first)}'s tab",
+            f"{ONE_TAB} ({first}). Turn Live on here to watch this folder instead (with auto-convert); the "
+            "other tab's Live then stops.")
+
+
 def _name(path: str) -> str:
     return os.path.basename(path.rstrip(os.sep)) or path
 
@@ -97,13 +112,15 @@ def start(window: HelabMainWindow, *, in_tests: bool = False) -> list[LaunchFold
         return []
     cache.auto_convert.update(folders)
     first = folders[0]
+    _elsewhere.clear()
+    _elsewhere.update(dict.fromkeys(folders[1:], first))
     for folder in (*folders[1:], first):
         window.add_new_folder_explorer_tab(target_path=folder)
         index = window.tab_widget.currentIndex()
         if folder != first:
             window.tab_widget.setTabToolTip(index, (
-                f"{folder}\nSet to start Live and auto-convert when HeLab launches. Live follows the current tab, "
-                f"so it started in {_name(first)}'s tab only: turn Live on here to watch this folder instead."))
+                f"{folder}\nSet to start Live and auto-convert when HeLab launches. {ONE_TAB}: {_name(first)}. "
+                "Turn Live on here to watch this folder instead."))
     from helab.views.FolderExplorer import FolderExplorer
     explorer = window.tab_widget.currentWidget()
     if not isinstance(explorer, FolderExplorer):

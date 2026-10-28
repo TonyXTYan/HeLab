@@ -77,8 +77,9 @@ flipped as planned and its mark is gone; a second real-app run converts (below).
 - **Start at launch.** The menu's "Start Live and auto-convert here when HeLab launches" adds the
   folder to `live_launch_folders`. At launch each listed folder opens in a tab; Live and
   auto-convert start in the first one listed (opened last, so current), the others' tab tooltips
-  say Live follows the current tab. All listed folders are set to auto-convert this session, so
-  turning Live on in another of those tabs converts too. A folder whose listing fails (missing,
+  say Live runs in one tab at a time (switching tabs turns it off), and so do their Live lines
+  (Q~2). All listed folders are set to auto-convert this session, so turning Live on in another of
+  those tabs converts too. A folder whose listing fails (missing,
   unmounted) or where Live can't start: one desktop notification, then nothing more.
 
 ## Decisions made here (technical; say if one is Tony's)
@@ -151,10 +152,18 @@ Stage 4 / L4: Live's auto-convert toggle, start at launch and low-count alerts d
   before any folder is listed, and it works for folders without a `.helab-root`. Reset all
   settings clears it. Alternative: a `convert_prefs` column (needs a data root and a store query
   at launch).
-- **Q~2** (CoCo approved as a Q~; Tony to confirm): **several launch folders**: Live follows the
-  current tab (switching tabs turns it off), so each opens in a tab but Live and auto-convert run
-  only in the first one listed; the others' tab tooltips say so, and they are set to auto-convert
-  if Live is turned on there. Alternative: allow one launch folder only.
+- **Q~2** (CoCo approved as a Q~; checked again for Side; Tony to confirm): **several launch
+  folders** each open in a tab, but Live and auto-convert start only in the first one listed. Why:
+  HeLab's Live can't run in several tabs at once today: `HelabMainWindow.on_current_tab_changed`
+  turns Live off in every tab but the current one (Tony's L1 decision, 2026-10-19,
+  `roadmaps/live-monitoring.md`: "Switching tabs turns Live off"), so starting it in each tab would
+  leave it on only in the last one opened. The other launch tabs say so: their tab tooltip, and
+  their Live line ("Live updates off · set to start at launch; Live started in <first>'s tab", the
+  tooltip saying Live runs in one tab at a time and that turning Live on there watches that folder
+  instead, with auto-convert, while the other tab's Live stops). Options for Tony: (a) as built;
+  (b) let Live run in several tabs at once (a change to L1's rule: the toolbar's Live follows the
+  current tab, the tree lock, plots following Live per folder), after which every launch folder
+  would start; (c) allow one launch folder only.
 - **Q~3** (Tony): the **low-count threshold**: `convert_low_hits`, default **100 hits**, 0 = off,
   notified once per shot. Why not Shot trends' Notify during Live: its rule needs a plot and the
   shot's TXY loaded (counts in the View range). Why not MATLAB's rule (`tdc_auto_convert`:
