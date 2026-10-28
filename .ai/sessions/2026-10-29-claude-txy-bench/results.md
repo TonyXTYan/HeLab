@@ -8,7 +8,7 @@ built into this floor's venv ([notes.md](notes.md), step 1). MB is 10^6 bytes of
 - **All six backends give the reference's bytes** on everything, built together on the landed
   code. The full suite passes with none of them skipped.
 - **Default: `numpy`.** It needs nothing beyond HeLab's own dependencies and adds ~31 kB to the
-  build. It runs at **119 MB/s on one core** end to end, 21× the reference's 13. With 12 warm
+  build. It runs at **119 MB/s on one core** end to end, 9.2× the reference's 13 (21× on reconstruction alone). With 12 warm
   processes it reaches **1,049 MB/s**. That clears both targets on this Mac: Live (a shot every
   ~30 s; the worst shot takes 58 ms) and bulk (~100 MB/s).
 - **Optional fast backend: `rust`.** It has the fastest reconstruction (1,056 MB/s) and the
@@ -23,7 +23,8 @@ built into this floor's venv ([notes.md](notes.md), step 1). MB is 10^6 bytes of
   only **1.43–1.49× numpy** per core end to end, although they reconstruct 3–4× faster.
 - **Parallelism:**
   - **Across shots in processes** is the lever: about 9× on 12 processes.
-  - **Threads** stop at ~400 MB/s: the formatter holds the GIL.
+  - **Threads** stop at ~400 MB/s: in practice the text I/O, the parse as well as the format,
+    holds the GIL.
   - **Within one shot**, `split.py` never helps the fast backends on the sample shots. On the
     24 large shots it halves their reconstruction speed. It pays only for the reference, and on
     a dense 25 MB shot for numpy and mlx (2.2×).
@@ -70,8 +71,9 @@ pieces in one shot) would take hours; I stopped it after ~10 min (it reports onl
   - The load before each run was 4.5–8.3 (median 5.9). That includes this run's own process
     pools: the 1-minute average lags.
   - Repeats agree closely: most spreads are within ±3 %, and the largest are ~10 % (12–16
-    processes). So the idle load from one busy core barely shows. Runs that use 16 workers on 16
-    cores share them with that tab, so the ×16 columns are the least reliable.
+    processes; numpy ×12 spans ~9 %). So the idle load from one busy core barely shows below 12
+    workers. At ×12 the workers fill the 12 performance cores that tab shares, and at ×16 every
+    core, so **both the ×12 and ×16 columns understate an idle ceiling**.
 - **Run:** [`run_all.sh`](run_all.sh), 04:33–04:43, one backend at a time. Each measure was
   repeated 3 times, each repeat in a fresh process. Each cell below is the **median (min–max)**
   of the 3.
@@ -79,7 +81,12 @@ pieces in one shot) would take hours; I stopped it after ~10 min (it reports onl
     [`bench.py`](bench.py): read = file read + `parse_raw`; reconstruct; write = `format_txy` +
     `write_atomic` (fsync, rename, folder fsync).
   - Data: all 309 sample shots (217.5 MB raw, 1,480,691 hits under `matlab-2019`). "Large" is
-    the 3 largest of each set (24 shots, 101.7 MB); "small" is the other 285.
+    the 3 largest of each set by raw bytes (24 shots, 101.7 MB); "small" is the other 285.
+  - **"Large" means large, not dense.** The large shots hold ~2,900 hits per raw MB against
+    ~10,200 for the small ones. The 3 largest of all (2019-halos d2227, d2134, d1937, 23–24 MB)
+    have only 15–20 hits each under `matlab-2019`. So the "large" reconstruct and write rates are
+    high because those shots are sparse. For a dense worst case, see the 25 MB `time_large` table
+    under [Within one shot](#within-one-shot-splitreconstruct_split).
   - The sample files sit in the page cache after the first run, so "read" is mostly the parse.
   - Raw data: `timing/runs.jsonl` (288 runs), `timing/first_call.jsonl`, `timing/time_large.log`,
     `timing/run.log`. The tables come from [`summarise.py`](summarise.py), whose full output is
@@ -138,8 +145,10 @@ the read and write share):
 | rust | 3.1 | 53.5 (53.2–56.1) | 3.0 | 15.4 | 7.5 | 53.5 |
 | mlx | 7.5 | 72.2 (70.2–76.8) | 7.1 | 49.1 | 17.1 | 72.2 |
 
-The max is the largest shot (2019-halos d2227, 24.1 MB, 1.59 M rows) for every backend: about 45 ms
-of it is reading and writing.
+The max is the largest shot (2019-halos d2227, 24.1 MB, 1.59 M rows) for every backend. It is
+nearly all reading: with rust, 44 ms read, 5 ms reconstruct and under 1 ms write, because it has
+only 20 hits. **Live's worst case is a dense shot, not this one:** the dense 25 MB shot below takes
+144 ms with rust and 305 ms with numpy (reconstruct and format, before reading).
 
 ## First call (fresh interpreter, ms; [`first_call.py`](first_call.py))
 
@@ -158,8 +167,10 @@ package, and checks the GPU for mlx.
 | mlx | 28.5 | 28.3 (MLX + Metal) | 8.0 | 1.5 | 72.3 | 62.4 |
 
 Every first conversion is ~10 ms slower than the second (page faults, NumPy's first calls). Only
-numba has a real start-up cost: about 175 ms per process with a warm cache, and 1.2 s the first
-time on a machine or after an upgrade.
+numba has a real start-up cost: about 175 ms per process with a warm cache **and a warm OS file
+cache** (these runs came back to back), and 1.2 s the first time on a machine or after an upgrade.
+The Reviewer (Ibis) saw ~0.6 s after a few idle minutes, once the OS had dropped llvmlite's
+126 MB library from its file cache. A HeLab helper started after idle time pays the latter.
 
 ## Across shots: processes (wall MB/s, all 309 shots)
 
@@ -211,8 +222,12 @@ numba loses most in a cold pool: each worker imports numba and loads its cache (
 | cython | 172 (166–174) | 356 (353–357) | 390 (384–399) |
 | rust | 175 (175–179) | 366 (356–375) | 404 (403–406) |
 
-Threads stop at ~400 MB/s, against ~1,080 for 8 processes. The parse and the backends release the
-GIL, but `format_txy`'s `%` formatting holds it.
+Threads stop at ~400 MB/s, against ~1,080 for 8 processes, because **the text I/O, parse and format,
+holds the GIL in practice**. The per-thread stage rates show it. With rust at ×1 / ×4 / ×8 threads,
+read falls 561 / 268 / 128 MB/s and write 338 / 171 / 95, while reconstruct (GIL released) only
+slips 1,056 / 822 / 731. In 8 processes read stays at ~430 and write at ~290. The NumPy floor
+made the parse's digit loop release the GIL, but the measured read stage scales no better than
+the write. `format_txy`'s `%` formatting holds the GIL throughout. A GIL-free parse **and** formatter would make threads scale (handoff A~1).
 
 ## Within one shot (`split.reconstruct_split`)
 
@@ -263,8 +278,11 @@ the largest sample.
 
 ## Against the targets (Q6.9)
 
-- **Live, a shot every ~30 s:** met by every backend, the reference included: the worst shot is
-  0.46 s with the reference and 54–72 ms with the others. Live doesn't decide the backend.
+- **Live, a shot every ~30 s:** met by every backend, the reference included. The worst sample shot
+  is 0.46 s with the reference and 54–72 ms with the others; that shot is sparse and mostly reading.
+  The dense 25 MB shot takes 118–144 ms (compiled), 305 ms (numpy), 493 ms (mlx) and ~3 s
+  (reference, extrapolated from 5 MB) to reconstruct and format. That is still 100× under 30 s for
+  every backend but the reference. Live doesn't decide the backend.
 - **Bulk, faster than raw files cross gigabit (~100 MB/s, at most ~117 MB/s of payload):**
 
   | backend | one core | processes needed for ~100 MB/s (warm) |
@@ -284,10 +302,12 @@ the largest sample.
    - It is byte-identical on everything.
    - It needs no compiler, no extra package and no per-platform build, and adds ~31 kB.
    - It meets both targets on one core here.
-   - HeLab should convert across shots in its helper processes (A~2 of the NumPy floor), not in
+   - HeLab should convert across shots in its helper processes (NumPy floor A~2), not in
      threads, and not split a shot.
 2. **Optional fast backend: `rust`**, if one ships.
-   - It reconstructs fastest: 1,056 MB/s, 3.8× numpy, and 1,881 on large shots.
+   - It reconstructs fastest: 1,056 MB/s over all shots, 3.8× numpy. The 1,881 MB/s on "large"
+     shots flatters it: those are the largest but sparsest shots. On the dense 25 MB shot it
+     reconstructs and formats in 144 ms, against numpy's 305.
    - End to end it is 1.49× numpy per core (178 vs 119) and ~1.4× at 12 processes
      (1,466 vs 1,049).
    - It costs ≈ 0.47 MB, and one abi3 wheel per OS and arch serves CPython 3.11–3.14.
@@ -305,10 +325,12 @@ the largest sample.
      4 % end to end.
 4. **`numba`: drop** (A9.1).
    - It is as fast as cython and rust, but adds +145 MB (+52 MB zipped).
-   - Every process pays ~175 ms to start, and the first compile takes 1.1 s.
+   - Every process pays ~175 ms to start (~0.6 s after idle time, once the OS file cache is cold),
+     and the first compile takes 1.1 s.
    - It pins NumPy below 2.6, and its cold pools are the slowest of the fast backends (399 vs
      ~1,000 MB/s at ×12).
-   - It offers nothing the two compiled backends don't, at 100–300× their size.
+   - It offers nothing the two compiled backends don't, at ~310× rust's size (145 MB vs
+     0.47 MB) and ~560× cython's (vs 257 kB).
 5. **`mlx`: drop** (A9.1).
    - It is slower than NumPy's CPU algorithm on every measure: reconstruction 111 vs 279 MB/s,
      end to end 72 vs 119.
@@ -344,7 +366,8 @@ by name.
   that speed NumPy on one core could fall below 100 MB/s, and a compiled backend or 2–4 processes
   would matter more. A timing run there would settle it (M~1). None of the compiled backends has
   been built or run on x86-64 yet: CI skips their tests today.
-- **The ×16 columns.** They share 16 cores with the one-core Safari tab, so they understate a
-  truly idle machine. The ×1–×12 columns are unaffected within the spreads shown.
+- **The ×12 and ×16 columns.** At ×12 the workers fill the 12 performance cores, and at ×16 every
+  core, all shared with the Safari tab's busy core. So both understate a truly idle machine's
+  ceiling (numpy ×12 spans ~9 %). The ×1–×8 columns are unaffected within the spreads shown.
 - **The write stage's fsyncs on other disks.** Here the atomic write is cheap on an internal SSD.
   On a network share or an HDD the write stage would be set by the disk, whatever the backend.

@@ -155,7 +155,8 @@ def main() -> int:
     args.out.parent.mkdir(parents=True, exist_ok=True)
     with args.out.open("a") as stream:
         stream.write(json.dumps(record) + "\n")
-    detail = TEMP / "bench" / f"{args.backend}-{args.mode}-{args.workers}-{args.shots}-{args.repeat}.json"
+    detail = (TEMP / "bench"
+              / f"{args.backend}-{args.profile}-{args.mode}-{args.workers}-{args.shots}-{args.repeat}.json")
     detail.parent.mkdir(parents=True, exist_ok=True)
     detail.write_text(json.dumps([t.__dict__ for t in timings]))
     a = record["summary"]["all"]

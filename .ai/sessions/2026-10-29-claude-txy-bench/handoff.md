@@ -24,7 +24,7 @@ Branch `agent/txy-bench` from `ed35099`. Brief: [brief.md](brief.md). Builds and
     processes, ~31 kB. Both targets are met on one core.
   - **rust is the optional fast backend**: 178 MB/s per core, reconstruction 1,056 MB/s,
     ≈ 0.47 MB, one abi3 wheel per OS. **cython** is its equal alternative; keep one of the two.
-  - **Drop numba** (+145 MB, a ~175 ms start per process) **and mlx** (slower than NumPy on the
+  - **Drop numba** (+145 MB, a ~175 ms start per process, ~0.6 s after idle time) **and mlx** (slower than NumPy on the
     CPU, +240 MB, Apple Silicon only).
   - The text I/O is now 80 % of a conversion with a compiled backend.
   - Parallelise across shots in processes: threads stop at ~400 MB/s, and within-shot
@@ -81,9 +81,10 @@ Scripts, all in this folder:
   - **Backends section, one paragraph:** "Stage 2's measured standing (results in
     `.ai/sessions/2026-10-29-claude-txy-bench/results.md`). numpy is the default; compiled
     backends reconstruct at ~0.9–1.9 GB/s, but reading and writing then take 80 % of a
-    conversion. Parallelise across shots in processes. Threads stop at ~400 MB/s because
-    `format_txy` holds the GIL. `split.reconstruct_split` pays only for slow backends or shots
-    much denser than the samples."
+    conversion. Parallelise across shots in processes. Threads stop at ~400 MB/s because the
+    text I/O, `parse_raw` as well as `format_txy`, holds the GIL in practice.
+    `split.reconstruct_split` pays only for slow backends or shots much denser than the
+    samples."
   - **Packaging note:** every `_MODULES` backend, the reference included, needs `hiddenimports`
     in a frozen build. The mlx and numba floors already proposed this; it is not yet in
     converter.md.
@@ -111,7 +112,9 @@ Scripts, all in this folder:
   - The rust floor's Rust `parse_strict` (1,910 MB/s) and `format_txy` (596 MB/s) are measured
     and byte-identical on all samples (report only today).
   - Wired in behind the same byte-for-byte checks, they would take rust to ≈ 300 MB/s per core.
-  - A GIL-free formatter would also make threads scale.
+  - A GIL-free parse **and** formatter would also make threads scale. Today both stages
+    serialise on the GIL: with rust at ×1/×4/×8 threads, read falls 561/268/128 MB/s and write
+    338/171/95 (Ibis, review round 1).
 - **A~2 (stage 4, helab-core):** convert across shots in long-lived helper processes (a warm pool:
   1,049 MB/s for numpy at ×12, against 761 cold). Don't use within-shot splitting for the fast
   backends; it makes them slower on every sample shot.
@@ -126,3 +129,16 @@ Scripts, all in this folder:
   elevated SSH session has poisoned HeLab's cache settings before.
 - **M~2 (optional):** repeat the ×12/×16 rows with Safari closed, if the exact ceiling matters.
   Nothing in the recommendation depends on it.
+
+## Review round 1 (Ibis, on `aad0487`: no blocker; numbers reproduced within a few %), all applied
+
+| Item | Fix |
+|---|---|
+| 1 (medium): threads are bound by parse **and** format holding the GIL, not the format alone | results.md: the Summary and the threads section (rust's per-thread stage rates against 8 processes); here: the converter.md paragraph and A~1 |
+| 2 (low-medium): "large" means the largest raw files, which are sparse (~2,900 hits/MB vs ~10,200; the 3 largest hold 15–20 hits each under 2019), so their rates flatter the backends; the max-latency shot is 44 ms read + <1 ms write | results.md: noted under the method and the latency table; the dense 25 MB `time_large` table named as Live's worst case (rust 144 ms, numpy 305 ms); Recommendation 2 quotes 1,881 with the caveat |
+| 3 (low): 21× is reconstruction only; numba's size ratio | Summary: 9.2× end to end (21× reconstruct); Recommendation 4: ~310× rust's size, ~560× cython's |
+| 4 (low): ×12 understates the idle ceiling too | results.md: method note and What-the-numbers-can't-decide: both ×12 and ×16 |
+| 5 (low): numba's ~175 ms start assumes a warm OS file cache; ~0.6 s after idle minutes | results.md: first-call note and Recommendation 4; here: the summary |
+| 6 (low): `bench.py`'s per-shot detail file had no profile in its name, so the 2023 serial runs overwrote the 2019 per-shot files (scratch under `.ai/temp/txy/bench/` only; `runs.jsonl` and every table are unaffected) | fixed: the name now carries the profile |
+| 7 (nit): Recommendation 1's A~2 is the NumPy floor's | "NumPy floor A~2" |
+
