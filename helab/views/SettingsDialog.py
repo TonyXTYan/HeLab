@@ -1,27 +1,35 @@
 # SettingsDialog.py
 import logging
-import sys
-import time
-from re import S
 from typing import Optional, Dict, Any
 
 from PyQt6.QtGui import QCloseEvent, QDesktopServices
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QLineEdit, QLabel, QTabWidget, \
-    QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem
+    QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem, QDoubleSpinBox
 from PyQt6.QtCore import QSettings, QUrl
 
-from helab.utils.folder_cache import FolderCache, store_options
+from helab.utils import folder_cache
+from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import fnum
-from helab.utils.constants import *
+from helab.utils.constants import (
+    CHECK_LEVEL_LABELS, DIR_TEMPS, LOAD_MODE_LABELS, MAX_LIVE_INTERVAL, MAX_LOG_KEEP, MAX_SIMULTANEOUS_IO,
+    MIN_LIVE_INTERVAL, cache_dir, default_app_dir, read_check_level, read_disk_budget, read_io_concurrency,
+    read_live_autosave, read_live_interval, read_load_mode, read_log_keep, read_plot_auto_reload,
+    read_ram_budget_steps,
+)
+from helab.utils.settings_defaults import (
+    AUTO_SCAN_VISIBLE_SETTING, CHECK_LEVEL_SETTING, DIR_CACHES_SETTING, DIR_TEMPS_SETTING, LIVE_INTERVAL_SETTING,
+    LOAD_MODE_SETTING, LOG_KEEP_SETTING, REOPEN_PLOTS_SETTING, RETIRED, SIMULTANEOUS_IO_SETTING, read_setting)
+from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
-from helab.views.CacheTab import CacheTab
+from helab.views.CacheTab import GB, CacheTab, read_result_reuse
+from helab.views.LabParametersTab import LabParametersTab
 
 
 class SettingsDialog(QDialog):
     def __init__(self, parent: Optional[QWidget] = None, *, settings: QSettings | None = None,
                  cache: FolderCache | None = None) -> None:
         super().__init__(parent)
-        self.settings = settings if settings is not None else QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        self.settings = settings if settings is not None else app_settings()
         self.cache = cache
         self.mover: Any = None  # CacheMover, made on the first Change…
         self.setWindowTitle("Settings")
@@ -48,18 +56,9 @@ class SettingsDialog(QDialog):
         self.general_tab = QWidget()
         self.general_layout = QVBoxLayout(self.general_tab)
 
-        self.example_checkbox = QCheckBox("Enable feature X")
-        self.example_text = QLineEdit()
-        self.example_text.setPlaceholderText("Enter some text")
-
-        self.general_layout.addWidget(self.example_checkbox)
-        self.general_layout.addWidget(QLabel("Example Text:"))
-        self.general_layout.addWidget(self.example_text)
-
         self.load_mode_combo = QComboBox()
         for mode, label in LOAD_MODE_LABELS.items():
             self.load_mode_combo.addItem(label, mode)
-        self.general_layout.addSpacerItem(QSpacerItem(0, 10))
         self.general_layout.addWidget(QLabel("When selecting another folder:"))
         self.general_layout.addWidget(self.load_mode_combo)
 
@@ -81,11 +80,35 @@ class SettingsDialog(QDialog):
             "file. Full always does that (slower on network folders). Right-click › Retry / Refresh always "
             "checks every file.")
         folder_io_form.addRow("Check of cached data:", self.check_level_combo)
+        self.live_interval_spin = QDoubleSpinBox()
+        self.live_interval_spin.setRange(MIN_LIVE_INTERVAL, MAX_LIVE_INTERVAL)
+        self.live_interval_spin.setDecimals(1)
+        self.live_interval_spin.setSingleStep(0.5)
+        self.live_interval_spin.setSuffix(" s")
+        self.live_interval_spin.setToolTip(
+            "While Live watches a folder, its next check starts this long after the previous one ended, so "
+            "checks never overlap or queue up on a slow drive. A check of an unchanged folder is one folder stat.")
+        folder_io_form.addRow("Live: check again after", self.live_interval_spin)
         self.general_layout.addLayout(folder_io_form)
         self.auto_scan_visible_checkbox = QCheckBox("Automatically check folder status in view")
         self.auto_scan_visible_checkbox.setToolTip(
             "Scan visible folders that have no saved scan results. Cached results are kept until a manual scan or refresh.")
         self.general_layout.addWidget(self.auto_scan_visible_checkbox)
+        self.reopen_plots_checkbox = QCheckBox("Reopen plots at start")
+        self.reopen_plots_checkbox.setToolTip(
+            "When HeLab starts, the plots open when it last quit open again with their settings and places. "
+            "Each runs again on its folder's data in RAM or the disk cache, never reading the folder itself: "
+            "without cached data it waits until a tab loads the folder.")
+        self.general_layout.addWidget(self.reopen_plots_checkbox)
+        log_form = QFormLayout()
+        self.log_keep_spin = QSpinBox()
+        self.log_keep_spin.setRange(1, MAX_LOG_KEEP)
+        self.log_keep_spin.setToolTip(
+            "Each HeLab writes its own log file, renamed and started again every 1 MB. At startup HeLab "
+            "deletes the oldest log files beyond this number, every session's counted, never a running "
+            "HeLab's. Help › Show log folder shows them.")
+        log_form.addRow("Log files to keep:", self.log_keep_spin)
+        self.general_layout.addLayout(log_form)
 
 
         # DIR_TEMPS and DIR_CACHES
@@ -118,7 +141,7 @@ class SettingsDialog(QDialog):
 
         self.dir_temps_browse_btn.clicked.connect(self.browse_dir_temps)
         self.dir_caches_browse_btn.clicked.connect(self.change_cache_folder)
-        self.dir_caches_browse_btn.setEnabled(self.cache is not None and bool(store_options()))
+        self.dir_caches_browse_btn.setEnabled(self.cache is not None and bool(folder_cache.store_options()))
         self.dir_temps_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_temps_edit.text())))
         self.dir_caches_open_btn.clicked.connect(lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(self.dir_caches_edit.text())))
         # Reset shows the persistent default; it is saved (and created on next launch) with Save.
@@ -151,6 +174,10 @@ class SettingsDialog(QDialog):
 
 
         self.tabs.addTab(self.general_tab, "General")
+
+        # Lab parameters: the constants every folder and plot starts from (F0b).
+        self.lab_tab = LabParametersTab(self.settings)
+        self.tabs.addTab(self.lab_tab, "Lab parameters")
 
         # TODO: default load folder
 
@@ -260,14 +287,16 @@ class SettingsDialog(QDialog):
 
     def load_settings(self) -> None:
         settings = self.settings
-        self.example_checkbox.setChecked(settings.value("example_checkbox", False, type=bool))
-        self.example_text.setText(settings.value("example_text", "", type=str))
-        self.dir_temps_edit.setText(settings.value("dir_temps", DIR_TEMPS, type=str))
+        # Unset only when its folder came from an override (tests, floors): show the one in use.
+        self.dir_temps_edit.setText(read_setting(settings, DIR_TEMPS_SETTING, typed=True) or DIR_TEMPS)
         self.dir_caches_edit.setText(cache_dir())
         self.load_mode_combo.setCurrentIndex(self.load_mode_combo.findData(read_load_mode(settings)))
         self.simultaneous_io_spin.setValue(read_io_concurrency(settings))
         self.check_level_combo.setCurrentIndex(self.check_level_combo.findData(read_check_level(settings)))
-        self.auto_scan_visible_checkbox.setChecked(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
+        self.live_interval_spin.setValue(read_live_interval(settings))
+        self.log_keep_spin.setValue(read_log_keep(settings))
+        self.auto_scan_visible_checkbox.setChecked(read_setting(settings, AUTO_SCAN_VISIBLE_SETTING, typed=True))
+        self.reopen_plots_checkbox.setChecked(read_setting(settings, REOPEN_PLOTS_SETTING, typed=True))
         logging.debug("Settings loaded")
 
     def save_settings(self) -> None:
@@ -292,16 +321,18 @@ class SettingsDialog(QDialog):
 
     def _write_settings(self) -> None:
         settings = self.settings
-        settings.setValue("example_checkbox", self.example_checkbox.isChecked())
-        settings.setValue("example_text", self.example_text.text())
-        settings.setValue("dir_temps", self.dir_temps_edit.text())
+        settings.setValue(DIR_TEMPS_SETTING, self.dir_temps_edit.text())
         settings.setValue(LOAD_MODE_SETTING, self.load_mode_combo.currentData())
         settings.setValue(SIMULTANEOUS_IO_SETTING, self.simultaneous_io_spin.value())
         settings.setValue(CHECK_LEVEL_SETTING, self.check_level_combo.currentData())
-        settings.remove("simultaneous_folder_scans")
-        settings.remove("simultaneous_folder_loads")
+        settings.setValue(LIVE_INTERVAL_SETTING, self.live_interval_spin.value())
+        settings.setValue(LOG_KEEP_SETTING, self.log_keep_spin.value())
+        for key in RETIRED:
+            settings.remove(key)
         settings.setValue(AUTO_SCAN_VISIBLE_SETTING, self.auto_scan_visible_checkbox.isChecked())
+        settings.setValue(REOPEN_PLOTS_SETTING, self.reopen_plots_checkbox.isChecked())
         self.cache_tab.save(settings)
+        self.lab_tab.save(settings)
         self.accept()
         logging.debug("Settings saved")
 
@@ -310,7 +341,7 @@ class SettingsDialog(QDialog):
         # TODO warning box if unsaved changes
 
 
-        logging.warning("Settings dialog closed")
+        logging.debug("Settings dialog closed")
         super().closeEvent(a0)
         self.deleteLater()
 
@@ -318,15 +349,20 @@ class SettingsDialog(QDialog):
         if not self.cache_tab.confirm(
                 "Reset all settings?",
                 "Resets every HeLab setting to its default: folders, load options, both cache budgets, window "
-                "and view choices. The disk cache's contents are kept.", "Reset all settings"):
+                "and view choices, and the list of plots to reopen. The disk cache's contents and your presets "
+                "are kept.", "Reset all settings"):
             return
         settings = self.settings
         # Where the disk cache is isn't a preference: it stays (moving it is Change…).
-        caches = settings.value("dir_caches", type=str)
+        caches = read_setting(settings, DIR_CACHES_SETTING, typed=True)
         settings.clear()
         if caches:
-            settings.setValue("dir_caches", caches)
+            settings.setValue(DIR_CACHES_SETTING, caches)
         self.load_settings()
-        self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / (1 << 30))
+        self.lab_tab.load(settings)
+        self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / GB)
         self.cache_tab.ram_budget.setValue(read_ram_budget_steps(settings, self.cache_tab.ram_budget.total))
+        self.cache_tab.live_autosave.setValue(read_live_autosave(settings))
+        self.cache_tab.plot_auto_reload.setChecked(read_plot_auto_reload(settings))
+        self.cache_tab.result_reuse.setChecked(read_result_reuse(settings))
         logging.debug("Settings reset to default")

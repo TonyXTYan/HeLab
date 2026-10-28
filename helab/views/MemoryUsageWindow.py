@@ -34,5 +34,5 @@ class MemoryUsageWindow(QWidget):
         # Add data to the series for the top object types
         for item in summary_info[:10]:  # Display top 10 object types
             obj_type = item[0]
-            mem_usage = item[2] / (1024 ** 2)  # Convert bytes to megabytes
+            mem_usage = item[2] / 1e6  # Bytes to megabytes (SI, as every size HeLab shows)
             self.series.append(f'{obj_type}: {mem_usage:.2f} MB', mem_usage)

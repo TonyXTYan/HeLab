@@ -1,0 +1,1114 @@
+"""Bounded least-squares fits of 1D histograms, for the T/X/Y fits of the DLD port (D1, D4).
+
+``fit_histogram(centres, counts, model)`` fits one of the registered ``MODELS`` with
+``scipy.optimize.curve_fit`` and returns a ``FitResult``: each parameter's value ± SE (from
+the covariance), the model curve, χ² per degree of freedom and, when the fit can't be
+trusted, a ``failure`` reason. Failures (no data, too few points, everything in one bin, no
+convergence, an undetermined parameter) are results with a note, never exceptions, so a
+plot can say why it shows no fit.
+
+How a fit runs:
+- Input: raw counts per bin, or anything else with its errors given as ``sigma=`` (rates,
+  smoothed counts). The count weights assume whole-number counts and say so otherwise.
+- Weights: counts are Poisson. ``weights="poisson"`` (the default) first fits with each
+  bin's error √max(n, 1), then refits with the model's own variance until the parameters
+  settle: the Poisson maximum-likelihood fit (``_reweight`` says why: the first fit alone
+  biases widths low). ``"counts"`` stops after the first fit. Either way the covariance is
+  absolute (the SEs don't scale with χ²; a poor model shows as a large reduced χ², noted).
+  ``"none"`` fits unweighted and scales the covariance by the residuals instead.
+- Offset: for counts (``nonnegative_offset``; by default raw counts with count weights) a
+  model's ``offset`` is at least 0 (a mean count can't be negative), and an offset at 0 isn't
+  noted as "at its bound"; otherwise (``sigma=`` rates, background-subtracted data) it keeps
+  the model's bound, −top.
+- Bins: by default (``binned``) the model is averaged over each bin (five-point
+  Gauss–Legendre, ``bin_means``), not taken at its centre: a centre value biases a
+  width by about +w²/(24σ) for bins w wide (Sheppard's correction: +0.5 SE at 50 000 events
+  in bins of σ/5, several SE at 10⁵–10⁶). Bin edges are ``edges=`` when given, else halfway
+  between neighbouring centres, which assumes equal-width bins of counts. ``binned`` may be a
+  weight function w(x) (r² for radial shells): each bin then gets ∫w·f / ∫w. The result's
+  ``curve`` and ``evaluate`` are the model itself at points (not averaged), for drawing.
+- Scaling: x and counts are mapped to order one before fitting (a T profile is ~0.4 s wide
+  ~0.1 ms, counts ~10³), each parameter by its role (a position, a width, a height or a
+  dimensionless shape), and mapped back with the covariance.
+- Starting points come from moments (each model's ``guesses``); a model may give several,
+  and the converged one with the lowest χ² is kept.
+- Components: a parameter that only shapes one part of a model (a TF radius) names that
+  part's amplitude as its ``gate``. When the amplitude is consistent with 0 (within 2 SE)
+  the fit says so in a note and the parameter's SE is nan, instead of failing.
+
+Models are derived from the physics, not copied from the MATLAB code (which has bugs:
+roadmaps/dld-front-panel-port.md). Registered now: Gaussian + offset, the Thomas–Fermi
+projection (1 − u²)^p + offset, bimodal TF^p + Gaussian with a shared centre, and the exact
+arrival-time ("Yavin") thermal profile on T (``arrival_time_model``: D1), and (D4) the
+Bose-enhanced thermal profiles g_{5/2} and g_2 (``bose_model``, with ``polylog``) and the bimodal
+TF² + g_{5/2} and TF^{3/2} + g_2 (fugacity 1). ``condensate_fraction`` and ``component_areas`` give
+N0/N and the parts' areas ± SE from a fit's covariance; ``helab/analysis/bec.py`` turns them into
+BEC properties (D14) and sets the R/σ_th cap per axis. Pure NumPy/SciPy, no Qt. Fits run in the
+analysis worker thread, so nothing here changes warning filters per call
+(``warnings.catch_warnings`` isn't thread-safe).
+"""
+from __future__ import annotations
+
+import math
+import warnings
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any, Callable, Literal, Mapping, Sequence, cast
+
+import numpy as np
+import numpy.typing as npt
+from scipy.optimize import OptimizeWarning, curve_fit
+from scipy.special import gamma, gammaln, zeta
+
+from helab.analysis.estimates import Estimate, finite_or_none, propagate
+from helab.analysis.physics import DEFAULTS
+
+Array = npt.NDArray[np.float64]
+Role = Literal["position", "width", "height", "shape"]
+Weights = Literal["poisson", "counts", "none"]
+MAX_EVALUATIONS = 4000
+REWEIGHT_ROUNDS = 10
+SETTLED = 0.01  # reweighting stops once no parameter moves more than this many SEs
+VARIANCE_FLOOR = 0.1  # counts: the least variance a bin is given when the model is near zero there
+CHI2_NOTE = 3.0  # a reduced χ² above this gets a note: the model doesn't describe the data well
+ZERO_SE = 2.0  # an amplitude within this many SEs of 0 is "consistent with 0"
+# The bimodal model's R / σ_thermal is at most this by default (fit_histogram's
+# max_radius_ratio); see the comment above ``bimodal_model``.
+MAX_RADIUS_RATIO = 2.0
+MIN_RADIUS_RATIO = 0.02
+RATIO = "ratio"  # the parameter max_radius_ratio caps
+RATIO_CAP_NEAR = 0.01  # a ratio within this fraction of the cap is "at its limit"
+OFFSET = "offset"  # floored at 0 for raw counts with count weights (fit_histogram)
+FUGACITY = "fugacity"  # a Bose thermal part's z, in [0, 1]
+SLICE_NOTE = "a slice holds part of the cloud: N, N0 and Tc need a full projection (p = 2)"
+# A fugacity this close to 1 (or 0) is "at 1" (saturated: at or below Tc) or "at 0" (Boltzmann).
+FUGACITY_SATURATED = 0.999
+
+# curve_fit warns when it can't estimate a covariance; the result's checks report that
+# instead. Set once here, for SciPy's optimizer only: per-call filters aren't thread-safe.
+warnings.filterwarnings("ignore", category=OptimizeWarning, module=r"scipy\.optimize")
+
+
+@dataclass(frozen=True)
+class ModelParameter:
+    name: str
+    title: str
+    role: Role  # how it scales with x and the counts: position and width with x, height with counts
+    # Amplitudes of the parts this parameter shapes: when any is consistent with 0, this one
+    # is undetermined by design (nan SE and a note, not a failure).
+    gates: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class Extra:
+    """A number computed from the parameters and reported beside them, with its SE from the
+    covariance (a bimodal fit's R, fitted as a ratio)."""
+    name: str
+    title: str
+    function: Callable[[Array], float]
+    gates: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class FitModel:
+    """A model y = function(x, *parameters), with how to start and bound a fit of it.
+
+    ``guesses`` gets the cleaned (centres, counts, errors) and ``bounds`` (centres, counts);
+    both work in data units. ``areas`` gives each component's integral over x (counts × x
+    units: divide by the bin width for counts), without the offset; D4's condensate fraction
+    comes from these. ``extras`` are reported in the result's estimates too."""
+    key: str
+    title: str
+    parameters: tuple[ModelParameter, ...]
+    function: Callable[..., Array]
+    guesses: Callable[[Array, Array, Array], list[Array]]
+    bounds: Callable[[Array, Array], tuple[Array, Array]]
+    areas: Callable[[Array], dict[str, float]] | None = None
+    min_bins: int = 3  # fewer bins with counts than this: too few to fit a width
+    extras: tuple[Extra, ...] = ()
+    # Constants built into the model (the arrival-time profile's fall distance and g),
+    # recorded with each fit of it.
+    fixed: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}))
+    # A thin-slice profile (TF^{3/2}, g_2): it integrates one other axis only, so its areas are
+    # part of the cloud's (``SLICE_NOTE``); a full projection (p = 2, g_{5/2}) holds it all.
+    slice: bool = False
+
+    @property
+    def names(self) -> tuple[str, ...]:
+        return tuple(parameter.name for parameter in self.parameters)
+
+    def __call__(self, x: npt.ArrayLike, values: Sequence[float] | Array) -> Array:
+        return self.function(np.asarray(x, dtype=np.float64), *np.asarray(values, dtype=np.float64))
+
+
+MODELS: dict[str, FitModel] = {}
+
+
+def register(model: FitModel) -> FitModel:
+    """Add a model to ``MODELS`` under its key (a key can be registered once)."""
+    if model.key in MODELS:
+        raise ValueError(f"fit model {model.key!r} is already registered")
+    MODELS[model.key] = model
+    return model
+
+
+@dataclass(frozen=True)
+class FitResult:
+    """A fit's outcome. ``failure`` is "" when it worked; otherwise it says why, and the
+    estimates (nan when nothing was fitted) shouldn't be shown as results. ``notes`` are
+    warnings about a fit that worked (a parameter at its bound, a large reduced χ², a part
+    consistent with 0). ``estimates`` has the parameters, then the model's extras. Its
+    arrays are read-only."""
+    model: FitModel = field(repr=False)
+    failure: str
+    estimates: Mapping[str, Estimate]
+    covariance: Array | None = field(repr=False)
+    x: Array = field(repr=False)
+    curve: Array = field(repr=False)  # the model at ``x``, not bin-averaged, for drawing (empty without a fit)
+    chi2: float = math.nan
+    dof: int = 0
+    points: int = 0  # bins fitted (after leaving out unusable ones)
+    notes: tuple[str, ...] = ()
+    options: Mapping[str, float] = field(default_factory=lambda: MappingProxyType({}))  # e.g. max_radius_ratio
+
+    def __post_init__(self) -> None:
+        for array in (self.covariance, self.x, self.curve):
+            if array is not None:
+                array.flags.writeable = False
+
+    @property
+    def ok(self) -> bool:
+        return not self.failure
+
+    @property
+    def reduced_chi2(self) -> float:
+        return self.chi2 / self.dof if self.dof > 0 else math.nan
+
+    @property
+    def values(self) -> Array:
+        """The fitted parameters in ``model.names`` order (extras left out)."""
+        return np.array([self.estimates[name].value for name in self.model.names])
+
+    def __getitem__(self, name: str) -> Estimate:
+        return self.estimates[name]
+
+    def evaluate(self, x: npt.ArrayLike) -> Array:
+        """The fitted model at ``x`` (a finer grid to draw it smoothly); nan without a fit."""
+        x = np.asarray(x, dtype=np.float64)
+        if not np.all(np.isfinite(self.values)):
+            return np.full(x.shape, math.nan)
+        return self.model(x, self.values)
+
+    def derived(self, function: Callable[[Array], float]) -> Estimate:
+        """A number computed from the fitted parameters (in ``model.names`` order), with its
+        SE from the covariance to first order; nan SE without a usable covariance."""
+        covariance = self.covariance if self.covariance is not None else np.full((len(self.values),) * 2, math.nan)
+        return propagate(function, self.values, covariance)
+
+    def as_record(self) -> dict[str, Any]:
+        """Strict JSON (nan and inf as None) for a result's record; the curve is left out
+        (``evaluate`` redraws it from the model and estimates)."""
+        return {"model": self.model.key, "failure": self.failure, "notes": list(self.notes),
+                "estimates": {name: estimate.as_record() for name, estimate in self.estimates.items()},
+                "chi2": finite_or_none(self.chi2), "dof": self.dof, "points": self.points,
+                "reduced_chi2": finite_or_none(self.reduced_chi2), "options": dict(self.options),
+                "fixed": dict(self.model.fixed)}
+
+
+def bin_bounds(centres: npt.ArrayLike) -> tuple[Array, Array]:
+    """(lower, upper) edges of bins with these centres (any order): halfway to each
+    neighbour in x, the outermost ones as wide on their open side as on the other. A single
+    bin has zero width."""
+    x = np.asarray(centres, dtype=np.float64).ravel()
+    order = np.argsort(x, kind="stable")
+    ordered = x[order]
+    half = np.diff(ordered) / 2
+    left = np.concatenate([half[:1], half]) if len(half) else np.zeros(len(x))
+    right = np.concatenate([half, half[-1:]]) if len(half) else np.zeros(len(x))
+    lower, upper = np.empty(len(x)), np.empty(len(x))
+    lower[order], upper[order] = ordered - left, ordered + right
+    return lower, upper
+
+
+# Five-point Gauss–Legendre on [−1, 1], and its weights halved to sum to 1. Five, not three,
+# so a wide bin is still exact: a radial shell from 0 to 1.75 σ (an equal-volume first shell)
+# under r² weights is off by 3·10⁻³ of a Gaussian peak with three points, 10⁻⁶ with five.
+_LEGENDRE = np.polynomial.legendre.leggauss(5)
+GAUSS_NODES = tuple(float(node) for node in _LEGENDRE[0])
+GAUSS_WEIGHTS = tuple(float(weight) / 2 for weight in _LEGENDRE[1])
+
+
+def bin_means(function: Callable[..., Array], lower: Array, upper: Array, values: Sequence[float] | Array,
+              weight: Callable[[Array], Array] | None = None) -> Array:
+    """``function(x, *values)`` averaged over each bin [lower, upper] by five-point
+    Gauss–Legendre quadrature (exact for polynomials up to degree 9; for a Gaussian in bins of
+    σ its error is ~10⁻¹⁰ of the peak, against the centre value's ~4 %). With ``weight`` w(x),
+    the weighted mean ∫w·f / ∫w (radial shells: w = r²), both by the same quadrature."""
+    middle, half = (lower + upper) / 2, (upper - lower) / 2
+    points = np.concatenate([middle + node * half for node in GAUSS_NODES])
+    evaluated = function(points, *values)
+    count = len(lower)
+
+    def mean(column: Array) -> Array:
+        return cast(Array, sum(w * column[k * count:(k + 1) * count] for k, w in enumerate(GAUSS_WEIGHTS)))
+    if weight is None:
+        return mean(evaluated)
+    weights = np.asarray(weight(points), dtype=np.float64)
+    return mean(evaluated * weights) / mean(weights)
+
+
+def bin_centres(edges: npt.ArrayLike) -> Array:
+    edges = np.asarray(edges, dtype=np.float64)
+    return cast(Array, (edges[:-1] + edges[1:]) / 2)
+
+
+def fit_histogram(centres: npt.ArrayLike, counts: npt.ArrayLike, model: str | FitModel = "gaussian", *,
+                  weights: Weights = "poisson", sigma: npt.ArrayLike | None = None,
+                  max_evaluations: int = MAX_EVALUATIONS,
+                  max_radius_ratio: float = MAX_RADIUS_RATIO,
+                  covariance_of: Callable[[Array, Array, Array], Array] | None = None,
+                  nonnegative_offset: bool | None = None, binned: bool | Callable[[Array], Array] = True,
+                  edges: npt.ArrayLike | None = None) -> FitResult:
+    """Fit ``model`` (a ``MODELS`` key or a ``FitModel``) to a histogram's bin centres and
+    raw counts. ``sigma``, when given, is each bin's error (absolute) and replaces
+    ``weights``: pass it for anything that isn't raw counts. Bins with a non-finite centre,
+    count or error, or an error ≤ 0, are left out (noted).
+
+    ``max_radius_ratio`` caps R/σ_th in models with a ``ratio`` parameter (bimodal; see
+    ``bimodal_model`` for why 2, and when to raise it). A fit that ends at the cap says so;
+    the cap goes in the result's ``options`` and record.
+
+    ``covariance_of(x, values, fitted)``, when given, replaces the fitted parameters' covariance
+    (data units, from the weights alone) before anything reads it: the SEs, the "consistent
+    with 0" gating and its notes, the undetermined check and the extras. For data whose bins
+    are correlated (a smoothed curve: ``profiles.fit_smoothed``), where only the caller knows
+    the real spread; ``x`` are the bins fitted.
+
+    ``nonnegative_offset``: the offset is at least 0 (counts); None means so for raw counts
+    with count weights (no ``sigma``, weights not "none"). ``binned``: the model is averaged
+    over each bin; False takes it at the centres (point samples, or a model that already
+    integrates its bins); a function w(x) averages with that weight, ∫w·f / ∫w (radial
+    shells: r²). ``edges`` (len(centres) + 1, in the centres' order) are the bins' exact bounds,
+    used whenever given; without them the edges are halfway between the centres given (before
+    any are left out), which is right for equal-width bins of counts only."""
+    fit_model = MODELS[model] if isinstance(model, str) else model
+    has_ratio = RATIO in fit_model.names
+    if has_ratio and not max_radius_ratio > MIN_RADIUS_RATIO:
+        raise ValueError(f"max_radius_ratio must be above {MIN_RADIUS_RATIO}")
+    options = MappingProxyType({"max_radius_ratio": float(max_radius_ratio)} if has_ratio else {})
+    x = np.asarray(centres, dtype=np.float64).ravel()
+    y = np.asarray(counts, dtype=np.float64).ravel()
+    if len(x) != len(y):
+        raise ValueError("centres and counts must have the same length")
+    finite_x = np.isfinite(x)
+    lower_x, upper_x = x.copy(), x.copy()
+    weight = binned if callable(binned) else None
+    if edges is not None:
+        bounds = np.asarray(edges, dtype=np.float64).ravel()
+        if len(bounds) != len(x) + 1:
+            raise ValueError("edges must have one more entry than centres")
+        lower_x, upper_x = bounds[:-1].copy(), bounds[1:].copy()
+    elif binned is not False and finite_x.any():
+        lower_x[finite_x], upper_x[finite_x] = bin_bounds(x[finite_x])
+    absolute = sigma is not None or weights != "none"
+    if sigma is not None:
+        errors = np.broadcast_to(np.asarray(sigma, dtype=np.float64), y.shape).ravel()
+    elif weights != "none":
+        errors = np.sqrt(np.maximum(np.where(np.isfinite(y), y, 0.0), 1.0))
+    else:
+        errors = np.ones_like(y)
+    notes: list[str] = []
+    finite = np.isfinite(x) & np.isfinite(y)
+    positive = np.isfinite(errors) & (errors > 0)
+    if not finite.all():
+        notes.append(f"{int((~finite).sum()):,} bins with a non-finite centre or count left out")
+    if not positive[finite].all():
+        notes.append(f"{int((~positive[finite]).sum()):,} bins with an error that isn't finite and > 0 left out")
+    usable = finite & positive
+    x, y, errors = x[usable], y[usable], errors[usable]
+    lower_x, upper_x = lower_x[usable], upper_x[usable]
+    if sigma is None and weights != "none" and not np.all(y == np.round(y)):
+        notes.append("the counts aren't whole numbers: Poisson weights assume raw counts "
+                     "(give errors as sigma for rates or smoothed counts)")
+    count = len(fit_model.parameters)
+
+    def failed(reason: str) -> FitResult:
+        nan = MappingProxyType({name: Estimate(math.nan, math.nan)
+                                for name in (*fit_model.names, *(extra.name for extra in fit_model.extras))})
+        return FitResult(fit_model, reason, nan, None, x, np.empty(0), points=len(x), notes=tuple(notes),
+                         options=options)
+
+    if len(x) == 0:
+        return failed("no data to fit")
+    if not np.any(y != 0):
+        return failed("no counts to fit")
+    if len(x) <= count:
+        return failed(f"too few bins to fit: {len(x)} for {count} parameters")
+    filled = int(np.count_nonzero(y != 0))
+    if filled < fit_model.min_bins:
+        return failed("all counts in one bin: no width to fit" if filled == 1 else
+                      f"counts in only {filled} bins: too few to fit this model (it needs {fit_model.min_bins})")
+
+    order = np.argsort(x, kind="stable")
+    x, y, errors = x[order], y[order], errors[order]
+    lower_x, upper_x = lower_x[order], upper_x[order]
+    centre, span = (float(x[0]) + float(x[-1])) / 2, float(x[-1] - x[0]) or 1.0
+    height = float(np.max(np.abs(y))) or 1.0
+    scale = np.array([span if parameter.role in ("position", "width") else
+                      height if parameter.role == "height" else 1.0 for parameter in fit_model.parameters])
+    shift = np.array([centre if parameter.role == "position" else 0.0 for parameter in fit_model.parameters])
+
+    def to_data(normalised: Array) -> Array:
+        return cast(Array, shift + scale * normalised)
+
+    def normalised_model(u: Array, *normalised: float) -> Array:
+        """The model on the fitted bins (``u`` is always their centres, normalised)."""
+        parameters = to_data(np.asarray(normalised))
+        if binned is not False:
+            return bin_means(fit_model.function, lower_x, upper_x, parameters, weight) / height
+        return fit_model.function(centre + span * u, *parameters) / height
+
+    lower, upper = (np.array(bound, dtype=np.float64) for bound in fit_model.bounds(x, y))
+    # Counts: an offset below 0 makes the model negative in the tails (117 of 200 sparse
+    # Poisson fits went there), an impossible mean count. Rates and other data given with
+    # sigma= keep the model's own bound (−top: background-subtracted data), unless the caller
+    # says they are counts (profiles.fit_smoothed).
+    if nonnegative_offset is None:
+        nonnegative_offset = sigma is None and weights != "none"
+    floored = nonnegative_offset and OFFSET in fit_model.names
+    if floored:
+        lower[fit_model.names.index(OFFSET)] = max(float(lower[fit_model.names.index(OFFSET)]), 0.0)
+    if has_ratio:
+        upper[fit_model.names.index(RATIO)] = max_radius_ratio
+    lower_n, upper_n = (lower - shift) / scale, (upper - shift) / scale
+    u, y_n, errors_n = (x - centre) / span, y / height, errors / height
+    room = np.where(np.isfinite(upper_n - lower_n), 1e-6 * (upper_n - lower_n), 1e-6)
+
+    def solve(start_n: Array, errors_n: Array) -> tuple[float, Array, Array] | str:
+        """(χ², parameters, covariance), normalised, or why curve_fit gave none."""
+        start_n = np.clip(np.nan_to_num(start_n), lower_n + room, upper_n - room)  # or curve_fit refuses
+        with np.errstate(all="ignore"):  # overflow in a trial step's exp; np.errstate is thread-local
+            try:
+                found, covariance = cast(tuple[Array, Array], curve_fit(
+                    normalised_model, u, y_n, p0=start_n, sigma=errors_n, absolute_sigma=absolute,
+                    bounds=(lower_n, upper_n), method="trf", max_nfev=max_evaluations))
+            except RuntimeError:
+                return f"the fit did not converge in {max_evaluations:,} evaluations"
+            except ValueError as error:
+                return f"the fit could not run: {error}"
+            chi2 = float(np.sum(((y_n - normalised_model(u, *found)) / errors_n) ** 2))
+        return (chi2, np.asarray(found), np.asarray(covariance)) if math.isfinite(chi2) else \
+            "the fit gave a non-finite χ²"
+
+    best: tuple[float, Array, Array] | None = None
+    reasons: list[str] = []
+    for start in fit_model.guesses(x, y, errors):
+        outcome = solve((np.asarray(start, dtype=np.float64) - shift) / scale, errors_n)
+        if isinstance(outcome, str):
+            reasons.append(outcome)
+        elif best is None or outcome[0] < best[0]:
+            best = outcome
+    if best is None:
+        return failed(reasons[0] if reasons else "the model gave no starting point")
+    if sigma is None and weights == "poisson":
+        best, moving = _reweight(best, solve, lambda found: normalised_model(u, *found) * height, height)
+        if moving:
+            notes.append(f"the Poisson weights did not settle in {REWEIGHT_ROUNDS} rounds (the parameters "
+                         f"still moved up to {moving:.2g} SE per round)")
+
+    chi2, found, covariance_n = best
+    values = to_data(found)
+    fitted_covariance = covariance_n * np.outer(scale, scale)
+    covariance = fitted_covariance if covariance_of is None else np.asarray(
+        covariance_of(x, values, fitted_covariance), dtype=np.float64)
+    dof = len(x) - count
+    finite_covariance = bool(np.all(np.isfinite(covariance)))
+    variances = np.diag(covariance) if finite_covariance else np.full(count, math.nan)
+    ses = {name: math.sqrt(variance) if variance > 0 else math.nan
+           for name, variance in zip(fit_model.names, variances)}
+    zero = _zero_parts(fit_model, values, ses, found, lower_n, room)
+    gated = {parameter.name for parameter in fit_model.parameters if set(parameter.gates) & zero}
+    if zero:
+        titles = {parameter.name: parameter.title for parameter in fit_model.parameters}
+        shaped = [titles[name] for name in fit_model.names if name in gated]
+        notes.append(f"{', '.join(titles[name] for name in fit_model.names if name in zero)} consistent with 0 "
+                     f"(within {ZERO_SE:g} SE)" + (f": {', '.join(shaped)} not determined" if shaped else ""))
+    # SciPy's pseudo-inverse gives a parameter the data don't determine a variance of exactly
+    # 0, or inf: either way it has no usable SE. A gated one is expected, and was noted.
+    undetermined = [parameter.title for parameter in fit_model.parameters
+                    if parameter.name not in gated and math.isnan(ses[parameter.name])]
+    failure = ""
+    if undetermined or not finite_covariance:
+        failure = (f"not determined by the data: {', '.join(undetermined) or 'the covariance is not finite'} "
+                   "(no usable SE)")
+    capped = has_ratio and RATIO not in gated and values[fit_model.names.index(RATIO)] >= \
+        (1 - RATIO_CAP_NEAR) * max_radius_ratio
+    if capped:
+        notes.append(f"TF radius at its limit (R = {max_radius_ratio:g}·σ_th): the cloud may be colder than "
+                     "the limit allows; raise it or treat T and N0/N as bounds")
+    width = np.where(np.isfinite(upper_n - lower_n), upper_n - lower_n, np.maximum(np.abs(found), 1.0))
+    # A Bose fugacity at either end of [0, 1] is physics, not a fit stuck at a bound: say what it means.
+    fugacity = float(values[fit_model.names.index(FUGACITY)]) if FUGACITY in fit_model.names else math.nan
+    if fugacity >= FUGACITY_SATURATED:
+        notes.append("fugacity z at 1: the thermal cloud is saturated, at or below Tc; a condensate may be there "
+                     "(try a bimodal fit, whose z is 1)")
+    elif fugacity <= 1 - FUGACITY_SATURATED:
+        notes.append("fugacity z at 0: the Boltzmann limit (the Gaussian), far above Tc")
+    at_bound = [parameter.title for parameter, value, low, high, size in
+                zip(fit_model.parameters, found, lower_n, upper_n, width)
+                if parameter.name not in zero and parameter.name not in gated
+                and not (capped and parameter.name == RATIO)
+                and not (parameter.name == FUGACITY and math.isfinite(fugacity)
+                         and not 1 - FUGACITY_SATURATED < fugacity < FUGACITY_SATURATED)
+                and not (floored and parameter.name == OFFSET and value - low <= 1e-6 * size)
+                and (value - low <= 1e-6 * size or high - value <= 1e-6 * size)]
+    if at_bound:
+        notes.append(f"at its bound: {', '.join(at_bound)} (its SE is not reliable)")
+    if absolute and dof > 0 and chi2 / dof > CHI2_NOTE:
+        notes.append(f"reduced χ² {chi2 / dof:.3g}: the model doesn't describe the data well")
+    if fit_model.slice:
+        notes.append(SLICE_NOTE)
+    estimates = {name: Estimate(float(value), math.nan if name in gated else ses[name])
+                 for name, value in zip(fit_model.names, values)}
+    for extra in fit_model.extras:
+        estimate = propagate(extra.function, values, covariance if finite_covariance else
+                             np.full((count, count), math.nan))
+        estimates[extra.name] = Estimate(estimate.value, math.nan if set(extra.gates) & zero else estimate.se)
+    return FitResult(fit_model, failure, MappingProxyType(estimates), covariance, x,
+                     fit_model.function(x, *values), chi2, dof, len(x), tuple(notes), options)
+
+
+def _zero_parts(model: FitModel, values: Array, ses: Mapping[str, float], found: Array, lower_n: Array,
+                room: Array) -> set[str]:
+    """The gate amplitudes consistent with 0: within ``ZERO_SE`` SEs of it, or at their lower
+    bound of 0 without a usable SE."""
+    gates = {gate for parameter in model.parameters for gate in parameter.gates}
+    zero: set[str] = set()
+    for index, name in enumerate(model.names):
+        if name not in gates:
+            continue
+        se = ses[name]
+        at_zero = found[index] - lower_n[index] <= 10 * room[index]
+        if (math.isfinite(se) and values[index] <= ZERO_SE * se) or (not math.isfinite(se) and at_zero):
+            zero.add(name)
+    return zero
+
+
+def _reweight(best: tuple[float, Array, Array], solve: Callable[[Array, Array], tuple[float, Array, Array] | str],
+              curve: Callable[[Array], Array], height: float) -> tuple[tuple[float, Array, Array], float]:
+    """Refit with each bin's variance from the model instead of its count, until the
+    parameters settle. Errors of √max(n, 1) pull a fit towards the bins with fewer counts
+    (Neyman's χ²: a Gaussian's σ comes out about one SE low at 500 events); with the model's
+    variance, the fixed point solves Σ (n − μ)/μ · ∂μ/∂θ = 0, the Poisson likelihood's own
+    equations, so the result is the Poisson maximum-likelihood fit and its covariance the
+    inverse Fisher information. Bins where the model is below ``VARIANCE_FLOOR`` use that.
+    The variances come from the mean of the last two fits' parameters: the plain iteration
+    overshoots and oscillates (mostly in the offset, through the near-empty tails), and the
+    mean damps it to a few rounds.
+
+    Returns the last fit and 0, or, when ``REWEIGHT_ROUNDS`` rounds don't settle (a model
+    that doesn't describe the data can keep moving), the fit whose round moved least and how
+    many SEs it moved, for a note."""
+    previous = best[1]
+    calmest: tuple[float, tuple[float, Array, Array]] | None = None
+    for _ in range(REWEIGHT_ROUNDS):
+        _, found, _ = best
+        errors_n = np.sqrt(np.maximum(curve((found + previous) / 2), VARIANCE_FLOOR)) / height
+        outcome = solve(found, errors_n)
+        if isinstance(outcome, str):
+            return best, 0.0
+        spread = np.sqrt(np.abs(np.diag(outcome[2]))) if np.all(np.isfinite(outcome[2])) else np.abs(found) + 1
+        moved = float(np.max(np.abs(outcome[1] - found) / np.maximum(spread, 1e-12)))
+        previous, best = found, outcome
+        if moved <= SETTLED:
+            return best, 0.0
+        if calmest is None or moved < calmest[0]:
+            calmest = (moved, outcome)
+    assert calmest is not None
+    return calmest[1], calmest[0]
+
+
+# Models
+
+def _moments(x: Array, y: Array) -> tuple[float, float, float, float]:
+    """(baseline, peak height above it, mean, standard deviation) of the counts above the
+    lowest bin, for starting points. The width is at least half a bin."""
+    baseline = float(np.min(y))
+    weight = np.clip(y - baseline, 0, None)
+    if not weight.sum() > 0:
+        weight = np.ones_like(y)
+    mean = float(np.dot(weight, x) / weight.sum())
+    spread = math.sqrt(float(np.dot(weight, (x - mean) ** 2) / weight.sum()))
+    step = float(np.min(np.diff(x))) if len(x) > 1 else 1.0
+    return baseline, float(np.max(y)) - baseline, mean, max(spread, step / 2)
+
+
+def _extent(x: Array) -> tuple[float, float, float, float]:
+    """(lowest x, highest x, span, smallest bin step) of sorted centres."""
+    span = float(x[-1] - x[0]) or 1.0
+    step = float(np.min(np.diff(x))) if len(x) > 1 else span
+    return float(x[0]), float(x[-1]), span, step
+
+
+def gaussian(x: Array, amplitude: float, centre: float, sigma: float, offset: float) -> Array:
+    return amplitude * np.exp(-0.5 * ((x - centre) / sigma) ** 2) + offset
+
+
+def gaussian_area(amplitude: float, sigma: float) -> float:
+    """∫ A exp(−(x − μ)²/2σ²) dx = A σ √(2π)."""
+    return amplitude * abs(sigma) * math.sqrt(2 * math.pi)
+
+
+def _position_bounds(x: Array) -> tuple[float, float]:
+    low, high, span, _ = _extent(x)
+    return low - span, high + span
+
+
+def _gaussian_guesses(x: Array, y: Array, errors: Array) -> list[Array]:
+    baseline, peak, mean, spread = _moments(x, y)
+    return [np.array([peak, mean, spread, baseline])]
+
+
+def _gaussian_bounds(x: Array, y: Array) -> tuple[Array, Array]:
+    low, high = _position_bounds(x)
+    _, _, span, step = _extent(x)
+    top = float(np.max(np.abs(y)))
+    return np.array([0.0, low, step / 100, -top]), np.array([np.inf, high, 10 * span, top])
+
+
+register(FitModel(
+    "gaussian", "Gaussian + offset",
+    (ModelParameter("amplitude", "Amplitude", "height"), ModelParameter("centre", "Centre", "position"),
+     ModelParameter("sigma", "σ", "width"), ModelParameter("offset", "Offset", "height")),
+    gaussian, _gaussian_guesses, _gaussian_bounds,
+    areas=lambda p: {"gaussian": gaussian_area(float(p[0]), float(p[2]))}))
+
+
+# Thomas–Fermi. A condensate's 3D density in the Thomas–Fermi limit is an inverted
+# parabola, n ∝ max(0, 1 − Σ xᵢ²/Rᵢ²), and keeps that shape through a time-of-flight
+# expansion (Castin–Dum scaling: only the radii grow). Integrating it over k of the other
+# axes, inside the ellipse, raises the power by k/2 per axis:
+#   ∫ (1 − x² − y²)₊ dy ∝ (1 − x²)^{3/2},   ∫∫ (1 − x² − y² − z²)₊ dy dz ∝ (1 − x²)².
+# The DLD records every atom in 3D, so a T, X or Y histogram of all events integrates over
+# both other axes: p = 2 on each. p = 3/2 is a profile through a narrow slice of one other
+# axis (an X histogram of a thin T window), or a 2D image's cut. Area of A (1 − u²)^p with
+# u = (x − x₀)/R: A R ∫₋₁¹ (1 − u²)^p du = A R √π Γ(p + 1) / Γ(p + 3/2) (16/15 A R at p = 2).
+
+
+def thomas_fermi(x: Array, amplitude: float, centre: float, radius: float, offset: float, power: float = 2.0
+                 ) -> Array:
+    inside = np.clip(1 - ((x - centre) / radius) ** 2, 0, None)
+    return amplitude * inside ** power + offset
+
+
+def thomas_fermi_area(amplitude: float, radius: float, power: float = 2.0) -> float:
+    return amplitude * abs(radius) * math.sqrt(math.pi) * math.exp(gammaln(power + 1) - gammaln(power + 1.5))
+
+
+def _power_text(power: float) -> str:
+    return f"{power:g}".replace(".", "_")
+
+
+def thomas_fermi_model(power: float) -> FitModel:
+    """A (1 − (x − x₀)²/R²)₊^p + offset, with a fixed power p."""
+    def function(x: Array, amplitude: float, centre: float, radius: float, offset: float) -> Array:
+        return thomas_fermi(x, amplitude, centre, radius, offset, power)
+
+    def guesses(x: Array, y: Array, errors: Array) -> list[Array]:
+        baseline, peak, mean, spread = _moments(x, y)
+        # The variance of (1 − u²)^p is R²/(2p + 3).
+        return [np.array([peak, mean, spread * math.sqrt(2 * power + 3), baseline])]
+
+    def bounds(x: Array, y: Array) -> tuple[Array, Array]:
+        low, high = _position_bounds(x)
+        _, _, span, step = _extent(x)
+        top = float(np.max(np.abs(y)))
+        return np.array([0.0, low, step / 10, -top]), np.array([np.inf, high, 10 * span, top])
+
+    return FitModel(
+        f"thomas_fermi_{_power_text(power)}", f"Thomas–Fermi (1 − u²)^{power:g} + offset",
+        (ModelParameter("amplitude", "Amplitude", "height"), ModelParameter("centre", "Centre", "position"),
+         ModelParameter("radius", "R", "width"), ModelParameter("offset", "Offset", "height")),
+        function, guesses, bounds,
+        areas=lambda p: {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2]), power)},
+        slice=power < 2)
+
+
+# The bimodal model fits R as a ratio to the thermal width, r = R/σ_th, capped by
+# fit_histogram's max_radius_ratio (default MAX_RADIUS_RATIO = 2). Unconstrained, a TF part
+# and a Gaussian sum to a shape close to either alone: on a purely thermal cloud the fit
+# invented a condensate wider than the Gaussian (R/σ 2–4, N0/N up to 0.15), and on a pure
+# condensate the "thermal" part became a narrow spike inside the TF.
+# The cap follows the physics: after a long time of flight t the thermal width grows as
+# σ_th = √(k_B T/m)·t, and a TF radius as its expansion velocity (Castin–Dum) times t, which
+# depends on the axis and the trap: along the radial axes of a cigar trap R ≈ √(2μ/m)·t, so
+# R/σ_th = √(2μ/k_B T); in an isotropic trap √(4μ/3k_B T); along a cigar's axis only
+# ≈ (π/2)(ω_z/ω_⊥)√(2μ/k_B T), much less. So the cap is axis-dependent: ``bec.radius_ratio_cap``
+# gives it for a trap axis at the run's time of flight (Castin–Dum), ``bec.axis_caps`` per T/X/Y from
+# the trap-axis mapping, and ``profiles.fit_axis(max_radius_ratio=None)`` uses those. With
+# √(2μ/k_B T), the default 2 allows μ ≤ 2 k_B T: clouds near Tc down to roughly 0.4 Tc. Colder,
+# deep condensates (T ≈ 0.1–0.3 Tc) often have μ/k_B T of 3–10, a ratio of
+# 2.5–4.5: raise the cap for them (a run that ends at the cap says so, and its T and N0/N
+# are then bounds, not values). A higher cap brings back some of the ambiguity above, so
+# raise it only when the data call for it. Each part's shape parameters are gated by its
+# amplitude.
+
+
+def bimodal_model(power: float, bose: float | None = None) -> FitModel:
+    """A condensate on a thermal cloud, one centre:
+    A_c (1 − u²)₊^p + A_t exp(−(x − x₀)²/2σ²) + offset, u = (x − x₀)/R, R = r σ with
+    r = R/σ from MIN_RADIUS_RATIO up to the fit's max_radius_ratio. R is reported as an
+    extra. Started from a Gaussian fit (count weights, or the caller's errors), split four
+    ways (the last a cold cloud's, clipped to the cap).
+
+    ``bose`` (the polylog order, 5/2 or 2) makes the thermal part the Bose-enhanced
+    A_t g_ν(e^{−(x − x₀)²/2σ²}) / ζ(ν), its fugacity fixed at 1 (see ``bose_thermal``)."""
+    def function(x: Array, condensate: float, centre: float, ratio: float, thermal: float, sigma: float,
+                 offset: float) -> Array:
+        if bose is not None:
+            return (thomas_fermi(x, condensate, centre, ratio * sigma, 0.0, power)
+                    + bose_thermal(x, thermal, centre, sigma, 1.0, offset, bose))
+        return (thomas_fermi(x, condensate, centre, ratio * sigma, 0.0, power)
+                + gaussian(x, thermal, centre, sigma, offset))
+
+    def guesses(x: Array, y: Array, errors: Array) -> list[Array]:
+        single = fit_histogram(x, y, "gaussian", sigma=errors)
+        if single.ok:
+            peak, mean, spread, baseline = (single[name].value for name in ("amplitude", "centre", "sigma", "offset"))
+        else:
+            baseline, peak, mean, spread = _moments(x, y)
+        # (condensate share of the peak, R/σ_thermal, σ_thermal / σ_gauss)
+        splits = ((0.7, 1.5, 1.4), (0.5, 1.0, 1.3), (0.3, 0.6, 1.1), (0.7, 3.0, 0.8))
+        return [np.array([share * peak, mean, ratio, (1 - share) * peak, s * spread, baseline])
+                for share, ratio, s in splits]
+
+    def bounds(x: Array, y: Array) -> tuple[Array, Array]:
+        low, high = _position_bounds(x)
+        _, _, span, step = _extent(x)
+        top = float(np.max(np.abs(y)))
+        return (np.array([0.0, low, MIN_RADIUS_RATIO, 0.0, step / 10, -top]),
+                np.array([np.inf, high, MAX_RADIUS_RATIO, np.inf, 10 * span, top]))
+
+    def areas(p: Array) -> dict[str, float]:
+        if bose is not None:
+            return {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2] * p[4]), power),
+                    "bose": bose_area(float(p[3]), float(p[4]), 1.0, bose)}
+        return {"thomas_fermi": thomas_fermi_area(float(p[0]), float(p[2] * p[4]), power),
+                "gaussian": gaussian_area(float(p[3]), float(p[4]))}
+
+    thermal_key, thermal_title = ("gaussian", "Gaussian") if bose is None else \
+        (f"g{_power_text(bose)}", f"Bose g_{_order_text(bose)} (z = 1)")
+    return FitModel(
+        f"bimodal_tf{_power_text(power)}_{thermal_key}",
+        f"Bimodal: Thomas–Fermi (1 − u²)^{power:g} + {thermal_title}",
+        (ModelParameter("condensate", "Condensate amplitude", "height"),
+         ModelParameter("centre", "Centre", "position"),
+         ModelParameter("ratio", "R / σ thermal", "shape", gates=("condensate", "thermal")),
+         ModelParameter("thermal", "Thermal amplitude", "height"),
+         ModelParameter("sigma", "σ thermal", "width", gates=("thermal",)),
+         ModelParameter("offset", "Offset", "height")),
+        function, guesses, bounds, areas=areas, min_bins=4,
+        extras=(Extra("radius", "R", lambda p: float(p[2] * p[4]), gates=("condensate",)),),
+        fixed=MappingProxyType({} if bose is None else {"fugacity": 1.0}), slice=power < 2)
+
+
+for _power in (2.0, 1.5):
+    register(thomas_fermi_model(_power))
+    register(bimodal_model(_power))
+
+
+# Polylogarithms, for the Bose-enhanced thermal profile below: Li_s(x) = Σ_{k≥1} x^k / k^s
+# (also written g_s), for real 0 ≤ x ≤ 1 and s > 1, without mpmath:
+# - x ≤ e^{−1}: the series itself, POLYLOG_TERMS terms (the next is below e^{−60} of the first).
+# - x > e^{−1}, μ = ln x ∈ (−1, 0]: the expansion about x = 1 (D. C. Wood, "The computation of
+#   polylogarithms", 1992), convergent for |μ| < 2π and here to ~(1/2π)^k:
+#     Li_s(e^μ) = Γ(1 − s)(−μ)^{s−1} + Σ_{k≥0} ζ(s − k) μ^k / k!            (s not a whole number)
+#     Li_n(e^μ) = μ^{n−1}/(n − 1)! (H_{n−1} − ln(−μ)) + Σ_{k≥0, k≠n−1} ζ(n − k) μ^k / k!   (s = n)
+#   with H the harmonic numbers, ζ from SciPy (which takes negative arguments). At x = 1 it is ζ(s).
+# The two agree to ~1e-15 where they meet (tests/test_bose_fits.py also checks known values).
+POLYLOG_TERMS = 60
+POLYLOG_NEAR_TERMS = 30
+POLYLOG_SPLIT = math.exp(-1.0)
+
+
+def _near_one_coefficients(order: float) -> tuple[Array, float, float, bool]:
+    """(ζ(s − k)/k! for k < POLYLOG_NEAR_TERMS, the singular term's coefficient, H_{n−1}, whether s
+    is a whole number) for ``polylog``'s expansion about 1. The k = n − 1 entry is 0 when s = n."""
+    whole = float(order).is_integer()
+    coefficients = np.array([0.0 if whole and k == round(order) - 1 else
+                             float(zeta(order - k)) / math.factorial(k) for k in range(POLYLOG_NEAR_TERMS)])
+    if whole:
+        n = round(order)
+        return coefficients, 1.0 / math.factorial(n - 1), sum(1.0 / j for j in range(1, n)), True
+    return coefficients, float(gamma(1 - order)), 0.0, False
+
+
+_NEAR_ONE: dict[float, tuple[Array, float, float, bool]] = {}
+
+
+def polylog(order: float, x: npt.ArrayLike) -> Array:
+    """Li_order(x) for real x in [0, 1] (clipped to it) and order > 1: the Bose functions g_ν."""
+    if not order > 1:
+        raise ValueError("polylog needs an order above 1 (it diverges at x = 1 otherwise)")
+    values = np.clip(np.asarray(x, dtype=np.float64), 0.0, 1.0)
+    result = np.empty(values.shape)
+    far = values <= POLYLOG_SPLIT
+    if far.any():
+        points = values[far]
+        total, power = np.zeros(points.shape), np.ones(points.shape)
+        for k in range(1, POLYLOG_TERMS + 1):
+            power = power * points
+            total += power / k ** order
+        result[far] = total
+    if (~far).any():
+        if order not in _NEAR_ONE:
+            _NEAR_ONE[order] = _near_one_coefficients(order)
+        coefficients, singular, harmonic, whole = _NEAR_ONE[order]
+        mu = np.log(values[~far])
+        total = np.zeros(mu.shape)
+        for coefficient in coefficients[::-1]:  # Horner: Σ c_k μ^k
+            total = total * mu + coefficient
+        with np.errstate(divide="ignore", invalid="ignore"):
+            if whole:
+                n = round(order)
+                log_term = np.where(mu < 0, harmonic - np.log(np.where(mu < 0, -mu, 1.0)), 0.0)
+                total += singular * mu ** (n - 1) * log_term
+            else:
+                total += singular * np.where(mu < 0, -mu, 0.0) ** (order - 1)
+        result[~far] = total
+    return result
+
+
+def _order_text(order: float) -> str:
+    return {2.5: "5/2", 1.5: "3/2"}.get(order, f"{order:g}")
+
+
+# The Bose-enhanced thermal profile. An ideal Bose gas in a harmonic trap, released and expanded
+# ballistically for long enough that the initial size is negligible, has the 3D density
+#   n(r) ∝ g_{3/2}(z exp(−Σ xᵢ²/2σᵢ²)),   σᵢ = √(k_B T/m)·t
+# (with the trap's initial size, × √(1 + 1/ωᵢ²t²)),
+# z = e^{μ/k_BT} the fugacity, 0 < z ≤ 1. Expanding g_{3/2} as Σ z^k e^{−k r²/2σ²}/k^{3/2} and
+# integrating each Gaussian over the other axes, every axis integrated raises the order by 1/2:
+#   over both other axes (a full projection, any T, X or Y histogram of all events): g_{5/2};
+#   over one (a thin slice of one other axis): g_2.
+# So the 1D profile is A g_ν(z e^{−(x − x₀)²/2σ²}) / g_ν(z) + offset (A the peak height above the
+# offset), ν = 5/2 paired with the TF exponent p = 2 and ν = 2 with p = 3/2: they integrate the same
+# axes. Its area is A √(2π) σ g_{ν+1/2}(z)/g_ν(z) (each Gaussian of the sum: σ√(2π/k)). As z → 0 it
+# is the Gaussian (the Boltzmann limit), and σ gives T exactly as the Gaussian's does (T = m σ_v²/k_B).
+# Near Tc (z → 1) the centre is Bose-enhanced, sharper than a Gaussian of the same σ: a Gaussian
+# fitted to it comes out narrower, biasing T low: by 5 % at z = 0.6, 10 % at z = 1, over ±5σ; as a
+# bimodal fit's thermal part it overstates N0/N by 0.04–0.08 and R by up to 9 % low (session notes,
+# 2026-10-20-claude-dld-d4-d14; tests/test_bose_fits.py). Below Tc the thermal cloud is saturated,
+# z = 1, so the bimodal fits fix it there (``bimodal_model``). That is the ideal-gas picture: the
+# condensate's mean field (μ > 0) pushes thermal atoms out of its centre, which z = 1 ignores (a
+# Hartree–Fock profile would include it; not offered). Above Tc a z = 1 bimodal invents a
+# condensate, so ``fit_condensate`` checks it against the free-z profile.
+# Along T the profile is a velocity distribution taken as a Gaussian in time (the arrival-time
+# model's skew is left out here, as in the Gaussian model).
+
+
+def bose_thermal(x: Array, amplitude: float, centre: float, sigma: float, fugacity: float, offset: float,
+                 order: float = 2.5) -> Array:
+    """A g_ν(z e^{−(x − x₀)²/2σ²}) / g_ν(z) + offset; the Gaussian when z is (nearly) 0."""
+    shape = np.exp(-0.5 * ((x - centre) / sigma) ** 2)
+    if fugacity < 1e-12:
+        return amplitude * shape + offset
+    return amplitude * polylog(order, fugacity * shape) / float(polylog(order, fugacity)) + offset
+
+
+def bose_area(amplitude: float, sigma: float, fugacity: float, order: float = 2.5) -> float:
+    """∫ A g_ν(z e^{−u²/2σ²}) / g_ν(z) dx = A √(2π) σ g_{ν+1/2}(z) / g_ν(z) (1 as z → 0)."""
+    z = min(max(float(fugacity), 0.0), 1.0)
+    ratio = 1.0 if z < 1e-12 else float(polylog(order + 0.5, z)) / float(polylog(order, z))
+    return gaussian_area(amplitude, sigma) * ratio
+
+
+def bose_model(order: float) -> FitModel:
+    """The Bose-enhanced thermal profile g_ν + offset, its fugacity z fitted in [0, 1]. Started
+    from a Gaussian fit, at three fugacities (σ wider as z grows: the enhanced centre is narrower)."""
+    def function(x: Array, amplitude: float, centre: float, sigma: float, fugacity: float, offset: float
+                 ) -> Array:
+        return bose_thermal(x, amplitude, centre, sigma, fugacity, offset, order)
+
+    def guesses(x: Array, y: Array, errors: Array) -> list[Array]:
+        single = fit_histogram(x, y, "gaussian", sigma=errors)
+        if single.ok:
+            peak, mean, spread, baseline = (single[name].value for name in ("amplitude", "centre", "sigma", "offset"))
+        else:
+            baseline, peak, mean, spread = _moments(x, y)
+        return [np.array([peak, mean, s * spread, z, baseline]) for z, s in ((0.3, 1.02), (0.8, 1.08), (0.99, 1.2))]
+
+    def bounds(x: Array, y: Array) -> tuple[Array, Array]:
+        low, high = _position_bounds(x)
+        _, _, span, step = _extent(x)
+        top = float(np.max(np.abs(y)))
+        return np.array([0.0, low, step / 100, 0.0, -top]), np.array([np.inf, high, 10 * span, 1.0, top])
+
+    return FitModel(
+        f"bose_g{_power_text(order)}", f"Bose-enhanced thermal g_{_order_text(order)} + offset",
+        (ModelParameter("amplitude", "Amplitude", "height"), ModelParameter("centre", "Centre", "position"),
+         ModelParameter("sigma", "σ", "width"), ModelParameter(FUGACITY, "Fugacity z", "shape"),
+         ModelParameter("offset", "Offset", "height")),
+        function, guesses, bounds, min_bins=4, slice=order < 2.5,
+        areas=lambda p: {"bose": bose_area(float(p[0]), float(p[2]), float(p[3]), order)})
+
+
+# ν = 5/2 for full projections (paired with TF²), ν = 2 for thin slices (with TF^{3/2}).
+for _order, _power in ((2.5, 2.0), (2.0, 1.5)):
+    register(bose_model(_order))
+    register(bimodal_model(_power, bose=_order))
+
+
+# Condensate fraction and atom numbers from a bimodal fit's components.
+
+CONDENSATE_AREA = "thomas_fermi"
+
+
+def component_areas(fit: FitResult) -> dict[str, Estimate]:
+    """Each component's area (counts × x units: divide by the bin width for counts) ± SE from the
+    fit's covariance (``FitModel.areas``). Empty when the model has no areas; nan without a fit."""
+    areas = fit.model.areas
+    if areas is None:
+        return {}
+    model_areas: Callable[[Array], dict[str, float]] = areas
+    names = list(model_areas(fit.values if fit.ok else np.ones(len(fit.model.names))))
+    if not fit.ok:
+        return {name: Estimate(math.nan, math.nan) for name in names}
+
+    def area_of(name: str) -> Callable[[Array], float]:
+        return lambda p: model_areas(p)[name]
+    return {name: fit.derived(area_of(name)) for name in names}
+
+
+def condensate_fraction(fit: FitResult) -> Estimate:
+    """N0/N = A_TF / (A_TF + A_thermal) from a bimodal fit's component areas, ± SE by the delta
+    method on the fitted parameters' covariance (so the areas' correlation is counted). nan for
+    a failed fit or a model without a condensate part. The fraction is of the counts the
+    histogram holds: a cropped box or window crops the thermal wings more than the condensate.
+    On a slice model (``FitModel.slice``: TF^{3/2}, g_2) it is the slice's fraction, not the
+    cloud's (a thin central slice holds relatively more condensate); the fit's notes say so
+    (``SLICE_NOTE``)."""
+    areas = fit.model.areas
+    if areas is None or not fit.ok or CONDENSATE_AREA not in areas(fit.values):
+        return Estimate(math.nan, math.nan)
+    model_areas: Callable[[Array], dict[str, float]] = areas
+
+    def fraction(p: Array) -> float:
+        parts = model_areas(p)
+        total = sum(parts.values())
+        return parts[CONDENSATE_AREA] / total if total > 0 else math.nan
+    return fit.derived(fraction)
+
+
+# Is there a condensate? The bimodal TF + Bose fits fix the thermal part's z at 1 (saturated), so
+# on a cloud above Tc they invent one: a thermal cloud at z = 0.3 came out with N0/N = 0.15 ± 0.01 and
+# σ 7 % wide (the review's probe). ``fit_condensate`` therefore always fits the free-z Bose
+# profile beside the bimodal one, and reports the condensate only when the bimodal fit's χ² is lower
+# by at least CONDENSATE_DELTA_CHI2 = 9 (the data are described clearly better by a condensate on a
+# saturated cloud than by any ideal thermal cloud, z ≤ 1) and either
+#   - the free-z fit saturates, z ≥ FUGACITY_SATURATED (at or below Tc), or
+#   - the bimodal fit is better by at least CONDENSATE_STRONG_DELTA_CHI2 = 25 (5σ for one parameter).
+# The second branch is there because the z condition alone fails real, strong condensates: with a
+# condensate of 2/3 of the peak the free-z profile follows the condensate with a narrow σ and z =
+# 0.44 ± 0.20, while the bimodal fit is better by Δχ² ≈ 150 (tests/test_bose_fits.py). Measured
+# (session notes): above Tc, true z of 0.3, 0.7, 0.95 gave Δχ² of about −340, −130, −9 at 400 000
+# events (the z = 1 bimodal can't follow an unsaturated cloud) and at most 12 at 20 000; at z = 1,
+# at most 11; condensates of 5–70 % were found in 5/5 runs each from 400 000 events and 30–70 % from
+# 20 000 (5 % in 2/5 there), N0/N within 0.005 from 400 000 events. False condensates: 1 in 60 thermal clouds of 20 000
+# events (at z = 1, i.e. at Tc), none in 120 from 400 000 up (proposed, for Tony).
+# Both fits are Poisson maximum-likelihood fits (``_reweight``) whose χ² uses the model's own
+# variance, so the χ² difference is the likelihood-ratio statistic to second order. The bimodal has
+# one more free parameter than the free-z profile (condensate amplitude and R/σ for z), so for one
+# extra degree of freedom Δχ² ≥ 9 is a 3σ improvement (p ≈ 0.003); the models aren't nested, so the
+# level is a convention, not an exact test (proposed, for Tony). For a smoothed-curve fit the χ² uses
+# the smoothed bins' variances as if independent, which overstates Δχ²: treat its decision as loose.
+# Otherwise the free-z fit is the result, with "no condensate (z = …)".
+CONDENSATE_DELTA_CHI2 = 9.0
+CONDENSATE_STRONG_DELTA_CHI2 = 25.0
+
+
+@dataclass(frozen=True)
+class CondensateChoice:
+    """``fit_condensate``'s outcome: the fit to report (the bimodal one or the free-z thermal one),
+    both fits, whether a condensate is reported, the χ² difference (thermal − bimodal) and why."""
+    fit: FitResult
+    bimodal: FitResult
+    thermal: FitResult
+    condensate: bool
+    delta_chi2: float
+    note: str
+
+
+def bose_order(power: float) -> float:
+    """The Bose order that integrates the same axes as the TF exponent: 5/2 for p = 2, 2 for 3/2."""
+    return power + 0.5
+
+
+# Unsaturated free-z fits need more (the re-review): summed shots whose widths jitter by ~10 % (T by
+# ~20 %) aren't one Bose profile, and the mismatch grows with N, so at 4·10⁶ events Δχ² reached
+# 140–230 with the free z at 0.98 and a "condensate" of 5–9 %. Those fits put R/σ_th at 1.8–2.0, up
+# against the cap, where real condensates sit near 0.8 of it or less, and neither fit described the
+# data. Jittered clouds near Tc (z 0.9–0.97) also drove the free z to 1, so the saturated branch was
+# fooled too (Δχ² 170–460 at 4·10⁶ events). So every condensate also needs (``_plausibility``):
+#   - R/σ_th ≤ UNSATURATED_CAP_SHARE (0.8) × the fit's cap (a cold cloud at the cap: raise the cap);
+#   - the bimodal fit acceptable by reduced χ² (χ²/dof ≤ 1 + ACCEPTABLE_SIGMAS √(2/dof), 3σ of the
+#     χ² distribution), or its gain over the thermal fit at least MISFIT_RATIO (10) times its own
+#     excess χ² − dof: summed real condensates fit no model to 3σ at 4·10⁶ events, but there the
+#     bimodal's gain was 40–500 times its misfit, against 2–3 times for the jittered thermal sums
+#     (both grow ∝ N, so the ratio holds at any N);
+#   - when the caller can check it (``consistency``: profiles.fit_axis with the run's constants and
+#     shots), μ/k_BT from the fitted R/σ_th agreeing within ×2 with μ/k_BT from N0 and T;
+# and without a saturated free z, Δχ² ≥ 25 and the free-z fit not acceptable. Otherwise: "possible
+# condensate (…, Δχ² …), not reported: why", and the thermal fit is the result. Measured (session
+# notes): σ-jittered sums (50 shots, 10 % σ jitter, 4·10⁶ events) at z 0.5/0.9/0.97 gave 1 false
+# condensate in 18 (z = 0.97, bimodal reduced χ² just acceptable); clean 5 % and 30 % mixtures were
+# all found, and jittered 5 % and 30 % mixtures at 4·10⁵ and 4·10⁶ events (N0/N 0.06 and 0.31: the
+# jitter biases them). Per-shot fits (D2) avoid the jitter and should make this decision per shot.
+UNSATURATED_CAP_SHARE = 0.8
+ACCEPTABLE_SIGMAS = 3.0
+MISFIT_RATIO = 10.0
+MU_AGREEMENT = 2.0  # μ/k_BT from R/σ and from N0, T agree within this factor
+# A check of a bimodal fit against the run's constants: (agrees, or None when it can't be checked,
+# and a note).
+Consistency = Callable[[FitResult], tuple[bool | None, str]]
+
+
+def acceptable(fit: FitResult) -> bool:
+    """Whether a fit's reduced χ² is within ``ACCEPTABLE_SIGMAS`` of 1 (χ²/dof ≤ 1 + 3√(2/dof))."""
+    return fit.ok and fit.dof > 0 and fit.reduced_chi2 <= 1 + ACCEPTABLE_SIGMAS * math.sqrt(2 / fit.dof)
+
+
+def _plausibility(bimodal: FitResult, thermal: FitResult, consistency: Consistency | None, saturated: bool
+                  ) -> list[str]:
+    """Why a condensate isn't credible ([] when it is); see the comment above
+    ``UNSATURATED_CAP_SHARE``."""
+    failed: list[str] = []
+    cap = bimodal.options.get("max_radius_ratio", MAX_RADIUS_RATIO)
+    ratio = bimodal[RATIO].value
+    if not ratio <= UNSATURATED_CAP_SHARE * cap:
+        failed.append(f"R/σ_th {ratio:.2f} near its cap {cap:.2f}")
+    misfit = bimodal.chi2 - bimodal.dof
+    gain = thermal.chi2 - bimodal.chi2
+    if not (acceptable(bimodal) or gain >= MISFIT_RATIO * misfit):
+        failed.append(f"the bimodal fit doesn't describe the data either (reduced χ² {bimodal.reduced_chi2:.3g}; "
+                      f"its gain Δχ² {gain:.3g} is under {MISFIT_RATIO:g}× its misfit {misfit:.3g})")
+    elif not saturated and acceptable(thermal):
+        failed.append(f"the thermal fit describes the data too (reduced χ² {thermal.reduced_chi2:.3g})")
+    if consistency is not None:
+        agrees, why = consistency(bimodal)
+        if agrees is False:
+            failed.append(why)
+    return failed
+
+
+def choose_condensate(bimodal: FitResult, thermal: FitResult, consistency: Consistency | None = None
+                      ) -> CondensateChoice:
+    """Decide between a bimodal TF + Bose (z = 1) fit and a free-z Bose fit of the same bins (see
+    the comments above ``CONDENSATE_DELTA_CHI2`` and ``UNSATURATED_CAP_SHARE``). ``consistency``
+    checks a bimodal fit against the run's constants (μ/k_BT both ways); None skips it."""
+    delta = thermal.chi2 - bimodal.chi2 if bimodal.ok and thermal.ok else math.nan
+    if not thermal.ok:
+        if bimodal.ok:
+            return CondensateChoice(bimodal, bimodal, thermal, True, delta,
+                                    f"condensate not checked: the free-z thermal fit failed ({thermal.failure})")
+        return CondensateChoice(bimodal, bimodal, thermal, False, delta, "")
+    z = thermal[FUGACITY]
+    saturated = z.value >= FUGACITY_SATURATED
+    z_text = "1" if saturated else z.text()
+    if not bimodal.ok:
+        return CondensateChoice(thermal, bimodal, thermal, False, delta,
+                                f"no condensate (z = {z_text}; the bimodal fit failed: {bimodal.failure})")
+    if not delta >= (CONDENSATE_DELTA_CHI2 if saturated else CONDENSATE_STRONG_DELTA_CHI2):
+        where = "at about Tc" if saturated else "above Tc"
+        return CondensateChoice(thermal, bimodal, thermal, False, delta,
+                                f"no condensate (z = {z_text}: {where}; the bimodal fit is not better by "
+                                f"Δχ² ≥ {CONDENSATE_DELTA_CHI2 if saturated else CONDENSATE_STRONG_DELTA_CHI2:g}: "
+                                f"{delta:.3g})")
+    failed = _plausibility(bimodal, thermal, consistency, saturated)
+    if failed:
+        kind = "saturated thermal fit, z = 1" if saturated else f"unsaturated thermal fit, z = {z_text}"
+        return CondensateChoice(thermal, bimodal, thermal, False, delta,
+                                f"possible condensate ({kind}, Δχ² {delta:.3g}), not reported: {'; '.join(failed)}")
+    if saturated:
+        why = (f"the free-z thermal fit saturates (z = 1) and the bimodal fit is better by Δχ² {delta:.3g} "
+               "and describes the data")
+    else:
+        why = (f"the bimodal fit is better by Δχ² {delta:.3g} and describes the data; the free-z thermal fit "
+               f"can't follow the condensate (its z = {z_text} means nothing here)")
+    if consistency is not None:
+        agrees, note = consistency(bimodal)
+        if agrees is None and note:
+            why += f" ({note})"
+    return CondensateChoice(bimodal, bimodal, thermal, True, delta, f"condensate: {why}")
+
+
+def fit_condensate(centres: npt.ArrayLike, counts: npt.ArrayLike, power: float = 2.0, *,
+                   consistency: Consistency | None = None, **options: Any) -> CondensateChoice:
+    """Fit the bimodal TF^p + Bose g_{p+1/2} (z = 1) and the free-z Bose g_{p+1/2} profile to the
+    same histogram (``options`` go to both ``fit_histogram`` calls; ``max_radius_ratio`` to the
+    bimodal only) and ``choose_condensate``."""
+    order = bose_order(power)
+    thermal_options = {key: value for key, value in options.items() if key != "max_radius_ratio"}
+    bimodal = fit_histogram(centres, counts, f"bimodal_tf{_power_text(power)}_g{_power_text(order)}", **options)
+    thermal = fit_histogram(centres, counts, f"bose_g{_power_text(order)}", **thermal_options)
+    return choose_condensate(bimodal, thermal, consistency)
+
+
+# The arrival-time ("Yavin") thermal profile. With z up and the detector a distance h below
+# the trap, an atom released at t = 0 with vertical velocity v is at z(t) = h + v t − ½ g t²
+# and reaches the detector (z = 0) at the positive root of ½ g t² − v t − h = 0:
+#   t(v) = (v + √(v² + 2 g h)) / g,  or inversely  v(t) = g t / 2 − h / t.
+# v(t) rises monotonically from −∞ (t → 0) to +∞, so each arrival time has exactly one
+# velocity. With Maxwell–Boltzmann velocities, p(v) ∝ exp(−v²/2σ_v²) with σ_v² = k_B T/m,
+# the detector's arrival-time distribution (atoms crossing z = 0) is
+#   p(t) = p(v(t)) · dv/dt,   dv/dt = g/2 + h/t²,
+# the Jacobian making it more than a Gaussian: it skews the profile (the early, fast-downward
+# side is compressed, the late side stretched). A v = 0 atom arrives at t_f = √(2h/g), where
+# dv/dt = g. In data time T (since the DLD trigger, not since release) t = T − T₀ + t_f, with
+# T₀ the arrival time of v = 0 (the "centre"), and the model is
+#   A · (g/2 + h/t²)/g · exp(−v(t)²/2(g s)²) + offset   for t > 0 (else the offset),
+# with s = σ_v/g, a time like the Gaussian's σ_t: to first order in s/t_f the profile is the
+# Gaussian of width s, so both give T = m (g s)²/k_B. Its area is A s √(2π) (∫ p(v) dv / g),
+# as the Gaussian's. Assumed: a point source (an initial size σ_z0 adds about σ_z0/(g t_f) to
+# the width: 2.5 µs for 10 µm, negligible against the ~5 ms of 1 µK), no mean vertical
+# velocity (a launch velocity v₀ shifts T₀ by about v₀/g, and the two can't be told apart, so
+# T₀ absorbs it), every atom reaching the detector, and h and g the run's constants
+# (``arrival_time_model`` builds the model with them).
+
+
+def arrival_time(x: Array, amplitude: float, centre: float, sigma: float, offset: float, fall_distance: float,
+                 g: float) -> Array:
+    t_f = math.sqrt(2 * fall_distance / g)
+    t = x - centre + t_f
+    positive = t > 0
+    safe = np.where(positive, t, t_f)
+    velocity = g * safe / 2 - fall_distance / safe
+    jacobian = (g / 2 + fall_distance / safe ** 2) / g
+    with np.errstate(over="ignore", under="ignore"):
+        profile = jacobian * np.exp(-0.5 * (velocity / (g * sigma)) ** 2)
+    return np.where(positive, amplitude * profile, 0.0) + offset
+
+
+def arrival_time_model(fall_distance: float, g: float) -> FitModel:
+    """The arrival-time thermal profile for atoms falling ``fall_distance`` under ``g`` (the
+    run's constants, recorded as the model's ``fixed``). Its parameters are the Gaussian's:
+    amplitude, centre T₀ (the arrival time of v = 0), σ (= σ_v/g) and offset."""
+    if not (fall_distance > 0 and g > 0 and math.isfinite(fall_distance * g)):
+        raise ValueError("the arrival-time model needs a positive, finite fall distance and g")
+
+    def function(x: Array, amplitude: float, centre: float, sigma: float, offset: float) -> Array:
+        return arrival_time(x, amplitude, centre, sigma, offset, fall_distance, g)
+
+    return FitModel(
+        "arrival_time", "Arrival-time thermal profile + offset",
+        (ModelParameter("amplitude", "Amplitude", "height"),
+         ModelParameter("centre", "Centre T₀ (v = 0)", "position"),
+         ModelParameter("sigma", "σ_v / g", "width"), ModelParameter("offset", "Offset", "height")),
+        function, _gaussian_guesses, _gaussian_bounds,
+        areas=lambda p: {"thermal": gaussian_area(float(p[0]), float(p[2]))},
+        fixed=MappingProxyType({"fall_distance": float(fall_distance), "g": float(g)}))
+
+
+# Registered with the default constants; a run fits the one ``arrival_time_model`` builds
+# from its own.
+register(arrival_time_model(DEFAULTS.fall_distance, DEFAULTS.g))

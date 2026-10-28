@@ -66,7 +66,7 @@ def test_clearing_a_root_removes_only_its_rows_and_keeps_folder_flags(store: Cac
     removal = store.clear_root(A)
     assert sorted(removal.paths or ()) == [f"root://{A}", f"root://{A}/run_1", f"root://{A}/run_1/a",
                                            f"root://{A}/run_2"]
-    assert removal.datasets == 3 and set(removal.kinds) == {"datasets", "summaries", "histories", "subtrees"}
+    assert removal.datasets == 3 and set(removal.kinds) == {"datasets", "summaries", "histories", "subtrees", "listings"}
     for table, left in (("datasets", 2), ("folder_summaries", 2), ("subtrees", 2), ("pending_saves", 1)):
         assert count(store, table, f"root://{A}/") == 0 and count(store, table, f"root://{B}/") == left
     assert store.read_dataset(f"root://{A}0").found
@@ -132,12 +132,12 @@ def page(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
         jobs.append((action, params))
         return f"job-{len(jobs)}"
     monkeypatch.setattr(cache, "cache_admin", admin)
-    monkeypatch.setattr(tab_module, "store_options", lambda: {"directory": str(tmp_path)})
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: {"directory": str(tmp_path)})
     settings = DataRootsTab(cache)
     qtbot.addWidget(settings)
     rows = [{"location": "smb://server/dld_output", "uuid": A, "kind": "smb", "label": "dld_output",
              "first_seen": 1.0e9, "last_seen": 1.7e9, "decision": "confirmed", "path": "",
-             "cached": {"folders": 12, "bytes": 3 * 1024 ** 3}},
+             "cached": {"folders": 12, "bytes": 3 * 10**9}},
             {"location": "vol://abc/data", "uuid": B, "kind": "vol", "label": "data",
              "first_seen": 1.0e9, "last_seen": 1.6e9, "decision": "confirmed", "path": "/data"}]
     cache.cacheAdminResult.emit("inventory", {"kind": "inventory", "inventory": {"roots": rows}})
@@ -152,7 +152,7 @@ def test_clear_names_the_root_and_its_size_then_asks_a_helper(
 ) -> None:
     first, second = page.list.topLevelItem(0), page.list.topLevelItem(1)
     assert first is not None and second is not None
-    assert first.text(4) == "3.0 GB" and second.text(4) == "—"
+    assert first.text(DataRootsTab.CACHED) == "3.0 GB" and second.text(DataRootsTab.CACHED) == "—"
     page.list.setCurrentItem(first)  # Not mounted: its cache can still be cleared.
     assert page.clear_button.isEnabled()
     assert next(a for a in page.context_menu().actions() if a.text() == CLEAR).isEnabled()
@@ -164,7 +164,7 @@ def test_clear_names_the_root_and_its_size_then_asks_a_helper(
     page.confirm = answer
     page.clear_selected()
     assert asked == ["Clears 12 cached folders (3.0 GB) for data root “dld_output” on this computer. "
-                     "The .helab-root and folder flags stay."] and len(jobs) == 1
+                     "The .helab-root, folder flags and cached analysis stay."] and len(jobs) == 1
     page.clear_selected()
     assert jobs[-1] == ("clear_root", {"uuid": A}) and not page.clear_button.isEnabled()
     assert page.cache is not None

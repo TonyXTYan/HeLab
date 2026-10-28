@@ -1,4 +1,5 @@
 # tests/test_helabMainWindow.py
+from pathlib import Path
 import signal
 from typing import Generator, Any
 from unittest.mock import patch
@@ -281,7 +282,7 @@ def test_file_menu_places_a_root_in_the_current_tabs_selected_folder(
     assert not main_window.place_root_in_current_tab() and not asked
     explorer.model.cache._root_gone(selected)
     # The disk cache off for this session.
-    monkeypatch.setattr("helab.views.FolderExplorer.store_options", lambda: {})
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: {})
     assert shown()[1:] == (False, f"{selected}\nThe disk cache is off for this session")
     # No folder tab.
     monkeypatch.setattr(main_window.tab_widget, "currentWidget", lambda: None)
@@ -352,3 +353,190 @@ def test_review_from_settings_is_modal_only_while_settings_is_open(
         for key in (location, "smb://server/other"):
             cache.root_duplicates.pop(key, None)
         window.hide()
+
+
+def test_help_menu_records_the_io_trace_for_this_session(
+    main_window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
+) -> None:
+    """Off at every start; turned on, a local-lane helper checks the temp folder (never the GUI thread),
+    then a new recording folder in its io-traces folder (one file per helper) and a status-bar note.
+    Earlier recordings ask once (Keep, the default, or Delete old traces); none, no question. Files that
+    can't be deleted are kept, and the user is told."""
+    import os
+    from helab.utils import cache_location
+    from helab.utils.io_service import IORequest, get_io_service, io_trace_folder
+    service = get_io_service()
+    action = main_window.action_io_trace
+    help_menu = next(item.menu() for item in main_window.menu_bar.actions() if item.text() == "Help")
+    assert isinstance(help_menu, QMenu)
+    assert {"Record I/O trace (this session)", "Show I/O trace folder"} <= {a.text() for a in help_menu.actions()}
+    assert action.isCheckable() and not action.isChecked() and service.trace_dir is None
+    assert main_window.io_trace_label.isHidden() and "trace_check" in service.LOCAL_OPERATIONS
+
+    def on_the_gui_thread(path: str) -> str:
+        raise AssertionError("the temp folder's check ran on the GUI thread")
+    monkeypatch.setattr(cache_location, "cache_location_problem", on_the_gui_thread)
+    monkeypatch.setattr("helab.views.HelabMainWindow.DIR_TEMPS", str(tmp_path))
+    folder = io_trace_folder(str(tmp_path))
+    asked: list[tuple[int, int, str]] = []
+    answer = [False]
+
+    def ask(count: int, size: int, where: str) -> bool:
+        asked.append((count, size, where))
+        return answer[0]
+
+    def record(recording: str, *pids: int) -> None:
+        for pid in pids:  # (As helpers write them: 3 bytes each, "\n" on every system.)
+            with open(os.path.join(recording, f"{pid}.jsonl"), "w", encoding="utf-8", newline="\n") as stream:
+                stream.write("{}\n")
+
+    def turn_on() -> str:
+        action.setChecked(True)
+        assert service.trace_dir is None  # (Not before the helper's answer.)
+        qtbot.waitUntil(lambda: service.trace_dir is not None, timeout=20000)
+        return str(service.trace_dir)
+
+    def turn_off() -> None:
+        """Off, and the window's own helpers traced into the recording done: it's complete now."""
+        action.setChecked(False)
+        qtbot.waitUntil(lambda: not service.pending and not service.active and not service.retired, timeout=30000)
+
+    def size(*recordings: str) -> int:
+        return sum(os.path.getsize(os.path.join(recording, name)) for recording in recordings
+                   for name in os.listdir(recording) if name.endswith(".jsonl"))
+    main_window.ask_delete_old_traces = ask
+    try:
+        # No earlier recordings: no question.
+        first = turn_on()
+        assert os.path.dirname(first) == folder and os.path.isdir(first) and not asked
+        assert main_window.io_trace_label.isVisible() and first in main_window.io_trace_label.toolTip()
+        record(first, 101, 102)
+        turn_off()
+        assert service.trace_dir is None and main_window.io_trace_label.isHidden()
+        other = os.path.join(folder, "notes.txt")  # Not a trace: never removed.
+        with open(other, "w", encoding="utf-8") as stream:
+            stream.write("kept")
+        # Keep (the default): the earlier recording stays.
+        held = size(first)  # (Ours, 6 bytes, and the window's own helpers' lines, if any ran.)
+        second = turn_on()
+        assert asked == [(1, held, folder)] and held >= 6 and second != first
+        assert {"101.jsonl", "102.jsonl"} <= set(os.listdir(first)) and os.path.exists(other)
+        record(second, 103)
+        turn_off()
+        # Delete old traces: only earlier recordings go, never the one about to start. A file Windows
+        # won't delete (a helper still has it open) is kept, and the user is told.
+        asked.clear()
+        answer[0] = True
+        remove = os.remove
+
+        def held_open(path: str) -> None:
+            if path.endswith("102.jsonl"):
+                raise PermissionError(13, "in use", path)
+            remove(path)
+        monkeypatch.setattr("helab.utils.io_service.os.remove", held_open)
+        held = size(first, second)
+        with patch.object(QMessageBox, "information") as told:
+            third = turn_on()
+        monkeypatch.setattr("helab.utils.io_service.os.remove", remove)
+        assert asked == [(2, held, folder)]
+        assert sorted(os.listdir(folder)) == sorted([os.path.basename(first), os.path.basename(third), "notes.txt"])
+        assert os.listdir(first) == ["102.jsonl"]  # (The new recording may have helpers' lines already.)
+        assert told.call_count == 1 and "1 trace file couldn't be deleted" in told.call_args.args[2]
+        turn_off()
+        # The helper's other answers, as events: refused on a share, a failed check, unticked meanwhile.
+        submitted: list[tuple[str, str, dict[str, Any], Any]] = []
+
+        def submit(owner: str, generation: int, path: str, operation: str, payload: dict[str, Any],
+                   **kwargs: Any) -> bool:
+            submitted.append((path, operation, payload, kwargs.get("timeout")))
+            return True
+        monkeypatch.setattr(service, "submit", submit)
+
+        def answered(event: dict[str, Any]) -> None:
+            request = IORequest(main_window._trace_owner, main_window._trace_generation, str(tmp_path),
+                                "trace_check", {}, 10.0)
+            service.resultReady.emit(request, event)
+        for event, says in (({"kind": "trace_folder", "problem": "on a network drive (smbfs)", "earlier": []},
+                             "is on a network drive (smbfs)"),
+                            ({"kind": "error", "message": "Timed out after 10 s without progress — Retry"},
+                             "couldn't check its temp folder")):
+            with patch.object(QMessageBox, "warning") as warned:
+                action.setChecked(True)
+                answered(event)
+            assert not action.isChecked() and service.trace_dir is None and main_window.io_trace_label.isHidden()
+            assert says in warned.call_args.args[2]
+        assert submitted[-1] == (str(tmp_path), "trace_check", {"temps": str(tmp_path), "folder": folder}, 10.0)
+        action.setChecked(True)
+        action.setChecked(False)
+        answered({"kind": "trace_folder", "problem": "", "earlier": []})  # (After unticking: ignored.)
+        assert service.trace_dir is None and main_window.io_trace_label.isHidden()
+    finally:
+        main_window.ask_delete_old_traces = None
+        action.setChecked(False)
+        service.stop_io_trace()
+
+
+@pytest.mark.parametrize("choice", ["Keep", "Delete old traces", None])
+def test_earlier_io_traces_ask_with_keep_as_the_default(
+    main_window: HelabMainWindow, monkeypatch: pytest.MonkeyPatch, tmp_path: Any, choice: str | None,
+) -> None:
+    from helab.utils.number_format import byte_size
+    seen: list[tuple[str, str, list[str]]] = []
+
+    def run(box: QMessageBox) -> int:
+        default = box.defaultButton()
+        assert default is not None
+        seen.append((box.text(), default.text(), [button.text() for button in box.buttons()]))
+        if choice is not None:  # (None: closed with Esc or the title bar.)
+            next(button for button in box.buttons() if button.text() == choice).click()
+        return 0
+    monkeypatch.setattr(QMessageBox, "exec", run)
+    assert main_window._ask_delete_old_traces(2, 3000, str(tmp_path)) is (choice == "Delete old traces")
+    text, default, buttons = seen[0]
+    assert text == f"2 earlier I/O traces ({byte_size(3000)}) in {tmp_path}."
+    assert default == "Keep" and sorted(buttons) == ["Delete old traces", "Keep"]
+
+
+def test_window_icon_is_found_from_any_launch_folder(
+        qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """The packaged app and ``python -m helab`` from elsewhere don't start in the repository's root."""
+    monkeypatch.chdir(tmp_path)
+    window = HelabMainWindow()
+    qtbot.addWidget(window)
+    assert "Icon file not found" not in caplog.text and not window.windowIcon().isNull()
+    window.close()
+
+
+def test_help_menu_shows_the_log_folder(main_window: HelabMainWindow, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Help › Show log folder reveals the app folder's logs folder (this test's own), detached; the
+    window doesn't tidy old logs until ``main`` starts it."""
+    from PyQt6.QtCore import QUrl
+    from PyQt6.QtGui import QDesktopServices
+    from helab.utils import app_log
+    from helab.utils.constants import app_folder
+    opened: list[QUrl] = []
+
+    def open_url(url: QUrl) -> bool:
+        opened.append(url)
+        return True
+    monkeypatch.setattr(QDesktopServices, "openUrl", open_url)
+    help_menu = next(item.menu() for item in main_window.menu_bar.actions() if item.text() == "Help")
+    assert isinstance(help_menu, QMenu)
+    action = next(a for a in help_menu.actions() if a.text() == "Show log folder")
+    assert not main_window.old_logs.threads
+    action.trigger()
+    folder = app_log.log_folder(app_folder())
+    assert [url.toLocalFile() for url in opened] == [QUrl.fromLocalFile(folder).toLocalFile()]
+    assert Path(folder).is_dir() and Path(folder).parent == Path(app_folder())
+
+
+def test_the_view_menu_has_no_thread_status_item_and_its_setting_is_retired(main_window: HelabMainWindow) -> None:
+    """C-10 (Tony, 2026-10-26): View › "Toggle Thread Status Auto Pop-up" read and wrote a setting
+    nothing else used: it is gone, and its key is retired (removed when Settings saves)."""
+    from helab.utils.settings_defaults import RETIRED, SETTINGS
+    bar = main_window.menuBar()
+    assert bar is not None
+    texts = [action.text() for menu in bar.findChildren(QMenu) for action in menu.actions()]
+    assert "Toggle Thread Status Auto Pop-up" not in texts and "Toggle Status Bar" in texts
+    assert "view_toggle_thread_status" in RETIRED
+    assert all(row.key != "view_toggle_thread_status" for row in SETTINGS)

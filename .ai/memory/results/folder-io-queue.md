@@ -9,7 +9,7 @@ metadata:
 ---
 How the active folder browser schedules filesystem I/O, and why. Code:
 `helab/utils/io_service.py` (`IOService`), `helab/io_helper.py` (isolated
-helper processes), `helab/utils/folder_cache.py` (shared jobs per tab).
+helper processes; operations in `helab/io_ops/`), `helab/utils/folder_cache.py` (shared jobs per tab).
 
 ## Cache first (2026-10-08)
 
@@ -28,6 +28,13 @@ nothing appeared.
   cache's `snapshot_at`, the helper answers with **one folder stat**
   (`unchanged`). Tony chose the plain mtime comparison: lab clocks are
   internet-synced, so no skew margin. Otherwise it lists and merges.
+  Changed 2026-10-22 (codebase review R-1, Tony's yes, `4468eaf`): the mtime is
+  the server's clock, so it is compared only with itself: the check needs the
+  folder's mtime to equal exactly the one stat'ed just before the last listing
+  (`info["folder_mtime_ns"]`, also in `memory_check`). Within 2 s
+  (`RACY_SECONDS`) of the listing, and after each Live save, none is kept, so
+  the next check lists. Caches from before keep the `snapshot_at` rule until
+  their next full listing.
 - A TXY file rewritten in place doesn't change the folder's mtime, so the
   folder stat can't see it (Codex review of PR #5, 2026-10-13). Tony's rule:
   **TXY files are written once; a repaired or regenerated file gets a new
@@ -240,3 +247,6 @@ folder and found it confusing. Now:
 - Per-scan timing log (planned io-lanes Phase 4): not added. Tony worried it
   would spam the log; if ever needed, make it opt-in or one summary line per
   slow scan.
+- Live checks (2026-10-19) are foreground loads that pause background work only while reading a file (measured: 15 % of a background load paused otherwise).
+- Codebase review (2026-10-22, `.ai/sessions/2026-10-22-claude-codebase-review/`): the quick check's exact folder mtime (R-1, above); a Live save's data dump counts as progress (R-2); a status check or details scan that finds a folder changed drops its datasets but no longer cancels its running load, Live check or cached read (R-7); a file with an mtime ahead of this PC's clock stays "still being written" (R-22: Tony keeps the rule; since `855bdaf` a clock-out-of-sync popup, once per share or volume per session, and Live stops on it).
+- SMB audit (2026-10-20, `.ai/sessions/2026-10-19-claude-smb-io-audit/`): roots_verify loop fixed (803 helpers → 2 after a mount change); Live saves from RAM (`save_held`); files still being written judged by settle age only (Tony); a recently read Live shot that changes is read again with a note and WARNING (Tony); Help › Record I/O trace (session only, temp folder, Keep/Delete earlier recordings, two INFO lines).

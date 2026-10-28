@@ -25,6 +25,8 @@ a = Analysis(
     pathex=[str(ROOT)],
     binaries=[],
     datas=[(str(ROOT / 'helab/resources/menu-right.svg'), 'helab/resources'),
+           # The window's icon, which HelabMainWindow looks for beside the package (R-12).
+           (str(ROOT / 'helab/resources/ai-icon.icns'), 'helab/resources'),
            (str(metadata_path), 'helab')],
     hiddenimports=["helab.io_helper"],
     hookspath=[],

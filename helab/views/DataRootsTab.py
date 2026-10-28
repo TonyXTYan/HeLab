@@ -12,10 +12,11 @@ from typing import Any, Callable
 
 from PyQt6.QtCore import QPoint, QProcess, Qt, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabel, QMenu, QMessageBox,
+from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabel, QLineEdit, QMenu, QMessageBox,
                              QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
-from helab.utils.folder_cache import FolderCache, marker_path, store_options
+from helab.utils import folder_cache
+from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache, marker_path
 from helab.utils.number_format import byte_size
 from helab.utils.io_service import IORequest
 
@@ -35,9 +36,15 @@ DELETE_TEXT = ("Deletes {marker}. This folder and its subfolders use RAM only on
                "disk cache for it too.")
 CLEAR = "Clear cached data…"
 CLEAR_TOOLTIP = ("Clear what this computer cached below this data root (datasets and saved folder status). "
-                 "The .helab-root and folder flags stay.")
+                 "The .helab-root, folder flags and cached analysis stay.")
+# Saved analysis results below the root (result caching R2), apart from its cached data (Tony, 2026-10-22).
+CLEAR_RESULTS = "Clear cached analysis…"
+CLEAR_RESULTS_TOOLTIP = ("Clear the analysis results this computer saved below this data root (plots compute them "
+                         "again). Its cached data and the .helab-root stay.")
 REVIEW = "Review…"
 REVIEW_TOOLTIP = "Same folder or a copy? This location uses RAM only until answered"
+DETAIL_NONE = "Select a location to see its .helab-root's path and UUID"
+NOT_MOUNTED = "Not mounted"
 REFUSED_TEXT = ("HeLab can't delete {file} ({reason}). Delete it by hand ({show} finds it), then Refresh "
                 "this list.")
 
@@ -62,13 +69,16 @@ def show_command(marker: str) -> tuple[str, list[str]] | None:
 
 
 class DataRootsTab(QWidget):
-    COLUMNS = ("Data root", "Folder", "Status", "Last seen", "Cached")
+    # No folder column (Tony, 2026-10-19): the long path would scroll the list sideways. The two lines
+    # below the list show the selected row's full path and UUID.
+    COLUMNS = ("Data root", "Status", "Last seen", "Cached")
+    LABEL, STATUS, SEEN, CACHED = range(4)
     reviewRequested = pyqtSignal(str)  # A pending location: RootDuplicatesWindow at it.
 
     def __init__(self, cache: FolderCache | None, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.cache = cache
-        self.enabled = bool(cache is not None and store_options())
+        self.enabled = bool(cache is not None and folder_cache.store_options())
         self.roots: list[dict[str, Any]] | None = None
         self.message = ""
         self._inventory_owner = ""
@@ -95,6 +105,14 @@ class DataRootsTab(QWidget):
         self.list.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.list.customContextMenuRequested.connect(self._context_menu)
         layout.addWidget(self.list, 1)
+        # Read-only and frameless: lines that select and scroll, whatever the path's length.
+        self.path_line, self.uuid_line = QLineEdit(), QLineEdit()
+        for line in (self.path_line, self.uuid_line):
+            line.setReadOnly(True)
+            line.setFrame(False)
+            line.setStyleSheet("background: transparent")
+            layout.addWidget(line)
+        self.path_line.setPlaceholderText(DETAIL_NONE)
         footer = QHBoxLayout()
         self.status_label = QLabel("Checking…")
         footer.addWidget(self.status_label, 1)
@@ -113,6 +131,10 @@ class DataRootsTab(QWidget):
         self.clear_button.setToolTip(CLEAR_TOOLTIP)
         self.clear_button.clicked.connect(self.clear_selected)
         footer.addWidget(self.clear_button)
+        self.clear_results_button = QPushButton(CLEAR_RESULTS)
+        self.clear_results_button.setToolTip(CLEAR_RESULTS_TOOLTIP)
+        self.clear_results_button.clicked.connect(self.clear_results_selected)
+        footer.addWidget(self.clear_results_button)
         self.review_button = QPushButton(REVIEW)
         self.review_button.setToolTip(REVIEW_TOOLTIP)
         self.review_button.clicked.connect(self.review_selected)
@@ -122,6 +144,7 @@ class DataRootsTab(QWidget):
             cache.cacheAdminResult.connect(self._on_result)
             cache.cacheAdminDone.connect(self._on_done)
             cache.resultReady.connect(self._on_remove)
+            cache.offlineChanged.connect(self._offline_changed)
         self._update()
         self.refresh()
 
@@ -130,7 +153,16 @@ class DataRootsTab(QWidget):
             self.cache.cacheAdminResult.disconnect(self._on_result)
             self.cache.cacheAdminDone.disconnect(self._on_done)
             self.cache.resultReady.disconnect(self._on_remove)
+            self.cache.offlineChanged.disconnect(self._offline_changed)
             self.cache = None
+
+    @property
+    def offline(self) -> bool:
+        """Work Offline: Show in Finder and Delete .helab-root… would reach the folder (D6)."""
+        return self.cache is not None and self.cache.offline
+
+    def _offline_changed(self, _offline: bool) -> None:
+        self._update()
 
     def _confirm(self, title: str, text: str, verb: str) -> bool:
         box = QMessageBox(QMessageBox.Icon.Question, title, text, parent=self)
@@ -151,7 +183,7 @@ class DataRootsTab(QWidget):
 
     def selected(self) -> dict[str, Any] | None:
         items = self.list.selectedItems()
-        row = items[0].data(0, Qt.ItemDataRole.UserRole) if items else None
+        row = items[0].data(self.LABEL, Qt.ItemDataRole.UserRole) if items else None
         return row if isinstance(row, dict) else None
 
     def forget_selected(self) -> None:
@@ -195,15 +227,19 @@ class DataRootsTab(QWidget):
         menu.addSeparator()
         review = menu.addAction(REVIEW, self.review_selected) if self.review_button.isEnabled() else None
         clear = menu.addAction(CLEAR, self.clear_selected)
+        clear_results = menu.addAction(CLEAR_RESULTS, self.clear_results_selected)
         forget = menu.addAction(FORGET, self.forget_selected)
         delete = menu.addAction(DELETE, self.delete_selected)
         for action, enabled, tooltip in (
-                (show, mounted, show_tooltip() if mounted else NOT_MOUNTED_TOOLTIP),
+                (show, mounted and not self.offline, OFFLINE_TOOLTIP if self.offline else
+                 show_tooltip() if mounted else NOT_MOUNTED_TOOLTIP),
                 (copy, row is not None, "The .helab-root file's path" if mounted else "The location"),
                 (review, True, REVIEW_TOOLTIP),
                 (clear, self.clear_button.isEnabled(), CLEAR_TOOLTIP),
+                (clear_results, self.clear_results_button.isEnabled(), CLEAR_RESULTS_TOOLTIP),
                 (forget, self.forget_button.isEnabled(), FORGET_TOOLTIP),
-                (delete, self.delete_button.isEnabled(), DELETE_TOOLTIP if mounted else NOT_MOUNTED_TOOLTIP)):
+                (delete, self.delete_button.isEnabled(), OFFLINE_TOOLTIP if self.offline else
+                 DELETE_TOOLTIP if mounted else NOT_MOUNTED_TOOLTIP)):
             if action is not None:
                 action.setEnabled(enabled)
                 action.setToolTip(tooltip)
@@ -212,7 +248,7 @@ class DataRootsTab(QWidget):
     def show_selected(self) -> bool:
         """Reveal the row's marker in the file manager, without waiting or touching the folder."""
         row = self.selected()
-        if row is None or not row["path"]:
+        if row is None or not row["path"] or self.offline:
             return False
         marker = marker_path(row["path"])
         command = show_command(marker)
@@ -236,16 +272,34 @@ class DataRootsTab(QWidget):
                 f"({byte_size(cached['bytes'])})" if cached else "the cached data")
         if not self.confirm("Clear this data root's cached data?",
                             f"Clears {what} for data root “{row['label']}” on this computer. "
-                            "The .helab-root and folder flags stay.", "Clear"):
+                            "The .helab-root, folder flags and cached analysis stay.", "Clear"):
             return
         self._job = self.cache.cache_admin("clear_root", uuid=row["uuid"])
         self._job_name = "Clear cached data"
         self.message = "" if self._job else "Disk cache queue full — try again"
         self._update()
 
+    def clear_results_selected(self) -> None:
+        """Clear cached analysis: the results saved below this root, nothing else (asks first)."""
+        row = self.selected()
+        if row is None or self.cache is None or self._job:
+            return
+        cached = row.get("cached") or {}
+        count = int(cached.get("results", 0))
+        what = (f"{count:,} saved result{'' if count == 1 else 's'} ({byte_size(int(cached.get('result_bytes', 0)))})"
+                if count else "the saved analysis results")
+        if not self.confirm("Clear this data root's cached analysis?",
+                            f"Clears {what} for data root “{row['label']}” on this computer: plots compute them "
+                            "again. Its cached data, the .helab-root and folder flags stay.", "Clear"):
+            return
+        self._job = self.cache.cache_admin("clear_root_results", uuid=row["uuid"])
+        self._job_name = "Clear cached analysis"
+        self.message = "" if self._job else "Disk cache queue full — try again"
+        self._update()
+
     def delete_selected(self) -> None:
         row = self.selected()
-        if row is None or not row["path"] or self.cache is None or self._job:
+        if row is None or not row["path"] or self.cache is None or self._job or self.offline:
             return
         if not self.confirm("Delete this .helab-root?", DELETE_TEXT.format(marker=marker_path(row["path"])),
                             "Delete"):
@@ -301,20 +355,26 @@ class DataRootsTab(QWidget):
         self.list.clear()
         for row in self.roots or ():
             folder = row["path"]
+            status = DECISIONS.get(row["decision"], row["decision"])
             item = QTreeWidgetItem([
-                row["label"], folder or f"Not mounted · {row['location']}",
-                DECISIONS.get(row["decision"], row["decision"]),
+                row["label"], status if folder or row["decision"] != "confirmed" else NOT_MOUNTED,
                 f"{datetime.fromtimestamp(row['last_seen']):%Y-%m-%d %H:%M}",
-                byte_size(row["cached"]["bytes"]) if row.get("cached") else "—"])
-            item.setData(0, Qt.ItemDataRole.UserRole, row)
-            item.setToolTip(0, f"{row['label']} · {row['uuid']}")
-            item.setToolTip(1, "\n".join(filter(None, (marker_path(folder) if folder else "",
-                                                        f"Location: {row['location']}"))))
+                byte_size(row["cached"]["bytes"]) if row.get("cached") and row["cached"]["folders"] else "—"])
+            item.setData(self.LABEL, Qt.ItemDataRole.UserRole, row)
+            item.setToolTip(self.LABEL, marker_path(folder) if folder
+                            else f"{NOT_MOUNTED_TOOLTIP} · {row['location']}")
+            if not folder:  # Greyed: not mounted now.
+                for column in range(len(self.COLUMNS)):
+                    item.setForeground(column, self.palette().placeholderText())
             first = datetime.fromtimestamp(row["first_seen"])
-            item.setToolTip(3, f"First seen {first:%Y-%m-%d %H:%M}")
+            item.setToolTip(self.SEEN, f"First seen {first:%Y-%m-%d %H:%M}")
             cached = row.get("cached")
-            item.setToolTip(4, f"{cached['folders']:,} folders cached below this data root on this computer"
-                            if cached else "Nothing cached below this data root on this computer")
+            results = int(cached.get("results", 0)) if cached else 0
+            item.setToolTip(self.CACHED, (f"{cached['folders']:,} folders cached below this data root on this "
+                                          "computer" if cached and cached["folders"] else
+                                          "No data cached below this data root on this computer")
+                            + (f"\nCached analysis: {results:,} saved result{'' if results == 1 else 's'} "
+                               f"({byte_size(int(cached.get('result_bytes', 0)))})" if cached and results else ""))
             self.list.addTopLevelItem(item)
         for column in range(len(self.COLUMNS)):
             self.list.resizeColumnToContents(column)
@@ -336,7 +396,22 @@ class DataRootsTab(QWidget):
         self.refresh_button.setEnabled(self.enabled and not self._inventory_owner)
         row = self.selected()
         self.forget_button.setEnabled(idle and row is not None)
-        self.delete_button.setEnabled(idle and row is not None and bool(row["path"]))
-        self.delete_button.setToolTip(DELETE_TOOLTIP if row is None or row["path"] else NOT_MOUNTED_TOOLTIP)
+        self.delete_button.setEnabled(idle and row is not None and bool(row["path"]) and not self.offline)
+        self.delete_button.setToolTip(OFFLINE_TOOLTIP if self.offline else
+                                      DELETE_TOOLTIP if row is None or row["path"] else NOT_MOUNTED_TOOLTIP)
         self.clear_button.setEnabled(idle and row is not None)
+        self.clear_results_button.setEnabled(idle and row is not None)
         self.review_button.setEnabled(row is not None and row["decision"] == "pending")
+        for line, text in zip((self.path_line, self.uuid_line), self.detail_lines(row)):
+            if line.text() != text:
+                line.setText(text)
+                line.setCursorPosition(0)
+        self.path_line.setToolTip(f"Location: {row['location']}" if row is not None else "")
+
+    @staticmethod
+    def detail_lines(row: dict[str, Any] | None) -> tuple[str, str]:
+        """The selected row's full .helab-root path (or where it was last seen), and its UUID."""
+        if row is None:
+            return "", ""
+        path = marker_path(row["path"]) if row["path"] else f"{NOT_MOUNTED} · last seen at {row['location']}"
+        return path, f"UUID {row['uuid']}"

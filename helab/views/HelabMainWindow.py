@@ -2,62 +2,73 @@ import gc
 import logging
 import os
 import platform
-import re
 import signal
-import subprocess
 import sys
-import tempfile
 import types
-import warnings
-import threading
 import time
-from helab.utils.io_service import IORequest, get_io_service
-from helab.utils.folder_cache import get_folder_cache, set_disk_budget, store_options
+from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, io_trace_folder, io_trace_refused
+from helab.utils.folder_cache import OFFLINE_TOOLTIP, get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
-from datetime import datetime, timedelta
+from helab.utils.lab_parameters import read_lab_constants
+from helab.utils import app_log, events
+from datetime import datetime
 from sys import getsizeof
-from typing import Any, List, Optional
+from typing import Any, Callable, Optional
 
 import psutil
-from PyQt6.QtCore import Qt, QSize, QTimer, QThreadPool, QFileInfo, QItemSelection, QModelIndex, QUrl, QEvent, QPoint, \
-    QDir, QDateTime, QSettings, QStorageInfo, QRect
-from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QPainter, QPixmap, QKeySequence
-from PyQt6.QtWidgets import QMainWindow, QDockWidget, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
-    QLabel, QToolBar, QSizePolicy, QFileDialog, QToolTip, QMenu, QApplication, QCheckBox, QTabWidget, QHBoxLayout, \
-    QPushButton, QTreeWidget, QTreeWidgetItem, QInputDialog, QProgressBar, QToolButton, QMessageBox
-from humanfriendly.terminal import message
-# from numpy.f2py.crackfortran import include_paths
-from pyqtgraph.parametertree import ParameterTree, Parameter
-from typing_extensions import no_type_check
+from PyQt6.QtCore import Qt, QSize, QTimer, QItemSelection, QUrl, QDateTime, QSettings, QRect
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplication, QPainter, QPixmap, QKeySequence
+from PyQt6.QtWidgets import QMainWindow, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
+    QLabel, QToolBar, QSizePolicy, QMenu, QApplication, QInputDialog, QProgressBar, QToolButton, QMessageBox
 
-from helab.models.ScriptTreeSelector import TreePanelWidget, ParamTreeTabWidget
+from helab.views.plots.arrangement import PlotReopen
+from helab.views.plots.presets import ArrangementPresets
+from helab.views.PresetsInspector import set_script_finder
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.workspace import PlotWorkspace
 from helab.resources.icons import ToolIcons
-from helab.utils.constants import *
+from helab.utils.constants import (
+    APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, DEFAULT_LOAD_MODE, DIR_TEMPS, LOAD_MODE_LABELS,
+    QSPLITTER_STYLESHEET, TOOLBAR_STYLESHEET_LR, assert_warn, cache_dir_refused, read_check_level,
+    read_disk_budget, read_io_concurrency, read_live_autosave, read_live_interval, read_load_mode,
+    app_folder, read_plot_auto_reload, read_ram_budget,
+)
 from helab.utils.number_format import byte_size, fnum
+from helab.utils.settings_defaults import (
+    AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, WORK_OFFLINE_SETTING, read_setting)
+from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
-from helab.views.CentralHint import CentralHint
+from helab.views.ClockSkewWarning import ClockSkewWarning
+from helab.views.OldLogs import OldLogs
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HoverMenuToolButton import HoverMenuToolButton
 from helab.views.FolderExplorer import (
-    AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP, IO_SPINNER, FolderExplorer, large_text,
-    paint_spinner,
+    AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP,
+    IO_SPINNER, FolderExplorer, paint_spinner,
 )
+from helab.views.explorer_text import large_text
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.MissingShotsWindow import MissingShotsWindow
+from helab.views.QuitSaveDialog import QuitSaveDialog
 from helab.views.RootDuplicatesWindow import RootDuplicatesWindow
 from helab.views.SettingsDialog import SettingsDialog
 from helab.views.DebugIconsWindow import DebugIconsWindow
 
-from PyQt6.QtWebEngineWidgets import QWebEngineView
-# sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'scripts'))
-# from helab.scripts.legacy_plotly.scattering_proj_monitori_dld import fig_txt_density
-import plotly
-import pyqtgraph as pg
-import pyqtgraph.parametertree as ptree
+# QtWebEngine must be imported before the QApplication exists; main.py imports this module first.
+from PyQt6.QtWebEngineWidgets import QWebEngineView  # noqa: F401
 
 PLACE_ROOT_MENU = " Place .helab-root…"
+
+# Work Offline (cache-only browsing; Tony named it, 2026-10-26: D2).
+WORK_OFFLINE_TOOLTIP = ("Browse and analyse cached data only: HeLab reads no source folder and no server until you "
+                        "turn this off. Remembered at the next start.")
+OFFLINE_STATUS = "Offline · cached data only"
+OFFLINE_STATUS_TOOLTIP = ("Working offline (File › Work Offline): folders show what was saved when they were last "
+                          "listed, checked or loaded. Click to work online.")
+REFRESH_TOOLTIP = ("Refresh folder list\nUpdate folder names and expanded folders in view.\n"
+                   "Use Check folder status to update counts and status.")
 
 
 class HelabMainWindow(QMainWindow):
@@ -75,25 +86,25 @@ class HelabMainWindow(QMainWindow):
     INTERVAL_UPDATE_STATUS_BAR_RIGHT = 1000
     INTERVAL_UPDATE_CENTRAL_LOADING_INDICATOR = 100
 
-    STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_COUNTS = 10
-    STATUS_LEFT_MISSED_REFRESH_HANG_THRESHOLD_SECS = 10
-    STATUS_LEFT_DEBUG_PRINT_HANG_THRESHOLD_MS = 999
 
     def __init__(self) -> None:
         super().__init__()
         self._closing = False
+        # Quitting waits for disk cache saves (QuitSaveDialog) unless Quit now, or none are left.
+        self._quit_dialog: QuitSaveDialog | None = None
+        self._quit_now = False
+        self._cache_dialogs_detached = False
         self.watchdog = GUIWatchdog(self)
         # logging.debug(f"Current directory is {CURRENT_WORKING_DIRECTORY}")
         if not os.path.exists(DIR_TEMPS): os.makedirs(DIR_TEMPS)
 
         self.current_tracking_folder_path = '/'
-        self.named_temp_files: List[tempfile._TemporaryFileWrapper[bytes]] = [] #TODO: dev code, remove these in prod
 
         signal.signal(signal.SIGINT, self.handle_exit)
         signal.signal(signal.SIGTERM, self.handle_exit)
 
         self.process = psutil.Process()
-        icon_path = os.path.abspath("./helab/resources/ai-icon.icns")
+        icon_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "resources", "ai-icon.icns")
         if os.path.exists(icon_path):
             self.setWindowIcon(QIcon(icon_path))
         else:
@@ -105,6 +116,7 @@ class HelabMainWindow(QMainWindow):
 
         # Create Central Widget Area with Dock Widgets
         self._setup_central_widgets()
+        self._start_with_rhi_surface()
 
         self.status_bar = QStatusBar()
         self._create_status_bar()
@@ -119,8 +131,17 @@ class HelabMainWindow(QMainWindow):
 
         # The disk cache's questions (Make room, Save update, 80% full), one at a time.
         cache = get_folder_cache(get_io_service())
+        # Work Offline is remembered (D2): on from the start, before any tab lists a folder.
+        cache.offlineChanged.connect(self._offline_changed)
+        if read_setting(app_settings(), WORK_OFFLINE_SETTING, typed=True):
+            cache.set_offline(True)
+        self._offline_changed(cache.offline)
         self.cache_dialogs = CacheDialogs(cache, self, lambda: self.show_settings_dialog(purge=True),
                                           self.show_status_notice)
+        # A folder's files dated ahead of this computer's clock: once per share or volume per session.
+        self.clock_skew_warning = ClockSkewWarning(cache, self)
+        # Old log files: tidied once at startup (``main`` calls its ``start``), off the GUI thread.
+        self.old_logs = OldLogs(app_folder(), self)
         cache.autoLoadPauseChanged.connect(self._auto_load_pause_changed)
         # Folders whose cached data doesn't match them: one list for the app, and its status-bar button.
         self.missing_shots = MissingShotsWindow(cache, self)
@@ -131,12 +152,22 @@ class HelabMainWindow(QMainWindow):
         self.root_duplicates = RootDuplicatesWindow(cache, self)
         self.roots_button.clicked.connect(lambda: self.review_root(None))
         cache.rootDuplicatesChanged.connect(self._update_roots_button)
+        self.plots.setup_ram_budget(cache, app_settings())
+        # The plots open last time reopen at start (Settings → General), after the first tab
+        # opens; recorded as plots open and close, and at quit. Presets of a folder and its plots.
+        self.plot_reopen = PlotReopen(self.plots, self.panel_right_bottom_script_selector)
+        self.arrangement_presets = ArrangementPresets(self.plots, self.panel_right_bottom_script_selector,
+                                                      self.current_explorer, self, cache)
+        self.menu_presets.aboutToShow.connect(lambda: self.arrangement_presets.fill_menu(self.menu_presets))
+        self.arrangement_presets.fill_menu(self.menu_presets, read=False)  # (It has asked for them.)
+        set_script_finder(self.panel_right_bottom_script_selector.find_script)  # Settings → Cache › Presets…
 
         # Create Left Panel (File Tree View)
         self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
 
         # Delay the execution of add_new_folder_explorer_tab until the GUI is loaded
         QTimer.singleShot(10, self.add_new_folder_explorer_tab)
+        QTimer.singleShot(30, self.plot_reopen.restore)
         QTimer.singleShot(50, self.update_tool_enabled_state)
         # QTimer.singleShot(20, self.on_folder_explorer_selection_changed)
         # Initial discovery is owned by the explorer; avoid duplicate refreshes.
@@ -173,6 +204,20 @@ class HelabMainWindow(QMainWindow):
         self.roots_button.setAutoRaise(True)
         self.roots_button.hide()
         self.status_bar.addPermanentWidget(self.roots_button)
+        # Shown while working offline (File › Work Offline); a click offers Work Online.
+        self.offline_button = QToolButton()
+        self.offline_button.setAutoRaise(True)
+        self.offline_button.setText(OFFLINE_STATUS)
+        self.offline_button.setToolTip(OFFLINE_STATUS_TOOLTIP)
+        self.offline_button.hide()
+        self.offline_button.clicked.connect(self._offline_button_clicked)
+        self.status_bar.addPermanentWidget(self.offline_button)
+        # Shown from 50 % of the RAM budget (loaded folders and plots); opens their sizes.
+        self.status_bar.addPermanentWidget(self.plots.ram_button)
+        # Shown while Help › Record I/O trace is on.
+        self.io_trace_label = QLabel("● I/O trace")
+        self.io_trace_label.hide()
+        self.status_bar.addPermanentWidget(self.io_trace_label)
         self.status_bar.addPermanentWidget(self.status_bar_message_right)
         self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
 
@@ -280,8 +325,7 @@ class HelabMainWindow(QMainWindow):
             self.status_bar_progress.setToolTip(explorer.loading_tooltip)
         self._update_cancel_loading_action()
         self.tab_widget.set_tab_switching_enable()
-        if not self.action_tab_live_checked:
-            self.set_tools_and_tabs_enable()
+        self._update_live_action()
         self.status_bar_message_last_update = datetime.now()
 
     def _spinner_pixmap(self) -> QPixmap:
@@ -300,8 +344,8 @@ class HelabMainWindow(QMainWindow):
         cpu_usage_total = sum(psutil.cpu_percent(percpu=True))
         ram_usage_app = self.process.memory_info().rss  # in bytes
         ram_usage_total = psutil.virtual_memory().used  # total used RAM in bytes
-        ram_usage_app_gb = ram_usage_app / (1024 ** 3)
-        ram_usage_total_gb = ram_usage_total / (1024 ** 3)
+        ram_usage_app_gb = ram_usage_app / 1e9  # (SI GB, as every size HeLab shows)
+        ram_usage_total_gb = ram_usage_total / 1e9
 
         # HeLab's own use; the system totals are in the tooltip.
         self.status_bar_message_right.setText(f"CPU {cpu_usage_app:.0f}% · RAM {ram_usage_app_gb:.1f} GB")
@@ -338,6 +382,13 @@ class HelabMainWindow(QMainWindow):
             menu_file.addAction(self.action_place_root)
             menu_file.setToolTipsVisible(True)
             menu_file.aboutToShow.connect(self.update_place_root_action)
+
+            # Cache-only browsing (D2): no source folder or server is read while it is on.
+            self.action_work_offline = QAction(" Work Offline", self)
+            self.action_work_offline.setCheckable(True)
+            self.action_work_offline.setToolTip(WORK_OFFLINE_TOOLTIP)
+            self.action_work_offline.triggered.connect(self.set_work_offline)
+            menu_file.addAction(self.action_work_offline)
 
             menu_file.addSeparator()
 
@@ -382,20 +433,14 @@ class HelabMainWindow(QMainWindow):
             self.view_toggle_status_bar.triggered.connect(lambda: self.status_bar.setVisible(not self.status_bar.isVisible()))
             menu_view.addAction(self.view_toggle_status_bar)
 
-            settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
-            self.view_toggle_thread_status = QAction('Toggle Thread Status Auto Pop-up', self)
-            self.view_toggle_thread_status.setCheckable(True)
-            self.view_toggle_thread_status.setChecked(settings.value("view_toggle_thread_status", type=bool, defaultValue=True))
-            self.view_toggle_thread_status.triggered.connect(lambda checked: settings.setValue("view_toggle_thread_status", checked))
-            menu_view.addAction(self.view_toggle_thread_status)
-
+            settings = app_settings()
             menu_view.addSeparator()
 
             self.view_toggle_auto_scan_visible = QAction('Automatically Check Folder Status in View', self)
             self.view_toggle_auto_scan_visible.setCheckable(True)
             self.view_toggle_auto_scan_visible.setToolTip(
                 "Scan visible folders that have no saved scan results; use Check folder status to recheck cached folders.")
-            self.view_toggle_auto_scan_visible.setChecked(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
+            self.view_toggle_auto_scan_visible.setChecked(read_setting(settings, AUTO_SCAN_VISIBLE_SETTING, typed=True))
             self.view_toggle_auto_scan_visible.triggered.connect(self.set_auto_scan_visible)
             menu_view.addAction(self.view_toggle_auto_scan_visible)
             get_io_service().configure_concurrency(
@@ -403,6 +448,8 @@ class HelabMainWindow(QMainWindow):
             set_disk_budget(read_disk_budget(settings))
             get_folder_cache(get_io_service()).set_ram_budget(read_ram_budget(settings))
             get_folder_cache(get_io_service()).check_level = read_check_level(settings)
+            self._apply_live_settings(settings)
+            get_folder_cache(get_io_service()).set_lab_constants(read_lab_constants(settings))
 
             self.view_toggle_auto_load_ram = QAction('Toggle Auto Load to RAM', self)
             self.view_toggle_auto_load_ram.setCheckable(True)
@@ -441,6 +488,11 @@ class HelabMainWindow(QMainWindow):
 
 
         
+        # Presets of a folder and its plots (helab/views/plots/presets.py), filled as it shows.
+        menu_presets = self.menu_bar.addMenu("Presets")
+        assert menu_presets is not None
+        self.menu_presets: QMenu = menu_presets
+
         menu_debug = self.menu_bar.addMenu('Debug')
         if menu_debug is not None:
             debug_action_2 = QAction('Draw a line in debug console', self)
@@ -487,9 +539,106 @@ class HelabMainWindow(QMainWindow):
             action_about = QAction("About HeLab", self)
             action_about.triggered.connect(self.show_about_dialog)
             menu_help.addAction(action_about)
+            menu_help.addSeparator()
+            # Off at every start and never saved.
+            # The temp-folder check before the I/O trace starts (``trace_check``): its owner, and the
+            # generation of the one waited for (None: none). Replaceable in tests: None asks with a
+            # message box (``_ask_delete_old_traces``).
+            self._trace_owner = f"io-trace-{id(self)}"
+            self._trace_generation = 0
+            self._trace_check: int | None = None
+            self.ask_delete_old_traces: Callable[[int, int, str], bool] | None = None
+            self.action_io_trace = QAction("Record I/O trace (this session)", self)
+            self.action_io_trace.setCheckable(True)
+            self.action_io_trace.setToolTip("Record every operation HeLab's helpers make on source folders "
+                                            "(listings, stats, reads) in HeLab's temp folder, until turned off")
+            self.action_io_trace.toggled.connect(self._toggle_io_trace)
+            get_io_service().resultReady.connect(self._on_trace_check)
+            menu_help.addAction(self.action_io_trace)
+            action_trace_folder = QAction("Show I/O trace folder", self)
+            action_trace_folder.triggered.connect(self._show_io_trace_folder)
+            menu_help.addAction(action_trace_folder)
+            action_log_folder = QAction("Show log folder", self)
+            action_log_folder.triggered.connect(self._show_log_folder)
+            menu_help.addAction(action_log_folder)
 
     def show_about_dialog(self) -> None:
         QMessageBox.about(self, "About HeLab", APP_BUILD_INFO.description())
+
+    def _toggle_io_trace(self, on: bool) -> None:
+        """Help › Record I/O trace (this session): a new recording folder in the temp folder's io-traces
+        folder; earlier recordings are kept unless the user deletes them when asked. A local-lane helper
+        checks the temp folder first (``trace_check``: its network/synced check reads the mount table,
+        which can stall on a disconnected network drive), never the GUI thread; 10 s without an answer
+        and the trace isn't started."""
+        service = get_io_service()
+        if not on:
+            if self._trace_check is not None:
+                self._trace_check = None
+                service.cancel(self._trace_owner)
+            service.stop_io_trace()
+            self.io_trace_label.hide()
+            return
+        self._trace_generation += 1
+        self._trace_check = self._trace_generation
+        service.submit(self._trace_owner, self._trace_generation, DIR_TEMPS, "trace_check",
+                       {"temps": DIR_TEMPS, "folder": io_trace_folder(DIR_TEMPS)}, timeout=10.0)
+
+    def _on_trace_check(self, request: IORequest, event: dict[str, Any]) -> None:
+        if (self._closing or request.owner != self._trace_owner or request.generation != self._trace_check
+                or event["kind"] not in ("trace_folder", "error")):
+            return
+        self._trace_check = None
+        if event["kind"] == "error":
+            self._refuse_io_trace(f"HeLab couldn't check its temp folder {DIR_TEMPS}: {event.get('message', '')}")
+            return
+        if event["problem"]:
+            self._refuse_io_trace(io_trace_refused(DIR_TEMPS, event["problem"]))
+            return
+        folder = io_trace_folder(DIR_TEMPS)
+        earlier: list[dict[str, Any]] = event["earlier"]
+        ask = self.ask_delete_old_traces or self._ask_delete_old_traces
+        if earlier and ask(len(earlier), sum(int(recording["size"]) for recording in earlier), folder):
+            # (Only earlier recordings: the new one doesn't exist yet.)
+            if kept := delete_io_traces(earlier):
+                QMessageBox.information(self, "I/O trace", (
+                    f"{len(kept):,} trace file{'' if len(kept) == 1 else 's'} couldn't be deleted (still open by "
+                    f"a running helper, or protected) and {'was' if len(kept) == 1 else 'were'} kept in {folder}."))
+        if not self.action_io_trace.isChecked():
+            return  # (Unticked while asked.)
+        path = get_io_service().start_io_trace(DIR_TEMPS)
+        self.io_trace_label.setToolTip(f"Recording the I/O trace in\n{path}\nHelp › Record I/O trace to stop.")
+        self.io_trace_label.show()
+
+    def _refuse_io_trace(self, reason: str) -> None:
+        self.action_io_trace.blockSignals(True)
+        self.action_io_trace.setChecked(False)
+        self.action_io_trace.blockSignals(False)
+        QMessageBox.warning(self, "I/O trace", f"The I/O trace isn't recorded. {reason}")
+
+    def _ask_delete_old_traces(self, count: int, size: int, folder: str) -> bool:
+        """Whether to delete the ``count`` earlier recordings (``size`` bytes; Keep is the default)."""
+        box = QMessageBox(QMessageBox.Icon.Question, "I/O trace",
+                          f"{count:,} earlier I/O trace{'' if count == 1 else 's'} "
+                          f"({byte_size(size)}) in {folder}.", QMessageBox.StandardButton.NoButton, self)
+        keep = box.addButton("Keep", QMessageBox.ButtonRole.RejectRole)
+        delete = box.addButton("Delete old traces", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(keep)
+        box.exec()
+        return box.clickedButton() is delete
+
+    def _show_io_trace_folder(self) -> None:
+        from PyQt6.QtGui import QDesktopServices
+        folder = io_trace_folder(DIR_TEMPS)
+        os.makedirs(folder, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
+
+    def _show_log_folder(self) -> None:
+        """Help › Show log folder: the app folder's ``logs``, where each HeLab writes its log."""
+        from PyQt6.QtGui import QDesktopServices
+        folder = app_log.log_folder(app_folder())
+        os.makedirs(folder, exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(folder))
 
     def _on_drive_result(self, request: IORequest, event: dict[str, Any]) -> None:
         if self._closing or request.owner != self._drive_owner or event["kind"] != "drives":
@@ -543,11 +692,13 @@ class HelabMainWindow(QMainWindow):
             self.settings_dialog.show_purge()
         self.settings_dialog.exec()
         self._set_root_window_modality(Qt.WindowModality.NonModal)  # Review… from Settings made it modal.
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+        settings = app_settings()
         self.apply_load_mode(read_load_mode(settings))
         get_io_service().configure_concurrency(
             read_io_concurrency(settings))
         cache.check_level = read_check_level(settings)
+        self._apply_live_settings(settings)
+        cache.set_lab_constants(read_lab_constants(settings))
         if read_disk_budget(settings) != store_options().get("budget"):
             # Saved without Save (e.g. Reset, then Cancel): the store is told until it has it.
             # (After Save it already has it: Settings saves a new disk budget only then.)
@@ -561,7 +712,16 @@ class HelabMainWindow(QMainWindow):
             size = sum(int(dataset.metadata.get("bytes", 0)) for dataset in dropped)
             self.show_status_notice(f"RAM budget lowered: dropped {len(dropped)} loaded "
                                     f"folder{'' if len(dropped) == 1 else 's'} ({byte_size(size)}) not shown in tabs")
-        self.apply_auto_scan_visible(settings.value(AUTO_SCAN_VISIBLE_SETTING, False, type=bool))
+        if (budget := self.plots.ram_budget) is not None:
+            budget.auto_reload = read_plot_auto_reload(settings)
+            budget.check()  # The plots' share of a new budget.
+        self.apply_auto_scan_visible(read_setting(settings, AUTO_SCAN_VISIBLE_SETTING, typed=True))
+
+    @staticmethod
+    def _apply_live_settings(settings: QSettings) -> None:
+        cache = get_folder_cache(get_io_service())
+        cache.live_interval = read_live_interval(settings)
+        cache.live_autosave_shots = read_live_autosave(settings)
 
     def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
         self._status_notice = (text, time.monotonic() + seconds)
@@ -678,22 +838,19 @@ class HelabMainWindow(QMainWindow):
         self.addAction(self.action_tab_cancel)
         self.action_tab_live = QAction(ToolIcons.ICON_LIVE, "Live", self)
         self.action_tab_live.setCheckable(True)
-        # FolderExplorer has no live monitor yet; do not imply that polling is active.
+        # Enabled for the current tab's selected folder once its data is shown (_update_live_action).
         self.action_tab_live.setEnabled(False)
-        self.action_tab_live_checked = False
-        self.action_tab_live_was_left_panel_open_before_clicking_live = True
 
         self.action_tab_new.setToolTip("New Tab")
         self.action_tab_new.setWhatsThis(
             "New Tab??? plz let me know if you see this text")  # literally don't know where this will show up memm
         # self.action_tab_new.set
-        self.action_tab_refresh.setToolTip(
-            "Refresh folder list\nUpdate folder names and expanded folders in view.\n"
-            "Use Check folder status to update counts and status.")
+        self.action_tab_refresh.setToolTip(REFRESH_TOOLTIP)
         self.action_tab_folder_up.setToolTip("Navigate up one directory")
         self.action_tab_rescan.setToolTip(self.FOLDER_STATUS_TOOLTIP)
         self.action_tab_cancel.setToolTip("Cancel loading in this tab (Esc)")
-        self.action_tab_live.setToolTip("Live updates unavailable\nUse Check folder status to check for new files.")
+        self.action_tab_live.setToolTip(
+            "Live\nSelect a folder with loaded data, or with no shots yet, to watch it for new shots.")
 
         # action_tab_new.triggered.connect(self.add_new_folder_explorer_tab)
         # action_tab_folder_up.triggered.connect(self.on_back_button_clicked)
@@ -817,11 +974,7 @@ class HelabMainWindow(QMainWindow):
 
         # right_top_widget = QLabel("Right Top Placeholder")
         # right_top_widget.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.panel_right_top_params_tab_widget = ParamTreeTabWidget(parent=self)
-        self.panel_right_top_params_tab_widget.add_example_tab()
-
-        self.panel_right_bottom_script_selector = TreePanelWidget(helab_main_window=self)
-        self.panel_right_bottom_script_selector.add_example_groups_and_items()
+        self.panel_right_bottom_script_selector = TreePanelWidget(self.plots)
 
         self.panel_right_bottom_script_selector.setVisible(True)
         # Add the bottom panel to the right_layout
@@ -832,7 +985,7 @@ class HelabMainWindow(QMainWindow):
         toggle_right_bottom_panel_action.triggered.connect(self.toggle_right_bottom_panel)
         self.sidebar_toolbar_right.addAction(toggle_right_bottom_panel_action)
 
-        self.right_splitter.addWidget(self.panel_right_top_params_tab_widget)
+        self.right_splitter.addWidget(self.plots.panel_right_top_plot_settings)
         self.right_splitter.addWidget(self.panel_right_bottom_script_selector)
         self.right_splitter.setSizes([400, 300])
 
@@ -841,12 +994,13 @@ class HelabMainWindow(QMainWindow):
 
 
     def _setup_middle_area(self) -> None:
-        self.middle_mainwindow = QMainWindow()
-        # Set a central widget for the middle main window
-        # Load details are in Folder details; the plot area keeps a short hint.
-        self.central_placeholder = CentralHint("Select a data folder to begin")
-        self.middle_mainwindow.setCentralWidget(self.central_placeholder)
-        self.dock_widgets: List[QDockWidget] = []
+        # The plot area: its docks, hint, Settings panel, Live feed and RAM budget.
+        self.plots = PlotWorkspace(self, current_explorer=self.current_explorer,
+                                   explorers=lambda: [explorer for _, explorer in self._explorers()],
+                                   notice=self.show_status_notice, show_settings=self.show_settings_dialog,
+                                   closing=lambda: self._closing)
+        # Desktop notifications without a system tray (helab/utils/events.py) go to the status bar.
+        events.hub().desktop.set_status_sink(self.show_status_notice)
 
 
         self.central_placeholder_timer = QTimer(self)
@@ -856,55 +1010,29 @@ class HelabMainWindow(QMainWindow):
         """ True is loading, False is loaded, None is not loadable"""
 
         # Add the middle main window to the splitter
-        self.splitter.addWidget(self.middle_mainwindow)
+        self.splitter.addWidget(self.plots.middle_mainwindow)
 
-        self.update_placeholder_visibility()
+        self.plots.update_placeholder_visibility()
 
-    def update_placeholder_visibility(self) -> None:
-        # Check if any dock widgets are visible
-        logging.debug(f"update_placeholder_visibility: called")
-        any_visible = any(dock_widget.isVisible() for dock_widget in self.dock_widgets)
-        if any_visible:
-            self.central_placeholder.hide()
-        else:
-            self.central_placeholder.show()
-
-    def _set_plot_source(self, dock: QDockWidget, explorer: FolderExplorer) -> None:
-        """Attach provenance to a plot at creation, before the selection changes."""
-        dataset = explorer.displayed_dataset
-        content = dock.widget()
-        if dataset is None or content is None:
-            return
-        dock.setProperty("dataSourcePath", dataset.path)
-        dock.setProperty("dataSourceSignature", dataset.signature)
-        wrapper = QWidget(dock)
-        layout = QVBoxLayout(wrapper)
-        layout.setContentsMargins(4, 4, 4, 4)
-        label = QLabel(wrapper)
-        label.setObjectName("plot_data_source")
-        label.setTextFormat(Qt.TextFormat.PlainText)
-        label.setWordWrap(True)
-        layout.addWidget(label)
-        layout.addWidget(content, 1)
-        dock.setWidget(wrapper)
-        HelabMainWindow._update_plot_source_label(dock, explorer)
+    def _start_with_rhi_surface(self) -> None:
+        """The 3D scatter's web view needs the window drawn through Qt's RHI; Qt switches a shown
+        window by destroying and recreating it, so the whole window closed and reopened when
+        the first such plot opened. A hidden QQuickWidget child, made before the window is
+        shown, makes it start that way. macOS only until checked on the lab PCs, whose GPUs
+        can't paint QtWebEngine (``needs_rhi_surface``)."""
+        if HelabMainWindow.needs_rhi_surface():
+            from PyQt6.QtQuickWidgets import QQuickWidget  # Loaded only where it is used.
+            self._rhi_surface = QQuickWidget(self)
+            self._rhi_surface.hide()
 
     @staticmethod
-    def _update_plot_source_label(dock: QDockWidget, explorer: FolderExplorer) -> None:
-        path = dock.property("dataSourcePath")
-        if not isinstance(path, str):
-            return
-        label = dock.findChild(QLabel, "plot_data_source")
-        if label is None:
-            return
-        node = explorer.model.nodes.get(explorer.selected_path_globally)
-        # A names-only listing has no signature; the explorer compares shot lists then.
-        current = (path == explorer.selected_path_globally and node is not None
-                   and (not node.signature or dock.property("dataSourceSignature") == node.signature)
-                   and explorer.folder_opened_path == path)
-        prefix = "Data source" if current else "Showing previously loaded data"
-        label.setText(f"{prefix}: {os.path.basename(path.rstrip(os.sep)) or path}")
-        label.setToolTip(path)
+    def needs_rhi_surface(system: str = sys.platform, qpa: str | None = None) -> bool:
+        """Whether the window starts with the hidden RHI surface: on macOS's own windows
+        (Qt's cocoa platform) only. Nothing is made on Windows or Linux, nor offscreen (tests),
+        where no window is recreated on screen."""
+        if qpa is None:
+            qpa = QGuiApplication.platformName()
+        return system == "darwin" and qpa == "cocoa"
 
     def toggle_left_panel(self, checked: bool) -> None:
         if checked: # Expand the left panel
@@ -1023,6 +1151,10 @@ class HelabMainWindow(QMainWindow):
         # self.action_tab_folder_up.setEnabled(self.tab_widget.tab_back_button_enabled)
         self.update_tool_enabled_state()
         current_folder_explorer = self.tab_widget.currentWidget()
+        for _, explorer in self._explorers():
+            if explorer is not current_folder_explorer and explorer.live is not None:
+                explorer.stop_live()  # Switching tabs turns Live off; its new shots are saved.
+        self._update_live_action()
         if isinstance(current_folder_explorer, FolderExplorer):
             # selection_model = current_folder_explorer.get_selection_model()
             # Connect the selectionChanged signal to the slot
@@ -1048,14 +1180,52 @@ class HelabMainWindow(QMainWindow):
             explorer.load_to_ram_cache(path)
         self._update_folder_details()
 
-    def load_folder_to_ram(self, current_folder_explorer: FolderExplorer, file_info: QFileInfo) -> None:
-        current_folder_explorer.load_to_ram_cache(file_info.absoluteFilePath())
-
     def _snapshot_data_loaded(self, explorer: FolderExplorer, path: str) -> None:
         if self.tab_widget.currentWidget() is explorer and path == explorer.selected_path_globally:
             self.current_tracking_folder_path_is_loading = False
             self._update_folder_details()
-            self.update_placeholder_visibility()
+            self.plots.update_placeholder_visibility()
+
+    def set_work_offline(self, on: bool) -> None:
+        """File › Work Offline (cache-only browsing; Tony, 2026-10-26: D1–D10). On: Live turns off in
+        every tab (its save finishes), then no source folder is read until it is turned off. Off:
+        every tab lists its shown folders again (Refresh, D8) and the current tab's selected folder
+        is checked as usual. Remembered across restarts."""
+        cache = get_folder_cache(get_io_service())
+        app_settings().setValue(WORK_OFFLINE_SETTING, bool(on))
+        if on == cache.offline:
+            self._offline_changed(on)
+            return
+        tabs = [widget for index in range(self.tab_widget.count())
+                if isinstance(widget := self.tab_widget.widget(index), FolderExplorer) and not widget.closed]
+        if on:
+            for explorer in tabs:
+                if explorer.live is not None:
+                    explorer.stop_live()
+            cache.set_offline(True)
+            return
+        cache.set_offline(False)
+        for explorer in tabs:
+            explorer.refresh()
+        current = self.tab_widget.currentWidget()
+        if isinstance(current, FolderExplorer) and not current.closed and current.selected_path_globally:
+            current.load_to_ram_cache(current.selected_path_globally)
+
+    def _offline_button_clicked(self) -> None:
+        if QMessageBox.question(self, "Work online?", "Work online again? HeLab lists the folders in every tab "
+                                "again and checks the selected folder's data.",
+                                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                                QMessageBox.StandardButton.Yes) == QMessageBox.StandardButton.Yes:
+            self.set_work_offline(False)
+
+    def _offline_changed(self, offline: bool) -> None:
+        """The File menu's check, the status-bar button and the tools that read source folders."""
+        if self._closing:
+            return
+        self.action_work_offline.setChecked(offline)
+        self.offline_button.setVisible(offline)
+        self._update_live_action()
+        self._update_folder_status_action()
 
     def _update_roots_button(self) -> None:
         count = len(get_folder_cache(get_io_service()).root_duplicates)
@@ -1084,6 +1254,11 @@ class HelabMainWindow(QMainWindow):
         for path in paths:
             current.load_as_it_is_now(path)
 
+    def current_explorer(self) -> FolderExplorer | None:
+        """The current tab's folder browser (None: no tab, or another kind)."""
+        current = self.tab_widget.currentWidget()
+        return current if isinstance(current, FolderExplorer) else None
+
     def _explorers(self) -> list[tuple[int, FolderExplorer]]:
         return [(index, widget) for index in range(self.tab_widget.count())
                 if isinstance(widget := self.tab_widget.widget(index), FolderExplorer)]
@@ -1092,7 +1267,7 @@ class HelabMainWindow(QMainWindow):
         """The tabs a running load is for (in tab order), and its progress note."""
         owners, note = get_folder_cache(get_io_service()).load_note(producer)
         tabs = [(index, explorer) for index, explorer in self._explorers()
-                if explorer.model.owner in owners or explorer.bg_owner in owners]
+                if {explorer.model.owner, explorer.bg_owner, explorer.live_owner, explorer.live_save_owner} & set(owners)]
         return tabs, note
 
     def _request_note(self, request: IORequest) -> str:
@@ -1120,12 +1295,12 @@ class HelabMainWindow(QMainWindow):
         if not self.folder_details.isHidden():
             self.folder_details.show_explorer(explorer, explorer.model.service if explorer else None)
         if explorer is None:
-            self.central_placeholder.set_hint("Select a data folder to begin")
+            self.plots.central_placeholder.set_hint("Select a data folder to begin")
             return
-        for dock in self.dock_widgets:
-            HelabMainWindow._update_plot_source_label(dock, explorer)
+        for dock in self.plots.dock_widgets:
+            PlotWorkspace._update_plot_source_label(dock, explorer)
         self.current_tracking_folder_path_is_loading = explorer.loading
-        self.central_placeholder.set_hint(*HelabMainWindow.central_hint(explorer))
+        self.plots.central_placeholder.set_hint(*HelabMainWindow.central_hint(explorer))
 
     @staticmethod
     def central_hint(explorer: FolderExplorer) -> tuple[str, str]:
@@ -1139,6 +1314,11 @@ class HelabMainWindow(QMainWindow):
                     f"{'Check' if explorer.load_is_check else 'Loading'} paused: {name}…" if explorer.load_paused else
                     f"Checking {name} for changes…" if explorer.load_is_check else f"Loading {name}…")
             return text, explorer.loading_tooltip
+        if explorer.live is not None:
+            live = explorer.live
+            return ((f"Live stopped: {name} — Retry in the folder summary", live.error) if live.error else
+                    (f"Live: watching {name} · " + (f"{live.new:,} new shot{'' if live.new == 1 else 's'}"
+                                                     if live.shots else "waiting for the first shot"), ""))
         if explorer.load_error:
             verb = "check" if explorer.shows_unchecked(path) else "load"
             return f"Could not {verb} {name} — see Folder details", explorer.load_error
@@ -1194,6 +1374,9 @@ class HelabMainWindow(QMainWindow):
             current_folder_explorer.reviewRootRequested.connect(self.review_root)
             current_folder_explorer.loadStateChanged.connect(self._update_folder_details)
             current_folder_explorer.loadStateChanged.connect(self._update_cancel_loading_action)
+            current_folder_explorer.liveChanged.connect(self._update_live_action)
+            current_folder_explorer.liveChanged.connect(lambda fe=current_folder_explorer: self.plots.follow_live(fe))
+            current_folder_explorer.dataLoaded.connect(lambda _, fe=current_folder_explorer: self.plots.follow_live(fe))
             current_folder_explorer.dataLoaded.connect(
                 lambda p, fe=current_folder_explorer: self._snapshot_data_loaded(fe, p))
         else:
@@ -1235,7 +1418,10 @@ class HelabMainWindow(QMainWindow):
 
     def _update_folder_status_action(self) -> None:
         explorer = self.tab_widget.currentWidget()
-        available = isinstance(explorer, FolderExplorer) and not explorer.closed
+        # Live locks the tab's folder tree: no status checks of it meanwhile.
+        # Working offline, no folder is checked either (cache-only browsing).
+        available = (isinstance(explorer, FolderExplorer) and not explorer.closed and explorer.live is None
+                     and not get_folder_cache(get_io_service()).offline)
         active = isinstance(explorer, FolderExplorer) and not explorer.closed and explorer._basic_active
         self.action_tab_rescan.setEnabled(available)
         title = "Cancel check" if active else "Check folder status"
@@ -1253,7 +1439,8 @@ class HelabMainWindow(QMainWindow):
         current_folder_explorer = self.tab_widget.currentWidget()
         if isinstance(current_folder_explorer, FolderExplorer):
             current_folder_explorer.update_back_button_state()
-            self.action_tab_folder_up.setEnabled(current_folder_explorer.back_button_enabled)
+            self.action_tab_folder_up.setEnabled(current_folder_explorer.back_button_enabled
+                                                 and current_folder_explorer.live is None)
         else:
             self.action_tab_folder_up.setEnabled(False)
 
@@ -1261,8 +1448,13 @@ class HelabMainWindow(QMainWindow):
         # logging.debug("set_tools_and_tabs_enable")
         self.action_tab_new.setEnabled(True)
         # self.action_tab_folder_up.setEnabled(True)
-        self.action_tab_refresh.setEnabled(True)
-        self.action_tab_rescan.setEnabled(True)
+        offline = get_folder_cache(get_io_service()).offline
+        # Working offline, Refresh and Check folder status would read folders (cache-only browsing).
+        self.action_tab_refresh.setEnabled(not offline)
+        self.action_tab_rescan.setEnabled(not offline)
+        self.action_tab_refresh.setToolTip(f"Refresh folder list\n{OFFLINE_TOOLTIP}." if offline else REFRESH_TOOLTIP)
+        self.action_tab_rescan.setToolTip(f"Check folder status\n{OFFLINE_TOOLTIP}." if offline
+                                          else self.FOLDER_STATUS_TOOLTIP)
         self.update_tool_enabled_state()
 
     def set_tools_and_tabs_disable(self) -> None:
@@ -1272,42 +1464,38 @@ class HelabMainWindow(QMainWindow):
         self.action_tab_refresh.setEnabled(False)
         self.action_tab_rescan.setEnabled(False)
 
-    def connect_folder_explorer_signals(self, index: QModelIndex) -> None:
-        current_folder_explorer = self.tab_widget.currentWidget()
-        if isinstance(current_folder_explorer, FolderExplorer):
-            current_folder_explorer.itemExpandedSignal.connect(self.update_tool_enabled_state)
-            QTimer.singleShot(50, self.update_status_bar_left)
-
     def on_live_button_clicked(self) -> None:
-        if self.action_tab_live_checked:
-            logging.debug("on_live_button_clicked: set to unchecked (stop tracking)")
-            self.action_tab_live.setChecked(False)
-            self.action_tab_live_checked = False
-            self.tab_widget.setEnabled(True)
-            if self.splitter.sizes()[0] == 0:
-                self.toggle_left_panel( self.action_tab_live_was_left_panel_open_before_clicking_live )
-            self.set_tools_and_tabs_enable()
-            self.update_tool_enabled_state()
-        else:
-            logging.debug("on_live_button_clicked: set to checked (start tracking)")
-            # logging.fatal(f"debug: {self.splitter.sizes()[0] > 0 = }")
-            self.action_tab_live_was_left_panel_open_before_clicking_live = self.splitter.sizes()[0] > 0
-            self.action_tab_live.setChecked(True)
-            self.action_tab_live_checked = True
-            self.tab_widget.setEnabled(False)
-            self.toggle_left_panel(False)
-            self.action_tab_refresh.setEnabled(False)
-            self.action_tab_new.setEnabled(False)
-            self.action_tab_rescan.setEnabled(False)
-            self.action_tab_folder_up.setEnabled(False)
+        """Live on or off for the current tab's selected folder (roadmaps/live-monitoring.md)."""
+        explorer = self.tab_widget.currentWidget()
+        if isinstance(explorer, FolderExplorer) and not explorer.closed:
+            if explorer.live is not None:
+                explorer.stop_live()
+            elif not explorer.start_live():
+                self.show_status_notice(explorer.live_unavailable(explorer.selected_path_globally)
+                                        or "Live couldn't start")
+        self._update_live_action()
 
-        current_folder_explorer = self.tab_widget.currentWidget()
-        if isinstance(current_folder_explorer, FolderExplorer):
-            # current_folder_explorer.toggle_live_update()
-            pass
+    def _update_live_action(self) -> None:
+        """The toolbar's Live follows the current tab. While it is on, the tab's folder tree is
+        locked, and so are Up, Refresh and Check folder status; switching tabs turns it off."""
+        if self._closing:
+            return
+        current = self.tab_widget.currentWidget()
+        explorer = current if isinstance(current, FolderExplorer) and not current.closed else None
+        enabled, tooltip = explorer.live_state() if explorer is not None else (False, "Live\nOpen a folder tab first.")
+        live = explorer is not None and explorer.live is not None
+        self.action_tab_live.setEnabled(enabled)
+        self.action_tab_live.setChecked(live)
+        if self.action_tab_live.toolTip() != tooltip:
+            self.action_tab_live.setToolTip(tooltip)
+        if live:
+            self.set_tools_and_tabs_disable()
+            self.action_tab_folder_up.setEnabled(False)
+        else:
+            self.set_tools_and_tabs_enable()
 
     def set_load_mode(self, mode: str) -> None:
-        QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME).setValue(LOAD_MODE_SETTING, mode)
+        app_settings().setValue(LOAD_MODE_SETTING, mode)
         self.apply_load_mode(mode)
 
     def apply_load_mode(self, mode: str) -> None:
@@ -1327,7 +1515,7 @@ class HelabMainWindow(QMainWindow):
                 explorer.auto_load_ram = toggled_on
 
     def set_auto_scan_visible(self, enabled: bool) -> None:
-        QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME).setValue(AUTO_SCAN_VISIBLE_SETTING, enabled)
+        app_settings().setValue(AUTO_SCAN_VISIBLE_SETTING, enabled)
         self.apply_auto_scan_visible(enabled)
 
     def apply_auto_scan_visible(self, enabled: bool) -> None:
@@ -1342,25 +1530,51 @@ class HelabMainWindow(QMainWindow):
             if a0 is not None:
                 a0.accept()
             return
+        if self._quit_dialog is not None or (not self._quit_now and self._wait_for_saves()):
+            # The quit window decides: when the saves end, or Quit now.
+            if a0 is not None:
+                a0.ignore()
+            return
         self._closing = True
-        self.cache_dialogs.detach()
+        self.plot_reopen.quit()  # The open plots are recorded before they close.
+        self.plots.close_plots()
+        self.plots.detach()  # The RAM budget, then the Settings panel.
+        if not self._cache_dialogs_detached:
+            self.cache_dialogs.detach()
+        self.clock_skew_warning.detach()
         self.watchdog.stop()
         for timer in self.findChildren(QTimer):
             timer.stop()
         self.tab_widget.closeEvent(None)
         get_io_service().shutdown()
-        # Local file cleanup never waits in the GUI.
-        def cleanup() -> None:
-            for temp_file in self.named_temp_files:
-                temp_file.close()
-                try:
-                    os.remove(temp_file.name)
-                except OSError:
-                    pass
-        threading.Thread(target=cleanup, daemon=True, name="HeLab-shutdown").start()
         if a0 is not None:
             a0.accept()
         QApplication.quit()
+
+    def _wait_for_saves(self) -> bool:
+        """Quitting turns Live off (it never survives a restart), which saves its new shots. If
+        any folder is being saved to the disk cache (that, or a finished load's background save),
+        a window names them and quitting waits, with Quit now. Whether it waits."""
+        for _, explorer in self._explorers():
+            explorer.stop_live()
+        cache = get_folder_cache(get_io_service())
+        if not cache.quit_saves():
+            return False
+        # Nothing else will be shown: the saves get the I/O. The cache's questions (Make room,
+        # Save update) wait for the next session.
+        cache.cancel_for_quit()
+        self.cache_dialogs.detach()
+        self._cache_dialogs_detached = True
+        self._quit_dialog = QuitSaveDialog(cache, self)
+        self._quit_dialog.finished.connect(self._quit_after_saves)
+        self._quit_dialog.open()
+        return True
+
+    def _quit_after_saves(self, result: int) -> None:
+        """The saves ended (or Quit now): quit."""
+        self._quit_dialog = None
+        self._quit_now = True
+        QTimer.singleShot(0, self.close)
 
     def handle_exit(self, signum: int, frame: Optional[types.FrameType]) -> None:
         # self.closeEvent(None)

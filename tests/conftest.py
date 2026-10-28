@@ -1,10 +1,14 @@
 # tests/conftest.py
 import os
+import sys
 import tempfile
 import json
+import re
+import traceback
 import uuid
 from pathlib import Path
-from typing import Iterator
+from types import TracebackType
+from typing import TYPE_CHECKING, Any, Iterator
 
 # Run Qt headless (offscreen) by default so tests don't pop up windows.
 # Set HELAB_SHOW_GUI=1 to force a real, visible display (e.g. when a test
@@ -28,12 +32,26 @@ if not os.environ.get("HELAB_SHOW_GUI") and "QT_QPA_PLATFORM" not in os.environ:
 # isolation. Each worker re-executes this module at its own startup, so an
 # unconditional assignment here always lets it stomp the inherited value with
 # a directory unique to itself.
+#
+# helab.utils.constants reads these overrides once, when it is first imported. A run that
+# imported helab before this file (a script calling pytest.main() after its own helab imports)
+# would already have the real cache folder and settings, and tests would write there.
+if "helab.utils.constants" in sys.modules:
+    raise RuntimeError("helab was imported before tests/conftest.py, so tests would use the real cache "
+                       "folder: import helab only after pytest has loaded conftest (e.g. patch it from a "
+                       "fixture or the test itself).")
 _worker_id = os.environ.get("PYTEST_XDIST_WORKER", "main")
 os.environ["HELAB_DIR_TEMPS_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_temps_{_worker_id}_")
 os.environ["HELAB_DIR_CACHES_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_caches_{_worker_id}_")
 os.environ["HELAB_APP_DIR_OVERRIDE"] = tempfile.mkdtemp(prefix=f"helab_test_app_{_worker_id}_")
 os.environ["HELAB_TEST_VOLUME_ID"] = "test-volume"
 os.environ["HELAB_TEST_LOCAL_MOUNT"] = Path(tempfile.gettempdir()).anchor
+# Tests never touch real data (a mounted share, a developer's data folder): helpers, and
+# helab.io_ops' functions called here, refuse such source paths before touching them and note
+# them in this folder, which fails the test (``no_real_data``). New tabs start in an empty folder
+# of their own, never the first of constants.DEV_POTENTIAL_DATA_PATHS that exists.
+os.environ["HELAB_TEST_SOURCE_GUARD"] = tempfile.mkdtemp(prefix=f"helab_test_refused_{_worker_id}_")
+START_FOLDER = tempfile.mkdtemp(prefix=f"helab_test_start_{_worker_id}_")
 # Tests write TXY files and load them at once; helpers would otherwise treat
 # them as still being written. Settling has its own tests.
 os.environ["HELAB_SETTLE_SECONDS"] = "0"
@@ -41,28 +59,145 @@ os.environ["HELAB_SETTLE_SECONDS"] = "0"
 
 import pytest  # noqa: E402  (after the environment above is set)
 
+if TYPE_CHECKING:
+    from helab.utils.io_service import IOService
+
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "no_auto_data_root: test the RAM-only or explicit marker path")
+    # The folders HeLab resolved must be this process's private ones, never the real app's.
+    from helab.utils import constants
+    expected = (os.environ["HELAB_DIR_CACHES_OVERRIDE"], os.environ["HELAB_DIR_TEMPS_OVERRIDE"],
+                os.environ["HELAB_APP_DIR_OVERRIDE"])
+    if (constants.cache_dir(), constants.DIR_TEMPS, constants.app_folder()) != expected:
+        raise pytest.UsageError(f"Tests would use HeLab's real folders ({constants.cache_dir()}, "
+                                f"{constants.DIR_TEMPS}, {constants.app_folder()}), not {expected}")
+
+
+_reruns: list[tuple[str, str]] = []  # (test, why it reran), in this process (the controller under xdist)
+
+
+def pytest_runtest_logreport(report: pytest.TestReport) -> None:
+    if report.outcome == "rerun":  # type: ignore[comparison-overlap]  # (pytest-rerunfailures' outcome)
+        text = report.longreprtext.splitlines()
+        lines = [line for line in text if line.startswith("E ")][:6]
+        lines += [line for line in text if re.match(r"\S+\.py:\d+: \w", line)][-1:]  # Where it failed.
+        _reruns.append((report.nodeid, "\n".join(lines) or report.longreprtext[-600:]))
+
+
+def pytest_terminal_summary(terminalreporter: Any) -> None:
+    """Why each rerun test failed: ``-rR`` names them only, so a flaky test's cause on CI was lost."""
+    if _reruns:
+        terminalreporter.section("rerun reasons")
+        for test, why in _reruns:
+            terminalreporter.write_line(f"{test}\n{why}")
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_teardown(item: pytest.Item) -> Iterator[None]:
+    try:
+        result = yield
+    except BaseException:  # A fixture's or pytest-qt's teardown failed: clean up, keep its failure.
+        delete_left_widgets(item.nodeid, fail=False)
+        raise
+    delete_left_widgets(item.nodeid)
+    return result
+
+
+def delete_left_widgets(test: str, *, fail: bool = True) -> None:
+    """Widgets a test leaves go with it. pytest-qt and fixtures only ``deleteLater()`` them, so a
+    later test's event loop, or the interpreter's exit, deleted them; a QWebEngineView outliving
+    its test that way crashed Qt (segfaults in ``test_live_plots.py`` on CI). Deferred deletes are
+    sent at each test's teardown, and a web view still alive after that fails the test: nothing
+    would delete it (``fail=False``: deleted only, when the teardown already failed)."""
+    if "PyQt6.QtWebEngineWidgets" not in sys.modules:
+        return
+    from PyQt6.QtCore import QEvent
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    from PyQt6.QtWidgets import QApplication
+    if QApplication.instance() is None:
+        return
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    alive = [view for view in QApplication.allWidgets() if isinstance(view, QWebEngineView)]
+    if alive:
+        for view in alive:  # (So the next test doesn't fail for this one too.)
+            view.close()
+            view.deleteLater()
+        QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+        if fail:
+            pytest.fail(f"{test} left {len(alive)} web view(s) alive: close or delete its plots",
+                        pytrace=False)
+
+
+def store_free(*services: "IOService") -> bool:
+    """Whether no helper of these IOServices, nor of the app-wide one, has the disk cache open (every
+    exit confirmed): only then may a test delete the store, which Windows refuses while a helper has
+    it open (WinError 32). A plot's Presets row reads presets through the app-wide FolderCache,
+    whatever cache the test gave the plot, and its timers keep starting helpers in later tests, on
+    the store of the test running then."""
+    from helab.utils import io_service
+    app = io_service._service
+    return not any(service.cache_busy() for service in (*services, app) if service is not None)
+
+
+@pytest.fixture(autouse=True)
+def private_settings(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each test's app settings are an ini file of its own (``settings_store.app_settings``), never
+    the machine's native store. In a folder apart from ``tmp_path``, which tests list."""
+    folder = tmp_path_factory.mktemp("settings")
+    monkeypatch.setenv("HELAB_TEST_SETTINGS_FILE", str(folder / "helab-settings.ini"))
+
+
+@pytest.fixture(autouse=True)
+def no_real_data(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """New tabs start in an empty temp folder; a test whose helpers were refused a source path
+    that could be real data (``io_ops.infra._guard``) fails, naming it. A refusal noted after its
+    test ended (a helper still running) fails the next test of this worker."""
+    monkeypatch.setattr("helab.views.FolderTabWidget.DEFAULT_DATA_PATH", START_FOLDER)
+    monkeypatch.setattr("helab.views.FolderTabWidget.DEV_POTENTIAL_DATA_PATHS", [START_FOLDER])
+    yield
+    notes = Path(os.environ["HELAB_TEST_SOURCE_GUARD"])
+    refused: list[str] = []
+    for note in sorted(notes.glob("*.txt")):
+        refused += note.read_text(encoding="utf-8").splitlines()
+        note.unlink()
+    if refused:
+        pytest.fail(f"Tests never touch real data, but this test's I/O asked for: {sorted(set(refused))}",
+                    pytrace=False)
+
+
+@pytest.fixture(autouse=True)
+def private_store(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
+    """Each test's disk cache is a store of its own (``constants.cache_dir()``, which helpers are
+    sent). A worker's tests shared one, so what a test left there (a pending save, a budget, roots)
+    changed a later test's results. In a folder apart from ``tmp_path``, which tests list."""
+    from helab.utils import constants
+    folder = str(tmp_path_factory.mktemp("caches"))
+    before = (constants.cache_dir(), constants.cache_dir_refused(), constants.cache_dir_enabled())
+    monkeypatch.setenv("HELAB_DIR_CACHES_OVERRIDE", folder)
+    monkeypatch.setattr(constants, "_dir_caches_override", folder)
+    constants.set_cache_dir(folder)
+    yield folder
+    constants.set_cache_dir(*before)
 
 
 @pytest.fixture(autouse=True)
 def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-                        request: pytest.FixtureRequest) -> Iterator[None]:
+                        request: pytest.FixtureRequest, private_store: str) -> Iterator[None]:
     """Give existing cache tests a marker and stable fake volume ID in test dirs.
 
     Individual root tests opt out and construct their own marker state. The
     wrapper seeds each test store through its roots table before the production
-    helper resolver opens it; no production fallback is introduced. The worker's
-    shared store forgets the test's roots afterwards, so a later test's
-    ``roots_verify`` checks only its own.
+    helper resolver opens it; no production fallback is introduced. The store
+    is the test's own (``private_store``), so a later test's ``roots_verify``
+    checks only its own roots.
     """
-    from helab import io_helper
+    from helab.io_ops import infra, stores
     from helab.utils import cache_paths, data_roots
     from helab.utils.cache_store import CacheStore, store_root
 
     monkeypatch.setattr(data_roots, "_volume_id", lambda _: "test-volume")
-    monkeypatch.setattr(io_helper, "_volume_id_cache", {})
+    monkeypatch.setattr(infra, "_volume_id_cache", {})
     # (On Windows, HELAB_TEST_LOCAL_MOUNT above stands in for the drive list.)
     if request.node.get_closest_marker("no_auto_data_root"):
         yield
@@ -82,8 +217,7 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
                         encoding="utf-8")
         return identifier
 
-    main_store = store_root(os.environ["HELAB_DIR_CACHES_OVERRIDE"])
-    seeded: set[str] = set()  # Root locations recorded in the shared store.
+    main_store = store_root(private_store)
 
     def seed(store_dir: str, source: str) -> None:
         mounts = cache_paths.current_mounts()
@@ -106,8 +240,6 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
         with CacheStore(store_dir, root_mode=True) as store:
             if store.read_only:
                 return
-            if store_dir == main_store:
-                seeded.add(location)
             if store.root_at(location) is None:
                 store.record_root(location, identifier,
                                   "smb" if location.startswith("smb://") else "vol",
@@ -117,38 +249,66 @@ def temporary_data_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 
     ensure_marker(str(tmp_path))
     seed(main_store, str(tmp_path))
-    original = io_helper._cache_store
+    original = stores._cache_store
 
     def open_seeded(root: str, source_paths: list[str] | None = None, *,
                     local_lane: bool = False, allow_unrooted: bool = False,
-                    verified_volumes: list[list[str]] | None = None) -> CacheStore:
+                    verified_volumes: list[list[str]] | None = None, offline: bool = False) -> CacheStore:
         for source in source_paths or ():
             seed(root, source)
         return original(root, source_paths, local_lane=local_lane, allow_unrooted=allow_unrooted,
-                        verified_volumes=verified_volumes)
+                        verified_volumes=verified_volumes, offline=offline)
 
-    monkeypatch.setattr(io_helper, "_cache_store", open_seeded)
+    monkeypatch.setattr(stores, "_cache_store", open_seeded)
     yield
-    if not seeded:
-        return
-    monkeypatch.undo()  # Tests that forbid I/O patch it out; this cleanup reads the store.
-    from helab.utils.cache_store import StoreError
-    try:
-        with CacheStore(main_store, root_mode=True) as store:
-            for location, _, _ in store.root_locations():
-                if any(location == root or location.startswith(root + "/") for root in seeded):
-                    store.forget_root(location)
-    except (StoreError, OSError):
-        pass  # (A test that left the store unusable; the next one's roots are its own anyway.)
 
 
 @pytest.fixture(autouse=True)
-def default_budget_is_newest(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Each worker shares one store, which keeps the newest budget it was sent; a budget an
-    earlier test lowered must not hold later tests' saves. Budget tests set their own again."""
-    import time
-    from helab.utils import folder_cache
-    monkeypatch.setattr(folder_cache, "_disk_budget_set_at", time.time())
+def default_constants() -> None:
+    """Plots that use constants start from the table's defaults: the app-wide FolderCache keeps
+    lab and folder values for the worker's whole run, and a test building a real
+    ``HelabMainWindow`` fills the lab's from its settings' saved Lab parameters. Only an existing
+    app-wide cache is reset (none is created here)."""
+    from helab.utils import io_service
+    service = io_service._service
+    cache = service.folder_cache if service is not None else None
+    if cache is not None:
+        cache.lab_constants = {}
+        cache.folder_constant_records.clear()
+        cache.constants_unsaved.clear()
+
+
+@pytest.fixture(autouse=True)
+def no_quitting_cache() -> Iterator[None]:
+    """A main window closed while saves were pending waits in its quit window, with the app-wide
+    FolderCache ``quitting``; deleted with its test, it never quits, and the worker's next test got
+    that cache, which refuses presets, flags and constants (a presets test then hung on the warning
+    it showed). It is shut down at teardown, so the next test gets a new one."""
+    yield
+    from helab.utils import io_service
+    service = io_service._service
+    cache = service.folder_cache if service is not None else None
+    if service is not None and cache is not None and cache.quitting:
+        service.shutdown()  # (Once closed, nothing.)
+
+
+@pytest.fixture(autouse=True)
+def where_qt_raised(monkeypatch: pytest.MonkeyPatch) -> None:
+    """An exception Qt reports from C, before any Python frame (a callable that is None when Qt
+    calls it), has no traceback, so pytest-qt's "Exceptions caught in Qt event loop" names no line
+    (``test_live_plots.py``'s scatter test on Ubuntu CI: "TypeError: 'NoneType' object is not
+    callable" at teardown). It gets a note: the test's or HeLab's code that was running Qt's event loop.
+    (Wraps pytest-qt's hook, which it installs before the test's fixtures.)"""
+    hook = sys.excepthook
+
+    def noted(kind: type[BaseException], value: BaseException, tback: TracebackType | None) -> None:
+        if tback is None:
+            ours = [frame for frame in traceback.extract_stack()[:-1] if "site-packages" not in frame.filename]
+            stack = "".join(traceback.format_list(ours[-4:]))  # (Short: the rerun reason keeps 600 characters.)
+            value.add_note(f"(No traceback: raised by Qt outside Python code, while this ran its event loop:)\n{stack}")
+        hook(kind, value, tback)
+
+    monkeypatch.setattr(sys, "excepthook", noted)
 
 
 @pytest.fixture(autouse=True)

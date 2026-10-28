@@ -23,8 +23,6 @@ import tempfile
 
 import coloredlogs
 
-# from helab.utils.loggingSetup import setup_logging
-# setup_logging()
 coloredlogs.install(
         level=logging.DEBUG,
         # format='%(asctime)s - %(levelname)s - %(message)s'
@@ -34,17 +32,17 @@ coloredlogs.install(
 
 import platform
 from typing import Any
-import re
-import subprocess
 import sys
-import os
 
-from PyQt6.QtCore import QSettings, Qt, QThreadPool, QTimer
+from PyQt6.QtCore import QSettings, QTimer
 from PyQt6.QtGui import QFont, QFontDatabase
 from PyQt6.QtWidgets import QApplication, QMessageBox
 
-from helab.resources.icons import StatusIcons, ToolIcons, IconsInitUtil
-from helab.utils.constants import *
+from helab.resources.icons import IconsInitUtil
+from helab.utils import app_log
+from helab.utils.constants import (
+    APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, app_folder, read_log_keep, start_cache_dir)
+from helab.utils.settings_store import app_settings
 from helab.views.HelabMainWindow import HelabMainWindow
 
 
@@ -69,7 +67,7 @@ def _start_cache() -> str:
     """Resolve a leftover cache move and register this instance; what was repaired ("" if nothing)."""
     import time
     from helab.utils.cache_locks import startup
-    settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
+    settings = app_settings()
     waiting: list[QMessageBox] = []
 
     def wait() -> None:
@@ -92,7 +90,9 @@ def _start_cache() -> str:
     message, instance = startup(app_folder(), recover, wait)
     for box in waiting:
         box.close()
-    QApplication.instance().aboutToQuit.connect(instance.unlock)  # type: ignore[union-attr]
+    app = QApplication.instance()
+    assert app is not None  # (main() makes it before starting the cache.)
+    app.aboutToQuit.connect(instance.unlock)
     _INSTANCE_LOCK.append(instance)
     return message
 
@@ -139,15 +139,11 @@ _INSTANCE_LOCK: list[object] = []
 
 
 def main() -> None:
-    # setup_logging()
+    # The packaged app has no console: errors leave their trace in the app folder's log file, and
+    # an unhandled exception is logged there and HeLab carries on (PyQt6 would end it).
+    app_log.start_log_file(app_folder())
+    app_log.catch_unhandled()
     _raise_fd_limit()
-    logging.debug("this is a debugging message")
-    logging.info("this is an informational message")
-    logging.warning("this is a warning message")
-    logging.error("this is an error message")
-    logging.critical("this is a critical message")
-    logging.fatal("this is a fatal message")
-
     logging.info(f"Platform: {sys.platform}, {platform.system()}, {platform.release()}, {platform.version()}, {platform.machine()}, {platform.processor()}")
     logging.info(f"{tempfile.gettempdir() = }")
 
@@ -174,7 +170,10 @@ def main() -> None:
     moved = _start_cache()
 
     main_window = HelabMainWindow()
+    app_log.catch_unhandled(main_window.show_status_notice)
     main_window.show()
+    # Registered as a running instance by now, so other HeLabs keep its log file.
+    main_window.old_logs.start(read_log_keep(app_settings()))
     if moved:
         QTimer.singleShot(0, lambda: QMessageBox.information(main_window, "Disk cache", moved))
 

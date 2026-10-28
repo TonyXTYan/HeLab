@@ -52,6 +52,10 @@ Both ways of running HeLab must work the same way:
 
 ## Release repos (proposed 2026-10-13, Tony to confirm)
 
+**Confirmed by Tony on 2026-10-28** (`.ai/DECISIONS_TODO.md` Q1.4). v0.0.6a1 is not lab-ready,
+so `HeBECANU/HeLab` waits for a later version (Q1.4.1). The heading keeps its old name so
+that links to it still work.
+
 Both repos run the same `dev-cicd.yml`, with Actions enabled, so a new version
 reaching either repo's `main` drafts a release **in that repo**. Today
 `TonyXTYan/HeLab` has the releases (v0.0.2e, v0.0.3b, draft v0.0.4a);

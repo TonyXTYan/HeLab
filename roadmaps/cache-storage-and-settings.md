@@ -596,6 +596,39 @@ found it removable with low to medium risk. The only visible change is one Debug
   to `dev/plotting-prototypes/` as unmaintained reference, not loaded by the app.
 - Docs: AGENTS.md's Threading, Caching and "earlier `HelabFileSystemModel`" paragraphs.
 
+## Saved listings and mount hints (cache-only browsing, 2026-10-26)
+
+What [cache-only browsing](cache-only-browsing.md) adds to the store:
+
+- **`listings`** (a record kind like `folder_summaries`: `path` = `root://` key, `record`, `saved_at`;
+  `gen_listings` in `meta`): a folder's subfolder names and own counts, written by `list` helpers
+  below data roots, read only offline. About 450 B per folder (4.5 MB per 10k folders). Settings →
+  Cache › Folder listings (Clear…); removed by Clear all, purges by age and a root's Clear cached
+  data…; moved by a nested root's re-key. Not counted toward the disk budget beyond `records.sqlite`.
+- **`mount_hints`** (`mount_path`, `location`, `seen_at`, in `ROOT_SCHEMA`): where each share or
+  volume was mounted, so an unmounted path keys offline; any current non-transparent mount at or
+  above the path wins.
+- Both are added to older stores by `_migrate`. An older HeLab's Clear all, root clear and re-key
+  don't touch listings (the next listing re-saves them).
+
+## Saved analysis results (result caching R2, 2026-10-23)
+
+The result cache's own rules are in [result caching](result-caching.md); what it adds here:
+
+- **Store layout:** `results` (one row per folder `root://` key and exact lookup key, a new
+  `result_id` every save, `last_used`), `pending_results` (results waiting for Make room or
+  Discard) and `gen_results` in `meta`; data in `results/<uuid>.npz` (NumPy arrays and a JSON
+  tree, never a pickle). Older `store-v3` stores gain them on a writable open (`_migrate`).
+- **Settings → Cache:** a Cached analysis row (count, size, Clear…, purge by `last_used`) and
+  **Reuse saved analysis results** (`result_reuse`, on by default). Clear all leaves results.
+- **Settings → Data roots:** Clear cached analysis… per root (button and menu), beside Clear
+  cached data…, which leaves results.
+- **Budget:** results count toward the one disk budget; one that doesn't fit asks Make room
+  (least recently shown other results, never datasets) or Discard.
+- **Store identity:** presets and saved results follow one rule, `FolderCache.store_answer`: the
+  cache folder decides which store is in use, answers from another store wait for an identity
+  probe, and writes name their store ([AGENTS.md › Caching](../AGENTS.md)).
+
 ## Sessions
 
 Each row is one agent session ending in one or two commits (ask Tony first). Start a session by
@@ -645,7 +678,7 @@ Notes from finished sessions:
   `close_all_caches` went with the old caches. `load_cache_param` stays for the helpers'
   options until S5. `helab/scripts/dev/` is now `dev/plotting-prototypes/` with a README;
   the prototypes no longer run (they import `LoadFolderToRamWorker`). `SynchronisedDict`
-  stays: the Dash server uses it. Checked offscreen: the main window and Settings open, and
+  stays: the Dash server uses it (no longer, by Codebase Review 2's check, 2026-10-26). Checked offscreen: the main window and Settings open, and
   the Cache tab shows one row. The old `status_cache/` and `os_file_system_cache/` folders
   stay on disk until S5 deletes them.
 - **S4:** `helab/utils/cache_store.py` (`CacheStore`), not yet used by any helper. Reads
@@ -722,7 +755,7 @@ Notes from finished sessions:
   `cache_admin` actions with `params`; `FolderCache` has `cache_admin()`, `removed()`,
   `pending_saves`, the sweep timer and the signals `cacheRemoved`, `pendingSavesChanged` and
   `cacheAdminResult` that S7's tab and dialogs use. Choices made here:
-  - The budget is bytes, default 8 GiB (`DISK_BUDGET_SETTING`, read at startup and after
+  - The budget is bytes, default 8 GB (`DISK_BUDGET_SETTING`, read at startup and after
     Settings; S7 adds the control). It travels in `store_options()`.
   - Live usage counts the records database by its pages in use (`page_count × page_size`),
     not the WAL file, whose size changes with checkpoints rather than with the records.
@@ -833,7 +866,7 @@ Notes from finished sessions:
   - At startup, after the sweep, an inventory restores saves still waiting from an earlier session
     (otherwise they would expire unasked) and the usage for the 80% pause; it is retried if the
     queue is full.
-  - Sizes are binary units shown as "GB" (the budget's 8 GB is 8 GiB), as the status bar already did.
+  - Sizes are binary units shown as "GB" (the budget's 8 GB is 8 GB), as the status bar already did.
   - The RAM budget is saved as steps (`ram_budget_steps`) and counts every dataset held in RAM
     once, including ones only a tab still shows (e.g. invalidated); lowering it drops unshown datasets at
     once and the status bar says what was dropped. The main status bar shows one-time notices

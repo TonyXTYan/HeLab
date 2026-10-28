@@ -1,182 +1,215 @@
 # HeLab Agent Notes
 
-HeLab (Helium Experiment Lab Analysis Board) is a PyQt6 desktop GUI application for real-time scientific data analysis in the ANU Helium BEC lab. It monitors experiment data folders, runs pluggable analysis scripts, and renders interactive visualizations.
+HeLab (Helium Experiment Lab Analysis Board) is a PyQt6 desktop app for real-time analysis of
+the ANU Helium BEC lab's delay-line-detector data. It browses the lab's data folders, loads and
+caches TXY files, follows new shots live and runs pluggable analysis scripts as interactive plots.
 
-Two repos exist: this one (`TonyXTYan/HeLab`) is the development branch; `HeBECANU/HeLab` is the stable lab deployment.
+`TonyXTYan/HeLab` (this repo) is where HeLab is developed and released; `HeBECANU/HeLab` is the
+lab's stable copy.
 
-## Working conventions
+**This file holds the rules every task follows, plus a map.** The detail of each area is in
+[`.ai/architecture/`](.ai/architecture/README.md). Keep this file under 30 KB: Codex reads only
+its first 32 KiB. A new feature adds at most a line here (an invariant, or a pointer); its
+mechanics go in its architecture file.
 
-- Address the user as "🎓Tony" in conversation.
-- Always ask Tony before running `git commit` in his checkout or on his branches. Staging, diffing and reviewing are fine without asking. An agent working in its own worktree, Maestri floor or cloud environment, on a new branch started from the commit Tony or the coordinator chose, may commit there freely and pushes that branch once, when its work is done (to save CI runs); merging into Tony's branches, landing a floor and opening a PR still need his approval ([agent workflow](roadmaps/agent-workflow.md)).
-- Every Git commit must include both a concise subject and a meaningful description in the message body, separated by a blank line. The description should explain what changed and why, and include relevant validation.
-- Whenever possible (a task finished, a natural pause, or work that touches the same area), offer to take on open items from `roadmaps/_readme.md` that fit, saying which and why. Offer only; start one after Tony agrees.
-- CodeGraph (`codegraph_*` tools, `.cursor/rules/codegraph.mdc`) is reliable for definitions, signatures and source, but its callers, callees, trace and impact results miss many calls made through attributes (e.g. `self.model.cache.submit(...)` reaching `FolderCache.submit`). Confirm them with grep before relying on them.
+## Working with Tony
 
-## AI workspace (`.ai/`)
+- Address the user as "🎓Tony" when answering him directly (a Chat answer, a reply in the
+  terminal). Progress lines and messages between agents don't need it.
+- **Commits.** Always ask Tony before `git commit` in his checkout or on his branches. Staging,
+  diffing and reviewing are fine without asking. An agent in its own worktree, Maestri floor or
+  cloud environment, on a new branch from the commit Tony or the Coordinator chose, commits there
+  freely. It pushes that branch once, when its work is done (each push runs the full CI). Merging
+  into Tony's branches, landing a floor and opening a PR need his approval.
+- **Commit messages:** a concise subject and a body that says what changed, why, and how it was
+  checked, separated by a blank line.
+- **Branches are kept.** Never delete an agent branch, locally or on GitHub; push finished
+  branches to `TonyXTYan/HeLab` for the record.
+- **Don't guess Tony's decision.** When a choice is his (behaviour users see, wording, scope,
+  anything hard to undo), add it to [`.ai/DECISIONS_TODO.md`](.ai/DECISIONS_TODO.md) with
+  options and a proposed answer, and carry on with what doesn't depend on it.
+- **Offer, don't start:** at a natural pause, offer roadmap or known-issues items that fit,
+  saying why. Start one only after Tony agrees. Items in [`.ai/AI_TODO.md`](.ai/AI_TODO.md) may
+  be done without asking.
+- **Floors** (Maestri; [workflow](roadmaps/agent-workflow.md), [setup](.ai/maestri-setup.md)):
+  workers and reviewers never edit `AGENTS.md`, `.ai/architecture/`, `roadmaps/`,
+  `.ai/MANUAL_TODO.md`, `.ai/DECISIONS_TODO.md`, `.ai/AI_TODO.md` or `.ai/memory/`. They write
+  only their own `.ai/sessions/<date>-<tool>-<task>/` and propose doc changes in its handoff,
+  which the Coordinator applies when landing.
+- **CodeGraph**, if the `codegraph_*` tools are available (`.cursor/rules/codegraph.mdc`): it is
+  reliable for definitions, signatures and source. Its callers, callees, trace and impact results
+  miss calls made through attributes (e.g. `self.model.cache.submit(...)`), so confirm them with
+  grep.
 
-- `.ai/coding-workspace.md` — shared AI-workspace conventions for Tony's repos (what goes in memory vs sessions, working rules).
-- `roadmaps/_readme.md` — the product overview, single priority/completion list and feature-plan index. Add new product items there, not to README or memory.
-- `roadmaps/` — ongoing feature documents: purpose, scope, dependencies, acceptance criteria and open decisions. Link each from `_readme.md`; do not duplicate its priority/completion checklist. Session-specific investigations and validation evidence stay in `.ai/sessions/`.
-- `.ai/maestri-setup.md` — human guide to setting up Maestri (coordinator, floors, setup hook, landing) for the [agent workflow](roadmaps/agent-workflow.md).
-- `.ai/MANUAL_TODO.md` — ongoing manual-action list, including native UI checks, real-volume testing and release validation. Detailed results and evidence belong in `.ai/sessions/`, linked from the item.
-- `.ai/memory/MEMORY.md` — index of project memory. Read it first; load individual files only when relevant. Settled design decisions (with the reasons and Tony's chosen wording/icons) live in `.ai/memory/results/`; this file keeps only the codebase rules.
-- `.ai/sessions/YYYY-MM-DD-<tool>-<title>/` — per-session notes. `.ai/session-export-codex/` and `.ai/session-export-claude/` — raw exported transcripts. Search these for history; don't auto-load them.
-- `.ai/temp/` and `.ai/local/` are gitignored scratch space.
+## Where things go
 
-## Setup
+| What | Where |
+|---|---|
+| A feature or priority | [`roadmaps/_readme.md`](roadmaps/_readme.md) (the one priority list), with a plan in `roadmaps/<feature>.md` |
+| A bug, gap or flaky test (any RERUN) | [`roadmaps/known-issues.md`](roadmaps/known-issues.md), until its cause is found and fixed |
+| A question only Tony can answer | [`.ai/DECISIONS_TODO.md`](.ai/DECISIONS_TODO.md) |
+| A settled decision, with its reason and Tony's wording | `.ai/memory/results/<topic>.md`, indexed in [`.ai/memory/MEMORY.md`](.ai/memory/MEMORY.md) |
+| A check that needs Tony at a screen, real data or the lab | [`.ai/MANUAL_TODO.md`](.ai/MANUAL_TODO.md) (the release smoke pass first) |
+| Work agents may do without asking | [`.ai/AI_TODO.md`](.ai/AI_TODO.md) |
+| How an area works (names, mechanics, behaviour) | [`.ai/architecture/<area>.md`](.ai/architecture/README.md) |
+| A rule every task must follow | this file |
+| Investigations, evidence, briefs, handoffs | `.ai/sessions/YYYY-MM-DD-<tool>-<title>/` (search, don't auto-load; raw transcripts in `.ai/session-export-*/` if present) |
+| Scratch | `.ai/temp/`, `.ai/local/` (gitignored) |
 
-Python 3.13 is the required version (CI gates on it). Use uv, as the README's "Setup (any machine)" guide does:
+**IDs:** items in the three `.ai/*_TODO.md` lists are `Q`/`A`/`M` + `<block>.<item>[.<sub>]` (e.g.
+`Q1.2`); refer to them by ID in commits, briefs and Chat. On a floor or in a cloud session, number
+proposals provisionally in your handoff (`Q~1`, `A~1`, `M~1`); the Coordinator or the Assistant
+merges them under the next block in [`.ai/ID_BLOCKS.md`](.ai/ID_BLOCKS.md), which has the rules.
+
+Read `.ai/memory/MEMORY.md` first (Claude Code loads it by itself; Codex should read it), and
+open individual memory files only when relevant. `.ai/coding-workspace.md` holds Tony's
+cross-repo conventions; it is a link into his `ai-common` folder and is missing on other machines.
+
+## Setup and commands
+
+Python 3.13 is required (CI gates on it). Use uv, as in the README's "Setup (any machine)":
 
 ```bash
 uv python install 3.13
 uv venv --seed --python 3.13 venv && source venv/bin/activate   # Windows: venv\Scripts\activate
-uv pip install -r requirements.txt -e .
-git submodule update --init --recursive   # legacy/tdc_autoconverter
+uv pip install -r requirements.lock -e .   # pinned; requirements.txt lists direct deps (README: refreshing the lock)
+git submodule update --init legacy/tdc_autoconverter   # the others (~440 MB) only for porting work
 ```
 
-`venv/` may be a symlink to `venv.nosync/` (keeps it out of iCloud Drive sync on macOS) — both names are gitignored and activation/imports behave identically either way.
-
-## Running
+`venv/` may be a symlink to `venv.nosync/` (out of iCloud sync on macOS); both are gitignored.
 
 ```bash
-helab              # via entry point
-python -m helab    # via module
+helab                          # or: python -m helab   (macOS venv/bin/helab, Windows venv\Scripts\helab.exe)
+pytest -n 12 --reruns 5 --reruns-delay 1   # full suite; at most the machine's cores (CI: -n 4)
+pytest tests/test_foo.py       # one file
+mypy helab/ --strict && mypy tests --strict && pyright helab tests
+pyinstaller HeLab.spec --clean -y          # HeLab.app on macOS (bundle ID au.edu.anu.he-bec-lab)
 ```
 
-## Testing
+Pass pyright explicit paths: bare `pyright` also scans `dev/`, `dist/` and `side_projects/`.
+`helab/scripts/legacy_plotly/` is excluded from type checks. Windows: if pytest crashes in
+cleanup with `WinError 5` on `pytest-current`, give each concurrent run its own
+`--basetemp=.ai/temp/pytest-<name>`. Logs: `<app folder>/logs/helab-<pid>.log` (macOS
+`~/Library/Caches/HeLab/logs/`, Windows `%LOCALAPPDATA%\HeLab\logs\`; Help › Show log folder).
 
-```bash
-pytest                        # all tests
-pytest -n 12 --reruns 5 --reruns-delay 1 --verbose   # faster: parallel, retries flaky tests
-pytest tests/test_foo.py      # single file
-pytest --cov=helab            # with coverage
-```
+## Tests and typing (rules)
 
-For the full suite, prefer the parallel form: `-n 12` runs 12 pytest-xdist workers (use at most the machine's CPU cores; CI uses `-n 4`). Never use `-n` without `--reruns` and `--reruns-delay` (pytest-rerunfailures): parallel workers can race (e.g. over temp folders) and Qt/timing tests fail now and then under load. Report any test that needed a `RERUN` rather than calling the run clean. Tests run Qt offscreen by default; set `HELAB_SHOW_GUI=1` to see the windows. `tests/conftest.py` gives every test's `tmp_path` a `.helab-root` and a fake volume ID (`temporary_data_root`); tests of RAM-only folders or of markers themselves opt out with `@pytest.mark.no_auto_data_root`. Production code reads two test seams: `HELAB_TEST_LOCAL_MOUNT` (Windows: one local mount) and `HELAB_TEST_VOLUME_ID` (a fixed volume ID).
+- **Tests never touch real data** (Tony, 2026-10-20). Conftest sets `HELAB_TEST_SOURCE_GUARD`,
+  under which helpers refuse any source path on a mount, share, cloud folder or
+  `constants.DEV_POTENTIAL_DATA_PATHS` outside the temp folder and this checkout; the refusal
+  fails the test. A test of mounts uses paths that don't exist.
+- **Never import helab before pytest has loaded `tests/conftest.py`**: `helab.utils.constants`
+  reads the cache, temp and app folder overrides (`HELAB_DIR_*_OVERRIDE`,
+  `HELAB_APP_DIR_OVERRIDE`) once at import, and conftest refuses to run otherwise. A script
+  that imports helab outside pytest sets those three variables first.
+- Never run `-n` without `--reruns` and `--reruns-delay`. **Report every test that needed a
+  RERUN**, quoting the summary's "rerun reasons", rather than calling the run clean, and list it
+  in known-issues until its cause is found.
+- Strict typing everywhere. `tests/test_typing.py` runs mypy (strict and not) and pyright inside
+  pytest, so a type error fails the suite.
+- Tests named `*.disabled` are skipped on purpose; find out why before reviving one.
+- Tests must not create native settings stores (conftest gives each test its own ini through
+  `app_settings()`), and must not leave a `QWebEngineView` alive.
+- **Done means:** the touched tests and the type checks pass for a small change; the full
+  parallel suite plus the three type checks pass before a handoff, a landing or a push, with
+  any RERUN reported.
+- Seams, fixtures and harness details (read gates, I/O traces, `store_free`, `no_source_io`,
+  offline tests, CI timeouts): [testing](.ai/architecture/testing.md).
 
-Windows: if pytest crashes during cleanup with `WinError 5` for
-`pytest-current`, use either option in PowerShell:
+## Codebase rules (invariants)
 
-```powershell
-pytest --basetemp="$env:TEMP/helab-pytest-fresh"
-pytest --basetemp=.ai/temp/pytest-fresh
-```
+Each rule names the area file with the detail.
 
-Use a dedicated scratch directory per concurrent run: pytest clears it at startup.
-See [investigation notes](.ai/sessions/2026-10-13-codex-windows-pytest/notes.md)
-for details and a separate intermittent cache-move failure.
+**I/O and threads** ([io-and-browsing](.ai/architecture/io-and-browsing.md)):
+- The GUI process never touches source folders or the disk cache store. Source-folder and store
+  work runs in isolated `helab/io_helper.py` processes (operation modules in `helab/io_ops/`),
+  started by `IOService` (`helab/utils/io_service.py`). The GUI has no worker pools besides the
+  one analysis worker thread (`AnalysisRunner`, no source I/O) and the short startup log tidy.
+- Rendering never reads disk or submits I/O: models, badges, tooltips and summaries read memory
+  only (`SnapshotFileSystemModel`).
+- Never let the GUI thread wait on cancellation, deadlines or a helper. Queues and concurrency
+  stay bounded and requests deduplicated.
+- A helper holds its slot **until its exit is confirmed** by the reaper's exit flag; never free
+  a slot on message delivery. A retry never runs beside the attempt it replaces.
+- Timeouts measure time **without progress** (helpers send heartbeats).
+- Files still being written (modified within `SETTLE_SECONDS` = 5 s, dated in the future, or
+  changing while read) are never read, cached, fingerprinted or counted in signatures.
+- Every automatic status scan goes through `FolderCache.submit`, which honours the scan-failure
+  flag; only a fresh successful scan clears it.
+- `helab/io_ops/` never imports `helab.io_helper` (it runs as `__main__`). A name tests patch is
+  called as `module.name` from other modules, never imported by value (list in the area file).
+- Helper events are the typed contract in `helab/io_ops/events.py` (standard library only);
+  add a kind there, and `tests/test_helper_events.py` checks both sides.
+- The frozen helper entry point in `helab/main.py` runs before imports that start GUI services,
+  caches or Dash.
 
-Tests ending in `.disabled` are intentionally skipped (not collected) — don't try to "fix" them into passing without checking why they were disabled first.
+**The disk cache** ([cache-store](.ai/architecture/cache-store.md),
+[data-roots](.ai/architecture/data-roots.md)):
+- Only helpers open the store (`DIR_CACHES/store-v3`, `CacheStore`); the GUI sends
+  `store_options()` with each request. A read answers found / missing / error, and an error is
+  never "nothing saved".
+- Disk caching needs a data root (a hidden `.helab-root` at or above the folder; keys
+  `root://<uuid>/<relative>`). Without one the folder is RAM only, with no fallback to path keys.
+- Every store write checks the save guard its job took when it started (generations, epochs,
+  `job_seq`), so a running save can't bring back removed data or overwrite newer data.
+- A table or column added within `store-v3` is added to older stores by `cache_store._migrate`
+  on every writable open, never only in `SCHEMA`.
+- **HeLab never removes the user's data, cached datasets, records, folder flags, constants or
+  presets without asking.** Housekeeping is the exception, and only what is listed here:
+  - the sweep deletes retired dataset files, and store files no row names once over an hour old;
+  - pending saves and results expire after `PENDING_MAX_AGE` (1 h);
+  - startup deletes the old diskcache folders and log files beyond the kept count;
+  - session-only lists drop their oldest entries;
+  - the RAM budget evicts datasets and releases plots (never closes them).
 
-## Type checking
+  Any other removal is the user's choice, asked first, and sends `removed` (Q3.3, to confirm).
+- Read the cache folder with `cache_dir()`, never `DIR_CACHES`: it can move while HeLab runs.
+- Every byte size shown is SI (kB/MB/GB, powers of 1000) (Tony, 2026-10-26).
 
-Strict typing is enforced — everything should be typed.
+**Settings** ([settings](.ai/architecture/settings.md)): open QSettings only through
+`app_settings()`. Every key HeLab reads is a row in `helab/utils/settings_defaults.py`, read
+through `read_setting`. Read numbers untyped (PyQt's `type=int` is 32-bit).
 
-```bash
-mypy helab/ --strict
-mypy tests --strict
-pyright helab tests
-```
+**Analysis and plots** ([plots-and-scripts](.ai/architecture/plots-and-scripts.md),
+[dld-analyses](.ai/architecture/dld-analyses.md)):
+- The script contract and the analysis core (`helab/analysis/`) import no Qt or plotting library
+  (`tests/test_headless_imports.py` lists each module).
+- Datasets share read-only NumPy arrays; analysis code that changes an array calls `.copy()`.
+- `compute` runs on the worker thread, `render` and `update` on the GUI thread. A hook that
+  raises is logged and HeLab goes on.
+- Saved results are NumPy arrays plus JSON (`result_codec`), never a pickle.
+- Matplotlib uses `matplotlib.figure.Figure`, never `pyplot`. A PyQtGraph log axis takes
+  `PlotDataItem`s. Avoid PyVista and VisPy.
+- The DLD port shows T in ms and X/Y in mm with "," grouping whatever the locale; Basic plots v1
+  keeps s and m with SI prefixes. Never rotate XY.
 
-`tests/test_typing.py` runs these (plus non-strict mypy) inside `pytest`, so type errors in tests fail the suite. Pass explicit paths to pyright: bare `pyright` also scans `dev/`, `dist/` and `side_projects/` and reports many unrelated errors. `pyrightconfig.json` and `mypy.ini` exclude `helab/scripts/legacy_plotly/` from type checks.
+**UI** ([app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md)): keep Qt's normal
+main-window resize and repaint handling (no `setUpdatesEnabled(False)` on the window).
+Navigation stays available during I/O. No vertical padding around panel blocks; status rows are
+one line, with detail in tooltips.
 
-## Building executables
+**Versions and releases** ([release-and-ci](.ai/architecture/release-and-ci.md)):
+- `helab/_version.py` is the only version source (PEP 440, no `v`).
+- Never generate `_build_info.json` in the source package.
+- The version bump goes on the PR branch.
+- Never modify a published release or move a tag.
 
-```bash
-pyinstaller HeLab.spec --clean -y    # all platforms
-```
+## Code map
 
-The `.spec` file produces `HeLab.app` on macOS (bundle ID `au.edu.anu.he-bec-lab`).
-
-**Versioning:** `helab/_version.py` is the only editable version source (PEP 440,
-no `v` prefix). Branch names need not match it. `helab/build_info.py` writes
-`_build_info.json` into PyInstaller/wheel build output; never generate it in the
-source package. Runtime uses that stamp, or Git explicitly rooted in the package's
-own checkout, never the launch directory. Help → About HeLab shows provenance.
-CI stamps record the explicit source branch/build ref without replacing Git HEAD.
-Put a release-version bump on the PR branch before final approval. A squash merge
-to `main` with a new version triggers CI tagging and a draft release after required
-checks pass; publication remains manual. An existing tag with an incomplete draft
-is recoverable: rebuild/test that tagged SHA, validate clean archive stamps before
-tagging/uploading, preserve manifest-verified assets and never modify a published
-release or force-move a tag. See `roadmaps/app-versioning.md`.
-
-## Architecture
-
-**Package layout:** `helab/models/`, `helab/views/`, `helab/workers/`, `helab/scripts/`, `helab/utils/`
-
-**Responsive filesystem I/O:** The active folder browser uses `IOService` (`helab/utils/io_service.py`) and isolated `helab/io_helper.py` processes. Requests are deduplicated, queues and concurrency are bounded, and cancellation/deadlines never wait on the GUI thread. Daemon reader threads deliver results through a bounded queue; a Qt timer applies small batches. Source folders are never queried by the GUI model. The frozen helper entry point in `helab/main.py` must run before imports that initialize GUI services, caches, or Dash. `GUIWatchdog` records event-loop stalls and dumps thread stacks independently of GUI timers.
-
-Rules for the shared I/O queue (decisions, timings and the stopping-helper display: `.ai/memory/results/folder-io-queue.md`):
-- One app-wide queue with two source-I/O lanes. The **foreground** lane runs the current tab's listings (`list`, `resolve`) and its selected load (in queue mode, its queued loads one at a time): one listing and one load at once, at most 3 processes including stopping ones, and it never waits for background work. The **background** lanes (Settings → General, "Simultaneous background I/O operations", default 1) run everything else: background loads, `details`, basic scans, cache writes and history saves. Navigation and loads precede bulk scans; FIFO within each group. `FolderCache` decides the lane (`foreground_owners`, set by the current `FolderExplorer`); switching tabs makes the old tab's work background.
-- While the foreground works, background loads and scans **pause cooperatively** (a `pause` file in the helper's private folder, checked between files/entries; `paused`/`resumed` events) and no new ones start; the selected load pauses while the tab lists a folder. Resume is 0.5 s after the foreground goes idle; a listing silent for 3 s no longer counts. A paused helper keeps its slot and its no-progress timer is frozen. A load leaving the foreground takes a free background slot, or is stopped and requeued to restart from its RAM shots.
-- **Automatic loads wait for the selection to settle** in Finish and Cancel modes (Queue mode keeps its 3 s wait): while a load is running, queued or stopping, or one started under 0.3 s ago, an automatic load starts only once the selection has stayed for 0.3 s plus 0.1 s per queued I/O task other than the folder's own, at most 1 s (`FolderExplorer.settle_seconds`); when idle it starts at once. Data in RAM shows at once; the cached read and the check wait. Tests set `SETTLE_MAX = 0` (`tests/conftest.py`).
-- A third, **local** lane (2 processes) runs `cached` reads of the local disk cache, batched `subtree_save` writes of derived subfolder status, `cache_admin` maintenance (the startup sweep) and `volumes_verify` (mounted volumes' IDs only, for data-root hints). They never touch source folders, never wait for or pause with foreground/background work, and are never paused. The user's `root_create`, `root_reassign` and `root_remove` (one marker write each) run in the foreground like a listing.
-- **Cache first.** Selecting a folder with a disk cache shows its data at once (memory, else a `cached` read), marked unchecked (`loaded (cached)` / `Checking for changes…`). The check is a load that runs **beside** the cached read (`cache_base`: it counts the cached shots as held; `FolderCache` holds its result until the read's dataset arrives; a failed or too-large read cancels it, and a plain load follows). Leaving the folder cancels a check that hasn't found files to read together with its read; one reading new files moves to the background with its read (Finish, Queue), and they stop together. Data in RAM counts as checked only for `FRESH_SECONDS`, after a load checked it or a scan of the folder found the same files (`FolderCache.counts_as_checked`, the one rule for the tab's label and for answering a load from memory; cached data counts only by such a scan), so returning to a folder later checks it again. When the cache has no unsettled files and the folder is not modified since the cache's file list (`snapshot_at`), the helper answers `unchanged` without listing, after statting a sample of the cached TXY files (Settings → General → Check of cached data: Swift = last, Fast = first and last, Medium (default) = those plus max(3, 1%) random, High = plus max(10, 3%), Full = always list; names saved in the dataset info). A full listing that finds every cached TXY file unchanged, none still being written, records that without rewriting the dataset (`CacheStore.confirm_dataset`): `snapshot_at` moves to when it started, `unsettled` to 0, and older caches gain their names, so a later non-TXY change (Finder's `.DS_Store`) doesn't rule out the quick check for good. Otherwise it lists, fingerprints and merges as usual. Shots cached or held that the folder no longer lists stop the load before any file is read (`shots_missing`): TXY files are written once, so another folder may sit at that path; a folder status check or details scan finds the same from the dataset's record alone (`cache_mismatch`, no data read). The folder's data is dropped from RAM and not shown (`FolderCache.mismatched`: session-only, up to 8192 folders, oldest dropped first; never a load's base) until a load completes or its cached data is cleared. The tab's line says Retry after checking the drive (remounting the right one is a fix) and offers Review…, which opens the window with that folder selected. One app-wide, non-modal `MissingShotsWindow` lists them (newest first; status-bar "⚠ N mismatched" reopens it) with Load as it is now (`FolderExplorer.load_as_it_is_now` → `allow_missing`, used once) / Don't load. When the session's count reaches 2, 4, 8…, loads and scans pause and none start (`IOService.mismatch_hold`, `MISMATCH_HELD`; browsing, cached reads, cache saves and icons go on) until Resume or Cancel all loads and scans; from 8, Skip mismatched folders lists them silently for the session with no more holds. Selecting a folder with saved counts and a disk cache does not list it (expanding still does). A failed check keeps the cached data with `Check failed` and Retry. A repaired TXY file gets a new name; right-click Retry / Refresh makes the folder's next check (at once for the shown folder) compare every file's size and mtime (`full_check`), since a file rewritten in place doesn't change the folder's mtime.
-- **Files still being written** (modified within `SETTLE_SECONDS` = 5 s, or changing while read) are never read or cached: they are left out of fingerprints and signatures (loads and scans alike), counted as `still being written`, and the cache records `unsettled` so the next check is a full one. Tests set `HELAB_SETTLE_SECONDS=0`.
-- A helper occupies its slot **until its exit is confirmed** by the daemon reaper's in-memory exit flag — including cancelled/timed-out helpers and background cache writers. Never free a slot on message delivery or reader completion; duplicate exit notifications are matched by request identity.
-- Browsing is two steps. `list` (one scandir, names only; the only stat is its own `.helab-root`'s, for data roots) gives counts and status at once, plus each subfolder's saved summary, history and cache flags from the local cache — so saved badges appear immediately and automatic visible scans don't redo them. `details` (the full scan) follows in the background for the signature and dates. Saved status is a last-known result keyed by data root (root UUID and relative path; the SMB share is only a location) on disk, and by source path in session memory: a changed observed folder mtime adds the amber clock, and only that folder's own completed status check replaces its result. Inodes and mount device numbers never invalidate saved status or scan-failure history. It is skipped while a load of a folder **without subfolders** runs — the load sends and saves the same folder summary. A listing writes only root-discovery records (`roots`, `root_volumes`, a nested root's re-key) and never clears a scan failure; a listing error records one. An empty `signature` means unknown, never "changed".
-- Timeouts measure **time without progress**; helpers send heartbeats while listing or checking files. Listings, scans and a load's listing phase get one 60 s attempt with no retry (a timeout is one scan failure). Only a load's per-file reads retry, with 15/20/30 s attempts per file. Right-click Retry / Refresh and the status-line Retry list one folder with no timeout, showing elapsed time and a Cancel action; a load retry keeps its per-file timeouts. **A retry never runs beside the attempt it replaces** — it is held until that helper exits. Cancellation stops retries. Timed-out loads restart from completed RAM shots after fingerprint validation.
-
-**Folder icons:** The name column starts with a generic folder icon. Visible rows get native folder/volume icons (including macOS custom icons) from a separate `icons` helper in the shared background I/O lane, in batches of at most 64 with a 5-second no-progress timeout and cooperative pausing. `FolderCache` holds up to 4096 icons in session memory, shared across tabs; failed lookups retain the generic icon until Refresh. Icon lookup never runs during listing or model rendering. Refresh clears visible icons for another lookup. Keep the native Qt platform plugin in the helper; offscreen Qt cannot supply macOS custom icons.
-
-**Data roots:** Disk caching needs a **data root**: a folder holding a hidden `.helab-root` JSON marker (`helab/utils/data_roots.py`: `{"helab": "root", "version": 1, "uuid", "label", "created_at"}`; unknown fields are ignored, an invalid marker is no root). A folder's cache key is `root://<uuid>/<relative>` from the nearest marker at or above it; nested markers are allowed. **Without one the folder uses RAM only**: nothing is read from or written to the store for it, with no fallback to path keys. Folder details then says "RAM only · no .helab-root above this folder", but only when a helper reported it (`FolderCache.no_root`), never because a root is unknown. The store's `roots` table maps **location** keys to UUIDs (`helab/utils/cache_paths.py`): `smb://server/share/relative` for shares (server and share lowercased, SMB account omitted, `/Volumes` suffixes ignored; Windows mapped drives and UNC paths alike) and `vol://<OS volume ID>/relative` for local volumes, so two same-named USB disks never share a location. Matching is case-insensitive on SMB and Windows volumes, but keys keep the source path's spelling.
-- **Discovery:** with the disk cache on, a listing lstats its own folder's `.helab-root` before its scandir, then reads and reconciles the marker (`_discover_root`: `root_found`, `root_changed`, `root_duplicate`). A marker found below an outer root re-keys that subtree's rows in one transaction (newer wins). A replaced marker starts fresh. An unreadable marker keeps the row; an invalid one forgets it. If the folder's key changed, the entries are sent again with `replace`. Results (list and scan status, cached and load `loaded`) carry `data_root`, so tabs know a folder's root without listing the root folder.
-- **Local lane:** it uses only the `roots` table and the `root_volumes` hints that source helpers record. Cached reads, subtree saves and scan-history writes trust only the hints this session's verification checked (`verified_volumes`, from the local-lane `volumes_verify` at startup and after a mount change), plus the system volume's. On any other volume they wait (`VolumeUnverified`) and the cached read is retried on `volumesVerified`. `roots_verify` (background, after other background work queued later: nothing waits for it) re-reads known markers. A listing asks for both again only when it reports a mount table they weren't asked for.
-- **Placing one:** right-click › **Place .helab-root here…**, or **File › Place .helab-root…** for the current tab's selected folder (at first its top folder, which isn't a tree row, e.g. a drive's top; `HelabMainWindow.update_place_root_action` on `aboutToShow`), runs `root_create` in the foreground. It writes the marker with exclusive create (hidden: dot name, Windows hidden attribute, macOS `UF_HIDDEN`). It first checks for a folder that isn't the top of its drive or share, is inside another root, is a home folder, the startup disk's top (`/`, never offered) or `/Volumes` (`DataRootDialogs.placement_checks`); with warnings, Cancel is the default button. Markers go as high as every machine sees the data: Windows `C:\` is a drive top like any other (a note says it may need admin rights). An existing marker is adopted; an invalid one is never overwritten. Without write permission, `ManualMarkerDialog` hands out the exact JSON. RAM-only folders grey out Don't cache / Don't auto-load and Clear loaded data cache. Root folders show the ANCHOR badge beside their status icon.
-- **Duplicates:** the same UUID at a new location is pending, and RAM only, until the user answers in `RootDuplicatesWindow`. It opens once per location per session: Later asks again at the next sighting, Remind me next session not until the next session, and the status bar shows "⚓ N to confirm". **Same folder** runs `cache_admin root_same`. **It's a copy…** runs `root_reassign` in the foreground: the other side gets a new marker, and the side keeping the original UUID keeps the data. Until then the tree warns on that folder and its shown descendants (ROOT_PENDING, an amber alert triangle beside the status icon, from `FolderCache.pending_root`; rows refresh on `rootDuplicatesChanged`), the row tooltip says "Data root “label” also seen at <other>: same folder or a copy? RAM only until answered.", the summary's cache line says "RAM only · this .helab-root is also at another location" with a Review… button, and Settings → Data roots has Review… on pending rows; all open the window at that location (`HelabMainWindow.review_root`, modal when Settings is open). Same folder, It's a copy… and a forgotten or removed location (`root_changed` with its location) settle it.
-- **Settings → Data roots** (`helab/views/DataRootsTab.py`) lists the locations and forgets one (`forget_root`). A forgotten location is found again while its marker is there. Clear all never touches `roots`. A row's menu also has Show in Finder / File Explorer / File Manager (reveals the hidden marker; a detached launch, no source I/O in the GUI) and Copy path; **Delete .helab-root…** (also a footer button; Cancel default) runs `root_remove` in the foreground: it deletes the marker only if it is still a regular file holding the row's UUID, then forgets that location and those below it with the UUID (cached data stays under the UUID), or without permission names the file (`root_remove_refused`). Open tabs list that folder, and their top and selected folders inside it, again (`rootDecided`). Not-mounted rows can't be shown or deleted. **Clear cached data…** (button and menu item, any row, mounted or not; the list's Cached column and the confirmation give the size from the inventory's `cached`) runs `cache_admin clear_root`: every record, dataset and pending save keyed below `root://<uuid>` goes in one transaction, with that root's epoch bumped (`folder_epochs` row `root-clear://<uuid>`, which every save guard below the root checks) so a save already running can't bring data back; `roots`, folder flags and the marker stay, dataset files are retired, and `removed` resets RAM flags. The user's marker writes (`root_create`, `root_reassign`, `root_remove`) run in the foreground whoever asked (`MARKER_OPERATIONS`).
-- **Unsupported mounts:** NFS, AFP and WebDAV mounts stay unsupported for disk caching ("Disk cache off" line per mount per session; Windows WebDAV UNC paths included). Two SMB accounts on one share use the same rows.
-- **Fresh store:** the store is `store-v3`, which started empty; `store-v2` is left on disk unused, and can be moved to the Trash by hand.
-- **Network plan:** the root UUID is the planned cross-machine logical root ID; location keys stay local (`roadmaps/network-runners-and-web.md`). Design: `roadmaps/data-roots.md`.
-
-Session-only `FolderCache` and open tabs still use source paths. If shares remount while HeLab stays open and macOS reorders `/Volumes` suffixes, toolbar Refresh relists the shown branches and, when saved records can be read, replaces their RAM status, failure history and derived status with the newly mounted share's saved results. It leaves RAM datasets available but unchecked, so the next selection checks them. A background details pass re-observes folder dates for freshness hints. Restart HeLab to refresh other paths and other tabs' loaded data. A load checks TXY files and reports mismatched folders when files have disappeared, but a stale derived subfolder status can be saved under the newly mounted share and show an amber clock until its children are checked. Live tab rebinding and offline roots are future roadmap work.
-
-**Threading:** The GUI process has no worker pools. Source-folder and disk-cache work runs in isolated `io_helper` processes, whose results daemon reader threads deliver (see Responsive filesystem I/O). `GUIWatchdog` and the Dash server run on their own background threads.
-
-**Window resizing:** Keep Qt's normal main-window resize and repaint handling. Disabling updates for the whole window during resize and restoring them with a timer can stop paint delivery while I/O continues. Resize regressions in `tests/test_window_resize.py` check continuing paint events and scan cancellation, not just `updatesEnabled()`.
-
-**Caching:** The disk cache is `DIR_CACHES/store-v3` (`helab/utils/cache_store.py`, `CacheStore`): SQLite records in `records.sqlite` (WAL, JSON text) and one Blosc-compressed dataset file per folder in `datasets/`. **Only helpers open it**; the GUI sends `store_options()` (`helab/utils/folder_cache.py`) with each request and never opens the store, at startup or in Settings. Reads answer found / missing / error, and an error is never "nothing saved". Every write checks a save guard taken when its job started (per-kind generations, the folder's epoch, and for datasets a `job_seq`), so a save that was already running can't bring back removed data or overwrite newer data. Replaced dataset files are retired, never deleted at once; a `cache_admin sweep` helper on the local lane deletes them later (at startup, then by the deadline each helper reports, via one `FolderCache` timer), and at startup also deletes the old diskcache folders (`data_ram_cache`, `status_cache`, `os_file_system_cache`). **Nothing is removed without the user asking.** Maintenance goes through `FolderCache.cache_admin(action, …)` (`inventory`, `clear`, `purge`, `trim`, `adopt`, `discard`, `sweep`, `forget_root`, `root_same`, `clear_root`; results on `cacheAdminResult`). Every removal sends `removed` (kinds, paths); `FolderCache.removed()` resets exactly those flags and saved results in memory, and ignores results read before the removal. A load's save checks the disk budget (`store_options()["budget"]`, default 8 GiB, live data only) in its save transaction, using the budget the app set last (requests carry `budget_set_at`; the store records the newest, so a load started before the user lowered it saves within the new one): one that doesn't fit, or that grows a cached folder while usage is at 80%, becomes a pending save (`cache_full` / `cache_approval`, tracked in `FolderCache.pending_saves`) until Make room (`adopt`) or Don't cache (`discard`). Helpers report the store's live usage with their results (`usage`, `usage_seq`); `FolderCache` keeps the newest by the store's write count (never by clock time). At 80% of the budget, automatic loads of folders without cached data pause (`FolderCache.auto_load_paused`, `FolderExplorer.auto_load_paused_path`; deliberate loads and cached folders still work) and `diskNearlyFull` asks once per crossing; Ignore lasts the session until usage rises another 10% of the budget. At startup an inventory restores saves still waiting from an earlier session, and the usage. `CacheDialogs` (`helab/views/CacheDialogs.py`) asks the cache's questions one at a time: Make room / Don't cache this folder now, Save update / Don't cache this update now, and the 80% warning. The Settings → Cache tab (`helab/views/CacheTab.py`) shows the inventory, clears by kind, purges by age and sets both budgets; every action asks first (`CacheTab.confirm`), and a changed disk budget is saved only after the store has recorded it (`CacheTab.apply_budget`). Large folders (`helab/utils/large_folder.py`): a load's or cached read's estimate is its TXY files' size on disk, unscaled; above the RAM budget or 10% of RAM, automatic loads never start (amber "Large folder · ~X in RAM" with **Load anyway…**) and deliberate ones ask (`LargeFolderDialog`); above 30% of RAM nothing loads. The tab decides from saved sizes before submitting (`FolderCache.large_estimate`, `FolderExplorer._large_blocked`), and helpers check again (`limits`, `allow_large`, `too_large` events). Folder flags (right-click › Don't cache / Don't auto-load this folder; store `folder_prefs`, `FolderCache.folder_prefs`) apply to one folder only, come with listings, and are never removed by Clear all, purges or making room; every dataset save checks `no_cache` in its transaction. File kinds (TXY, raw `d*.txt`) are matched, counted and sized from one table, `FILE_KINDS` (`helab/utils/file_kinds.py`). Design and later sessions (large-folder warning, cache move, folder flags): `roadmaps/cache-storage-and-settings.md`.
-
-Cache dirs resolve via `QSettings` (`dir_caches` / `dir_temps`) to `DIR_CACHES` / `DIR_TEMPS` in `helab/utils/constants.py`; the cache folder can change while HeLab runs, so read it with `cache_dir()` (never `DIR_CACHES`). It changes only by moving the cache (Settings → General → Change…, `helab/views/CacheMover.py`, `helab/utils/cache_move.py`): every helper that opens the cache is held (`IOService.hold_cache`), the folder is renamed or copied and verified, `dir_caches` is saved and synced before the switch (`set_cache_dir`), and a crash at any step is recovered at the next start (in a helper) from `cache-move.json` in the app folder (`app_folder()`), before any cache opens. OS file locks there (`cache.lock`, `move.lock`, `instances/<pid>.lock`; `helab/utils/cache_locks.py`) keep other HeLabs away from a move; tests set `HELAB_APP_DIR_OVERRIDE`. Defaults are persistent per-user folders (`default_app_dir`): macOS `~/Library/Caches/HeLab/{caches,temps}`, Windows `%LOCALAPPDATA%\HeLab\{caches,temps}`, else `~/.cache/HeLab`. A saved path is used only if a probe file can be written there. A cache folder on a network or synced folder (`helab/utils/cache_location.py`) is refused at startup: HeLab uses the default for that session and says why (`cache_dir_refused()`), leaving the setting for the user to change. Older `helab_<kind>_*` folders in the system temp dir (which the OS may delete) are renamed to the default on launch. Tests never touch these: `tests/conftest.py` sets `HELAB_DIR_*_OVERRIDE` to private temp folders.
-
-The active browser additionally uses session-only `FolderCache` (`helab/utils/folder_cache.py`), shared by models using the same IOService. Completed directory snapshots have a 10-second freshness window; explicit refresh bypasses it. Shared scan/load/resolve jobs have per-tab subscriptions, so closing one tab does not cancel another's work. Datasets share read-only NumPy arrays with private dictionaries per tab; analysis code that intentionally modifies an array must call `.copy()`. The RAM budget (Settings → Cache, steps of 1/128 of RAM, default 1/8; `FolderCache.set_ram_budget`) evicts datasets no tab shows, least recently used first, while open tabs pin their current datasets. Directory snapshots are bounded to 256 folders and 100,000 retained entries. This memory store supplements the compressed disk cache and **never reads disk during rendering**.
-
-Persisted folder metadata lives in the store's record tables, separate from datasets, and is **written only by isolated helpers**: compact basic-scan summaries (`folder_summaries`: counts, per-kind `files` with TXY sizes, status, signature, scan date) and basic-scan failure history (`scan_histories`, `helab/utils/scan_history.py`). A failure is the final outcome after all attempts; cancellation, queue rejection and metadata-save errors are not failures. **Every automatic basic-scan entry point must honour the failure flag** (all go through `FolderCache.submit`, which checks the session's history first), and only a fresh successful scan clears it. A helper that can't read the saved history (the store won't open or its read fails) skips scans that aren't manual: a saved failure may be there. A folder with no disk cache (the cache off, or off by design for it: no data root, pending confirmation or an unsupported mount, `cache_skipped`) has no saved history, so its scans run with the session's history as the only guard, and its outcomes stay in RAM with no "could not be saved" note. Defaults, edge cases and display: `.ai/memory/results/basic-scan-defaults-and-failures.md`.
-
-A folder's status shown in the tree can be **derived from its subfolders** (`something` if any listed subfolder has data; `nothing` only when the listing is complete and all were checked and empty) without changing its own `report`, which alone decides loading. Derivation reads only direct subfolders' in-memory statuses — never recursive. The result is saved in the store's `subtrees` table (via `subtree_save`) so it shows after a restart without listing the folder; listings attach each subfolder's saved result. Rules and tooltip wording: `.ai/memory/results/subfolder-derived-status.md`.
-
-**UI:** Model-View pattern. The active `FolderExplorer` uses `SnapshotFileSystemModel` (`helab/models/SnapshotFileSystemModel.py`), a `QAbstractItemModel` that only reads memory during rendering — badges, tooltips, summaries and relative ages must never touch the source filesystem, the disk cache, or submit I/O. Directory contents are scanned on selection or expansion; an unlisted folder whose saved summary has no subfolders (`has_dirs`) shows no expand arrow until selecting it (or a load's listing) finds some; automatic basic scanning of visible folders is off by default and never rescans folders with saved results. Freshness indicators are hints only and never schedule scans or loads. Navigation and direct path entry stay available during I/O. The folder summary panel, cache-freshness icons and their wording are described in `.ai/memory/results/folder-summary-indicators.md`. The main window (`helab/views/HelabMainWindow.py`) uses dockable panels: left tree view with **Folder details** (`helab/views/FolderDetailsPanel.py`) below it, right properties panel, center plot area. Folder details shows the current tab's selected folder, its load (state, progress, files, elapsed time and time left, rate) and the loaded dataset, plus the tab's and app-wide I/O activity (State names the file being read and Files what is left; All I/O names a single running load's folder and a click shows it in its tab, and its tooltip lists each running helper with its tab, progress, file and time, `IOService.request_note`); the plot area keeps only a one-line hint (`CentralHint`, room for later tips). The status bar is short: this tab's main activity (`FolderExplorer.activity_brief`) │ app-wide counts (`IOService.activity_counts`); full wording is in its tooltip and Folder details. A load's running time and estimate come from `LoadClock` (`helab/utils/load_clock.py`) on the shared job: queued and paused time are excluded, and the rate counts only TXY files actually read (`read_bytes`/`read_files`/`total_read_bytes` in the helper's progress events), and a read with no progress for 5 s shows "no progress for M:SS" instead of an estimate.
-
-**Script system:** Analysis scripts live in `helab/scripts/`. Each script inherits from `HelabAnalysisScript` (`helab/scripts/base.py`) and implements `get_metadata()`, `get_actions()`, `execute_action()`. Scripts are discovered dynamically by `ScriptsManager` (`helab/scripts/scripts_manager.py`) via `importlib.util`, scanning a directory for `.py` files and grouping loaded scripts by their `ScriptMetadata.group`. The right-hand panel (`ScriptTreeSelector`) loads `helab/scripts/examples/` by default; `helab/scripts/legacy_plotly/` holds older lab Plotly figures. Unmaintained plotting-library prototypes are in `dev/plotting-prototypes/`, outside the package.
-
-**Data loading:** The active browser loads TXY data in `helab/io_helper.py`, streams per-shot results through local artifacts read by daemon threads, and retains the existing dictionary-of-float64-arrays format. It stores Blosc-compressed dictionaries as dataset files in the store, with per-shot `(size, mtime)` fingerprints, sizes and `last_used` in the `datasets` row: when a folder changes, unchanged shots are reused from the cache and only new/modified TXY files are read, then the merged dataset is written back (load source `merged`). When an open tab still holds the folder's dataset, `FolderCache` sends its per-shot fingerprints with the load (`memory`); the helper skips those shots entirely (`memory_shots`, load source `updated`), sends `loaded` first, and only then rewrites the compressed disk cache in the background (`disk_cached` event). Cache reads/writes and compression run outside the GUI process.
-
-**Visualization:** Plotly is used for interactive 3D scatter; Matplotlib for publication-quality output. PyQtGraph is available for fast real-time plots. Avoid PyVista/VisPy (known data-point issues with large files). `helab/utils/dash_server.py` runs a background-thread Dash server (`127.0.0.1:8050`) to serve interactive Plotly figures in a browser tab via `/plot/<id>` routes.
-
-**Legacy submodule:** `legacy/tdc_autoconverter` (git submodule from `HeBECANU/tdc_autoconverter`) is a MATLAB TDC data auto-converter kept for reference/compatibility, not part of the Python package.
-
-**Settings persistence:** Uses `QSettings` with org `ANU_HE_BEC_GROUP`, app `HeLab` (`helab/utils/constants.py`). macOS plist: `~/Library/Preferences/com.anu-he-bec-group.HeLab.plist` (Qt derives the name from the org). Tests must not create native settings stores; pass a tmp-dir `QSettings(path, IniFormat)` instead.
-
-## CI/CD
-
-`.github/workflows/dev-cicd.yml` runs required Python 3.13 test/build matrices on
-macOS, Windows and Ubuntu for every branch push and PR to `main`. A push to a
-branch with an open PR to `main` runs only the detection job, since the PR's own
-run tests the same commit (if the PR lookup fails, everything runs). Separate
-Python 3.11, 3.12 and 3.14 compatibility matrices run only on PRs to `main`,
-with soft failures. Shared steps live in `ci-test.yml` and `ci-build.yml`, with
-Codecov uploads. Compatibility matrices expand on pushes, but pass `enabled: false`
-to the called jobs, recording individual skips without starting runners. All
-matrices disable fail-fast; required failures do not cancel
-other OS tests/builds. All four matrices depend on branch/version selection;
-release waits for all four, but only required matrices and version selection
-must succeed (compatibility skips/failures are non-blocking). A new package
-version on `main` creates an explicit tag and a draft
-release; tag pushes do not
-trigger releases. `python -m helab.release` validates/selects the version in CI.
-`python -m helab.release_draft` validates archives and resumes draft uploads. API
-errors fail selection; they never mean "no release". Only authenticated main runs
-query release state. Build jobs may target an older tagged SHA during recovery;
-the normal test jobs still check the current workflow commit, and recovery builds
-add Python 3.13 tests of the tagged commit on each OS.
+| Package / module | What | Detail |
+|---|---|---|
+| `helab/main.py`, `helab/__main__.py` | entry; frozen helper dispatch first | [release-and-ci](.ai/architecture/release-and-ci.md) |
+| `helab/io_helper.py`, `helab/io_ops/` | helper process: browse, scanning, loading, save_held, live, icons, markers, admin, results, listings, trace_check; `infra`, `stores`, `fingerprints`, `metadata`, `events` | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
+| `helab/utils/io_service.py` | `IOService`: lanes, slots, pausing, offline gate | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
+| `helab/utils/folder_cache.py` | `FolderCache`: session memory, jobs, RAM budget, presets and results state, store identity | [cache-store](.ai/architecture/cache-store.md) |
+| `helab/utils/cache_store.py`, `cache_paths.py`, `data_roots.py`, `cache_move.py` | the store, location keys, markers, cache-folder move | [cache-store](.ai/architecture/cache-store.md), [data-roots](.ai/architecture/data-roots.md) |
+| `helab/models/SnapshotFileSystemModel.py` | the tree model (memory only) | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md) |
+| `helab/views/` | main window, `FolderExplorer` and `explorer_live.py` (Live), Folder details, Settings tabs, dialogs | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [live](.ai/architecture/live.md) |
+| `helab/views/plots/` | `PlotWorkspace`, docks, settings panel, presets, arrangements, cached results | [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |
+| `helab/analysis/` | Qt-free core: `DatasetView`, runner, parameters, selection, fits and other numerics, presets, result cache | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
+| `helab/scripts/standard/`, `helab/scripts/dld/` | Basic plots v1; the DLD Front Panel Port | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
+| `helab/utils/settings_store.py`, `settings_defaults.py`, `lab_parameters.py` | settings | [settings](.ai/architecture/settings.md) |
+| `helab/utils/app_log.py`, `gui_watchdog.py`, `events.py`, `dash_server.py` | logging, stall dumps, notifications, the Plotly server | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |
+| `tests/conftest.py` | isolation: data guard, private store, settings, folders | [testing](.ai/architecture/testing.md) |
+| `.github/workflows/` | CI: 3.13 on macOS, Windows, Ubuntu; compat 3.11/3.12/3.14 on PRs | [release-and-ci](.ai/architecture/release-and-ci.md) |
+| `legacy/` | MATLAB references: tdc_autoconverter, Momentum_Bells_test, DLD_front_panel | [dld-analyses](.ai/architecture/dld-analyses.md) |

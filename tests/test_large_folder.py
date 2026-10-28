@@ -11,8 +11,9 @@ import numpy as np
 import pytest
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
-from helab.io_helper import list_folder, load, read_cached
+from helab.io_ops import stores
+from helab.io_ops.browse import list_folder
+from helab.io_ops.loading import load, read_cached
 from helab.utils import large_folder
 from helab.utils.cache_store import CacheStore, DatasetRow
 from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache
@@ -37,13 +38,13 @@ def options_for(tmp_path: Path) -> dict[str, Any]:
 def run_load(source: Path, tmp_path: Path, options: dict[str, Any] | None, **kwargs: Any) -> list[dict[str, Any]]:
     output = tmp_path / f"artifacts-{time.monotonic_ns()}"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, options, **kwargs)
     return events
 
 
 def dataset_row(options: dict[str, Any], path: str) -> DatasetRow:
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         found = store.read_dataset_row(path)
     assert found.value is not None
     return found.value
@@ -54,9 +55,9 @@ LIMITS = {"warn": 10_000, "refuse": 30_000}
 
 
 def test_thresholds_warn_above_the_ram_budget_or_10_percent_and_refuse_above_30() -> None:
-    assert large_folder.limits(ram_budget=16 << 30, total=128 << 30) == {
-        "warn": int(12.8 * (1 << 30)), "refuse": int(0.3 * (128 << 30))}
-    assert large_folder.limits(ram_budget=1 << 30, total=128 << 30)["warn"] == 1 << 30
+    assert large_folder.limits(ram_budget=16 * 10**9, total=128 * 10**9) == {
+        "warn": int(12.8 * 10**9), "refuse": int(0.3 * (128 * 10**9))}
+    assert large_folder.limits(ram_budget=1 * 10**9, total=128 * 10**9)["warn"] == 1 * 10**9
     assert large_folder.verdict(None, LIMITS) == ""
     assert large_folder.verdict(10_000, LIMITS) == ""
     assert large_folder.verdict(10_001, LIMITS) == "large"
@@ -79,7 +80,7 @@ def test_a_large_load_stops_after_its_scan_phase_unless_allowed(tmp_path: Path) 
     stopped = next(event for event in events if event["kind"] == "too_large")
     assert stopped == {"kind": "too_large", "estimate": size, "refused": False}
     # Its scan phase was saved first: the size is known next time without listing.
-    with io_helper._cache_store(options["directory"], [str(source)]) as store:
+    with stores._cache_store(options["directory"], [str(source)]) as store:
         summary = store.read_records("summaries", [str(source)])[str(source)].value
     assert summary is not None and summary["files"]["txy"]["bytes"] == size
     # Allowed (the user said yes): it loads, and saves the sizes with the dataset.
@@ -147,7 +148,7 @@ def test_a_large_cached_dataset_isnt_read_unless_allowed_and_listings_carry_its_
     size = sum(f.stat().st_size for f in source.glob("d_txy_forc*.txt"))
     output = tmp_path / "out"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     read_cached(str(source), str(output), events.append, options, limits={"warn": size - 1, "refuse": 1 << 40})
     assert events == [{"kind": "too_large", "estimate": size, "refused": False}] and not any(output.iterdir())
     events.clear()
@@ -175,11 +176,11 @@ def test_a_large_cached_dataset_isnt_read_unless_allowed_and_listings_carry_its_
     # for a dataset saved before S8 it is summed from the fingerprint.
     older = tmp_path / "older"
     older.mkdir()
-    with io_helper._cache_store(options["directory"], [str(older)]) as store:
+    with stores._cache_store(options["directory"], [str(older)]) as store:
         store.save_dataset(str(older), store.write_dataset_file(b"x"), {
             "ram_bytes": 7, "rows": 1, "shots": 2, "fingerprint": [[1, 300, 0], [2, 200, 0]], "problematic": [],
             "info": {"saved_at": time.time(), "signature": "s"}}, store.start_dataset_job(str(older)))
-    listed: list[dict[str, Any]] = []
+    listed: list[Any] = []
     list_folder(str(tmp_path), listed.append, options)
     entry = next(e for event in listed if event["kind"] == "entries" for e in event["entries"]
                  if e["path"] == str(source))
@@ -268,15 +269,15 @@ def test_automatic_loads_of_large_folders_never_start_and_offer_load_anyway(
         # Known from its saved summary: no helper starts, no dialog.
         assert ("load", big) not in cache.jobs and not explorer.loading and not asked
         assert explorer.large_state(big) == (20_000, False)
-        assert "Not loaded · Large folder · ~19.5 kB in RAM" in explorer.folder_summary_label.text()
+        assert "Not loaded · Large folder · ~20.0 kB in RAM" in explorer.folder_summary_label.text()
         assert AMBER in explorer.folder_summary_label.styleSheet()
         assert explorer.retry_button.isVisibleTo(explorer) and explorer.retry_button.text() == "Load anyway…"
-        assert "Large folder · ~19.5 kB in RAM · right-click › Load data" in str(
+        assert "Large folder · ~20.0 kB in RAM · right-click › Load data" in str(
             explorer.model.data(explorer.model.path_index(big), 3))
-        assert explorer.activity_brief == "Large folder · ~19.5 kB in RAM"
+        assert explorer.activity_brief == "Large folder · ~20.0 kB in RAM"
         panel = FolderDetailsPanel(explorer)
         panel.show_explorer(explorer, service)
-        assert panel.text("state") == "Large folder · ~19.5 kB in RAM · Load anyway…"
+        assert panel.text("state") == "Large folder · ~20.0 kB in RAM · Load anyway…"
         assert AMBER in panel.values["state"].styleSheet()
         # Load anyway… asks; declined, nothing starts.
         explorer.retry_button.click()
@@ -331,7 +332,7 @@ def test_above_30_percent_of_ram_nothing_loads_even_deliberately(
     try:
         select(qtbot, explorer, huge)
         assert explorer.large_state(huge) == (40_000, True)
-        assert "Too large to load · ~39.1 kB in RAM, over 30% of RAM" in explorer.folder_summary_label.text()
+        assert "Too large to load · ~40.0 kB in RAM, over 30% of RAM" in explorer.folder_summary_label.text()
         assert not explorer.retry_button.isVisibleTo(explorer)
         assert not explorer.load_to_ram_cache(huge, dwell=False, explicit=True)
         assert not explorer.queue_load(huge)
@@ -536,11 +537,11 @@ def test_an_automatic_update_too_large_to_load_says_so_beside_the_shown_data(
         shown = explorer.displayed_dataset
         assert not asked and shown is not None and shown.path == b and not explorer.loading
         explorer._update_activity()
-        assert "Large folder · ~14.6 kB in RAM" in explorer.folder_summary_label.text()
+        assert "Large folder · ~15.0 kB in RAM" in explorer.folder_summary_label.text()
         assert explorer.retry_button.isVisibleTo(explorer) and explorer.retry_button.text() == "Load anyway…"
         panel = FolderDetailsPanel(explorer)
         panel.show_explorer(explorer, service)
-        assert panel.text("state").endswith(" · Update not loaded: Large folder · ~14.6 kB in RAM · Load anyway…")
+        assert panel.text("state").endswith(" · Update not loaded: Large folder · ~15.0 kB in RAM · Load anyway…")
         assert AMBER in panel.values["state"].styleSheet()
     finally:
         explorer.close_cleanup()
@@ -575,7 +576,7 @@ def test_a_fresh_size_replaces_an_earlier_stop(
 
 
 def test_the_dialog_enables_load_anyway_only_once_understood(qtbot: QtBot) -> None:
-    dialog = LargeFolderDialog("/data/run", 2 << 30, 16 << 30, 128 << 30)
+    dialog = LargeFolderDialog("/data/run", 2 * 10**9, 16 * 10**9, 128 * 10**9)
     qtbot.addWidget(dialog)
     assert "run would take about 2.0 GB in RAM" in dialog.text.text()
     assert "RAM budget 16.0 GB · this computer has 128 GB of RAM" in dialog.text.text()

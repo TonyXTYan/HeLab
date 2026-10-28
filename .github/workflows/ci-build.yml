@@ -17,6 +17,10 @@ on:
         description: Allow compatibility failures without failing CI
         type: boolean
         default: false
+      upload:
+        description: Keep the build as an artifact (only a run that releases needs it)
+        type: boolean
+        default: false
       build-sha:
         required: true
         type: string
@@ -93,7 +97,13 @@ jobs:
             source venv/bin/activate
           fi
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          # Python 3.13 (required) installs the pinned lock; compatibility jobs, and a recovery
+          # build of a tag older than the lock, install requirements.txt unpinned.
+          if [ "${{ inputs.python-minor }}" = "13" ] && [ -f requirements.lock ]; then
+            pip install -r requirements.lock
+          else
+            pip install -r requirements.txt
+          fi
           pip install -e .
 
       - name: Test the older tagged commit before rebuilding recovery assets
@@ -123,10 +133,11 @@ jobs:
       # so the Qt framework symlinks survive: upload-artifact would replace each
       # link with a copy of its target (~2.1 GB instead of ~290 MB).
       - name: Zip the macOS app, keeping its symlinks
-        if: inputs.os == 'macos'
+        if: inputs.upload && inputs.os == 'macos'
         run: ditto -c -k --norsrc --noextattr --noacl --keepParent dist/HeLab.app dist/HeLab-macos.zip
 
       - name: Archive build artifacts
+        if: inputs.upload
         uses: actions/upload-artifact@v7
         with:
           name: build-${{ inputs.os }}-py3${{ inputs.python-minor }}

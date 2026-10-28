@@ -5,6 +5,9 @@ import logging
 import os
 from typing import Dict, List, Optional, Type
 
+from types import ModuleType
+
+from helab.analysis.identity import file_hash
 from helab.scripts.base import HelabAnalysisScript, ScriptMetadata
 
 class ScriptLoadError(Exception):
@@ -83,9 +86,11 @@ class ScriptsManager:
 
     def _clear_directory_scripts(self, directory: str) -> None:
         """Remove all scripts from the specified directory"""
+        # By the file each was loaded from (its id's first part), not the path its metadata
+        # gives, which a script may set to anything.
         to_remove = [
-            script_id for script_id, metadata in self._metadata.items()
-            if os.path.dirname(metadata.file_path) == directory
+            script_id for script_id in self._metadata
+            if os.path.normcase(os.path.dirname(script_id.rpartition("::")[0])) == os.path.normcase(directory)
         ]
 
         for script_id in to_remove:
@@ -106,6 +111,8 @@ class ScriptsManager:
     def _load_script_file(self, file_path: str) -> None:
         """Load and validate a single script file"""
         try:
+            # Hashed before it runs: the hash identifies the code that made a result.
+            digest = file_hash(file_path)
             # Import the module
             spec = importlib.util.spec_from_file_location(
                 f"helab.scripts.dynamic.{os.path.basename(file_path)}",
@@ -116,44 +123,66 @@ class ScriptsManager:
             
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)
+            self._register_module(module, file_path, digest)
+        except (Exception, SystemExit) as e:
+            # SystemExit too: a script that exits at import (sys.exit, argparse on HeLab's argv)
+            # fails alone, never Load Scripts… or HeLab.
+            raise ScriptLoadError(f"Failed to load script: {e!r}" if isinstance(e, SystemExit)
+                                  else f"Failed to load script: {e}")
 
-            # Find HelabAnalysisScript subclasses. A single file may define
-            # more than one script class, so all matches are loaded.
-            found_any = False
-            for name, obj in inspect.getmembers(module):
-                if (inspect.isclass(obj) and
-                    issubclass(obj, HelabAnalysisScript) and
-                    obj != HelabAnalysisScript and
-                    obj.__module__ == module.__name__):
-
-                    # Create instance to get metadata
-                    script = obj()
-                    metadata = script.get_metadata()
-
-                    # Validate metadata
-                    if not metadata.name or not metadata.group:
-                        raise ScriptLoadError("Script metadata missing name or group")
-
-                    found_any = True
-                    script_id = f"{file_path}::{obj.__qualname__}"
-                    metadata.script_id = script_id
-
-                    # Store script class and metadata
-                    self._scripts[script_id] = obj
-                    self._metadata[script_id] = metadata
-
-                    # Update groups
-                    if metadata.group not in self._groups:
-                        self._groups[metadata.group] = []
-                    self._groups[metadata.group].append(script_id)
-
-                    logging.info(f"Loaded script {metadata.name} from {file_path}")
-
-            if not found_any:
-                raise ScriptLoadError("No HelabAnalysisScript subclass found")
-
+    def load_module(self, module: ModuleType) -> None:
+        """Register the scripts of an already imported module (HeLab's bundled analyses,
+        imported normally so that packaged builds include them)."""
+        file_path = os.path.normpath(os.path.abspath(module.__file__ or module.__name__))
+        try:
+            self._register_module(module, file_path, file_hash(file_path))
         except Exception as e:
             raise ScriptLoadError(f"Failed to load script: {e}")
+
+    def _register_module(self, module: ModuleType, file_path: str, digest: str) -> None:
+        # Find HelabAnalysisScript subclasses. A single file may define
+        # more than one script class, so all matches are loaded.
+        found_any = False
+        abstract: List[str] = []
+        for name, obj in inspect.getmembers(module):
+            if (inspect.isclass(obj) and
+                issubclass(obj, HelabAnalysisScript) and
+                obj != HelabAnalysisScript and
+                obj.__module__ == module.__name__):
+                if inspect.isabstract(obj):
+                    # A helper base class the file's scripts share, or a script missing a method.
+                    abstract.append(f"{obj.__qualname__} (missing {', '.join(sorted(obj.__abstractmethods__))})")
+                    continue
+
+                # Create instance to get metadata
+                script = obj()
+                metadata = script.get_metadata()
+
+                # Validate metadata
+                if not metadata.name or not metadata.group:
+                    raise ScriptLoadError("Script metadata missing name or group")
+
+                found_any = True
+                script_id = f"{file_path}::{obj.__qualname__}"
+                metadata.script_id = script_id
+                metadata.file_hash = digest
+
+                # Store script class and metadata
+                self._scripts[script_id] = obj
+                self._metadata[script_id] = metadata
+
+                # Update groups
+                if metadata.group not in self._groups:
+                    self._groups[metadata.group] = []
+                self._groups[metadata.group].append(script_id)
+
+                logging.info(f"Loaded script {metadata.name} from {file_path}")
+
+        if not found_any:
+            raise ScriptLoadError("No HelabAnalysisScript subclass found" if not abstract
+                                  else f"No complete script: abstract {'; '.join(abstract)}")
+        if abstract:
+            logging.info(f"Skipped abstract classes in {file_path}: {'; '.join(abstract)}")
 
     def get_groups(self) -> List[str]:
         """Get list of all script groups"""

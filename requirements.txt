@@ -25,7 +25,6 @@ matplotlib
 uncertainties
 pandas
 scipy
-joblib
 pyarrow
 zstandard
 blosc

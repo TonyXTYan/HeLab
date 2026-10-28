@@ -205,6 +205,12 @@ class DebugIconsWindow(QWidget):
                            "Cached counts and status may be outdated. Use Check folder status to recheck.")
                 item.setToolTip(0, tooltip)
                 item.setToolTip(1, tooltip)
+            elif name == "report":
+                tooltip = ("Report (folder row, after the data cache's badge): the folder has saved analysis results\n"
+                           "that reuse will use (Settings → Cache › Reuse saved analysis results). The row tooltip\n"
+                           "and Folder details say how many and their size.")
+                item.setToolTip(0, tooltip)
+                item.setToolTip(1, tooltip)
             elif name == "scan_failed":
                 tooltip = ("Magnifying glass + exclamation mark: the last folder status check failed.\n"
                            "Automatic folder status checks are skipped. Use Check folder status to retry manually.\n"

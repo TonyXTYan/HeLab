@@ -1,26 +1,29 @@
 """Session memory reuse above isolated I/O; no filesystem or disk-cache reads."""
 from __future__ import annotations
 
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 import base64
 from dataclasses import dataclass, field
 import logging
 import math
 import os
 import time
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable, Mapping
 from uuid import uuid4
+import weakref
 
 import numpy as np
 import numpy.typing as npt
 from PyQt6.QtCore import QObject, QTimer, pyqtSignal
 from PyQt6.QtGui import QIcon, QPixmap
 
-from helab.utils import large_folder
+from helab.analysis.constant_layers import clean_layer, folder_layer
+from helab.utils.ram_buffers import Buffers, dataset_buffers
+from helab.utils import file_kinds, large_folder
 from helab.utils.cache_store import APPROVAL_SHARE, KINDS, store_root
 from helab.utils.constants import (
-    DEFAULT_CHECK_LEVEL, DEFAULT_DISK_BUDGET, DEFAULT_RAM_STEPS, DISK_CACHE_ENABLED, cache_dir, cache_dir_enabled,
-    ram_step_bytes,
+    DEFAULT_CHECK_LEVEL, DEFAULT_DISK_BUDGET, DEFAULT_LIVE_AUTOSAVE, DEFAULT_LIVE_INTERVAL, DEFAULT_RAM_STEPS,
+    DISK_CACHE_ENABLED, cache_dir, cache_dir_enabled, cache_dir_refused, ram_step_bytes,
 )
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.load_clock import LoadClock
@@ -33,12 +36,28 @@ from helab.utils.scan_history import ScanHistory, empty_history, parse_history, 
 SCANS = ("list", "details", "scan")
 # The saved fields a listing entry carries for each kind of disk cache record.
 ENTRY_KEYS = {"datasets": ("disk_cached", "cache_info"), "summaries": ("scan_status",),
-              "histories": ("scan_history",), "subtrees": ("subtree",)}
+              "histories": ("scan_history",), "subtrees": ("subtree",), "results": ("results",)}
 # The current tab's work that runs in the foreground I/O lane.
 # (``root_create``: the user's Enable disk cache here…, one small write, runs like a listing.)
-FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create", "root_reassign", "root_remove")
+FOREGROUND_OPERATIONS = ("list", "resolve", "load", "root_create", "root_reassign", "root_remove", "marker_save")
 # The user's marker writes: in the foreground whoever asked (a tab, Settings or a window).
-MARKER_OPERATIONS = ("root_create", "root_reassign", "root_remove")
+MARKER_OPERATIONS = ("root_create", "root_reassign", "root_remove", "marker_save")
+
+
+@dataclass
+class HeldWrite:
+    """A write naming its store, held while an identity probe is out (``FolderCache.store_answer``):
+    submitted once the folder has answered, ended as not saved if it couldn't, dropped by
+    ``FolderCache.cancel`` of its owner and by shutdown."""
+    owner: str
+    path: str
+    operation: str
+    payload: dict[str, Any]
+    blob: bytes | None = None
+
+    def request(self) -> IORequest:
+        """Its stand-in request, to end it with an event as a helper would."""
+        return IORequest(self.owner, 0, self.path, self.operation, self.payload, 0.0)
 
 
 @dataclass
@@ -80,6 +99,8 @@ class SharedJob:
     load_status: dict[str, Any] | None = None
     attempt: int = 1
     fingerprints: dict[int, tuple[int, int, int]] = field(default_factory=dict)
+    # Shot times (raw files' mtimes, ns) sent with the shots so far (``raw_mtime``).
+    raw_times: dict[int, int] = field(default_factory=dict)
     problematic: set[int] = field(default_factory=set)
     base: Dataset | None = None
     scan_mode: str = "scan"
@@ -96,6 +117,20 @@ class SharedJob:
     clock: LoadClock = field(default_factory=LoadClock)
     # The TXY file a load is reading now ("" between files), for the I/O tooltip.
     current_file: str = ""
+    # A Live check (``io_ops.live.live_check``): keyed apart from ordinary loads of the folder, so
+    # neither joins the other (their results differ).
+    live: bool = False
+    # A Live save's summary older than the folder's snapshot (a newer listing ran meanwhile): not
+    # adopted, and its data is kept without the signature check, not counted as checked.
+    behind_listing: bool = False
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return ("live" if self.live else self.operation), self.path
+
+    def saves(self) -> bool:
+        """Whether a subscriber asked for a save (``FolderCache.save``), whatever the job's own payload."""
+        return bool(self.payload.get("save")) or any(r.payload.get("save") for r in self.subscribers.values())
 
 
 # Set from the saved setting at startup (``set_disk_budget``); sent with every request, with
@@ -110,12 +145,18 @@ def set_disk_budget(budget: int) -> None:
     _disk_budget, _disk_budget_set_at = int(budget), time.time()
 
 
+# Work Offline (cache-only browsing, ``FolderCache.set_offline``): sent with every request's cache
+# options, so helpers key a folder on an unmounted share or volume through its mount hint.
+_offline = False
+
+
 def store_options() -> dict[str, Any]:
     """What a helper needs to open the disk cache, and its budget in bytes; {} when the
     cache is off for this session. The GUI process never opens the store."""
     if not (DISK_CACHE_ENABLED and cache_dir_enabled()):
         return {}
-    return {"directory": store_root(cache_dir()), "budget": _disk_budget, "budget_set_at": _disk_budget_set_at}
+    return {"directory": store_root(cache_dir()), "budget": _disk_budget, "budget_set_at": _disk_budget_set_at,
+            **({"offline": True} if _offline else {})}
 
 
 class FolderCache(QObject):
@@ -129,6 +170,11 @@ class FolderCache(QObject):
     folderPrefsChanged = pyqtSignal(str)
     # A flag couldn't be saved (path, why, the owner that set it); memory shows the saved state again.
     folderPrefsFailed = pyqtSignal(str, str, str)
+    # Constants the analyses use changed: a folder's own (its path; its subfolders inherit them),
+    # or the lab's ("").
+    constantsChanged = pyqtSignal(str)
+    # (path, message, owner): a folder's constants couldn't be saved; the saved ones show again.
+    folderConstantsFailed = pyqtSignal(str, str, str)
     subtreeChanged = pyqtSignal(str)
     savedRefreshed = pyqtSignal(str)
     mountWarningChanged = pyqtSignal(str)
@@ -136,12 +182,18 @@ class FolderCache(QObject):
     cacheRemoved = pyqtSignal(object, object)
     # Pending saves (waiting for Make room / Save update) were added or answered.
     pendingSavesChanged = pyqtSignal()
+    # A saved analysis result that waited for the user (R2) was saved (True) or not (False): its
+    # pending_id, and saved, its row's result_id ("" if not); not saved, why (``PENDING_*``).
+    resultPendingAnswered = pyqtSignal(str, bool, str, str)
+    # Make room evicted saved results: their result_ids (a newer copy of one of those keys has another).
+    resultsEvicted = pyqtSignal(object)
+    # Folders' saved analysis results (the row badge) changed: their keys, or None (every folder, or
+    # reuse turned on or off).
+    resultCountsChanged = pyqtSignal(object)
     # A cache_admin job's result: action, event (inventory, admin_result, swept, error).
     cacheAdminResult = pyqtSignal(str, object)
     # A cache_admin job ended: its owner, action, and "" or why it failed.
     cacheAdminDone = pyqtSignal(str, str, str)
-    # The disk cache's live usage changed (``disk_usage``).
-    diskUsageChanged = pyqtSignal()
     # Automatic loads of folders without cached data paused (True) or resumed (False).
     autoLoadPauseChanged = pyqtSignal(bool)
     # Usage crossed 80% of the budget (or rose another 10% after Ignore): ask the user once.
@@ -163,14 +215,31 @@ class FolderCache(QObject):
     rootDuplicateFound = pyqtSignal(str)
     # A Same folder or Copy answer took effect: these folders are listed again by tabs showing them.
     rootDecided = pyqtSignal(list)
+    # A finished load's disk cache save ended: the folder, and "saved", "pending" (waiting for the
+    # user's answer), "superseded" (a later save covers it) or "failed".
+    saveEnded = pyqtSignal(str, str)
+    # A folder's files dated ahead of this computer's clock (path, seconds): once per share or volume
+    # (the helper's ``location``) per session (``clock_skew_seen``).
+    clockSkew = pyqtSignal(str, float)
+    # The saves the quit window waits for changed (``quit_saves``).
+    quitSavesChanged = pyqtSignal()
+    # Work Offline turned on (True) or off (False): ``set_offline``.
+    offlineChanged = pyqtSignal(bool)
+    # The presets (``presets``) or what is known about them (``presets_note``) changed.
+    presetsChanged = pyqtSignal()
     MAX_FOLDER_ICONS = 4096
     # Seconds before a sweep the queue rejected is tried again.
     SWEEP_RETRY = 5.0
+    # Data-root marker checks (``roots_verify``) start at most this often. A backstop only: they are
+    # asked for by listings that report a mount table not yet asked about (``_verify_roots``).
+    VERIFY_MIN_SECONDS = 5.0
     MAX_SUBTREES = 4096
     SUBTREE_SAVE_DELAY_MS = 500
     FRESH_SECONDS: float = 10.0
     MAX_SNAPSHOTS: int = 256
     MAX_ENTRIES: int = 100_000
+    # Saved analysis results' requests remembered for stale answers (each a few bytes).
+    MAX_RESULT_OPS = 1024
     # Folders remembered as mismatched (``mismatched``): small entries, ~2-4 MB at most.
     MAX_MISMATCHED: int = 8192
     # From this many mismatched folders, the user may skip them for the session.
@@ -185,20 +254,84 @@ class FolderCache(QObject):
         # The app's cache mover (S9, ``helab.views.CacheMover.cache_mover``): kept here so a move
         # outlives the Settings dialog that started it.
         self.cache_mover: QObject | None = None
-        # Settings → General's check of cached data, sent with every load (``io_helper.load``).
+        # Settings → General's check of cached data, sent with every load (``io_ops.loading.load``).
         self.check_level = DEFAULT_CHECK_LEVEL
+        # Live: seconds from the end of one check to the next (Settings → General), and how many
+        # new shots wait in RAM before the folder is saved (Settings → Cache).
+        self.live_interval = DEFAULT_LIVE_INTERVAL
+        self.live_autosave_shots = DEFAULT_LIVE_AUTOSAVE
+        # Saves (loads with ``save`` in their payload) waiting for the folder's running save to
+        # end, so saves of one folder never overlap: folder → (owner, payload).
+        self._deferred_saves: dict[str, tuple[str, dict[str, Any]]] = {}
+        # Quitting waits for saves (``cancel_for_quit``): no other folder work starts meanwhile.
+        self.quitting = False
         # Each folder's flags, as the store or this session last said: {"no_cache", "no_auto_load", "set_at"}.
         self.prefs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         # What the store last confirmed for each folder (listings, saves): shown again if a choice fails.
         self._confirmed_prefs: dict[str, dict[str, Any]] = {}
         # Flag saves in flight: job owner → (path, the choice's set_at, who set it).
         self._pref_writes: dict[str, tuple[str, float, str]] = {}
+        # Constants (F0b): the lab's (Settings → Lab parameters, set by the main window), and each
+        # folder's own, as the store or this session last said: {"values": {key: float}, "set_at"}.
+        # Folders with no disk cache keep theirs for the session only (``constants_session_only``).
+        self.lab_constants: dict[str, float] = {}
+        self.folder_constant_records: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self._confirmed_constants: dict[str, dict[str, Any]] = {}
+        self._constant_writes: dict[str, tuple[str, float, str]] = {}
+        # Folders a helper found no disk cache for when saving their constants: session only, why.
+        self.constants_unsaved: dict[str, str] = {}
+        # Folders whose values this session holds in RAM only (no disk cache when they were set):
+        # sent to a helper once the folder has one (a root found or decided, volumes verified).
+        self._session_constants: set[str] = set()
+        # Those whose automatic save (``_constants_roots_moved``) failed: why; tried again at the
+        # next root change, and still RAM only meanwhile.
+        self._constants_save_failed: dict[str, str] = {}
+        # Presets (helab/views/plots/presets.py), as the store or this session last said, deleted
+        # ones too: (kind, scope, name) → {"record": JSON text or None, "set_at"}; the newest
+        # ``set_at`` wins. Read and written by helpers (``read_presets``, ``set_presets``).
+        self.presets: dict[tuple[str, str, str], dict[str, Any]] = {}
+        self.presets_read = False  # The current store sent its rows: its names are known.
+        self.presets_error = ""  # Why the store's presets couldn't be read last ("" if they were).
+        # Rows not in the store yet: why ("" while a helper writes them); tried again by the next read.
+        self.presets_unsaved: dict[tuple[str, str, str], str] = {}
+        # Preset jobs in flight: owner → the changes it writes, by their ``set_at`` (none: a read).
+        self._preset_jobs: dict[str, dict[tuple[str, str, str], float]] = {}
+        self._presets_again = False  # Read again once the read in flight ends.
+        # Changes made before the current store's names were known: checked against them, then written.
+        self._presets_unknown: set[tuple[str, str, str]] = set()
+        # Those the store turned out to hold already: kept as saved, the user told (``PRESET_FOUND``).
+        self.presets_conflicts: dict[tuple[str, str, str], str] = {}
+        # The disk cache store whose answers count (``store_answer``): its ``store_id`` ("": none has
+        # answered yet). While an identity probe is out (its owner), no answer counts and writes
+        # wait (``_probe_held``); stores other than the one in use named meanwhile are probed again after.
+        self._store = ""
+        self._probe_owner = ""
+        self._probe_seen: set[str] = set()
+        self._probe_held: list[HeldWrite] = []
+        # Why the cache folder's store is unknown ("" once a probe has answered): the last probe
+        # failed. What waited is then stale, owed preset changes are said not saved, and nothing
+        # reads again by itself; the next answer naming a store, or a deliberate read, asks again.
+        self._store_unknown = ""
+        self._closing = False  # Shutting down: a probe ending now launches nothing.
+        # Answers waiting for the probe (and their jobs' later events, in order), replayed once the
+        # folder has answered; ``_replaying`` while they are.
+        self._probe_waiting: list[tuple[IORequest, dict[str, Any]]] = []
+        self._probe_waiting_owners: set[str] = set()
+        self._replaying = False
+        self._presets_stale: set[str] = set()  # Jobs a replaced store answered: their changes go to the current one.
+        # Failures noted while other preset jobs run, said once none is (``_presets_settle``): why
+        # each change couldn't be written, and why the store's names couldn't be read.
+        self._presets_failed: dict[tuple[str, str, str], str] = {}
+        self._presets_unread = ""
         self.service = service
         self.snapshots: OrderedDict[str, FolderSnapshot] = OrderedDict()
         self.datasets: OrderedDict[tuple[str, str, int], Dataset] = OrderedDict()
         self.pins: dict[str, Dataset] = {}
         # The RAM budget for datasets no tab shows (Settings → Cache; ``set_ram_budget``).
         self.max_data_bytes = DEFAULT_RAM_STEPS * ram_step_bytes()
+        # What else counts against it: the open plots' data (``helab.analysis.budget.RamBudget``),
+        # each with ``ram_buffers()``. Arrays they share with a dataset held here count once.
+        self.ram_users: weakref.WeakSet[Any] = weakref.WeakSet()
         self.total_ram = large_folder.total_ram()
         # The disk cache's live bytes, as the newest helper measurement reported them.
         self.disk_usage: int | None = None
@@ -272,6 +405,12 @@ class FolderCache(QObject):
         self._cleanup = ""
         self._root_verify_owner = ""
         self._volume_verify_owner = ""
+        # Roots found, decided or verified: session-only constants may be saved now, and the
+        # folders whose inheritance stops at a root (``constants_root``) changed.
+        self.dataRootsChanged.connect(self._constants_roots_moved)
+        self.rootDecided.connect(self._constants_roots_decided)
+        self.rootDuplicatesChanged.connect(lambda: self._constants_roots_moved(""))
+        self.volumesVerified.connect(lambda: self._constants_roots_moved(""))
         # The local mounts (path, device) whose volume IDs this session's last verification
         # checked: the only hints a cached read trusts, besides the system volume's.
         self._verified_volumes: tuple[tuple[str, str], ...] = ()
@@ -280,8 +419,38 @@ class FolderCache(QObject):
         # The mounts listings had reported when verification was last asked for: listed again
         # while it waits, the same mounts don't ask again.
         self._verify_asked: tuple[tuple[str, str], ...] | None = None
+        # The last volume check's IDs (path, device, ID), handed to the marker check when it starts
+        # (``_before_start``) so it doesn't check the volumes again.
+        self._volume_ids: tuple[tuple[str, str, str], ...] = ()
+        # Asked for again while a check runs: one more after it (each at most once).
+        self._volumes_again = False
+        self._markers_again = False
+        # The marker check waits for the volume check asked for with it.
+        self._markers_wanted = False
+        self._markers_started = -math.inf
+        self._markers_timer = QTimer(self)
+        self._markers_timer.setSingleShot(True)
+        self._markers_timer.timeout.connect(self._verify_markers)
         # cache_admin jobs by owner: their action.
         self._admin: dict[str, str] = {}
+        # Saved analysis results' reads and saves in flight (R2), by their owner: the folder and when it
+        # was asked (monotonic), so an answer a removal made stale since is never taken as current.
+        # Kept after its helper ends (the newest ``MAX_RESULT_OPS``): an event delivered late is still checked.
+        self._result_ops: OrderedDict[str, tuple[str, float, str]] = OrderedDict()
+        # Result saves and Make room adoptions of results in flight, by owner: their folder. Quitting
+        # waits for them (``quit_saves``) until their helpers end.
+        self._result_writes: dict[str, str] = {}
+        # Each folder's saved analysis results as last measured in the store (count, files' bytes and
+        # the store's [store_id, writes] then, None after a removal), from listings, saves and Make
+        # room: the row badge and Folder details read them, memory only. The newest MAX_ENTRIES.
+        self.result_counts: OrderedDict[str, tuple[int, int, tuple[str, int] | None]] = OrderedDict()
+        # Settings → Cache › Reuse saved analysis results: the badge shows only while it is on.
+        from helab.utils.settings_defaults import RESULT_REUSE_SETTING, read_setting
+        from helab.utils.settings_store import app_settings
+        self.result_reuse = bool(read_setting(app_settings(), RESULT_REUSE_SETTING, typed=True))
+        # Saved results Make room evicted, by result_id: the newest ``MAX_RESULT_OPS``. Only reads and
+        # marks of those very rows are affected, not their folders' nor a newer copy of their keys.
+        self._evicted: OrderedDict[str, None] = OrderedDict()
         # When cache_admin jobs and history writes started: removals since then void their results.
         self._started: dict[str, float] = {}
         # When each kind was last removed from the disk cache, for every path or per path;
@@ -290,6 +459,11 @@ class FolderCache(QObject):
         self._removed_paths: OrderedDict[tuple[str, str], float] = OrderedDict()
         # Saves waiting for the user's answer, by folder: the cache_full / cache_approval event.
         self.pending_saves: dict[str, dict[str, Any]] = {}
+        # Analysis results that didn't fit the disk budget, waiting for Make room or Discard (R2), by
+        # pending_id (several per folder): asked by CacheDialogs with the dataset saves.
+        self.pending_results: dict[str, dict[str, Any]] = {}
+        # When an event added each (monotonic): an inventory asked for before keeps it.
+        self._pending_result_added: OrderedDict[str, float] = OrderedDict()
         # What late events must not undo: pending ids answered, superseded or expired; each
         # folder's newest job_seq whose save outcome arrived; when events last changed a folder's
         # pending save (an inventory requested before then doesn't override it).
@@ -297,7 +471,8 @@ class FolderCache(QObject):
         self._save_seq: dict[str, int] = {}
         self._pending_changed: dict[str, float] = {}
         # When the newest inventory applied was requested; an older one arriving later is stale.
-        self._inventory_started = float("-inf")
+        # When the newest inventory applied was asked for, by store: never compared across stores.
+        self._inventory_started: dict[str, float] = {}
         # One timer for the store's next cleanup deadline (wall clock).
         self._sweep_deadline: float | None = None
         # ``sync_budget``: the job telling the store the app's disk budget, retried until it has.
@@ -317,7 +492,11 @@ class FolderCache(QObject):
         # Subscriber owners of the current tab (its model, and in queue mode its
         # background loads); their listings and loads use the foreground lane.
         self.foreground_owners: set[str] = set()
+        # Shares and volumes whose clock this session found ahead of ours (``clockSkew``).
+        self.clock_skew_seen: set[str] = set()
         service.is_foreground = self._is_foreground
+        service.owners_of = self._owners_of
+        service.before_start = self._before_start
         service.resultReady.connect(self._on_event)
 
     def _is_foreground(self, request: IORequest) -> bool:
@@ -325,6 +504,11 @@ class FolderCache(QObject):
         return (job is not None and job.operation in FOREGROUND_OPERATIONS
                 and (job.operation in MARKER_OPERATIONS
                      or any(r.owner in self.foreground_owners for r in job.subscribers.values())))
+
+    def _owners_of(self, request: IORequest) -> list[str]:
+        """Whom a helper works for: its shared job's subscribers (tabs), for the I/O trace."""
+        job = self._producers.get(request.owner)
+        return sorted({r.owner for r in job.subscribers.values()}) if job is not None else [request.owner]
 
     def set_foreground(self, owners: set[str]) -> None:
         """Make these subscribers' work the foreground; the previous tab's becomes background."""
@@ -398,7 +582,11 @@ class FolderCache(QObject):
                    if folder == path or folder.startswith(path.rstrip("/\\") + os.sep)]
         for folder in cleared:
             del self.unrooted[folder]
-        if self.data_roots.get(path) != (identifier, label) or cleared:
+        known = self.data_roots.get(path)
+        if known is not None and known[0] != identifier:
+            self._root_constants_gone(path)  # Another root at this folder now (any event saying so).
+            self._root_results_gone(path)
+        if known != (identifier, label) or cleared:
             self.data_roots[path] = (identifier, label)
             self.dataRootsChanged.emit(path)
 
@@ -469,6 +657,9 @@ class FolderCache(QObject):
                            priority=True)
 
     def _root_gone(self, path: str) -> None:
+        if path in self.data_roots:
+            self._root_constants_gone(path)
+            self._root_results_gone(path)
         if self.data_roots.pop(path, None) is not None:
             self.dataRootsChanged.emit(path)
 
@@ -525,12 +716,13 @@ class FolderCache(QObject):
             self.subtreeChanged.emit(path)
 
     def save_subtree(self, path: str, record: dict[str, Any], cache_options: dict[str, Any]) -> None:
-        """Share a newly derived status with other tabs and save it for later sessions."""
+        """Share a newly derived status with other tabs and save it for later sessions (not while
+        working offline: derived from saved results, it would date old information as new)."""
         self.remember_subtree(path, record, notify=False)
         # Notified later: the deriving tab must not re-enter its own derivation.
         QTimer.singleShot(0, lambda: None if self.service.closed else self.subtreeChanged.emit(path))
-        if not cache_options:
-            return  # The disk cache is off: shared in memory only.
+        if not cache_options or self.offline:
+            return  # The disk cache is off, or working offline: shared in memory only.
         self._subtree_pending[path] = {"path": path, **record}
         self._subtree_pending.move_to_end(path)
         self._subtree_options = cache_options
@@ -623,13 +815,17 @@ class FolderCache(QObject):
         return next((entry for key, entry in reversed(self.datasets.items())
                      if key[0] == path and entry.epoch == self._epochs.get(path, 0)), None)
 
-    def _base(self, path: str) -> Dataset | None:
+    def _base(self, path: str, prefer: str = "") -> Dataset | None:
         # A dataset an open tab still shows survives signature changes, so a
         # refresh only needs the shots that are new or changed since then.
+        # ``prefer``: the signature of the data the caller shows (Live), if still held.
         floor = self._base_floor.get(path, 0)
         candidates = [entry for entry in (*self.pins.values(), *self.datasets.values())
                       if entry.path == path and entry.epoch >= floor and "fingerprint" in entry.metadata]
-        return max(candidates, key=lambda entry: entry.epoch, default=None)
+        newest = max((entry.epoch for entry in candidates), default=None)
+        preferred = next((entry for entry in candidates if prefer and entry.signature == prefer
+                          and entry.epoch == newest), None)
+        return preferred or max(candidates, key=lambda entry: entry.epoch, default=None)
 
     @staticmethod
     def verified(dataset: Dataset) -> bool:
@@ -743,6 +939,14 @@ class FolderCache(QObject):
         self.pins[owner] = dataset
         self._evict()
 
+    def empty_dataset(self, path: str) -> Dataset:
+        """No shots yet: Live started before the folder's first shot. Not kept here; the tab that
+        shows it pins it (``retain``), which makes it the base of the folder's Live checks, so
+        the first check lists the folder and every TXY file it finds is new."""
+        metadata = {"fingerprint": [], "problematic": [], "files": 0, "rows": 0, "bytes": 0,
+                    "loaded_at": time.time(), "checked_at": time.monotonic(), "verified": True}
+        return Dataset(path, "", {}, metadata, self._epochs.get(path, 0))
+
     def release(self, owner: str) -> None:
         self.pins.pop(owner, None)
         self._evict()
@@ -781,7 +985,11 @@ class FolderCache(QObject):
                          owner: str = "") -> bool:
         """The user's choice for one folder: shown at once, then saved by a helper (with the folder's
         cached data removed too, if asked). If saving fails, the saved state is shown again and
-        ``folderPrefsFailed`` says why. Session-only when the disk cache is off."""
+        ``folderPrefsFailed`` says why. Session-only when the disk cache is off. Refused while
+        quitting, like the constants."""
+        if self.quitting:
+            self.folderPrefsFailed.emit(path, QUITTING, owner)
+            return False
         set_at = time.time()
         self.remember_prefs(path, {"no_cache": no_cache, "no_auto_load": no_auto_load, "set_at": set_at},
                             confirmed=False)
@@ -806,6 +1014,697 @@ class FolderCache(QObject):
                 self.prefs[path] = dict(saved)
             self.folderPrefsChanged.emit(path)
         self.folderPrefsFailed.emit(path, message, owner)
+
+    # Constants (F0b; helab/analysis/constant_layers.py). Memory only: runs resolve from these.
+
+    def set_lab_constants(self, values: object) -> None:
+        """The lab's values (Settings → Lab parameters), as saved; plots hear of a change."""
+        cleaned = clean_layer(values)
+        if cleaned != self.lab_constants:
+            self.lab_constants = cleaned
+            self.constantsChanged.emit("")
+
+    def folder_constants(self, path: str) -> dict[str, float]:
+        """The values this folder sets itself (never its parent's)."""
+        record = self.folder_constant_records.get(path) or {}
+        return clean_layer(record.get("values"))
+
+    def constants_root(self, path: str) -> str | None:
+        """The folder inheritance stops at: the data root seen at or above ``path``, else None (the top)."""
+        root = self.root_of(path)
+        return root[0] if root is not None else None
+
+    def inherited_constants(self, path: str) -> dict[str, tuple[float, str]]:
+        """Each constant some folder at or above ``path`` sets, with the nearest such folder: the
+        folder's own values, else its parent's, and so on up to its data root (inclusive; the
+        top of the drive for a folder without one). From memory only."""
+        found: dict[str, tuple[float, str]] = {}
+        stop = self.constants_root(path)
+        folder, previous = path, ""
+        while folder and folder != previous:
+            for key, value in self.folder_constants(folder).items():
+                found.setdefault(key, (value, folder))
+            if folder == stop:
+                break
+            folder, previous = os.path.dirname(folder), folder
+        return found
+
+    def effective_folder_constants(self, path: str) -> dict[str, float]:
+        """The folder layer a run on ``path`` uses: ``inherited_constants``' values (``folder_layer``:
+        a fall time set above the folder that sets the fall distance is derived instead)."""
+        return folder_layer(self.inherited_constants(path))
+
+    def constants_session_only(self, path: str) -> str:
+        """Why this folder's constants last only this session ("" if a helper saves them)."""
+        if not store_options():
+            return "the disk cache is off for this session"
+        if self.no_root(path) is not None:
+            return "no .helab-root found here or above"
+        if self.pending_root(path) is not None:
+            return "this .helab-root is also at another location: answer Review… first"
+        if path in self._constants_save_failed:
+            return f"couldn't be saved ({self._constants_save_failed[path]})"
+        return self.constants_unsaved.get(path, "")
+
+    def remember_constants(self, path: str, record: object, *, known: bool = True,
+                           confirmed: bool = True) -> None:
+        """Keep a folder's own constants; a later choice (``set_at``) wins. ``known=False`` (a
+        listing that found none saved) only fills in a folder this session knows nothing about.
+        ``confirmed``: what the store said (not this session's unsaved choice)."""
+        if not isinstance(record, dict):
+            return
+        given: dict[str, Any] = {}
+        if record:
+            try:
+                set_at = float(record.get("set_at") or 0.0)
+            except (TypeError, ValueError):
+                return
+            given = {"values": clean_layer(record.get("values")), "set_at": set_at}
+        if confirmed and given:
+            saved = self._confirmed_constants.get(path)
+            if saved is None or float(saved["set_at"]) <= given["set_at"]:
+                self._confirmed_constants[path] = dict(given)
+        current = self.folder_constant_records.get(path)
+        if not given:
+            # None set: nothing to keep (most folders; no record per listed folder). ``known``
+            # (the store's answer) forgets what this session held instead.
+            if current is None or not known:
+                return
+            before = self.folder_constants(path)
+            del self.folder_constant_records[path]
+            if before:
+                self.constantsChanged.emit(path)
+            return
+        elif current is not None and float(current.get("set_at", 0)) > given["set_at"]:
+            return
+        before = self.folder_constants(path)
+        self.folder_constant_records[path] = given
+        self.folder_constant_records.move_to_end(path)
+        while len(self.folder_constant_records) > self.MAX_ENTRIES:
+            # Folders that set nothing go first: a value set is never forgotten while HeLab runs.
+            empty = next((folder for folder, kept in self.folder_constant_records.items() if not kept["values"]), None)
+            if empty is None:
+                break
+            del self.folder_constant_records[empty]
+        if self.folder_constants(path) != before:
+            self.constantsChanged.emit(path)
+
+    def set_folder_constants(self, path: str, values: dict[str, float], *, owner: str = "") -> bool:
+        """The user's constants for one folder (all it sets; a key left out goes back to inheriting):
+        shown at once, then saved by a helper. If saving fails, the saved ones show again and
+        ``folderConstantsFailed`` says why. Kept for the session only when the folder has no disk
+        cache (``constants_session_only``). Refused while quitting (no new folder work then)."""
+        if self.quitting:
+            self.folderConstantsFailed.emit(path, QUITTING, owner)
+            return False
+        set_at = time.time()
+        self.remember_constants(path, {"values": clean_layer(values), "set_at": set_at}, confirmed=False)
+        self._constants_save_failed.pop(path, None)  # The user's choice is tried now.
+        if self.constants_session_only(path):
+            self._session_constants.add(path)
+            return True
+        self._session_constants.discard(path)
+        job = self.cache_admin("constants", path=path, values=self.folder_constants(path), set_at=set_at,
+                               verified_volumes=self.verified_volumes())
+        if not job:
+            self._constants_not_saved(path, set_at, "HeLab's work queue is full", owner)
+            return False
+        self._constant_writes[job] = (path, set_at, owner)
+        return True
+
+    def _constants_roots_decided(self, paths: list[str]) -> None:
+        for path in paths:
+            self._constants_roots_moved(str(path))
+
+    def _constants_roots_moved(self, path: str) -> None:
+        """A data root at ``path`` was found, changed or decided ("": any, e.g. volumes verified):
+        a helper's earlier "no data root" answer at or below it is stale, plots below it may
+        inherit differently (``constantsChanged``), and values this session held in RAM only
+        are saved now where the folder has a disk cache (proposed: the choice was the user's)."""
+        def below(folder: str) -> bool:
+            return not path or folder == path or folder.startswith(path.rstrip("/\\") + os.sep)
+        # Only "no data root" and "volume not verified" answers: an unsupported mount stays one
+        # whatever roots are found.
+        for folder in [folder for folder, reason in self.constants_unsaved.items()
+                       if below(folder) and reason in (NO_ROOT_CONSTANTS, UNVERIFIED_CONSTANTS)]:
+            del self.constants_unsaved[folder]
+        if path:
+            self.constantsChanged.emit(path)
+        if self.quitting or self.service.closed:
+            return  # No new folder work while quitting.
+        for folder in sorted(self._session_constants):
+            failed = self._constants_save_failed.pop(folder, None)  # Tried again now.
+            if self.constants_session_only(folder):
+                if failed is not None:
+                    self._constants_save_failed[folder] = failed
+                continue
+            self._session_constants.discard(folder)
+            record = self.folder_constant_records.get(folder) or {}
+            set_at = float(record.get("set_at") or time.time())
+            job = self.cache_admin("constants", path=folder, values=self.folder_constants(folder), set_at=set_at,
+                                   verified_volumes=self.verified_volumes())
+            if job:
+                self._constant_writes[job] = (folder, set_at, AUTOMATIC_SAVE)
+            else:
+                self._automatic_save_failed(folder, "HeLab's work queue is full")
+
+    def _root_constants_gone(self, path: str) -> None:
+        """The data root at ``path`` changed identity or went (called before ``data_roots``
+        changes): what the old root's store said about the folders it holds no longer applies,
+        so the next listing's answer (none: no record) stands, whatever its ``set_at``. Folders
+        inside a nested root below ``path`` keep theirs (their root is unchanged), and so do
+        this session's unsaved choices (RAM only, or a write still running): the user's."""
+        writing = {write[0] for write in self._constant_writes.values()}
+        for folder in [folder for folder in self._confirmed_constants if self._root_holds(path, folder)]:
+            del self._confirmed_constants[folder]
+        for folder in [folder for folder in self.folder_constant_records if self._root_holds(path, folder)
+                       and folder not in self._session_constants and folder not in writing]:
+            before = self.folder_constants(folder)
+            del self.folder_constant_records[folder]
+            if before:
+                self.constantsChanged.emit(folder)
+
+    def _root_results_gone(self, path: str) -> None:
+        """Beside :meth:`_root_constants_gone`: the old root's saved-result counts no longer apply to
+        the folders it held (not those inside a nested root below), until a listing measures them."""
+        gone = [folder for folder in self.result_counts if self._root_holds(path, folder)]
+        for folder in gone:
+            del self.result_counts[folder]
+        if gone:
+            self.resultCountsChanged.emit(gone)
+
+    def _root_holds(self, path: str, folder: str) -> bool:
+        """Whether the data root at ``path`` holds ``folder``: at or below it, not inside a nested root."""
+        prefix = path.rstrip("/\\") + os.sep
+        if folder != path and not folder.startswith(prefix):
+            return False
+        nearest = self.root_of(folder)
+        return nearest is None or not nearest[0].startswith(prefix)
+
+    def _automatic_save_failed(self, folder: str, message: str) -> None:
+        """An automatic save of session-only values failed: they stay in RAM (still "RAM only",
+        saying why) and are tried again at the next root change; no tab asked, so it is logged."""
+        logging.warning("Folder constants of %s not saved: %s; kept for this session", folder, message)
+        self._session_constants.add(folder)
+        self._constants_save_failed[folder] = message
+        self.constantsChanged.emit(folder)
+
+    def _constants_not_saved(self, path: str, set_at: float, message: str, owner: str) -> None:
+        current = self.folder_constant_records.get(path)
+        if current is not None and float(current.get("set_at", 0)) == set_at:
+            # Still this choice (not a newer one): show what the store last confirmed again.
+            saved = self._confirmed_constants.get(path)
+            before = self.folder_constants(path)
+            if saved is None:
+                del self.folder_constant_records[path]
+            else:
+                self.folder_constant_records[path] = dict(saved)
+            if self.folder_constants(path) != before:
+                self.constantsChanged.emit(path)
+        self.folderConstantsFailed.emit(path, message, owner)
+
+    def _remember_constant_folders(self, folders: object, *, known: bool) -> None:
+        if isinstance(folders, dict):
+            for folder, record in folders.items():
+                self.remember_constants(str(folder), record, known=known)
+
+    # The disk cache store answers come from: one identity for presets and saved results.
+
+    def store_answer(self, store: object) -> bool:
+        """Whether an answer from the store ``store`` (its ``store_id``) counts. The one rule for
+        every answer naming a store, presets and saved results alike (presets reads and writes,
+        result reads and saves, Make room for a result, inventories, saved-result counts, the disk
+        usage any helper measures), checked before anything in the answer is used: **the cache
+        folder decides** which store is in use, never a clock or a counter.
+
+        - The store in use is the first one an answer names, then whatever the cache folder holds
+          when an identity probe opens it.
+        - An answer naming another store disagrees: one identity probe (``cache_admin identity``,
+          local lane) asks the folder which store is there. It is sent after that answer arrived,
+          so it opens the folder after both stores were seen.
+        - While the probe is out, nothing claims anything: every answer naming a store, whichever,
+          waits for it with its job's later events (``_waits_for_folder``); measurements (counts,
+          usage) count for nothing; writes wait (``_probe_held``: result saves, Make room for a
+          result, presets reads and writes; quitting waits for them). So nothing reads or writes
+          again until the folder has answered.
+        - The probe's store is the store in use. If it isn't the one before, both features drop the
+          old one's state together (``_store_changed``): presets start afresh as at startup (what it
+          said goes; the new store's names are unknown until read; this session's unsaved changes
+          stay and are written there; ``presetsChanged``), and saved results drop plots' "saved in
+          disk cache", the folders' counts, the results waiting there and the disk usage. Then the
+          answers that waited are replayed in order: the folder's store's count, the others are
+          stale (a stale presets read is asked again). Then the held writes go, and the store's
+          waiting results are asked for again (an inventory).
+        - A store other than the probe's named while it was out is probed again once it answers: a
+          replacement meanwhile only starts another probe, so it converges.
+        - A probe that fails, or can't be asked, leaves the folder's store unknown (one transition,
+          ``_store_not_confirmed``). Until a probe succeeds, no answer counts, the store in use's
+          included: what waited is stale, held writes end not saved, owed preset changes stay in
+          RAM and are said not saved ("Saved presets can't be read: …"), and nothing is asked again
+          by itself, so quitting waits for none of it. The next presets or result answer naming a
+          store, whichever (a deliberate read: the Presets menu, a plot's settings page, the presets
+          window; a plot's lookup), asks the folder again: one probe at a time, never a chain.
+          Measurements (counts, usage) never ask. Only a successful probe ends it: the store in use
+          again is a recovery (what waited counts, owed changes are written), another store the
+          change of store above.
+        - Held writes keep their owner (``HeldWrite``): ``cancel`` of it ends one cancelled, and
+          shutdown ends them all before the service cancels the probe, whose end then launches
+          nothing.
+        - Writes name their store, and the helper writes nothing in another: a result save the
+          store its guard was taken in (``ResultGuard.store``), Make room for a result the store it
+          waits in, a presets write the store whose names were read.
+        - Inventories are ordered against inventories of the same store only.
+        - An answer naming no store (a folder without a disk cache) says nothing of one: True. A
+          cache move keeps the store (its target must be empty or new, and a rename or a verified
+          copy keeps ``store_id``), so nothing changes."""
+        if not isinstance(store, str) or not store:
+            return True
+        if self._probe_owner:
+            if store != self._store:
+                self._probe_seen.add(store)
+            return False
+        if self._store_unknown:
+            return False  # (Nothing counts, the store in use's included, until a probe succeeds.)
+        if self._replaying:
+            return store == self._store  # (Waited for the probe, which opened the folder after it.)
+        if not self._store:
+            self._store = store
+            self._store_changed(replaced=False)
+            return True
+        if store == self._store:
+            return True
+        logging.info("Disk cache: an answer came from store %s, not %s in use: asking the cache folder", store,
+                     self._store)
+        self._probe()
+        return False
+
+    def _waits_for_folder(self, producer: IORequest, event: dict[str, Any]) -> bool:
+        """An answer naming a store other than the one in use, or any answer naming a store while
+        an identity probe is out, waits for the folder's answer (``store_answer``), and so do its
+        job's later events, in order. True: it waits."""
+        if producer.owner == self._probe_owner or self._replaying:
+            return False
+        store = event["inventory"].get("store_id") if event["kind"] == "inventory" else event.get("store")
+        store = store if isinstance(store, str) else ""
+        if not self._probe_owner:
+            if not (store and ((self._store and store != self._store) or self._store_unknown)):
+                return False
+            logging.info("Disk cache: an answer came from store %s (%s in use%s): asking the cache folder", store,
+                         self._store, ", unconfirmed" if self._store_unknown else "")
+            self._probe()
+            if not self._probe_owner:
+                return False  # (Couldn't ask: judged now, as from another store.)
+        elif store and store != self._store:
+            self._probe_seen.add(store)
+        elif not store and producer.owner not in self._probe_waiting_owners:
+            return False
+        self._probe_waiting.append((producer, event))
+        self._probe_waiting_owners.add(producer.owner)
+        return True
+
+    def _answered_from(self, event: Mapping[str, Any]) -> bool:
+        """``store_answer`` for an event naming its store (``store``)."""
+        return self.store_answer(event.get("store"))
+
+    def _probe(self) -> None:
+        """Ask the cache folder which store it holds (``store_answer``); one probe at a time."""
+        if self._probe_owner or self.service.closed or self._closing:
+            return
+        self._probe_owner = self.cache_admin("identity")
+        if self._probe_owner:
+            self._probe_seen.clear()
+            self.quitSavesChanged.emit()
+            return
+        # Not asked: as a failed probe (nothing waited and nothing is held, since none was out).
+        self._store_not_confirmed("HeLab's work queue is full")
+        self._presets_settle()
+        self.quitSavesChanged.emit()
+        self.presetsChanged.emit()
+
+    def _probe_answered(self, store: str, why: str = "") -> None:
+        """The cache folder holds ``store`` (after an unknown store: a recovery if it is the one in
+        use), or (""), the probe failed (``why``): ``_store_not_confirmed``. Then the answers that
+        waited are judged, and held writes go (or ended already)."""
+        self._probe_owner = ""
+        recovered = bool(store) and bool(self._store_unknown)
+        seen, self._probe_seen = self._probe_seen, set()
+        if self._closing or self.service.closed:
+            # Shutting down: nothing waits for an answer any more, and nothing is launched.
+            self._probe_waiting.clear()
+            self._probe_waiting_owners.clear()
+            self._drop_held(None, {"kind": "cancelled"})
+            return
+        if not store:
+            self._store_not_confirmed(why or "no answer")
+        else:
+            self._store_unknown = ""  # (The same store: a recovery; owed changes are written below.)
+        if store and store != self._store:
+            old, self._store = self._store, store
+            logging.info("Disk cache: the cache folder holds store %s now (was %s): its saved results and "
+                         "presets are read afresh", store, old or "none")
+            self._store_changed(replaced=bool(old))
+        # The answers that waited: those of the folder's store count, the others are stale (the
+        # folder was opened after they arrived), in the order they came.
+        waiting, self._probe_waiting = self._probe_waiting, []
+        self._probe_waiting_owners.clear()
+        self._replaying = True
+        try:
+            for producer, event in waiting:
+                self._on_event(producer, event)
+        finally:
+            self._replaying = False
+        if store:
+            held, self._probe_held = self._probe_held, []
+            for write in held:
+                if not self.service.submit(write.owner, 0, write.path, write.operation, write.payload,
+                                           priority=True, blob=write.blob):
+                    self.service.resultReady.emit(write.request(), {"kind": "error",
+                                                                    "message": "HeLab's work queue is full"})
+            # The store's waiting results and usage: answers dropped while the probe was out may
+            # have named some.
+            self.restore_pending()
+        if recovered:
+            # The folder's store is known again: its note goes (a real error reading presets stays).
+            if self.presets_error.startswith(STORE_NOT_CONFIRMED):
+                self.presets_error = ""
+            if self._presets_unread.startswith(STORE_NOT_CONFIRMED):
+                self._presets_unread = ""
+            if any(not self._preset_carried(key) for key in self.presets_unsaved):
+                self._presets_again = True  # Changes owed while the store was unknown: written now.
+        if self._presets_again:
+            self._presets_again = False
+            if store:
+                self._read_presets()
+        self._presets_settle()
+        self.quitSavesChanged.emit()
+        self.presetsChanged.emit()
+        if store and any(other != self._store for other in seen):
+            self._probe()
+
+    def _store_not_confirmed(self, why: str) -> None:
+        """The one failure transition (a probe failed, or couldn't be asked): the cache folder's store
+        is unknown. Until a probe succeeds no answer counts, the store in use's included; held writes
+        end not saved; presets are as when the store can't be read: owed changes stay in RAM and are
+        said not saved (written by the next read that reaches the store), and nothing is asked again
+        by itself."""
+        self._store_unknown = why
+        message = f"{STORE_NOT_CONFIRMED} ({why})"
+        logging.warning("Disk cache: which store the cache folder holds couldn't be confirmed (%s): no answer is "
+                        "taken and nothing is saved until it is asked again", why)
+        self._drop_held(None, {"kind": "error", "message": message})
+        self.presets_error = message
+        if not self.presets_read:
+            self._presets_unread = message
+        for key, owed in self.presets_unsaved.items():
+            if owed in ("", PRESETS_WAIT_READ) and not self._preset_carried(key):
+                self._presets_failed[key] = f"couldn't be saved ({message})"
+
+    def _store_changed(self, replaced: bool) -> None:
+        """Another store is in use (``store_answer``): presets start afresh; if it ``replaced`` one,
+        that store's saved results, waiting results and usage are gone from here too."""
+        known = self.presets_read
+        self._presets_fresh_start()
+        if known:
+            self.presetsChanged.emit()  # Its names are unknown now: views say so, and read when they open.
+        if replaced:
+            self._results_store_replaced(self._store)
+            self._usage_seq, self.disk_usage = None, None
+            self.update_auto_load_pause()
+            self._inventory_started.clear()
+
+    def _hold_or_submit(self, owner: str, path: str, operation: str, payload: dict[str, Any], *,
+                        blob: bytes | None = None) -> bool:
+        """Submit a write naming its store, or hold it while an identity probe is out (True: it will
+        be submitted, or end as a helper's would: not saved, or cancelled)."""
+        if not self._probe_owner:
+            return self.service.submit(owner, 0, path, operation, payload, priority=True, blob=blob)
+        self._probe_held.append(HeldWrite(owner, path, operation, payload, blob))
+        return True
+
+    def _drop_held(self, owner: str | None, end: dict[str, Any], operation: str | None = None,
+                   path: str | None = None) -> None:
+        """End held writes (of ``owner``, ``operation`` and ``path``; None: all) with ``end``, as
+        their helper would have."""
+        dropped = [write for write in self._probe_held if (owner is None or write.owner == owner)
+                   and (operation is None or write.operation == operation) and (path is None or write.path == path)]
+        self._probe_held = [write for write in self._probe_held if write not in dropped]
+        for write in dropped:
+            self.service.resultReady.emit(write.request(), end)
+
+    # Presets (helab/views/plots/presets.py): the store's ``presets`` table, through helpers only.
+    # Read at startup and whenever they could have changed (the Presets menu, a plot's settings
+    # page or the presets window opening); the user's changes show at once and a helper writes
+    # them. RAM only while the disk cache is off or its saved folder refused, saved once it's there.
+    #
+    # One rule keeps ``presets_unsaved`` right whatever order helpers answer in:
+    # - RAM follows one store, the one in use (``store_answer``, shared with saved results: the cache
+    #   folder decides). An answer from another store changes nothing. Another store becoming the
+    #   one in use is a fresh start (``_presets_fresh_start``): what the last one said goes, its
+    #   names are unknown until it sends its rows (``presets_read``), and this session's unsaved
+    #   changes stay, to be checked against them. While an identity probe is out, reads and writes
+    #   wait for it (``_presets_again``), so nothing re-reads a store the folder may not hold.
+    # - A change is written only once the current store's names are known, and only to that store:
+    #   each write names it, and a helper finding another store writes nothing. Until then it waits
+    #   (PRESETS_WAIT_READ); a name the store turns out to hold is never replaced unasked
+    #   (``presets_conflicts``).
+    # - A change stays unsaved until the current store holds it or a later choice of that preset
+    #   (its row with the change's ``set_at`` or a later one), whichever job's answer says so.
+    # - When a job ends, a change it carried that is still unsaved, and no other job carries, is
+    #   written again (to the current store) if the job's answer came from a replaced store, and a
+    #   read asked for meanwhile is queued: before anyone hears of the job's end.
+    # - A change is said not saved in one place only (``_presets_settle``): once the last preset job
+    #   has ended and no read is asked for, a change still owed can't be saved now (why: the
+    #   failure noted for it, or the read that failed). Until then it stays as it was.
+    # So while a change is owed, quitting waits (``presets_saving``) until no preset job is in
+    # flight and no read is asked for: no answer, in any order, can show it nothing to wait for
+    # while work that would save it remains.
+
+    def presets_session_only(self) -> str:
+        """Why presets last only this session ("" if a helper saves them)."""
+        if not store_options():
+            return "the disk cache is off for this session"
+        if cache_dir_refused():
+            return "the saved cache folder isn't used this session"
+        return ""
+
+    def presets_known(self) -> bool:
+        """Every saved preset's name is known here: the current store sent its rows, or there is
+        none (RAM only). Until then, no list of presets is "all of them"."""
+        return self.presets_read or bool(self.presets_session_only())
+
+    def presets_note(self) -> str:
+        """What the presets known here may lack: "" once the store's have been read."""
+        session = self.presets_session_only()
+        if session:
+            return f"RAM only: {session}"
+        if self.presets_error:
+            return f"⚠ Saved presets can't be read: {self.presets_error}"
+        return "" if self.presets_read else "Reading saved presets…"
+
+    def preset_records(self, kind: str, scope: str | None = None) -> dict[tuple[str, str], str]:
+        """The presets of ``kind`` (of ``scope`` only, if given) that aren't deleted: (scope, name) →
+        their JSON record."""
+        return {(key[1], key[2]): str(row["record"]) for key, row in self.presets.items()
+                if key[0] == kind and (scope is None or key[1] == scope) and row["record"] is not None}
+
+    def preset_unsaved(self, kind: str, scope: str, name: str) -> str:
+        """Why this preset isn't in the store ("" if it is, or a helper is writing it)."""
+        return self.presets_unsaved.get((kind, scope, name), "")
+
+    def presets_saving(self) -> bool:
+        """A change is owed (being written, or waiting for the store's names) while a preset job is
+        in flight or a read is asked for: ``quit_saves`` waits for it. (An owed change is decided
+        only once neither is left, ``_presets_settle``; a plain read with nothing owed isn't waited for.)"""
+        return (bool(self._preset_jobs) or self._presets_again) and any(
+            why in ("", PRESETS_WAIT_READ) for why in self.presets_unsaved.values())
+
+    def read_presets(self) -> None:
+        """Ask a helper for the store's presets (``presetsChanged`` when it answers), with the
+        changes not saved yet once the store's names are known. One read at a time: asked
+        meanwhile, it reads again after. Not while quitting."""
+        if not self.quitting:
+            self._read_presets()
+
+    def _read_presets(self) -> None:
+        if self.presets_session_only() or self.service.closed:
+            return
+        if self._probe_owner:
+            self._presets_again = True  # After the cache folder has said which store it holds.
+            return
+        if any(not keys for keys in self._preset_jobs.values()):
+            self._presets_again = True
+            return
+        if self.presets_read:
+            self._write_presets([key for key in self.presets_unsaved if not self._preset_carried(key)])
+        else:
+            self.presets_unsaved.update(dict.fromkeys(self._presets_unknown, PRESETS_WAIT_READ))
+            self._write_presets([])
+
+    def set_presets(self, rows: Iterable[tuple[str, str, str, str | None]]) -> str:
+        """The user's change to presets: (kind, scope, name, JSON record, or None to delete), all
+        written together. Shown at once, then saved by a helper; "" or why it lasts only this
+        session for now. Before the store's names are known, it waits for them (a name the store
+        holds then is kept, and said: ``presets_conflicts``). Refused while quitting."""
+        if self.quitting:
+            return QUITTING
+        now = time.time()
+        keys: list[tuple[str, str, str]] = []
+        for kind, scope, name, record in rows:
+            key = (kind, scope, name)
+            current = self.presets.get(key)
+            # Newer than what this HeLab shows, even if another HeLab's clock is ahead.
+            set_at = max(now, float(current["set_at"]) + 0.001) if current is not None else now
+            self.presets[key] = {"record": record, "set_at": set_at}
+            self.presets_conflicts.pop(key, None)
+            keys.append(key)
+        why = self.presets_session_only()
+        if not self.presets_read:
+            self._presets_unknown.update(keys)
+        if why:
+            self.presets_unsaved.update(dict.fromkeys(keys, why))
+        elif not self.presets_read:
+            self.presets_unsaved.update(dict.fromkeys(keys, PRESETS_WAIT_READ))
+            self._read_presets()
+            why = self.presets_unsaved.get(keys[0], "") if keys else ""
+            self.quitSavesChanged.emit()
+        elif not self._write_presets(keys):
+            why = self.presets_unsaved.get(keys[0], "") if keys else ""
+        self.presetsChanged.emit()
+        return why
+
+    def _write_presets(self, keys: list[tuple[str, str, str]]) -> bool:
+        """Write these changes to the current store (its names known), then read it; none: a read."""
+        keys = [key for key in keys if key in self.presets]
+        if self._probe_owner:
+            # Owed, written after the cache folder has said which store it holds (``_read_presets``).
+            self.presets_unsaved.update(dict.fromkeys(keys, ""))
+            self._presets_again = True
+            if keys:
+                self.quitSavesChanged.emit()
+            return True
+        rows = [{"kind": key[0], "scope": key[1], "name": key[2], **self.presets[key]} for key in keys]
+        owner = self.cache_admin("presets", rows=rows, store=self._store)
+        if not owner:
+            full = "couldn't be saved (HeLab's work queue is full)"
+            self.presets_unsaved.update(dict.fromkeys(keys, ""))  # Owed, and decided with the rest.
+            self._presets_failed.update(dict.fromkeys(keys, full))
+            if not self.presets_read:
+                self._presets_failed.update(dict.fromkeys(self._presets_unknown, full))
+            self._presets_settle()
+            return False
+        self.presets_unsaved.update(dict.fromkeys(keys, ""))
+        for key in keys:
+            self._presets_failed.pop(key, None)
+        self._preset_jobs[owner] = {key: float(self.presets[key]["set_at"]) for key in keys}
+        if keys:
+            self.quitSavesChanged.emit()
+        return True
+
+    def _preset_carried(self, key: tuple[str, str, str]) -> bool:
+        """A job in flight writes this preset's change as RAM holds it."""
+        set_at = float(self.presets[key]["set_at"]) if key in self.presets else None
+        return any(keys.get(key) == set_at for keys in self._preset_jobs.values())
+
+    def _remember_preset(self, row: Mapping[str, Any]) -> tuple[str, str, str]:
+        """A row the current store holds: shown unless RAM holds a later change, which it settles
+        otherwise (the store has that change, or a later choice: another HeLab's)."""
+        key = (str(row["kind"]), str(row["scope"]), str(row["name"]))
+        record, set_at = row.get("record"), float(row["set_at"])
+        current = self.presets.get(key)
+        if current is None or float(current["set_at"]) <= set_at:
+            self.presets[key] = {"record": None if record is None else str(record), "set_at": set_at}
+            self.presets_unsaved.pop(key, None)
+        return key
+
+    def _presets_fresh_start(self) -> None:
+        """Another store is in use (``store_answer``): as at a fresh start. Nothing the last one said
+        holds, whatever its times, and this one's names aren't known until it sends its rows; this
+        session's unsaved changes stay, to be checked against them and written."""
+        for key in [key for key in self.presets if key not in self.presets_unsaved]:
+            del self.presets[key]
+        self.presets_conflicts.clear()
+        self.presets_read = False
+        self._presets_unknown.update(self.presets_unsaved)
+
+    def _on_presets(self, producer: IORequest, event: Mapping[str, Any], in_use: bool) -> None:
+        if not in_use:
+            # It says nothing about the store in use (or the cache folder is being asked which that
+            # is): its changes are written again, to that one, when the job ends, and its read is
+            # asked again (after the folder has answered).
+            self._presets_stale.add(producer.owner)
+            if not self._preset_jobs.get(producer.owner) and not self._store_unknown:
+                self._presets_again = True  # (A write is written again, and so read, when it ends.)
+            return
+        for row in event.get("saved") or ():
+            self._remember_preset(row)
+        if "rows" in event:
+            stored = {(str(row["kind"]), str(row["scope"]), str(row["name"])): row for row in event["rows"] or ()}
+            for key in sorted(self._presets_unknown):
+                # Changed before the store's names were known: a preset saved under that name stays.
+                found = stored.get(key)
+                if found is not None and found.get("record") is not None:
+                    self.presets[key] = {"record": str(found["record"]), "set_at": float(found["set_at"])}
+                    self.presets_unsaved.pop(key, None)
+                    self.presets_conflicts[key] = PRESET_FOUND
+            for row in stored.values():
+                self._remember_preset(row)
+            self.presets_read, self.presets_error, self._presets_unread = True, "", ""
+            waiting = [key for key in self._presets_unknown if key in self.presets_unsaved]
+            self._presets_unknown.clear()
+            if waiting:
+                self._write_presets(waiting)
+        else:
+            self.presets_error = str(event.get("error") or "the disk cache could not be read")
+            logging.warning("Presets could not be read: %s", self.presets_error)
+            if not self.presets_read:
+                self._presets_unread = self.presets_error  # (Said at ``_presets_settle``.)
+        self.quitSavesChanged.emit()
+        self.presetsChanged.emit()
+
+    def _preset_job_ended(self, producer: IORequest, kind: str, event: Mapping[str, Any]) -> None:
+        carried = self._preset_jobs.pop(producer.owner)
+        stale = producer.owner in self._presets_stale
+        self._presets_stale.discard(producer.owner)
+        left = [key for key in carried if self.presets_unsaved.get(key) == "" and not self._preset_carried(key)]
+        if stale and self._store_unknown:
+            # Its store isn't known to be the folder's: not saved, and not written again by itself.
+            message = f"{STORE_NOT_CONFIRMED} ({self._store_unknown})"
+            self._presets_failed.update(dict.fromkeys(left, f"couldn't be saved ({message})"))
+        elif stale:
+            if left and self.presets_read:
+                self._write_presets(left)
+            elif left:
+                self._presets_unknown.update(left)
+                self.presets_unsaved.update(dict.fromkeys(left, PRESETS_WAIT_READ))
+                self._read_presets()
+        elif left or kind != "done":
+            message = str(event.get("message") or "cancelled") if kind != "done" else "the disk cache didn't keep it"
+            self._presets_failed.update(dict.fromkeys(left, f"couldn't be saved ({message})"))
+            if kind != "done":
+                self.presets_error = message  # (A job that writes reads after: it read nothing either.)
+                if not self.presets_read:
+                    self._presets_unread = message
+            logging.warning("Presets: %s", message)
+        if self._presets_again and not carried:
+            self._presets_again = False
+            self._read_presets()
+        self._presets_settle()
+        self.quitSavesChanged.emit()
+        self.presetsChanged.emit()
+
+    def _presets_settle(self) -> None:
+        """No preset job in flight and none asked for: a change still owed (being written, or
+        waiting for the names) can't be saved now. It says why, until the next read tries again."""
+        if self._preset_jobs or self._presets_again:
+            return
+        for key, why in list(self.presets_unsaved.items()):
+            if why == "" or why == PRESETS_WAIT_READ:
+                unread = self._presets_unread or "no answer"
+                self.presets_unsaved[key] = self._presets_failed.get(key) or (
+                    f"not saved: the saved presets can't be read ({unread})" if not self.presets_read
+                    else "couldn't be saved (the disk cache didn't keep it)")
+        self._presets_failed.clear()
+        self._presets_unread = ""
 
     def load_file(self, path: str) -> str:
         """The TXY file a running load of ``path`` is reading now ("" if none), from memory."""
@@ -863,27 +1762,87 @@ class FolderCache(QObject):
 
     def memory_usage(self) -> tuple[int, int, int]:
         """Loaded datasets in memory: (count, bytes, bytes shown in tabs)."""
-        held = {id(entry): entry for entry in (*self.datasets.values(), *self.pins.values())}
+        held = self._held()
         shown = {id(entry) for entry in self.pins.values()}
         total = sum(int(entry.metadata.get("bytes", 0)) for entry in held.values())
         pinned = sum(int(entry.metadata.get("bytes", 0)) for key, entry in held.items() if key in shown)
         return len(held), total, pinned
 
-    def _evict(self) -> list[Dataset]:
-        """Drop datasets no tab shows, least recently used first, until the rest fit the RAM budget."""
+    def _held(self) -> dict[int, Dataset]:
+        """Everything held in RAM, once each: tabs may still show datasets no longer in
+        ``datasets`` (e.g. invalidated), and those count too."""
+        return {id(entry): entry for entry in (*self.datasets.values(), *self.pins.values())}
+
+    def _plot_buffers(self) -> Buffers:
+        merged: Buffers = {}
+        for user in list(self.ram_users):
+            merged.update(user.ram_buffers())
+        return merged
+
+    def held_buffers(self) -> Buffers:
+        """The memory the datasets held in RAM use (their arrays' buffers)."""
+        merged: Buffers = {}
+        for entry in self._held().values():
+            merged.update(dataset_buffers(entry))
+        return merged
+
+    def shown_buffers(self) -> Buffers:
+        """The memory the datasets shown in tabs use (never dropped)."""
+        merged: Buffers = {}
+        for entry in {id(entry): entry for entry in self.pins.values()}.values():
+            merged.update(dataset_buffers(entry))
+        return merged
+
+    def plot_bytes(self) -> int:
+        """RAM the plots hold beyond the datasets held here: arrays shared with one count once."""
+        plots = self._plot_buffers()
+        if not plots:
+            return 0
+        held = self.held_buffers()
+        return sum(size for key, size in plots.items() if key not in held)
+
+    def held_sizes(self) -> list[tuple[str, int, bool]]:
+        """Each dataset held in RAM: (path, bytes, shown in a tab)."""
+        shown = {id(entry) for entry in self.pins.values()}
+        return [(entry.path, int(entry.metadata.get("bytes", 0)), key in shown) for key, entry in self._held().items()]
+
+    def evict_to(self, target: int) -> list[Dataset]:
+        """Drop datasets no tab shows until RAM in use, the plots' included, fits ``target``
+        (the plots' budget checks: before releasing plots, ``RamBudget.check``)."""
+        return self._evict(target)
+
+    def _evict(self, target: int | None = None) -> list[Dataset]:
+        """Drop datasets no tab shows, least recently used first, until the rest, with what the
+        plots hold beyond them, fit the RAM budget (or ``target``). A dataset whose arrays plots
+        hold anyway would free nothing: it stays."""
+        limit = self.max_data_bytes if target is None else target
         dropped: list[Dataset] = []
-        # Everything held in RAM, once each: tabs may still show datasets no longer in
-        # ``datasets`` (e.g. invalidated), and those count too.
         _, total, _ = self.memory_usage()
+        plots = self._plot_buffers()
+        holders: Counter[int] = Counter()
+        if plots and total + sum(plots.values()) <= limit:
+            plots = {}  # It fits even counting every plot array apart: no need to find the shared ones.
+        if plots:
+            for entry in self._held().values():
+                holders.update(dataset_buffers(entry).keys())
+            total += sum(size for key, size in plots.items() if not holders[key])
         pinned = {id(entry) for entry in self.pins.values()}
         for key, entry in list(self.datasets.items()):
-            if total <= self.max_data_bytes:
+            if total <= limit:
                 break
-            if id(entry) not in pinned:
-                total -= int(entry.metadata.get("bytes", 0))
-                del self.datasets[key]
-                dropped.append(entry)
-                self.datasetChanged.emit(entry.path)
+            if id(entry) in pinned:
+                continue
+            frees = int(entry.metadata.get("bytes", 0))
+            if plots:
+                own = dataset_buffers(entry)
+                frees -= sum(size for buffer, size in own.items() if buffer in plots and holders[buffer] == 1)
+                if frees <= 0:
+                    continue
+                holders.subtract(own.keys())
+            total -= frees
+            del self.datasets[key]
+            dropped.append(entry)
+            self.datasetChanged.emit(entry.path)
         count = sum(len(s.entries) for s in self.snapshots.values())
         while self.snapshots and (len(self.snapshots) > self.MAX_SNAPSHOTS or count > self.MAX_ENTRIES):
             _, snapshot = self.snapshots.popitem(last=False)
@@ -898,8 +1857,13 @@ class FolderCache(QObject):
             return False
         path = self.key(path)
         payload = payload or {}
+        if self.quitting and not (operation == "load" and payload.get("save")):
+            return False
         if self.has_request(owner, operation, path):
             return True
+        if (self.offline and operation not in IOService.OFFLINE_OPERATIONS
+                and not (operation == "load" and payload.get("save") and payload.get("before_offline"))):
+            return self._offline_submit(owner, generation, path, operation, payload, priority)
         request = IORequest(owner, generation, path, operation, payload,
                             self.service.NO_PROGRESS_TIMEOUT if timeout is None else timeout)
         snapshot = self.snapshot(path) if operation in SCANS else None
@@ -963,7 +1927,8 @@ class FolderCache(QObject):
             if candidates in self._defaults:
                 self._deliver(request, {"kind": "resolved", "path": self._defaults[candidates]})
                 return True
-        job_key = (operation, path)
+        live = operation == "load" and bool(payload.get("live"))
+        job_key = ("live" if live else operation, path)
         job = self.jobs.get(job_key)
         if job:
             if priority and operation != "load":
@@ -987,24 +1952,149 @@ class FolderCache(QObject):
             if snapshot:
                 snapshot.checked_at = 0
         # The data of a folder that lost shots may be another folder's: never a load's base.
-        base = (self._base(path) if operation == "load" and path not in self.mismatched
-                and path not in self.allow_missing
+        base = (self._base(path, str(payload.get("prefer_base") or "")) if operation == "load"
+                and path not in self.mismatched and path not in self.allow_missing
                 and not payload.get("allow_missing") else None)
         if base:
             payload = {**payload, "memory": [list(entry) for entry in base.metadata["fingerprint"]
                                              if entry[0] in base.data],
+                       # Their times: the helper never stats an unchanged shot's raw file again.
+                       "memory_raw_times": [list(entry) for entry in base.metadata.get("raw_times") or ()
+                                            if entry and entry[0] in base.data],
                        "base_signature": base.signature}
-        job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base)
+            if self.verified(base) and base.metadata.get("listed_at") and base.metadata.get("identity"):
+                # The quick check of the data in RAM when no cached dataset has one (``io_ops.loading``).
+                payload["memory_check"] = {key: base.metadata.get(key) for key in (
+                    "listed_at", "names", "identity", "fingerprint", "problematic", "data_root",
+                    "folder_mtime_ns")} | {
+                    "signature": base.signature, "unsettled": base.metadata.get("unsettled_files", 0)}
+        arrays: dict[int, npt.NDArray[np.float64]] | None = None
+        if operation == "load" and payload.get("save_memory"):
+            if base is not None and base.data:
+                # Live's save: the data in RAM is saved as it is (``io_ops.save_held.save_held``), its arrays
+                # handed to the helper; its files are checked, not read.
+                arrays = dict(base.data)
+                payload = {**payload, "held": [list(entry) for entry in base.metadata["fingerprint"]],
+                           "held_problematic": list(base.metadata.get("problematic", ())),
+                           "held_raw_times": list(base.metadata.get("raw_times") or ())}
+            else:
+                payload = {key: value for key, value in payload.items() if key != "save_memory"}
+        job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base, live=live)
         if operation in SCANS:
             job.payload = payload = {**payload, "scan_operation_id": job.owner,
                                      "scan_revision": time.time_ns(), "scan_manual": manual}
         job.subscribers[(owner, generation)] = request
         self.jobs[job_key] = job
         self._producers[job.owner] = job
-        if not self.service.submit(job.owner, 0, path, operation, payload, priority=priority, timeout=timeout):
+        if not self.service.submit(job.owner, 0, path, operation, payload, priority=priority, timeout=timeout,
+                                   arrays=arrays):
             self.jobs.pop(job_key)
             self._producers.pop(job.owner)
             return False
+        return True
+
+    @property
+    def offline(self) -> bool:
+        """Work Offline (cache-only browsing): no source folder is read; see ``set_offline``."""
+        return self.service.offline
+
+    def set_offline(self, on: bool) -> None:
+        """Work Offline on or off (Tony, 2026-10-26: D1–D10 of the cache-only design).
+
+        On: no source operation starts (``IOService.OFFLINE_OPERATIONS``; ``submit`` answers
+        the others with an ``offline`` event, and lists a folder from its saved listing). Running
+        listings, scans, icon lookups and loads are cancelled; saves already asked for, cached
+        reads and other local-disk work go on. The caller turns Live off first, so its save is
+        one of those. Off: volumes and data roots are verified again; the main window refreshes the tabs.
+        """
+        global _offline
+        if on == self.offline:
+            return
+        _offline = on
+        if on:
+            # Saves the user asked for that wait for another load keep their authorization: they
+            # start offline once that load ends (``submit``, ``IOService.submit``).
+            for _, payload in self._deferred_saves.values():
+                payload["before_offline"] = True
+            for job in list(self.jobs.values()):
+                stand_in = IORequest(job.owner, 0, job.path, job.operation, job.payload, 0.0)
+                if not IOService.finishes_offline(stand_in) and not job.saves():
+                    self._cancel_job(job)
+            self._subtree_pending.clear()
+        else:
+            # Saved listings still being read, or replayed to tabs, and answers still to deliver end
+            # now: a Refresh just after would otherwise join them and show saved names as current
+            # (Vernier, review round 1). Tabs list those folders again.
+            for job in [job for job in self.jobs.values() if job.payload.get("offline")]:
+                self._cancel_job(job)
+            for request in [r for r in self._deliveries if r.payload.get("offline")]:
+                self._deliveries.remove(request)
+                request.cancelled.set()
+                self.resultReady.emit(request, {"kind": "cancelled", "offline": True})
+        self.service.set_offline(on)
+        logging.info("Work Offline %s", "on: cached data only" if on else "off")
+        if not on:
+            self._verify_roots()  # Volumes and markers may have changed meanwhile.
+        self.offlineChanged.emit(on)
+
+    def _offline_submit(self, owner: str, generation: int, path: str, operation: str,
+                        payload: dict[str, Any], priority: bool) -> bool:
+        """``submit`` while working offline: a listing reads the folder's saved listing (the local
+        lane's ``saved_list``; no snapshot, no scan history: ``_on_event``), a default folder's lookup
+        finds the newest data root, a local operation goes on as usual, and any other is answered
+        ``offline`` at once, as accepted (never a failure)."""
+        if operation in ("list", "resolve"):
+            # (A tab's default folder: the data root seen most recently, ``io_ops.listings.newest_root_folder``.)
+            payload = {**payload, "offline": True, "cache": store_options(), "verified_volumes": self.verified_volumes(),
+                       **({"resolve": True} if operation == "resolve" else
+                          {"listing_only": True, "scan_manual": False, "automatic": False})}
+            request = IORequest(owner, generation, path, operation, payload, self.service.NO_PROGRESS_TIMEOUT)
+            job = self.jobs.get((operation, path))
+            if job is not None:
+                job.subscribers[(owner, generation)] = request
+                self._catch_up(job, request)
+                return True
+            job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload)
+            job.subscribers[(owner, generation)] = request
+            self.jobs[job.key] = job
+            self._producers[job.owner] = job
+            if not self.service.submit(job.owner, 0, path, "saved_list", payload, priority=priority):
+                self.jobs.pop(job.key)
+                self._producers.pop(job.owner)
+                return False
+            return True
+        request = IORequest(owner, generation, path, operation, {**payload, "offline": True}, 0.0)
+        self._deliveries.append(request)
+
+        def answer() -> None:
+            if request in self._deliveries:
+                self._deliveries.remove(request)
+            if request.cancelled.is_set() or self.service.closed:
+                return
+            self.resultReady.emit(request, {"kind": "offline", "operation": operation})
+            # A status check ends as a skipped one would (its row keeps what it shows); others cancelled.
+            self.resultReady.emit(request, {"kind": "done", "scan_skipped": True, "offline": True} if operation in SCANS
+                                  else {"kind": "cancelled", "offline": True})
+        QTimer.singleShot(0, answer)
+        return True
+
+    def replay_snapshot(self, owner: str, generation: int, path: str, *, metadata_only: bool = False,
+                        listing_only: bool = False) -> bool:
+        """Apply the folder's snapshot in RAM to a tab as its listing (or, ``metadata_only``, its
+        status check) would: no helper and never a revalidating check, however old the snapshot.
+        Another tab's finished result reaches a refreshing tab this way. Whether there was one to
+        apply: not for a snapshot a load found outdated (``checked_at`` 0), nor a names-only one
+        for a status check."""
+        path = self.key(path)
+        operation = "scan" if metadata_only else "list"
+        snapshot = self.snapshots.get(path)
+        if (self.service.closed or snapshot is None or snapshot.checked_at == 0
+                or metadata_only and not snapshot.status.get("details")):
+            return False
+        if not self.has_request(owner, operation, path):
+            # ``applied``: memory only, so Refresh's cancelling of automatic work leaves it.
+            self._replay(IORequest(owner, generation, path, operation, {
+                "applied": True, "metadata_only": metadata_only, "listing_only": listing_only}, 0.0), snapshot)
         return True
 
     def _deliver(self, request: IORequest, event: dict[str, Any]) -> None:
@@ -1050,7 +2140,11 @@ class FolderCache(QObject):
         QTimer.singleShot(0, batch)
 
     def _forget_job(self, job: SharedJob) -> None:
-        self.jobs.pop((job.operation, job.path), None)
+        if self.jobs.get(job.key) is job:
+            del self.jobs[job.key]
+        if job.operation == "load" and not job.live and job.path in self._deferred_saves:
+            # A save waiting for this load: it starts once the load (and any write it does) ends.
+            QTimer.singleShot(0, lambda: self._start_deferred(job.path))
         self._producers.pop(job.owner, None)
         self._awaiting_cached.pop(job.owner, None)
         if job.operation == "cached" and job.path in self._awaiting_producers:
@@ -1081,6 +2175,17 @@ class FolderCache(QObject):
             self.mismatched.popitem(last=False)  # The oldest.
         for key in [key for key in self.datasets if key[0] == path]:
             del self.datasets[key]
+        # Fence the folder's work from before: every load, memory check, Live check, held save and
+        # cached read started before now is cancelled when it reports (its ``loaded`` fails the epoch
+        # check), so none brings the old data back or clears the mismatch, whatever completes before
+        # it; nothing held from before is a later load's base; RAM answers queued are cancelled. Not a
+        # clear: the record, its window and Review / Retry stay; a load started now clears it.
+        self._epochs[path] = self._epochs.get(path, 0) + 1
+        self._base_floor[path] = self._epochs[path]
+        for request in list(self._deliveries):
+            if request.operation in ("load", "cached") and request.path == path and not request.cancelled.is_set():
+                request.cancelled.set()
+                self.resultReady.emit(request, {"kind": "cancelled"})
         self.datasetChanged.emit(path)
         if earlier is None:
             self.mismatch_count += 1
@@ -1154,20 +2259,30 @@ class FolderCache(QObject):
             problematic.discard(shot)
         problematic.update(job.problematic)
         metadata = {"fingerprint": list(fingerprints.values()), "problematic": sorted(problematic)}
+        metadata["raw_times"] = dataset_raw_times(job.base, metadata, job.raw_times)
         job.base = Dataset(job.path, "", data, metadata, job.epoch)
         memory = [list(entry) for shot, entry in fingerprints.items() if shot in data]
         producer.payload["memory"] = memory
+        producer.payload["memory_raw_times"] = list(metadata["raw_times"])
         job.payload = dict(producer.payload)
 
     def _cleared_since(self, job: SharedJob, path: str) -> bool:
         """A scan that started before a cache clear may report the cleared entry."""
         return job.created < self._cleared_at.get(path, float("-inf")) or self._removed_since(job, "datasets", path)
 
-    def _adopt_load_summary(self, path: str, status: dict[str, Any]) -> None:
-        """A load's listing and fingerprint complete a names-only listing of the same files."""
+    def _adopt_load_summary(self, path: str, status: dict[str, Any], *, live: bool = False) -> None:
+        """A load's listing and fingerprint complete a names-only listing of the same files.
+
+        A Live check's (``live``) found new shots just now: the snapshot takes its files and
+        counts as freshly listed, so tabs show the new counts without listing the folder again."""
         self.remember_scan(path, status)
         snapshot = self.snapshots.get(path)
-        if (snapshot and not snapshot.status.get("signature")
+        if snapshot and live:
+            snapshot.status = {**snapshot.status, **status,
+                               "details": bool(snapshot.status.get("details")) or not status["has_dirs"]}
+            snapshot.checked_at = time.monotonic()
+            self.snapshotChanged.emit(path)
+        elif (snapshot and not snapshot.status.get("signature")
                 and snapshot.status.get("txy") == status["txy"] and snapshot.status.get("raw") == status["raw"]):
             # Subfolder dates still need the details scan.
             snapshot.status = {**snapshot.status, **{key: status[key] for key in (
@@ -1176,9 +2291,13 @@ class FolderCache(QObject):
               and float(status.get("scanned_at") or 0) > float(snapshot.status.get("scanned_at") or 0)):
             # The folder changed after its details scan, and this load listed it later: its
             # files are the current ones (else the finished load is dropped as out of date).
-            # Subfolder entries and their dates still come from the details scan.
+            # Subfolder entries and their dates still come from the details scan. Without
+            # subfolders, that listing was the whole folder: as fresh as a check of it, so tabs
+            # showing it needn't list it again.
             snapshot.status = {**snapshot.status, **status,
                                "details": bool(snapshot.status.get("details")) or not status["has_dirs"]}
+            if not status["has_dirs"]:
+                snapshot.checked_at = time.monotonic()
             self.snapshotChanged.emit(path)
 
     def _cancel_replays(self, path: str) -> None:
@@ -1195,9 +2314,27 @@ class FolderCache(QObject):
             request.cancelled.set()
             self.resultReady.emit(request, {"kind": "cancelled"})
 
+    def _drop_superseded(self, entry: Dataset) -> None:
+        """A dataset that reuses an older one's arrays (``memory_shots``: an update or a Live check)
+        replaces the folder's older datasets no tab shows: they describe files the folder has moved
+        past, and each would count its shared arrays again against the RAM budget."""
+        shown = {id(dataset) for dataset in self.pins.values()}
+        for key in [key for key, dataset in self.datasets.items()
+                    if key[0] == entry.path and key[1] != entry.signature and id(dataset) not in shown]:
+            del self.datasets[key]
+
+    def _folder_changed(self, path: str) -> None:
+        """A status check found other files than the folder's snapshot: its datasets describe files
+        the folder has moved past (a tab still shows its own, pinned). Unlike a clear
+        (``_invalidate_data``), running loads, Live checks and cached reads go on: each checks the
+        folder itself, and a ``loaded`` from before the change fails its signature check."""
+        for key in [key for key in self.datasets if key[0] == path]:
+            del self.datasets[key]
+        self.datasetChanged.emit(path)
+
     def _invalidate_data(self, path: str) -> None:
         self._epochs[path] = self._epochs.get(path, 0) + 1
-        for operation in ("load", "cached"):
+        for operation in ("load", "live", "cached"):
             job = self.jobs.get((operation, path))
             if job:
                 self._cancel_job(job)
@@ -1213,7 +2350,7 @@ class FolderCache(QObject):
         cancelled = []
         for request in tuple(self.requests(owner)):
             if (request.operation in SCANS and not request.payload.get("listing_only")
-                    and not request.payload.get("scan_manual") and (
+                    and not request.payload.get("scan_manual") and not request.payload.get("applied") and (
                     request.payload.get("automatic") or request.payload.get("revalidate")
                     or request.operation in ("scan", "details"))):
                 request.payload["refresh_cancelled"] = True
@@ -1221,7 +2358,82 @@ class FolderCache(QObject):
                 cancelled.append(request)
         return cancelled
 
+    def save(self, owner: str, path: str, payload: dict[str, Any]) -> bool:
+        """Save a folder's data shown in RAM to the disk cache with an ordinary load (Live's saves:
+        its new shots are re-read from the folder, the rest come from the cache). Saves of one
+        folder never overlap: while its previous save runs, this one waits (one per folder, the
+        newest). It never joins another load of the folder that isn't a save either (that one may
+        not save, or save with other choices): it waits for it to end. False if it couldn't be
+        queued."""
+        path = self.key(path)
+        payload = {**payload, "save": True}
+        if self._save_waits(path):
+            self._deferred_saves[path] = (owner, payload)
+            self.quitSavesChanged.emit()
+            return True
+        submitted = self.submit(owner, 0, path, "load", payload, priority=True)
+        self.quitSavesChanged.emit()
+        return submitted
+
+    def _save_waits(self, path: str) -> bool:
+        """A save of ``path`` waits: the folder's data is being written, or another load of it
+        that isn't a save is running or queued."""
+        job = self.jobs.get(("load", path))
+        return self.disk_cache_saving(path) or (job is not None and not job.saves())
+
+    def _start_deferred(self, path: str) -> None:
+        if path not in self._deferred_saves or self._save_waits(path) or self.service.closed:
+            return
+        owner, payload = self._deferred_saves.pop(path)
+        if not self.submit(owner, 0, path, "load", payload, priority=True):
+            logging.warning("Disk cache save of %s: queue full", path)
+            # Its owner waits for a load's outcome: this is it.
+            request = IORequest(owner, 0, path, "load", payload, self.service.NO_PROGRESS_TIMEOUT)
+            self.resultReady.emit(request, {"kind": "error", "message": "Save queue full"})
+        self.quitSavesChanged.emit()
+
+    def quit_saves(self) -> list[str]:
+        """Folders whose data is being saved to the disk cache, or will be: what quitting waits
+        for. A finished load's background save, and a save not yet started or still reading; a
+        folder's flags or constants the user chose, still being written (``folder_settings_saving``):
+        quitting would end that helper, and with it the user's choice; a plot's result being saved,
+        by its run or by Make room (``result_saving``); and presets being written."""
+        writing = [self._finishing[owner] for owner in self._disk_cache_writers if owner in self._finishing]
+        loading = [job.path for job in self.jobs.values() if job.operation == "load" and job.saves()]
+        settings = [write[0] for write in (*self._pref_writes.values(), *self._constant_writes.values())]
+        presets = [PRESETS_SAVING] if self.presets_saving() else []
+        results = list(self._result_writes.values())
+        return list(dict.fromkeys((*writing, *loading, *self._deferred_saves, *settings, *results, *presets)))
+
+    def result_saving(self, path: str) -> bool:
+        """A plot's result of the folder (or, for ``RESULTS_SAVING``, one of unknown folder) is being
+        saved, by its run or by Make room (``quit_saves``). Results waiting for Make room aren't:
+        they stay in the store for the next session, as datasets do."""
+        return path in self._result_writes.values()
+
+    def folder_settings_saving(self, path: str) -> bool:
+        """A write of the folder's flags or constants is queued or running (``quit_saves``)."""
+        return any(write[0] == path for write in (*self._pref_writes.values(), *self._constant_writes.values()))
+
+    def cancel_for_quit(self) -> None:
+        """Quitting: stop the reads, listings and loads nothing will show, and data-root
+        verification, so saves get the I/O (a save waiting for a load it doesn't join then
+        starts); none of those start again (``quitting``)."""
+        self.quitting = True
+        if self._root_verify_owner:
+            self.service.cancel(self._root_verify_owner)
+        for job in list(self.jobs.values()):
+            if job.operation in ("load", "cached", "list", "details", "scan", "icons", "resolve") and not (
+                    job.operation == "load" and job.saves()):
+                self._cancel_job(job)
+
     def cancel(self, owner: str, operation: str | None = None, path: str | None = None) -> None:
+        # A write held for an identity probe ends cancelled, as a queued helper would.
+        self._drop_held(owner, {"kind": "cancelled"}, operation, path)
+        for folder, (waiting, _) in list(self._deferred_saves.items()):
+            if waiting == owner and operation in (None, "load") and path in (None, folder):
+                del self._deferred_saves[folder]
+                self.quitSavesChanged.emit()
         for request in list(self._deliveries):
             if request.owner == owner and (operation is None or request.operation == operation) and (path is None or request.path == path):
                 self._deliveries.remove(request)
@@ -1277,6 +2489,13 @@ class FolderCache(QObject):
             self.service.promote(job.owner)
 
     def shutdown(self) -> None:
+        # Before the service cancels the identity probe: what it held is dropped, and its end
+        # launches nothing (``_probe_answered``).
+        self._closing = True
+        self._drop_held(None, {"kind": "cancelled"})
+        self._probe_waiting.clear()
+        self._probe_waiting_owners.clear()
+        self._deferred_saves.clear()
         self._sweep_timer.stop()
         self._restore_timer.stop()
         self._budget_timer.stop()
@@ -1321,19 +2540,63 @@ class FolderCache(QObject):
 
     def _verify_roots(self) -> None:
         """Check the saved volume IDs at once on the local lane (cached reads of external volumes
-        wait for that), and queue one background source helper for remembered marker locations."""
+        wait for that), then remembered marker locations in one background source helper, which
+        reuses those IDs. Asked for at startup and by listings reporting a mount table not yet
+        asked about; a check already queued sees the newest table when it starts, and one asked for
+        while a check runs follows it once. Never asked again because a check saw a newer table
+        than the listings reported: only a new listing observation asks."""
         options = store_options()
-        if not options or self.service.closed:
+        if not options or self.service.closed or self.quitting:
             return
         self._verify_asked = self._mounts_observed
-        if not self._volume_verify_owner:
-            owner = uuid4().hex
-            if self.service.submit(owner, 0, options["directory"], "volumes_verify", {"cache": options}):
-                self._volume_verify_owner = owner
-        if not self._root_verify_owner:
-            owner = uuid4().hex
-            if self.service.submit(owner, 0, options["directory"], "roots_verify", {"cache": options}):
-                self._root_verify_owner = owner
+        if self._volume_verify_owner:
+            self._volumes_again = self._volumes_again or self._started_request(self._volume_verify_owner)
+        else:
+            self._verify_volumes(options)
+        running = self._started_request(self._root_verify_owner)
+        if running:
+            self._markers_again = True
+        elif not self._root_verify_owner:
+            self._markers_wanted = True
+            if not self._volume_verify_owner:
+                self._verify_markers()
+
+    def _started_request(self, owner: str) -> bool:
+        return bool(owner) and any(request.owner == owner for request in self.service.active)
+
+    def _verify_volumes(self, options: dict[str, Any]) -> None:
+        self._volume_verify_owner = uuid4().hex
+        if not self.service.submit(self._volume_verify_owner, 0, options["directory"], "volumes_verify",
+                                   {"cache": options}):
+            self._volume_verify_owner = ""
+
+    def _verify_markers(self) -> None:
+        """Queue the marker check asked for, at most every ``VERIFY_MIN_SECONDS``."""
+        options = store_options()
+        if (not self._markers_wanted or self._root_verify_owner or not options or self.service.closed
+                or self.quitting):
+            return
+        wait = self._markers_started + self.VERIFY_MIN_SECONDS - time.monotonic()
+        if wait > 0:
+            if not self._markers_timer.isActive():
+                self._markers_timer.start(int(wait * 1000) + 1)
+            return
+        # The owner is known before the job can start (``_before_start`` runs as it does).
+        self._root_verify_owner = uuid4().hex
+        if self.service.submit(self._root_verify_owner, 0, options["directory"], "roots_verify", {"cache": options}):
+            self._markers_wanted = False
+            self._markers_started = time.monotonic()
+        else:
+            self._root_verify_owner = ""
+
+    def _before_start(self, request: IORequest) -> None:
+        """The marker check uses the volume IDs checked last, unless a volume check still runs (it
+        checks them itself then)."""
+        if request.operation == "roots_verify" and request.owner == self._root_verify_owner:
+            if self._volume_verify_owner or not self._volume_ids:
+                request.payload.pop("volume_ids", None)
+            else:
+                request.payload["volume_ids"] = [list(item) for item in self._volume_ids]
 
     def verified_volumes(self) -> list[list[str]]:
         """For a cached read (``verified_volumes``): a disk swapped in at the same mount path and
@@ -1370,13 +2633,210 @@ class FolderCache(QObject):
         if not options or self.service.closed:
             return ""
         owner = uuid4().hex
-        if not self.service.submit(owner, 0, options["directory"], "cache_admin",
-                                   {"cache": options, "action": action, "params": params}, priority=True):
+        waiting = self.pending_results.get(str(params.get("pending_id") or ""), {}) if action == "adopt_result" else {}
+        if waiting.get("store"):
+            params["store"] = waiting["store"]  # Make room in the store it waits in, or nothing.
+        payload = {"cache": options, "action": action, "params": params}
+        if not (self._hold_or_submit(owner, options["directory"], "cache_admin", payload) if action == "adopt_result"
+                else self.service.submit(owner, 0, options["directory"], "cache_admin", payload, priority=True)):
             logging.warning("Disk cache %s: queue full", action)
             return ""
         self._admin[owner] = action
         self._started[owner] = time.monotonic()
+        if action == "adopt_result":
+            # Make room for a waiting result: it saves the result, so quitting waits for it too.
+            self._result_writes[owner] = str(waiting.get("path") or "") or RESULTS_SAVING
+            self.quitSavesChanged.emit()
         return owner
+
+    # Saved analysis results (result caching R2): reads and saves on the local lane, never of a
+    # source folder. The plot that asked gets the helper's events through ``resultReady`` under
+    # the owner it gave; the disk usage they report is noted here (results count toward the disk
+    # budget, Tony 2026-10-22).
+
+    def result_cache_off(self, path: str) -> str:
+        """Why ``path`` keeps results in RAM only, as far as this session knows ("" when it may have
+        a disk cache: a helper finds out). The disk cache off, no data root, a pending duplicate."""
+        if not store_options():
+            return "the disk cache is off"
+        if self.no_root(path):
+            return "no .helab-root found here or above"
+        if self.pending_root(path) is not None:
+            return "this .helab-root is also at another location"
+        return ""
+
+    def find_result(self, owner: str, path: str, lookup: str, family: str = "") -> bool:
+        """Ask for ``path``'s result saved under ``lookup`` (else, with ``family``, an outdated one):
+        ``result_found``, ``result_missing`` or ``error``, with the save guard a save of the run
+        takes. False if it can't be asked (no disk cache for the folder, HeLab quitting)."""
+        options = store_options()
+        if not options or self.service.closed or self.quitting or self.result_cache_off(path):
+            return False
+        if not self.service.submit(owner, 0, self.key(path), "result_find",
+                                   {"cache": options, "lookup": lookup, "family": family,
+                                    "verified_volumes": self.verified_volumes()}, priority=True):
+            return False
+        self._result_ops[owner] = (self.key(path), time.monotonic(), lookup)
+        return True
+
+    def save_result(self, owner: str, path: str, packed: bytes, *, lookup: str, family: str, record: Any,
+                    analysis_id: str, action: str, computed_at: float, guard: Any, label: str = "") -> bool:
+        """Save a run's packed result (``result_codec.pack``) under the guard its lookup gave:
+        ``result_saved`` or ``result_not_saved``. False if it can't be asked."""
+        options = store_options()
+        if not options or self.service.closed or self.quitting or self.result_cache_off(path):
+            return False
+        if not self._hold_or_submit(owner, self.key(path), "result_save",
+                                    {"cache": options, "lookup": lookup, "family": family, "record": record,
+                                     "analysis_id": analysis_id, "action": action, "computed_at": computed_at,
+                                     "guard": guard, "label": label, "verified_volumes": self.verified_volumes()},
+                                    blob=packed):
+            return False
+        self._result_ops[owner] = (self.key(path), time.monotonic(), lookup)
+        self._result_writes[owner] = self.key(path)
+        self.quitSavesChanged.emit()
+        return True
+
+    def _on_result_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if event["kind"] in ("done", "error", "cancelled") and self._result_writes.pop(producer.owner, None) is not None:
+            self.quitSavesChanged.emit()  # (Its helper has ended: the save is in the store, or never will be.)
+        # Its store first (``store_answer``): from another one, nothing in it counts.
+        in_use = self._answered_from(event)
+        if in_use:
+            self._note_usage(event.get("usage"), event.get("usage_seq"))
+            if "next_deadline" in event:
+                # A save that replaced or refused a result retired its file; a waiting one expires.
+                self._schedule_sweep(event["next_deadline"])
+        path, started, _ = self._result_ops.get(producer.owner, ("", time.monotonic(), ""))
+        if not in_use and event["kind"] in ("result_found", "result_missing", "result_saved", "result_pending"):
+            # From a store the cache folder may not hold: what it found or saved may not be in the
+            # store in use, and its guard means nothing there.
+            event = self._replaced_store_result(event)
+        elif (event["kind"] in ("result_found", "result_saved", "result_pending")
+                and self._removed_after(started, "results", path)):
+            # A Clear cached analysis (all, the root's, a purge) since it was asked: what it found or
+            # saved is gone, and its guard, taken before, would never save. Never shown as current.
+            event = self._stale_result(event)
+        elif event["kind"] == "result_found" and str(event.get("result_id") or "") in self._evicted:
+            # Make room evicted that very row since it was read: not found, so the run computes and
+            # saves anew (an eviction fences nothing: the save checks the budget like any other).
+            event = {"kind": "result_missing", "evicted": True, **({"guard": event["guard"]} if "guard" in event else {})}
+        elif event["kind"] == "result_saved" and str(event.get("result_id") or "") in self._evicted:
+            # Saved, then evicted by Make room (as the oldest shown) before this arrived: not on disk.
+            event = {"kind": "result_not_saved", "reason": "evicted", "bytes": int(event.get("bytes") or 0),
+                     "budget": None, "message": "Make room removed it again"}
+        elif event["kind"] == "result_pending" and str(event.get("pending_id")) in self._pending_gone:
+            # Already answered when this arrives (as the startup inventory's question): never asked
+            # again nor waited for, but not saved by this save.
+            event = {"kind": "result_not_saved", "reason": "dropped", "bytes": int(event.get("bytes") or 0),
+                     "budget": event.get("budget"), "message": "already answered"}
+        if event["kind"] == "result_saved" and path and isinstance(event.get("folder_results"), dict):
+            self._note_result_counts({path: event["folder_results"]})
+        if event["kind"] == "result_pending" and event.get("pending_id") not in self._pending_gone:
+            # Doesn't fit the disk budget: asked (Make room or Discard) with the dataset saves.
+            self.pending_results[str(event["pending_id"])] = {**event, "result": True, "reason": "over_budget",
+                                                              "created_at": time.time()}
+            self._pending_result_added[str(event["pending_id"])] = time.monotonic()
+            self.pendingSavesChanged.emit()
+        while len(self._result_ops) > self.MAX_RESULT_OPS:
+            self._result_ops.popitem(last=False)
+        self.resultReady.emit(producer, event)
+
+    def analysis_cached(self, path: str) -> tuple[int, int] | None:
+        """The folder's saved analysis results that reuse will use: (count, bytes), None if none,
+        not known, reuse is off or the folder is set to Don't cache (the helper refuses its reuse
+        then). Memory only (row rendering)."""
+        if not self.result_reuse or self.result_cache_off(path) or self.folder_prefs(path)["no_cache"]:
+            return None
+        entry = self.result_counts.get(self.key(path))
+        return (entry[0], entry[1]) if entry is not None and entry[0] > 0 else None
+
+    def set_result_reuse(self, on: bool) -> None:
+        """Settings → Cache › Reuse saved analysis results changed."""
+        if on != self.result_reuse:
+            self.result_reuse = on
+            self.resultCountsChanged.emit(None)
+
+    def _note_result_counts(self, counts: Mapping[str, Any], started: float | None = None) -> None:
+        """Measured saved-result counts by folder (``ResultCountField`` each), kept unless a newer
+        measurement of the same store is known or, asked at ``started``, a removal came since."""
+        changed: list[str] = []
+        for path, value in counts.items():
+            if not isinstance(value, dict):
+                continue
+            seq: Any = value.get("seq")
+            try:
+                count, size = int(value["count"]), int(value["bytes"])
+                order = (str(seq[0]), int(seq[1]))
+            except (KeyError, TypeError, ValueError, IndexError):
+                continue
+            if not self.store_answer(order[0]):
+                continue  # Measured in a store not in use.
+            key = self.key(path)
+            if started is not None and self._removed_after(started, "results", key):
+                continue
+            old = self.result_counts.get(key)
+            if old is not None and old[2] is not None and old[2][0] == order[0] and order[1] < old[2][1]:
+                continue  # Measured before the one kept.
+            self.result_counts[key] = (count, size, order)
+            self.result_counts.move_to_end(key)
+            if old is None or old[:2] != (count, size):
+                changed.append(key)
+        while len(self.result_counts) > self.MAX_ENTRIES:
+            self.result_counts.popitem(last=False)
+        if changed:
+            self.resultCountsChanged.emit(changed)
+
+    def _results_evicted(self, evicted: list[Any]) -> None:
+        """Make room removed these old saved results ([folder, lookup, result_id] each) for a waiting
+        one: reads of those rows aren't current, plots showing them say RAM only. Everything else is
+        untouched (no epoch moved): their folders' other results, and every save and waiting result,
+        a newer copy of those keys' included (saved, it has another result_id)."""
+        ids = [str(item[2]) for item in evicted if isinstance(item, (list, tuple)) and len(item) > 2]
+        for result_id in ids:
+            self._evicted[result_id] = None
+            self._evicted.move_to_end(result_id)
+        while len(self._evicted) > self.MAX_RESULT_OPS:
+            self._evicted.popitem(last=False)
+        self.resultsEvicted.emit(ids)
+
+    def _results_store_replaced(self, store: str) -> None:
+        """Another store replaced the one in use (now ``store``, ``store_answer``): the old one's saved
+        results and the results waiting there are gone with it. Plots say RAM only (``cacheRemoved``, as a
+        clear), rows drop their badge until the new store is listed."""
+        counted = [path for path, entry in self.result_counts.items() if entry[2] is None or entry[2][0] != store]
+        for path in counted:
+            del self.result_counts[path]
+        if counted:
+            self.resultCountsChanged.emit(None)
+        gone = {pending_id for pending_id, entry in self.pending_results.items() if entry.get("store") != store}
+        for pending_id in gone:
+            self.resultPendingAnswered.emit(pending_id, False, "", PENDING_STORE)
+        if gone:
+            self._forget_pending(gone)
+            self.pendingSavesChanged.emit()
+        self.cacheRemoved.emit(None, ["results"])
+
+    def _replaced_store_result(self, event: dict[str, Any]) -> dict[str, Any]:
+        """An answer to a result read or save from a store not in use (``store_answer``): nothing
+        found (and no guard: a save of the run would check it against another store), or not saved."""
+        if event["kind"] in ("result_found", "result_missing"):
+            return {"kind": "result_missing", "stale": True}
+        return {"kind": "result_not_saved", "reason": "store_replaced", "bytes": int(event.get("bytes") or 0),
+                "budget": event.get("budget"), "message": "the disk cache was recreated before saving completed"}
+
+    def _stale_result(self, event: dict[str, Any]) -> dict[str, Any]:
+        """The answer to a result read or save that a removal made stale: nothing found (and no guard:
+        a save of the run would be refused), or not saved."""
+        if event["kind"] == "result_found":
+            return {"kind": "result_missing", "stale": True}
+        if event["kind"] == "result_pending" and event.get("pending_id"):
+            # Its guard predates the removal, so Make room would be refused: dropped, not asked.
+            self._forget_pending({str(event["pending_id"])})
+            self.cache_admin("discard_result", pending_id=str(event["pending_id"]))
+        return {"kind": "result_not_saved", "reason": "cleared", "bytes": int(event.get("bytes") or 0),
+                "budget": event.get("budget"),
+                "message": "Cached analysis was cleared before saving completed"}
 
     def _schedule_sweep(self, deadline: object) -> None:
         """Keep one timer for the earliest cleanup deadline any helper reported."""
@@ -1394,17 +2854,18 @@ class FolderCache(QObject):
 
     def _note_usage(self, usage: object, seq: object) -> None:
         """A helper measured the disk cache's live usage; keep the newest measurement, by the
-        store's write count when it was taken (a different store, e.g. recreated, starts over)."""
+        store's write count when it was taken. Only the store in use's (``store_answer``: another
+        store's usage counts for nothing, and a change of store forgets the old one's)."""
         if (not isinstance(usage, int) or isinstance(usage, bool) or not isinstance(seq, (list, tuple))
                 or len(seq) != 2 or not isinstance(seq[0], str) or not isinstance(seq[1], int)):
             return
         store_id, writes = seq
+        if not self.store_answer(store_id):
+            return
         if self._usage_seq is not None and self._usage_seq[0] == store_id and writes < self._usage_seq[1]:
             return
         self._usage_seq = (store_id, writes)
-        if usage != self.disk_usage:
-            self.disk_usage = usage
-            self.diskUsageChanged.emit()
+        self.disk_usage = usage
         self.update_auto_load_pause()
 
     def disk_nearly_full(self) -> bool:
@@ -1440,6 +2901,7 @@ class FolderCache(QObject):
 
     def removed(self, paths: list[str] | None, kinds: list[str]) -> None:
         """Forget what a disk cache removal took away: ``paths`` (None: every path) of ``kinds``.
+        (Make room's eviction of saved results isn't one: ``_results_evicted``.)
 
         Cache flags and dates, saved summaries, histories and subfolder statuses go;
         datasets in RAM stay loaded but are no longer marked as cached. Results read
@@ -1459,6 +2921,20 @@ class FolderCache(QObject):
 
         def selected(known: Any) -> list[str]:
             return list(known) if keys is None else [path for path in keys if path in known]
+        if "results" in kinds:
+            # The folders' saved results are gone; a measurement from before is ignored (by its
+            # job's start: ``_fresh_entry``, ``_removed_after``), any later one taken.
+            cleared = selected(self.result_counts)
+            for path in cleared:
+                self.result_counts[path] = (0, 0, None)
+            if cleared:
+                self.resultCountsChanged.emit(None if keys is None else cleared)
+            # Results waiting for an answer go with the saved ones of their folders.
+            gone = {pending_id for pending_id, entry in self.pending_results.items()
+                    if keys is None or self.key(str(entry.get("path", ""))) in keys}
+            for pending_id in gone:
+                self.resultPendingAnswered.emit(pending_id, False, "", PENDING_CLEARED)
+            self._forget_pending(gone)
         if "datasets" in kinds:
             # The store drops the folders' pending saves with their data.
             self._forget_pending({entry["pending_id"] for path, entry in self.pending_saves.items()
@@ -1523,7 +2999,12 @@ class FolderCache(QObject):
         for path in gone:
             del self.pending_saves[path]
             self._pending_changed[path] = time.monotonic()
-        if gone:
+        results = [pending_id for pending_id in self.pending_results if pending_id in pending_ids]
+        for pending_id in results:
+            del self.pending_results[pending_id]
+        for pending_id in pending_ids:
+            self._pending_result_added.pop(pending_id, None)
+        if gone or results:
             self.pendingSavesChanged.emit()
 
     def _hold_pending(self, path: str, event: dict[str, Any]) -> bool:
@@ -1552,11 +3033,34 @@ class FolderCache(QObject):
     def _on_admin_event(self, producer: IORequest, event: dict[str, Any]) -> None:
         action = self._admin[producer.owner]
         kind = event["kind"]
-        if "next_deadline" in event:
-            self._schedule_sweep(event["next_deadline"])
-        self._note_usage(event.get("usage"), event.get("usage_seq"))
+        if producer.owner == self._probe_owner and kind in ("admin_result", "error", "cancelled"):
+            # The cache folder said which store it holds (``store_answer``), or couldn't.
+            self._probe_answered(str(event.get("store") or "") if kind == "admin_result" else "",
+                                 str(event.get("message") or kind))
+        # Its store first (``store_answer``): from another one, nothing in it counts.
+        in_use = self.store_answer(event["inventory"].get("store_id")) if kind == "inventory" else (
+            self._answered_from(event))
+        if in_use:
+            if "next_deadline" in event:
+                self._schedule_sweep(event["next_deadline"])
+            self._note_usage(event.get("usage"), event.get("usage_seq"))
         if kind == "folder_prefs":
             self.remember_prefs(event["path"], event["prefs"])
+            return
+        if kind == "folder_constants":
+            write = self._constant_writes.get(producer.owner)
+            for folder, reason in dict(event.get("session_only") or {}).items():
+                # No data root after all: kept for this session, and said so (until it has one).
+                self.constants_unsaved[str(folder)] = str(reason)
+                self._session_constants.add(str(folder))
+                if write is not None and write[0] == folder:
+                    del self._constant_writes[producer.owner]
+                    self.quitSavesChanged.emit()
+                self.constantsChanged.emit(str(folder))
+            self._remember_constant_folders(event.get("folders"), known=True)
+            return
+        if kind == "presets" and producer.owner in self._preset_jobs:
+            self._on_presets(producer, event, in_use)
             return
         if kind == "prefs_cleared":
             # As of the Clear's own time: a choice saved after it (arriving first) stays.
@@ -1564,16 +3068,22 @@ class FolderCache(QObject):
             for path in {*event["paths"], *self.prefs}:
                 self.remember_prefs(path, cleared)
             return
+        if kind == "removed" and isinstance(event.get("evicted"), list):
+            self._results_evicted(event["evicted"])
+            return
         if kind == "removed":
             self.removed(event["paths"], event["kinds"])
             return
         started = self._started.get(producer.owner, 0.0)
-        # A newer inventory was already applied: this one is stale, for the cache and its viewers.
-        stale = kind == "inventory" and started < self._inventory_started
+        # A newer inventory of the same store was already applied, or it is of a store not in use:
+        # stale, for the cache and its viewers.
+        inventory_store = str(event["inventory"].get("store_id") or "") if kind == "inventory" else ""
+        stale = kind == "inventory" and (not in_use or started < self._inventory_started.get(
+            inventory_store, float("-inf")))
         if stale:
             pass
         elif kind == "inventory":
-            self._inventory_started = started
+            self._inventory_started[inventory_store] = started
             # First: the questions about its pending saves show this usage.
             self._note_usage(event["inventory"].get("usage"), event["inventory"].get("usage_seq"))
             # The store's list is the truth; keep what events added (e.g. a room plan) for the same
@@ -1595,6 +3105,20 @@ class FolderCache(QObject):
                     # Its job_seq orders it against late events, as for one an event added.
                     self._save_seq[path] = max(self._save_seq.get(path, 0), int(snapshot[path].get("job_seq", 0)))
             self.pending_saves = merged
+            # Waiting results (R2): the store's list, with what events added for the same one.
+            # Each tagged with its store: it waits there (Make room names it; another store drops it).
+            waiting = {str(entry["pending_id"]): {**entry, "store": inventory_store}
+                       for entry in event["inventory"].get("pending_results") or ()
+                       if entry["pending_id"] not in self._pending_gone
+                       and not self._removed_after(started, "results", self.key(entry["path"]))}
+            merged_results = {pending_id: {**self.pending_results.get(pending_id, {}), **entry}
+                                  for pending_id, entry in waiting.items()}
+            # Those an event added after this inventory was asked for stay (the store has them too).
+            for pending_id, entry in self.pending_results.items():
+                if pending_id not in merged_results and self._pending_result_added.get(
+                        pending_id, float("-inf")) > started:
+                    merged_results[pending_id] = entry
+            self.pending_results = merged_results
             self.pendingSavesChanged.emit()
             self._schedule_sweep(event["inventory"].get("next_deadline"))
         elif kind == "admin_result" and action in ("adopt", "discard"):
@@ -1621,8 +3145,33 @@ class FolderCache(QObject):
                 state.info, state.error = dict(event.get("cache_info") or {}), ""
                 self._set_disk_cached(adopted, True, notify=True)
             self.pendingSavesChanged.emit()
+        elif kind == "admin_result" and action in ("adopt_result", "discard_result"):
+            pending_id = str(producer.payload["params"].get("pending_id") or "")
+            if event.get("adopted") is False and event.get("room") is not None and pending_id in self.pending_results:
+                # Still waiting: Make room wasn't enough or changed; asked again with the new plan (a
+                # plan from a store not in use changes nothing: the question stays as it was).
+                if in_use:
+                    self.pending_results[pending_id] = {**self.pending_results[pending_id], "room": event["room"]}
+            elif pending_id:
+                self._forget_pending({pending_id})
+                # Saved, unless a Clear cached analysis (all, the root's, a purge) of its folder came since
+                # Make room was asked, or another Make room evicted that very row (by its id; a newer
+                # copy has another): its acknowledgement then names a row that is gone.
+                saved_now = (bool(event.get("adopted")) and in_use
+                             and str(event.get("result_id") or "") not in self._evicted
+                             and not self._removed_after(started, "results", self.key(str(event.get("path") or ""))))
+                if isinstance(event.get("folder_results"), dict):
+                    self._note_result_counts(event["folder_results"], started)
+                self.resultPendingAnswered.emit(pending_id, saved_now,
+                                                str(event.get("result_id") or "") if saved_now else "",
+                                                "" if saved_now else PENDING_DISCARDED
+                                                if action == "discard_result" else PENDING_NOT_SAVED)
+            self.pendingSavesChanged.emit()
         elif kind == "swept":
-            self._forget_pending(set(event.get("expired_ids") or ()))
+            expired: set[str] = {str(pending_id) for pending_id in event.get("expired_ids") or ()}
+            for pending_id in expired & set(self.pending_results):
+                self.resultPendingAnswered.emit(pending_id, False, "", PENDING_EXPIRED)
+            self._forget_pending(expired)
             logging.info("Disk cache cleanup: %s", event)
         elif kind in ("error", "cancelled"):
             logging.warning("Disk cache %s: %s", action, event.get("message", "Cancelled"))
@@ -1635,6 +3184,19 @@ class FolderCache(QObject):
             if write is not None and kind != "done":
                 self._prefs_not_saved(write[0], write[1], str(event.get("message") or "the save was cancelled"),
                                       write[2])
+            constants_write = self._constant_writes.pop(producer.owner, None)
+            if constants_write is not None and kind != "done":
+                message = str(event.get("message") or "the save was cancelled")
+                if constants_write[2] == AUTOMATIC_SAVE:
+                    self._automatic_save_failed(constants_write[0], message)
+                else:
+                    self._constants_not_saved(*constants_write[:2], message, constants_write[2])
+            if self._result_writes.pop(producer.owner, None) is not None:
+                self.quitSavesChanged.emit()  # (Make room for a result has ended.)
+            if write is not None or constants_write is not None:
+                self.quitSavesChanged.emit()
+            if producer.owner in self._preset_jobs:
+                self._preset_job_ended(producer, kind, event)
             if producer.owner == self._budget_owner:
                 self._budget_owner = ""
                 if kind != "done":
@@ -1642,7 +3204,9 @@ class FolderCache(QObject):
             self.cacheAdminDone.emit(producer.owner, action,
                                      "" if kind == "done" else str(event.get("message") or "Cancelled"))
 
-    def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+    def _on_root_event(self, producer: IORequest, event: dict[str, Any]) -> bool:
+        """Data roots and mount tables, from whichever helper reports them; True: nothing else
+        to do with the event (``mounts_seen``)."""
         if isinstance(event.get("data_root"), dict):
             # The root of the folder listed, checked or loaded, wherever its root folder is.
             self._root_reported(event["data_root"])
@@ -1665,6 +3229,11 @@ class FolderCache(QObject):
         if event["kind"] in ("root_found", "root_created", "root_adopted"):
             self._root_seen(str(event["path"]), str(event["uuid"]), str(event["label"]))
         if event["kind"] == "root_changed":
+            if str(event["path"]) not in self.data_roots:
+                # A root this session hadn't seen at that folder: what RAM holds there came from
+                # whichever root was nearest, gone too. (A known one: ``_root_seen``/``_root_gone``.)
+                self._root_constants_gone(str(event["path"]))
+                self._root_results_gone(str(event["path"]))
             if event.get("location"):
                 self._duplicate_settled(str(event["location"]))  # Forgotten, removed or replaced.
             if "uuid" in event:
@@ -1683,17 +3252,33 @@ class FolderCache(QObject):
                                            if pair in self._mounts_observed)
             if self._mounts_observed not in (self._roots_mounts, self._verify_asked):
                 self._verify_roots()
-            return
+            elif self._mounts_observed == self._roots_mounts:
+                # The table the last check saw: covered, so a later change back is new again.
+                self._verify_asked = self._mounts_observed
+            return True
+        return False
+
+    def _on_verification_event(self, producer: IORequest, event: dict[str, Any]) -> bool:
+        """The local-lane volume and data-root verifications; True if ``producer`` is one."""
         if producer.owner == self._volume_verify_owner:
             if event["kind"] == "volumes_verified":
                 self._verified_volumes = tuple(tuple(pair) for pair in event["volumes"])
+                self._volume_ids = tuple((str(path), str(source), str(identifier))
+                                         for path, source, identifier in event.get("ids", ()))
                 self.volumesVerified.emit()
             elif event["kind"] in ("error", "cancelled"):
                 logging.warning("Volume verification: %s", event.get("message", "Cancelled"))
                 self._verify_asked = None  # The next listing asks again.
+                self._volume_ids = ()
             if event["kind"] in ("done", "error", "cancelled"):
                 self._volume_verify_owner = ""
-            return
+                options = store_options()
+                if self._volumes_again and options and not self.quitting:
+                    self._volumes_again = False
+                    self._verify_volumes(options)
+                else:
+                    self._verify_markers()
+            return True
         if producer.owner == self._root_verify_owner:
             if event["kind"] == "volumes_verified":
                 self._verified_volumes = tuple(tuple(pair) for pair in event["volumes"])
@@ -1704,12 +3289,81 @@ class FolderCache(QObject):
                 self.removed(event.get("paths"), event["kinds"])
             elif event["kind"] in ("error", "cancelled"):
                 logging.warning("Data-root verification: %s", event.get("message", "Cancelled"))
-                self._verify_asked = None
+                self._verify_asked = None  # The next listing asks again (no retry before it).
             if event["kind"] in ("done", "error", "cancelled"):
                 self._root_verify_owner = ""
-                if (event["kind"] == "done" and self._roots_mounts is not None
-                        and self._mounts_observed is not None and self._mounts_observed != self._roots_mounts):
-                    self._verify_roots()
+                # Once, for a listing that reported a table while it ran, unless it checked that table.
+                again, self._markers_again = self._markers_again, False
+                if again and self._mounts_observed != self._roots_mounts and not self.quitting:
+                    self._markers_wanted = True
+                    if not self._volume_verify_owner:
+                        self._verify_markers()
+            return True
+        return False
+
+    def _on_finishing_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        """A finished load's helper still writing its disk cache (``_finishing``)."""
+        path = self._finishing[producer.owner]
+        kind = event["kind"]
+        # A removal since the load started voids its cache events: a save that committed
+        # before a Clear must not bring the badge back after it.
+        valid = (self._finishing_epochs.get(producer.owner) == self._epochs.get(path, 0)
+                 and not self._removed_after(self._finishing_created.get(producer.owner, 0.0), "datasets", path))
+        was_saving = producer.owner in self._disk_cache_writers
+        if kind in ("cache_saved", "cache_save_failed", "disk_cached", "cache_warning", "cache_full",
+                    "cache_approval", "done", "error", "cancelled"):
+            self._disk_cache_writers.discard(producer.owner)
+        if "next_deadline" in event:
+            self._schedule_sweep(event["next_deadline"])
+        self._note_usage(event.get("usage"), event.get("usage_seq"))
+        if kind in ("cache_full", "cache_approval", "cache_saved"):
+            self._forget_pending(set(event.get("superseded") or ()))
+        if kind == "cache_saved" and event.get("job_seq"):
+            self._save_seq[path] = max(self._save_seq.get(path, 0), int(event["job_seq"]))
+        held = False
+        if valid and kind in ("cache_full", "cache_approval") and (held := self._hold_pending(path, event)):
+            # Not saved yet: it waits for the user's answer (Make room / Save update).
+            state = self._cache_states.setdefault(path, CacheStatus())
+            state.error = ("Not cached — disk cache full" if kind == "cache_full"
+                           else "Cache update waiting for your answer")
+            self.diskCacheChanged.emit(path)
+        if valid and kind == "cache_saved":
+            state = self._cache_states.setdefault(path, CacheStatus())
+            state.info, state.error = dict(event["cache_info"]), ""
+            for entry in self.datasets.values():
+                if entry.path == path and entry.signature == state.info.get("signature"):
+                    entry.metadata.update(cache_info=state.info, disk_cached=True, disk_cache_pending=False)
+            self._set_disk_cached(path, True, notify=True)
+        elif valid and kind == "disk_cached":
+            self._set_disk_cached(path, bool(event["disk_cached"]), notify=was_saving)
+        elif valid and (kind == "cache_save_failed" or was_saving and kind in (
+                "cache_warning", "done", "error", "cancelled")):
+            state = self._cache_states.setdefault(path, CacheStatus())
+            state.error = event.get("message", "Cache save did not complete")
+            self.diskCacheChanged.emit(path)
+        if kind == "cache_warning":
+            logging.warning("Folder cache %s: %s", path, event["message"])
+        if kind in ("done", "error", "cancelled"):
+            del self._finishing[producer.owner]
+            self._finishing_epochs.pop(producer.owner, None)
+            self._finishing_created.pop(producer.owner, None)
+        if was_saving and producer.owner not in self._disk_cache_writers:
+            outcome = ("saved" if valid and kind == "cache_saved" else
+                       "pending" if held else
+                       "superseded" if valid and kind in ("cache_full", "cache_approval") else "failed")
+            self.saveEnded.emit(path, outcome)
+            self.quitSavesChanged.emit()
+            if path in self._deferred_saves and not self.disk_cache_saving(path):
+                QTimer.singleShot(0, lambda: self._start_deferred(path))
+
+    def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if self._on_root_event(producer, event) or self._on_verification_event(producer, event):
+            return
+        if event["kind"] == "clock_skew":
+            location = str(event.get("location") or event["path"])
+            if location not in self.clock_skew_seen:
+                self.clock_skew_seen.add(location)
+                self.clockSkew.emit(str(event["path"]), float(event["seconds"]))
             return
         if event["kind"] == "cache_skipped":
             self._remember_mount_warning(event)
@@ -1717,7 +3371,12 @@ class FolderCache(QObject):
                 job.cache_off = True
             return
         if producer.owner in self._admin:
-            self._on_admin_event(producer, event)
+            if not self._waits_for_folder(producer, event):
+                self._on_admin_event(producer, event)
+            return
+        if producer.owner in self._result_ops or producer.owner in self._result_writes:
+            if not self._waits_for_folder(producer, event):
+                self._on_result_event(producer, event)
             return
         if producer.owner == self._subtree_writer:
             if event["kind"] in ("error", "cancelled"):
@@ -1747,49 +3406,7 @@ class FolderCache(QObject):
             return
         job = self._producers.get(producer.owner)
         if job is None and producer.owner in self._finishing:
-            path = self._finishing[producer.owner]
-            kind = event["kind"]
-            # A removal since the load started voids its cache events: a save that committed
-            # before a Clear must not bring the badge back after it.
-            valid = (self._finishing_epochs.get(producer.owner) == self._epochs.get(path, 0)
-                     and not self._removed_after(self._finishing_created.get(producer.owner, 0.0), "datasets", path))
-            was_saving = producer.owner in self._disk_cache_writers
-            if kind in ("cache_saved", "cache_save_failed", "disk_cached", "cache_warning", "cache_full",
-                        "cache_approval", "done", "error", "cancelled"):
-                self._disk_cache_writers.discard(producer.owner)
-            if "next_deadline" in event:
-                self._schedule_sweep(event["next_deadline"])
-            self._note_usage(event.get("usage"), event.get("usage_seq"))
-            if kind in ("cache_full", "cache_approval", "cache_saved"):
-                self._forget_pending(set(event.get("superseded") or ()))
-            if kind == "cache_saved" and event.get("job_seq"):
-                self._save_seq[path] = max(self._save_seq.get(path, 0), int(event["job_seq"]))
-            if valid and kind in ("cache_full", "cache_approval") and self._hold_pending(path, event):
-                # Not saved yet: it waits for the user's answer (Make room / Save update).
-                state = self._cache_states.setdefault(path, CacheStatus())
-                state.error = ("Not cached — disk cache full" if kind == "cache_full"
-                               else "Cache update waiting for your answer")
-                self.diskCacheChanged.emit(path)
-            if valid and kind == "cache_saved":
-                state = self._cache_states.setdefault(path, CacheStatus())
-                state.info, state.error = dict(event["cache_info"]), ""
-                for entry in self.datasets.values():
-                    if entry.path == path and entry.signature == state.info.get("signature"):
-                        entry.metadata.update(cache_info=state.info, disk_cached=True, disk_cache_pending=False)
-                self._set_disk_cached(path, True, notify=True)
-            elif valid and kind == "disk_cached":
-                self._set_disk_cached(path, bool(event["disk_cached"]), notify=was_saving)
-            elif valid and (kind == "cache_save_failed" or was_saving and kind in (
-                    "cache_warning", "done", "error", "cancelled")):
-                state = self._cache_states.setdefault(path, CacheStatus())
-                state.error = event.get("message", "Cache save did not complete")
-                self.diskCacheChanged.emit(path)
-            if kind == "cache_warning":
-                logging.warning("Folder cache %s: %s", path, event["message"])
-            if kind in ("done", "error", "cancelled"):
-                del self._finishing[producer.owner]
-                self._finishing_epochs.pop(producer.owner, None)
-                self._finishing_created.pop(producer.owner, None)
+            self._on_finishing_event(producer, event)
             return
         if job is None:
             # Non-shared IOService consumers retain their existing protocol.
@@ -1856,6 +3473,9 @@ class FolderCache(QObject):
             if kind == "folder_prefs":
                 self.remember_prefs(event["path"], event["prefs"], known=False)
                 return
+            if kind == "folder_constants":
+                self._remember_constant_folders(event.get("folders"), known=False)
+                return
             if kind == "cache_mismatch":
                 # Its cached shots aren't all in the folder now. A folder not cached by choice
                 # never shows its cached data, so it needs no answer.
@@ -1890,8 +3510,12 @@ class FolderCache(QObject):
                         self.remember_subtree(entry["path"], entry["subtree"], notify=False)
                     if "prefs" in entry:
                         self.remember_prefs(entry["path"], entry["prefs"], known=False)
+                    if "constants" in entry:
+                        self.remember_constants(entry["path"], entry["constants"], known=False)
                     if "disk_cached" in entry and not self._cleared_since(job, entry["path"]):
                         self._observe_cache(entry["path"], entry)
+                self._note_result_counts({entry["path"]: entry["results"] for entry in event["entries"]
+                                          if "results" in entry})
                 if event.get("replace"):
                     changed = {entry["path"]: entry for entry in event["entries"]}
                     job.entries = [changed.get(entry["path"], entry) for entry in job.entries]
@@ -1927,8 +3551,23 @@ class FolderCache(QObject):
                 self.remember_history(job.path, None)
                 if "disk_cached" in event and not self._cleared_since(job, job.path):
                     self._observe_cache(job.path, event)
+                if "results" in event:
+                    self._note_result_counts({job.path: event["results"]}, job.created)
                 job.status = event
                 job.completed_scan = FolderSnapshot(tuple(job.entries), event, time.monotonic())
+                return
+            if job.payload.get("offline") and kind in ("done", "error", "cancelled"):
+                # A saved listing (``saved_list``): saved results only, so no snapshot is kept for
+                # other tabs as a fresh listing and no scan outcome is recorded. Its subscribers get
+                # its names and status as a listing's (``_replay``), without one.
+                self._forget_job(job)
+                listing = (FolderSnapshot(tuple(job.entries), job.status, 0.0)
+                           if kind == "done" and job.status else None)
+                for request in tuple(job.subscribers.values()):
+                    if listing is not None:
+                        self._replay(request, listing)
+                    else:
+                        self.resultReady.emit(request, event)
                 return
             if kind == "error" and job.completed_scan is not None:
                 self.scan_history_errors[job.path] = "Folder status check completed, but saving its metadata failed."
@@ -1942,7 +3581,7 @@ class FolderCache(QObject):
                 old = self.snapshot(job.path)
                 signature = job.status.get("signature")
                 if old and signature and old.status.get("signature") not in (None, "", signature):
-                    self._invalidate_data(job.path)
+                    self._folder_changed(job.path)
                 checked_at = time.monotonic() - max(0, time.time() - job.status.get("scanned_at", time.time()))
                 # A late status check must not replace a newer refresh's names,
                 # including snapshots used by tabs opened after both jobs finish.
@@ -1999,7 +3638,16 @@ class FolderCache(QObject):
                 if job.load_status is not None and job.load_status["kind"] == "heartbeat":
                     job.load_status = None
             if kind == "scan_summary":
-                self._adopt_load_summary(job.path, event["status"])
+                # A Live check's, or a Live save's that read shots again (``io_ops.save_held.save_held``).
+                listed = self.snapshots.get(job.path)
+                if (job.payload.get("save_memory") and listed is not None
+                        and float(event["status"].get("scanned_at") or 0)
+                        < float(listed.status.get("scanned_at") or 0)):
+                    # A listing newer than the save's (Refresh, another tab) is the folder's status.
+                    job.behind_listing = True
+                    return
+                self._adopt_load_summary(job.path, event["status"],
+                                         live=bool(job.payload.get("live") or job.payload.get("save_memory")))
                 return
             if kind == "shot":
                 array = event["array"]
@@ -2007,16 +3655,23 @@ class FolderCache(QObject):
                 job.data[event["shot"]] = array
                 if "fingerprint" in event:
                     job.fingerprints[event["shot"]] = tuple(event["fingerprint"])
+                if isinstance(event.get("raw_mtime"), int):
+                    job.raw_times[event["shot"]] = event["raw_mtime"]
                 if event.get("problematic"):
                     job.problematic.add(event["shot"])
+                return
+            if kind == "live_unchanged" and job.epoch != self._epochs.get(job.path, 0):
+                # A Live check from before a mismatch (the folder's epoch moved): fenced like a ``loaded``.
+                self._cancel_job(job)
                 return
             if kind == "loaded":
                 job.clock.stop()
                 event = {"loaded_at": time.time(), **event}
                 if job.operation == "load":
-                    # When this data was last checked against its folder (a cached read isn't a check).
-                    event["checked_at"] = time.monotonic()
-                    self._matched(job.path)
+                    # When this data was last checked against its folder (a cached read isn't a check;
+                    # nor is a Live save's listing older than the folder's).
+                    if not job.behind_listing:
+                        event["checked_at"] = time.monotonic()
                 if job.operation == "load" and job.clock.total_bytes:
                     # Only a load that read TXY files has a load time; a check
                     # answered from memory or the cache would show "took 0:00".
@@ -2025,7 +3680,8 @@ class FolderCache(QObject):
                 expected = source_snapshot.status.get("signature") if source_snapshot else None
                 # Cached data is shown unchecked, even if the folder has changed since.
                 if job.epoch != self._epochs.get(job.path, 0) or (
-                        job.operation == "load" and expected and event.get("signature") != expected):
+                        job.operation == "load" and expected and event.get("signature") != expected
+                        and not job.behind_listing):
                     self._cancel_job(job)
                     if source_snapshot:
                         source_snapshot.checked_at = 0
@@ -2058,8 +3714,12 @@ class FolderCache(QObject):
                     event = {**event, "problematic": sorted(problematic), "files": len(job.data),
                              "rows": sum(len(array) for array in job.data.values()),
                              "bytes": sum(array.nbytes for array in job.data.values())}
+                event = {**event, "raw_times": dataset_raw_times(job.base, event, job.raw_times)}
                 # The helper may still be updating the disk cache; the data is
                 # complete, so later shared loads must not wait for that.
+                if job.operation == "load":
+                    # Accepted (its epoch, signature and base hold): the folder matches its data again.
+                    self._matched(job.path)
                 self._forget_job(job)
                 self._finishing[job.owner] = job.path
                 self._finishing_epochs[job.owner] = job.epoch
@@ -2073,6 +3733,8 @@ class FolderCache(QObject):
                 # Subscribers pin the dataset during delivery before eviction.
                 for request in tuple(job.subscribers.values()):
                     self.resultReady.emit(request, event)
+                if memory_shots:
+                    self._drop_superseded(entry)
                 self.datasetChanged.emit(job.path)
                 self._evict()
                 return
@@ -2088,7 +3750,7 @@ class FolderCache(QObject):
             self._schedule_sweep(event.get("next_deadline"))
             self._note_usage(event.get("usage"), event.get("usage_seq"))
             return
-        elif job.operation == "resolve" and kind == "resolved":
+        elif job.operation == "resolve" and kind == "resolved" and not job.payload.get("offline"):
             candidates = tuple(job.payload["candidates"])
             self._defaults[candidates] = event["path"]
             if len(self._defaults) > 16:
@@ -2103,22 +3765,65 @@ class FolderCache(QObject):
             self.snapshotChanged.emit(job.path)
 
 
+def dataset_raw_times(base: Dataset | None, metadata: Mapping[str, Any], sent: Mapping[int, int]) -> list[list[int]]:
+    """The shot times of a load's dataset (``metadata``: its ``loaded`` event): the base's for
+    shots whose fingerprint is unchanged (those it held: an update sends none for them), then the
+    helper's (``raw_times``), then those sent with its shots (``sent``); for the shots in its
+    fingerprint. A changed TXY file may be another run's shot of that number (a folder copied over
+    this one): it has only the time the helper found for it now."""
+    prints = {int(entry[0]): tuple(entry) for entry in metadata.get("fingerprint") or () if len(entry) >= 3}
+    times: dict[int, int] = {}
+    if base is not None:
+        held = {int(entry[0]): tuple(entry) for entry in base.metadata.get("fingerprint") or () if len(entry) >= 3}
+        times = {shot: value for shot, value in file_kinds.raw_times(base.metadata.get("raw_times")).items()
+                 if shot in prints and held.get(shot) == prints[shot]}
+    times.update(file_kinds.raw_times(metadata.get("raw_times")))
+    times.update(sent)
+    return [[shot, times[shot]] for shot in sorted(prints) if shot in times]
+
+
 def get_folder_cache(service: IOService) -> FolderCache:
     if service.folder_cache is None:
         service.folder_cache = FolderCache(service)
     return service.folder_cache
 
 
+# Work Offline (cache-only browsing): what controls that would read a source folder say meanwhile.
+OFFLINE_TOOLTIP = "Not while working offline"
 # Data roots (Tony, 2026-10-18): the right-click action, and how a folder's disk cache is described.
 PLACE_ROOT_ACTION = "Place .helab-root here…"
-PLACE_ROOT_TOOLTIP = ("No .helab-root found above this folder, so it uses RAM only.\n"
+PLACE_ROOT_TOOLTIP = ("No .helab-root found here or above, so this folder uses RAM only.\n"
                       "Place it as high up as possible (the top folder of the drive or share), unless this "
                       "folder is also shared on its own, so other computers see it as a top folder.")
-RAM_ONLY = "RAM only · no .helab-root above this folder"
+RAM_ONLY = "RAM only · no .helab-root found here or above"
 RAM_ONLY_TOOLTIP = ("No .helab-root at or above this folder, so its statuses, settings and loaded data stay in "
                     "RAM for this session.\nTo use the disk cache: right-click the top folder of this drive "
                     "or share › " + PLACE_ROOT_ACTION)
-NEEDS_ROOT_TOOLTIP = "No .helab-root above this folder: " + PLACE_ROOT_ACTION + " first"
+# A helper's answer when saving a folder's constants finds no data root, or the folder on a volume
+# this session hasn't verified yet (``io_ops.admin.cache_admin``; the same texts as there).
+NO_ROOT_CONSTANTS = "no .helab-root found here or above"
+UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
+# Why a folder's flags or constants chosen while HeLab quits aren't saved.
+QUITTING = "HeLab is quitting"
+# Why a saved analysis result that waited for Make room wasn't saved (``resultPendingAnswered``):
+# the user's Discard; it expired (``cache_store.PENDING_MAX_AGE``, an hour); the store was recreated;
+# its cached analysis was cleared (all, the root's, a purge); Make room didn't save it.
+PENDING_DISCARDED, PENDING_EXPIRED, PENDING_STORE, PENDING_CLEARED, PENDING_NOT_SAVED = (
+    "discarded", "expired", "store", "cleared", "not_saved")
+# ``quit_saves``' entry while presets are being written (it names folders otherwise).
+PRESETS_SAVING = "Presets"
+# Why presets and saved results weren't taken while the cache folder's store was unknown (a failed
+# identity probe, FolderCache.store_answer): the note ends once a probe succeeds.
+STORE_NOT_CONFIRMED = "the disk cache's store couldn't be confirmed"
+# quit_saves's entry for a result Make room saves whose folder isn't known here.
+RESULTS_SAVING = "Analysis results"
+# A preset changed before the store's names were read: written once they are.
+PRESETS_WAIT_READ = "waiting for the saved presets to be read"
+# A preset saved before the store's names were read, under a name the store already held.
+PRESET_FOUND = "a saved preset has this name (it was still being read): it is kept; save again to replace it"
+# The "owner" of a save of session-only constants made when the folder gained a disk cache.
+AUTOMATIC_SAVE = "automatic"
+NEEDS_ROOT_TOOLTIP = "No .helab-root found here or above: " + PLACE_ROOT_ACTION + " first"
 # A location whose .helab-root is also elsewhere, until Same folder or Copy (D4).
 PENDING_ROOT = "RAM only · this .helab-root is also at another location · Review…"
 PENDING_ROOT_TOOLTIP = ("HeLab found the same .helab-root at two locations. Say whether they're the same "
@@ -2149,7 +3854,17 @@ def data_root_text(cache: FolderCache, path: str) -> str:
         folder, _, label = root
         return f"Data root: {label or os.path.basename(folder)} · " + (
             ".helab-root in this folder" if folder == path else marker_path(folder))
-    return "RAM only: no .helab-root above this folder" if cache.no_root(path) is not None else ""
+    return "RAM only: no .helab-root found here or above" if cache.no_root(path) is not None else ""
+
+
+def analysis_cached_text(cache: FolderCache, path: str) -> str:
+    """The row tooltip's and Folder details' line for the folder's saved analysis results that
+    reuse will use ("Cached analysis: 2 results, 1.2 MB"; "" if none). Memory only."""
+    if (cached := cache.analysis_cached(path)) is None:
+        return ""
+    from helab.utils.number_format import byte_size
+    count, size = cached
+    return f"Cached analysis: {count:,} result{'' if count == 1 else 's'}, {byte_size(size)}"
 
 
 def data_root_row(cache: FolderCache, path: str) -> tuple[str, str]:

@@ -12,8 +12,10 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
-from helab.io_helper import list_folder, load, save_subtrees, scan
+from helab.io_ops import stores
+from helab.io_ops.browse import list_folder
+from helab.io_ops.loading import load
+from helab.io_ops.scanning import save_subtrees, scan
 from helab.utils.cache_store import CacheStore, Read
 from helab.utils.cache_paths import Mount
 from helab.utils import cache_paths
@@ -40,11 +42,16 @@ def producer(cache: FolderCache, path: str, operation: str) -> IORequest:
 
 
 def replay(qtbot: QtBot, cache: FolderCache, path: str, operation: str,
-           helper: Callable[[Callable[[dict[str, Any]], None]], None]) -> None:
-    """Send a real helper's events for the queued request, then wait for tab delivery."""
+           helper: Callable[[Callable[[Any], None]], None]) -> None:
+    """Send a real helper's events for the queued request, then wait for tab delivery.
+
+    Some requests are submitted from a posted call (Refresh's details, ``QTimer.singleShot(0)``),
+    so wait for the request first."""
+    qtbot.waitUntil(lambda: (operation, path) in cache.jobs and any(
+        r.owner == cache.jobs[(operation, path)].owner for r in cache.service.pending))
     request = producer(cache, path, operation)
 
-    def send(event: dict[str, Any]) -> None:
+    def send(event: Any) -> None:
         if event["kind"] == "shot":
             event = {**event, "array": np.load(event["artifact"])}
         cache.service.resultReady.emit(request, event)
@@ -87,13 +94,13 @@ class _NoStatListing:
 
 
 def saved_summary(options: dict[str, Any], path: str) -> dict[str, Any]:
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         found = store.read_record("summaries", path)
     assert found.value is not None
     return found.value
 
 
-def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_listing_reads_names_only_and_writes_only_its_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     source = tmp_path / "source"
     data_folder(source)
     path = str(source)
@@ -107,7 +114,7 @@ def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: 
         no_stat.setattr("os.scandir", lambda p: _NoStatListing(p, scandir))
         no_stat.setattr("os.stat", lambda *a, **k: pytest.fail("Listing called os.stat"))
         list_folder(path, lambda event: None)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     list_folder(path, events.append, options)
     status = next(event for event in events if event["kind"] == "status")
     assert (status["status"], status["count"], status["raw"], status["txy"]) == ("ok", 2, [1, 2], [1, 2])
@@ -118,7 +125,8 @@ def test_listing_reads_names_only_and_never_writes(tmp_path: Path, monkeypatch: 
     # Saved cache metadata comes along; dates need a stat (step 2).
     assert {"scan_history", "scan_status", "disk_cached", "cache_info"} <= set(entries[0])
     assert not {"modified", "identity"} & set(entries[0])
-    # The folder's own saved summary is restored; nothing is written.
+    # The folder's own saved summary is restored and left as it was; only its listing is saved
+    # (for browsing it offline: tests/test_saved_listings.py).
     assert next(event for event in events if event["kind"] == "scan_cached")["status"] == saved
     assert saved_summary(options, path) == saved
 
@@ -156,6 +164,27 @@ def test_browse_shows_counts_first_and_details_fill_dates_and_signature(
     assert not cache.jobs
     explorer.close_cleanup()
     service.shutdown()
+
+
+def test_details_dates_subfolders_from_the_listing_without_another_stat(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A share's top folder may hold hundreds of date folders: their dates come from the listing's
+    entries (free on Windows, the same single call elsewhere), never a stat by path per subfolder."""
+    child = tmp_path / "run"
+    child.mkdir()
+    stat, modified = os.stat, child.lstat().st_mtime
+
+    def refuse_subfolder(path: Any, *args: Any, **kwargs: Any) -> os.stat_result:
+        if os.fspath(path) == str(child):
+            raise PermissionError("a stat by path")
+        return stat(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "stat", refuse_subfolder)
+    events: list[Any] = []
+    scan(str(tmp_path), events.append)
+    dated = [entry for event in events if event["kind"] == "entries" for entry in event["entries"]]
+    assert [entry["path"] for entry in dated] == [str(child)] and dated[0]["modified"] == modified
 
 
 def test_refresh_does_not_complete_a_running_folder_status_check(
@@ -196,7 +225,7 @@ def test_refresh_replaces_newer_ram_status_history_and_subtree_with_saved_listin
     qtbot.addWidget(explorer)
     cache, options = explorer.model.cache, explorer.model._cache_options
     scan(path, lambda event: None, options)
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         saved_status = store.read_record("summaries", path).value
         assert saved_status is not None
         saved_history = apply_outcome(empty_history(), {
@@ -352,7 +381,7 @@ def test_manual_check_cannot_restore_children_removed_by_a_newer_refresh(
     explorer.start_basic_scan("current")
     explorer._dispatch_deep()
     check = producer(cache, path, "scan")
-    check_events: list[dict[str, Any]] = []
+    check_events: list[Any] = []
     scan(path, check_events.append, options)
     explorer.refresh()
     assert not check.cancelled.is_set() and explorer._basic_active
@@ -422,8 +451,8 @@ def test_refresh_cancels_only_automatic_subscriptions_and_suppresses_new_checks(
     assert ("details", child) not in cache.jobs
     replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
     assert not explorer.model.refreshing
-    # The details Refresh cancelled run again once it finishes.
-    assert cache.has_request(explorer.model.owner, "details", child)
+    # The details Refresh cancelled run again once it finishes (from a posted call).
+    qtbot.waitUntil(lambda: cache.has_request(explorer.model.owner, "details", child))
     cache.cancel(explorer.model.owner, "details", child)
     service.max_operations = 2  # The surviving manual check still occupies one slot.
     explorer._check_visible_folders()
@@ -497,23 +526,14 @@ def test_row_returns_to_a_running_status_check_when_refresh_listing_finishes(
     assert node.state == "idle" and node.children
 
 
-# Near-term fix (roadmaps/_readme.md): while a tab refreshes, it ignores
-# results other tabs finish. `_shared_snapshot_changed` applies them through
-# `request_scan(automatic=True)`, which Refresh blocks so it starts no new
-# checks; that also blocks results already in memory, which need no I/O. The
-# planned fix is a separate no-I/O path for in-memory results, also useful for
-# cache-only browsing (roadmaps/cache-only-browsing.md). Remove these markers then;
-# strict xfail fails as soon as the behaviour is fixed.
-SHARED_RESULTS_DURING_REFRESH = pytest.mark.xfail(
-    strict=True, reason="Refresh blocks other tabs' in-memory results; needs no-I/O replay (roadmaps/_readme.md)")
-
-
 def check_in_other_tab(qtbot: QtBot, cache: FolderCache, path: str, options: dict[str, Any]) -> None:
+    """Another tab checks the folder; this tab shows the result from memory, submitting nothing."""
+    before = list(cache.service.pending)
     assert cache.submit("other-tab", 0, path, "scan", {"metadata_only": True}, force=True)
     replay(qtbot, cache, path, "scan", lambda send: scan(path, send, options))
+    assert list(cache.service.pending) == before
 
 
-@SHARED_RESULTS_DURING_REFRESH
 def test_other_tabs_finished_check_shows_while_this_tab_refreshes(
     qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path,
 ) -> None:
@@ -527,7 +547,6 @@ def test_other_tabs_finished_check_shows_while_this_tab_refreshes(
     assert explorer.model.nodes[child].txy_count == 1
 
 
-@SHARED_RESULTS_DURING_REFRESH
 def test_other_tabs_finished_check_of_an_off_screen_row_shows_after_refresh(
     qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path,
 ) -> None:
@@ -545,6 +564,25 @@ def test_other_tabs_finished_check_of_an_off_screen_row_shows_after_refresh(
     replay(qtbot, cache, path, "list", lambda send: list_folder(path, send, options))
     qtbot.waitUntil(lambda: not explorer.model.refreshing)
     assert explorer.model.nodes[str(inner)].txy_count == 1
+
+
+@pytest.mark.parametrize("refreshing", [False, True])
+def test_applying_another_tabs_old_result_submits_no_source_operation(
+    qtbot: QtBot, checked_browser: tuple[IOService, FolderExplorer, str], tmp_path: Path, refreshing: bool,
+) -> None:
+    service, explorer, _ = checked_browser
+    cache, child = explorer.model.cache, str(tmp_path / "run")
+    check_in_other_tab(qtbot, cache, child, explorer.model._cache_options)
+    if refreshing:
+        explorer.refresh()
+    before = list(service.pending)
+    # Older than the freshness window: a replay through ``submit`` would revalidate it in a helper.
+    cache.snapshots[child].checked_at -= 10 * cache.FRESH_SECONDS
+    cache.snapshotChanged.emit(child)
+    qtbot.waitUntil(lambda: not any(r.path == child for r in cache._deliveries))
+    node = explorer.model.nodes[child]
+    assert list(service.pending) == before
+    assert node.state == "idle" and node.report is not None and node.loaded
 
 
 @pytest.mark.parametrize("row_state", ["queued", "idle"])
@@ -712,7 +750,7 @@ def test_startup_restores_saved_subfolder_status_without_rescanning(
     for child in children:
         scan(str(child), lambda event: None, options)  # Saved by a previous session.
     # A prior version stored mount-dependent IDs. Their mismatch must not erase statuses.
-    with io_helper._cache_store(options["directory"], [str(child) for child in children]) as store:
+    with stores._cache_store(options["directory"], [str(child) for child in children]) as store:
         for child in children:
             saved = store.read_record("summaries", str(child)).value
             assert saved is not None
@@ -918,8 +956,8 @@ def test_derived_status_survives_restart_without_listing_the_folder(
     # B's background details scan saves its summary (a names-only listing does not).
     scan(str(a / "B"), lambda event: None, tree.model._cache_options)
     assert set(save_queued_subtrees(qtbot, tree)) == {str(a), str(tmp_path)}
-    with io_helper._cache_store(tree.model._cache_options["directory"],
-                                [str(a), str(tmp_path)]) as store:
+    with stores._cache_store(tree.model._cache_options["directory"],
+                             [str(a), str(tmp_path)]) as store:
         for path in (str(a), str(tmp_path)):
             saved = store.read_record("subtrees", path).value
             assert saved is not None

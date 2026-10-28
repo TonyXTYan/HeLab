@@ -4,7 +4,8 @@ The product overview, priority list and index of the feature plans in this folde
 Horizons describe sequencing, not promised dates. Feature scope and implementation
 details remain drafts until resolved during design.
 
-Manual work lives in [.ai/MANUAL_TODO.md](../.ai/MANUAL_TODO.md); review history and
+Manual work lives in [.ai/MANUAL_TODO.md](../.ai/MANUAL_TODO.md) and known issues in
+[known-issues.md](known-issues.md); review history and
 validation evidence live in `.ai/sessions/`; settled decisions live in `.ai/memory/results/`.
 
 How to use it:
@@ -15,101 +16,91 @@ How to use it:
 - Keep each item to one or two lines; link substantial features to a document
   in this folder. Keep priority/completion here rather than duplicating task lists.
 
-## Now: v0.0.5a folder browser
+## Now: v0.0.7
 
-- [x] Cache rebuild: SQLite records + compressed dataset files (old cache dropped),
-  remove the old folder browser, editable disk and RAM budgets, large-folder warning,
-  per-folder don't-cache/don't-auto-load flags, cache-folder move, rebuilt Settings →
-  Cache tab. Eleven sessions S1–S11
-  ([plan](cache-storage-and-settings.md#sessions)) (2026-10-10; done 2026-10-11,
-  `fe5a5b7`…`eafcf4b`; native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)).
+v0.0.6a1 went to `main` by PR on 2026-10-28 (Tony: released on his own use of HeLab on his
+Mac and the lab PCs through v0.0.6, plus the Mac smoke pass; Q6.1). Work for v0.0.7 branches
+from `dev/v0.0.7` (agents: `agent/<task>`, [workflow](agent-workflow.md)) and lands back
+there; `dev/v0.0.7` goes to `main` by PR, with the version bump on that branch.
 
-- [x] App version and build info: package version `0.0.5a1`, embedded build provenance,
-  Help → About, and explicit CI tagging plus draft releases on new versions merged
-  to `main` ([implementation](app-versioning.md#implemented-workflow-authoritative))
-  (2026-10-12; release/native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)).
+**Focus for v0.0.7 (Tony, 2026-10-28):**
+
+- [ ] The TXY converter port (`tdc_autoconverter`, Live L4): raw → TXY inside HeLab, written
+  to a temporary name and renamed, checked against existing `_txy_forc` files (the item under
+  Near term; [Live L4](live-monitoring.md#stages)). Inputs and where it runs: Q6.3 (2026-10-28).
+- [ ] Distributed results compute: one machine computes analysis results and other HeLabs use
+  them without repeating the work. It builds on the [headless runner](headless-analysis.md)
+  and the [network extension](network-runners-and-web.md#cross-machine-result-sharing). The
+  first slice is Q6.2 (2026-10-28).
+
+**Carried over from v0.0.6:**
+
+- [ ] Parallel agent workflow on Maestri floors (cloud agents kept open): pilot
+  the first floor with the setup hook ([setup](../.ai/maestri-setup.md)), then
+  the pytest `pythonpath` guard, a hard-coded settings-defaults table (also for
+  Restore default and tooltips in the release) and per-checkout share/isolated
+  profiles, with `HELAB_SETTINGS_OVERRIDE` ([plan](agent-workflow.md)) (2026-10-15).
+  The settings factory (`app_settings()`) landed in TonyXTYan/HeLab#7 (2026-10-21).
+  Floors piloted; the pytest `pythonpath` guard (`50fa36b`) and the settings-defaults
+  table with `read_setting` (`0f4df65`) landed from `agent/ci-robustness-2` (merge
+  `51c0ee2`, 2026-10-22). Left: Restore default and default tooltips, the profiles.
+
+- [ ] Release v0.0.6a1 (Tony, 2026-10-28: Q1.1–Q1.3, Q6.1). The smoke pass ran on a Mac by
+  computer use ([results](../.ai/sessions/2026-10-28-claude-smoke-mac/results.md)). Tony
+  released on that and on his own use through v0.0.6, so the lab PC pass and Live (M1.3) are
+  the first checks of v0.0.7. Version bumped and PR to `main` opened 2026-10-28. Left: CI green
+  with no RERUN, the merge, and publishing the draft. The `v0.0.5a1` draft stays unpublished.
+
+- [ ] Unsupervised smoke runs: menu-bar actions, an in-app save-screenshot command,
+  accessibility labels, a debug/smoke menu, then a `--smoke` control channel (design first),
+  so a model drives M1.1–M1.8 without taking the cursor. Approved by Tony 2026-10-28 (Q5.2)
+  ([plan](smoke-automation.md)) (2026-10-28).
 
 - [ ] Release repos: develop and release on `TonyXTYan/HeLab`; fast-forward
   `HeBECANU/HeLab` `main` only for lab-ready versions, which drafts the same
-  release there; stop pushing dev branches to `HeBECANU`. Proposed, Tony to
-  confirm ([plan](app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm)) (2026-10-13).
+  release there; stop pushing dev branches to `HeBECANU`. Confirmed by Tony
+  2026-10-28 (Q1.4); v0.0.6a1 is not lab-ready, so HeBECANU waits for a later version (Q1.4.1)
+  ([plan](app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm)) (2026-10-13).
 
-- [ ] Build size: ship one copy of the app per asset with symlinks kept (macOS
-  artifact 2152 MiB, `HeLab.app` alone zips to 276 MB), then exclude unused
-  packages (pyarrow, mypy), replace pytablericons/pygame, and decide on
-  QtWebEngine ([plan](build-size.md)) (2026-10-13). Step 1 (macOS zip of
-  `HeLab.app` only, symlinks kept) done 2026-10-13; CI result to check.
+- [ ] Build size: exclude unused packages (pyarrow, mypy), replace
+  pytablericons/pygame, and decide on QtWebEngine ([plan](build-size.md))
+  (2026-10-13). Step 1 done: the macOS zip holds only `HeLab.app` with its
+  symlinks (275 MiB instead of 2152 MiB, checked on the PR #5 build).
 
-- [ ] Data roots: disk caching only below a hidden `.helab-root` marker (UUID,
-  created on request, on every kind of disk; nearest wins, so equivalent
-  folders share one cache); RAM only otherwise; each new equivalent location
-  asks same folder or copy, remembered per PC. Next after the SMB key change,
-  with one more cache clear; the root UUID becomes the network plan's logical
-  root ID ([plan](data-roots.md), [stages](../.ai/sessions/2026-10-16-claude-data-roots/plan.md))
-  (2026-10-16; decided 2026-10-18). D1–D4 implemented on `dev/data-roots`
-  (2026-10-18); native checks pending ([manual to-do](../.ai/MANUAL_TODO.md#data-roots-dev-data-roots-added-2026-10-18)).
-
-- [ ] Finish the status-message audit: verify load-phase labels for `merged`/
+- [x] Finish the status-message audit: verify load-phase labels for `merged`/
   `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).
+  Done 2026-10-26 (Quick Fixes 2: `8de9ea6`, `93fb3dd`; Tony agreed the new labels).
 
-- [x] Folder details panel (replaces the left-bottom placeholder and the plot
-  area's loading text), shorter status bar with its running helpers listed in
-  the tooltip, load elapsed time and time left (2026-10-10, `3af4fea`).
+- [ ] Data roots follow-ups: smaller items (Remove .helab-root… in the tree,
+  every location in the duplicates window, NFS/AFP caching, label rename)
+  ([list](../.ai/sessions/2026-10-16-claude-data-roots/follow-ups.md)) (2026-10-18).
 
 ## Known issues
 
-- [x] Resize repaint freeze: removed main-window repaint suppression; pytest covers
-  painting and scan cancellation ([fix](../.ai/sessions/2026-10-11-codex-resize-during-scan/notes.md#implementation)) (2026-10-11; native check in [MANUAL_TODO](../.ai/MANUAL_TODO.md)).
-
-- [x] Disk-cache eviction can drop scan-failure history and other records to make room
-  for data, until the cache rebuild (S5/S6). Fixed: records are never removed to make room
-  (`fd4e020`, `ef4c0ca`). The contention part (reads silently
-  returning "nothing saved", so an automatic scan could run on a blocked folder) was
-  fixed in S1 ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#storage-findings-ranked)) (2026-10-10).
-- [x] Settings → Cache: parameter edits never apply, Clear blocks the GUI and
-  leaves badges stale ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#settings--cache-tab-helabviewssettingsdialogpy)) (2026-10-10).
-  Fixed by the rebuilt Cache tab (`52201ca`).
-
-- [ ] Finish and verify the folder-status remount fix in the native GUI on `/Volumes/dld_output`.
-  Saved icons disappeared because SMB remounts changed `st_dev`, which the status
-  cache treated as a different folder. The fix keeps last-known
-  statuses and failure history across device changes and keys the disk store by
-  SMB source plus relative folder path, avoiding macOS's mount-order suffixes.
-  No migration: the old cache is cleared by hand before first launch. Automated
-  tests pass; the native remount check remains in [MANUAL_TODO](../.ai/MANUAL_TODO.md); see the
-  [investigation](../.ai/sessions/2026-10-15-codex-status-remount/notes.md).
-- [ ] Folders with over 100,000 entries record a scan failure.
-- [ ] The temp folder (`DIR_TEMPS`, Settings → General) is created and can be
-  changed, but nothing uses it: helpers' private folders go to the system temp
-  dir (`tempfile.mkdtemp` in `IOService`). Remove the setting, or move helper
-  folders into it (2026-10-15).
-- [ ] Quitting cancels cache writes still running in the background (a finished
-  load's `disk_cache_pending` save), so the next check redoes them. Quit should
-  finish them first, with Quit now to skip, as planned for
-  [live monitoring](live-monitoring.md#dataset-cache-writes-while-monitoring) (2026-10-13).
-- [ ] With the default of one background lane, folder details and status checks
-  (including manual ones) wait for the selected load. As planned; revisit if
-  it feels slow.
-- [ ] When a tab's shown data is dropped while it is shown (a folder status check finds
-  the folder mismatched, or its cache is cleared), the tab keeps its arrays and later
-  plots on screen; a load finding missing shots clears them. Clear the analysis view
-  or mark it stale, once plotting exists (Tony, 2026-10-14).
+Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues.md).
 
 ## Near term: useful analysis from loaded data
 
+- [ ] TXY converter (`HeBECANU/tdc_autoconverter`, `lib/dld_raw_to_txy_counts.m`):
+  write each TXY to a temporary name and `movefile` it to the final name, so
+  HeLab never sees a partly written file (Tony, 2026-10-19). Porting it into HeLab
+  (Live L4) is the one raw → TXY converter. The legacy reconstruction has two
+  variants: 2019, and the 2023 lab edit with an x1 dead time of 0.5 µs and
+  separate tsums. Check that existing `_txy_forc` files are reproduced: the same
+  event counts and values to 8 significant figures, for the variant that wrote
+  them ([notes](../.ai/sessions/2026-10-20-claude-dld-front-panel-review/core-update.md#import-and-reconstruction)) (2026-10-20).
 - [ ] Decouple browser/cache, dataset, analysis and UI responsibilities so
   agents can develop separate features in supervised, isolated worktrees
   without changing current behaviour. Feature-driven: the dataset view first,
   then splits where work collides ([plan](refactoring.md)) (2026-10-13;
-  revised 2026-10-15).
-- [ ] Parallel agent workflow on Maestri floors (cloud agents kept open): floor
-  setup script, then a hard-coded settings-defaults table (also for Restore
-  default and tooltips in the release) and per-checkout share/isolated
-  profiles, with `HELAB_SETTINGS_OVERRIDE`
-  ([plan](agent-workflow.md)) (2026-10-15).
+  revised 2026-10-15). Milestone 1 (dataset view) and the two-floor pilot
+  done (2026-10-19). Milestone 2 mostly done (TonyXTYan/HeLab#7, 2026-10-21): `io_ops`,
+  `views/plots`, the Qt-free analysis core, `PlotWorkspace`, `LiveController`; left: the
+  explorer's load logic, `FolderCache`'s stores, `_on_event`.
 
-- [ ] Apply other tabs' finished status checks during Refresh without source
+- [x] Apply other tabs' finished status checks during Refresh without source
   I/O ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#cross-tab-status-results)) (2026-10-08).
+  Done 2026-10-26 (cache-only C1, `9c75340`).
 - [ ] Explain when disk-cache failure skips automatic status checks and offer
   a manual check (2026-10-08).
 - [ ] Add small anonymized TXY fixtures with known counts/arrays, including
@@ -120,17 +111,64 @@ How to use it:
   results, validated reuse and optional versioned script bundles; plain files
   remain usable. Local runner first, open to remote later
   ([plan](analysis-job-runner.md)) (2026-10-13; revised 2026-10-15).
-- [ ] First analysis: interactive 3D scatter (Plotly via the Dash server),
-  default auto-crop to regions of interest
+- [x] First analysis: interactive 3D scatter (Plotly via the Dash server),
+  default auto-crop to regions of interest. v1 done 2026-10-19; the crop rule
+  awaits Tony's check on real data
   ([plan](analysis-workflow.md#first-analysis-3d-scatter-decided-2026-10-15)) (2026-10-15).
 - [ ] Complete the dataset → parameters → background script → results workflow,
   with folder-following views, pinning, progress, cancellation and errors
   ([plan](analysis-workflow.md)) (2026-10-08; revised 2026-10-14).
 - [ ] Analysis result caching: RAM results (R1), then disk-cached one-off
   results with exact-match reuse (R2); Live stages follow
-  ([plan](result-caching.md)) (2026-10-15).
-- [ ] Standard analyses: per-shot counts, T/X/Y distributions and shot selection
+  ([plan](result-caching.md)) (2026-10-15). R1 done (2026-10-19), R2 done (2026-10-23).
+- [x] Open plots count toward the RAM budget: 50 % status bar, 75 % window, 80 % release
+  least recently shown plots (never closed; a picture with Reload from RAM or the
+  local disk cache only) (Tony, 2026-10-19/20; landed 2026-10-20).
+- [ ] One Settings panel follows the active plot (click, focus, tabbed or
+  floating dock; chooser raises a plot; settings pages as tabs via
+  `ParameterSpec.page`). Quick version on Ground (Tony, 2026-10-19); hardened
+  2026-10-19 (signals instead of an event filter, many plots, tab rule, tab
+  close by identity, activation sources, typed numbers). Left: the on-screen
+  checks (MANUAL_TODO) and a pin to keep one plot's settings shown.
+- [ ] Transfer fractions plot (port of Momentum_Bells_test's `monitor_momentum.m`):
+  orders auto-found in T, manual centre/spacing filled from the detection. Quick
+  version on Ground; hardened 2026-10-20 (detection edge cases with "order 0
+  unsure" and "moved", clipped manual windows, typed values kept across reruns,
+  From-shot wording, counts checked against a Python `fraction_calc`); a
+  Reference spacing (15 ms) guides auto's spacing, so a bump 5 ms from order 0
+  no longer gives 5 ms (2026-10-20); the DLD port's Transfer fractions uses the same
+  detection and Reference spacing (R-19, `f7d06e6`…`6fac7df`, merge `0ee6ca2`, 2026-10-22). Left:
+  detection on real Bragg/magnetic data (MANUAL_TODO); a hot spot near the XY
+  box's edge without MATLAB's `dld_xy_rot` (to investigate; new detector since);
+  draggable windows on the T histogram; the averaged-vs-detuning view (Tony,
+  2026-10-19/20).
+- [ ] How auto detection should find orders 0, ±1, ±2 (it also covers a first run
+  at high transfer, where +1 can be taken for order 0): Tony to describe; not built
+  (2026-10-20).
+- [x] Floating plot settings: a floating plot's settings travel with its window (collapsible, on the right, draggable splitter) (Tony, 2026-10-19; landed 2026-10-20).
+- [ ] Show the analysis worker beside I/O: status-bar counts and Folder
+  details' activity, each job with script, input, revision, time and Cancel;
+  later remote/CLI workers in the same list (Tony, 2026-10-19).
+- [ ] Packaged builds: record bundled scripts' SHA-256 at build time (in
+  `_build_info.json`), since PyInstaller leaves no `.py` files to hash
+  (2026-10-19).
+- [ ] Standard analyses: per-shot counts, T/X/Y distributions (v1 done
+  2026-10-19; T in ms and X/Y in mm since 2026-10-20) and shot selection
   ([plan](analysis-workflow.md#standard-analyses)) (2026-10-08).
+- [ ] Features from the old MATLAB DLD front panel. Built 2026-10-20 (F0, D1–D10,
+  D12, D14, D15 placeholder), on `agent/dld-front-panel-port`: constants at
+  three levels (Settings → Lab parameters, folder constants, plot overrides) with
+  bounded fits ± SE; fits, Bose/bimodal condensate fits and BEC properties on the
+  T/X/Y histograms; density images; mean X/Y against T and the T spectrum; shot times
+  from the raw files; Shot trends with an opt-in low-count notification in Live;
+  hot-spot masks with a placeholder finder; Release time and Velocity distributions;
+  g² and back-to-back Correlations. T in ms and X/Y in mm everywhere (Tony, 2026-10-20). Next: D13's
+  per-shot halo centring, then the plan's
+  left-to-do list; raw-pulse diagnostics after the TXY converter port. 33 open
+  decisions, each built as proposed, and on-screen and real-data checks
+  ([plan](dld-front-panel-port.md#open-decisions),
+  [register](../.ai/sessions/2026-10-20-claude-dld-coordinator/register.md),
+  [manual to-do](../.ai/MANUAL_TODO.md#dld-front-panel-port-added-2026-10-20)) (2026-10-20).
 - [ ] Export results and figures with their data source and analysis settings
   ([plan](analysis-workflow.md#export)) (2026-10-08).
 - [ ] Headless analysis runner sharing GUI jobs/results; add its CLI afterward
@@ -146,14 +184,19 @@ How to use it:
   staged 2026-10-15). New shots stay in RAM; the disk cache is written every
   N shots (configurable) and when monitoring stops or HeLab quits
   ([decided](live-monitoring.md#dataset-cache-writes-while-monitoring)) (2026-10-13).
+  L1–L3 done (2026-10-19): plots follow Live; L4 (converter in HeLab) next.
 - [ ] QC script catalogue and safe derived-file repairs, kept in HeLab's cache
   folder; migrate the current status scan as its first provider
   ([plan](quality-control-and-repair.md)) (2026-10-14; revised 2026-10-15).
 - [ ] Save analysis presets and reopen analysis workspaces
-  ([plan](presets-and-workspaces.md)) (2026-10-08).
-- [ ] Cache-only browsing: browse and analyse cached data while the source is
+  ([plan](presets-and-workspaces.md)) (2026-10-08). Stage 1 done (2026-10-23,
+  `agent/presets-reopen`): script and one-folder arrangement presets, plots
+  reopening at start, Settings → Cache › Presets…; the full workspace file is
+  still open.
+- [x] Cache-only browsing: browse and analyse cached data while the source is
   unavailable; offline mode makes no network request
-  ([plan](cache-only-browsing.md)) (2026-10-08; revised 2026-10-14).
+  ([plan](cache-only-browsing.md)) (2026-10-08; revised 2026-10-14). Done 2026-10-26: File ›
+  Work Offline (C0–C3, merge `9bb1ff7`); on-screen and real-volume checks in MANUAL_TODO.
 - [ ] Compare folders or experimental runs using consistent settings
   ([plan](run-comparison-and-batch.md#run-comparison)) (2026-10-08).
 - [ ] Self-update button for source checkouts (git + uv) and frozen builds
@@ -195,12 +238,41 @@ How to use it:
   for the cache instead of holding a second copy of every shot (2026-10-10).
 
 - [ ] Plot-area hints when no plot is open: usage tips, or a daily motivational
-  quote. `CentralHint` already has a second line and `add_widget` for this (2026-10-09).
+  quote. Usage tips done on Ground (`CentralHint.TIPS`, a new one every 30 s
+  while shown, click for the next; keep them current as features change); the
+  quote stays unchosen (2026-10-09; tips 2026-10-19).
 
 - [ ] Lock the tree view during a recursive status check? (from the old README
   list; may no longer be needed).
 
 ## Done
+
+v0.0.5a1 (`main` `5a8ae6f`, 2026-10-19; native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)):
+
+- [x] Cache rebuild: SQLite records + compressed dataset files, editable disk and
+  RAM budgets, large-folder warning, per-folder flags, cache-folder move, rebuilt
+  Settings → Cache tab; sessions S1–S11 ([plan](cache-storage-and-settings.md#sessions))
+  (2026-10-10; `fe5a5b7`…`eafcf4b`).
+- [x] App version and build info, Help → About, explicit CI tagging and draft
+  releases ([implementation](app-versioning.md#implemented-workflow-authoritative)) (2026-10-12).
+- [x] Folder details panel, shorter status bar, load elapsed time and time left
+  (2026-10-10, `3af4fea`).
+- [x] Data roots: disk caching keyed by a hidden `.helab-root` marker (UUID),
+  RAM only without one; SMB share and local-volume locations; Same folder / Copy
+  for duplicates with warnings; Place .helab-root (right-click and File menu,
+  Windows `C:\` allowed); Settings → Data roots with Show, Copy path, Clear
+  cached data, Forget, Delete and Review; store `store-v3`
+  ([plan](data-roots.md), [stages](../.ai/sessions/2026-10-16-claude-data-roots/plan.md)) (2026-10-16…18).
+  It replaces the SMB-key remount fix ([investigation](../.ai/sessions/2026-10-15-codex-status-remount/notes.md)).
+- [x] Folders without a disk cache get their status from browsing (session
+  failure history only) (2026-10-18).
+- [x] Resize repaint freeze: no main-window repaint suppression; pytest covers
+  painting and scan cancellation ([fix](../.ai/sessions/2026-10-11-codex-resize-during-scan/notes.md#implementation)) (2026-10-11).
+- [x] Disk-cache eviction no longer drops records to make room (`fd4e020`,
+  `ef4c0ca`); reads never mean "nothing saved" on contention (S1)
+  ([audit](../.ai/sessions/2026-10-10-claude-cache-audit/notes.md#storage-findings-ranked)) (2026-10-10).
+- [x] Settings → Cache edits apply, Clear doesn't block the GUI (rebuilt Cache
+  tab, `52201ca`) (2026-10-10).
 
 Ticked items from the old README TODO list, kept for reference:
 

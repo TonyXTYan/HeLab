@@ -482,31 +482,6 @@ class IconsInitUtil:
         ToolIcons.initialise_icons()
         PercentageIcon.initialise_icons()
 
-def str_to_QIcon(text: str, size: int = 128*4, scaled: int = 128) -> QIcon:
-    """
-    Converts a given string to a QIcon with specified size and scaling.
-    :param text: The string to be converted into an icon.
-    :type text: str
-    :param size: The size of the initial pixmap (default is 128*4=512).
-    :type size: int
-    :param scaled: The size to which the pixmap should be scaled (default is 128).
-    :type scaled: int
-    :return: A QIcon object created from the given string.
-    :rtype: QIcon
-    """
-    pixmap = QPixmap(size, size)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setPen(Qt.GlobalColor.black)
-    painter.setFont(QFont("Monospaced", 128*2))
-    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, text)
-    painter.end()
-    pixmap = pixmap.scaled(scaled, scaled,
-                           Qt.AspectRatioMode.KeepAspectRatio,
-                           Qt.TransformationMode.SmoothTransformation)
-    return QIcon(pixmap)
-
-
 class PercentageIcon:
 
     """
@@ -516,10 +491,6 @@ class PercentageIcon:
     -----------
     _DIVS_COARSE : int
         Number of coarse divisions for the percentage icons.
-    _DIVS_COARSE_CUTOFF_RIGHT : int
-        Right cutoff value for coarse divisions.
-    _DIVS_COARSE_CUTOFF_LEFT : int
-        Left cutoff value for coarse divisions.
     _DIVS_FINE_MULTIPLIER : int
         Multiplier to determine the number of fine divisions.
     _DIVS_FINE : int
@@ -537,8 +508,6 @@ class PercentageIcon:
         Pre-fills the fine-grained cache and initialises icons for coarse divisions.
     """
     _DIVS_COARSE = 12
-    _DIVS_COARSE_CUTOFF_RIGHT = -3
-    _DIVS_COARSE_CUTOFF_LEFT  = 0
     _DIVS_FINE_MULTIPLIER = 30
     _DIVS_FINE = _DIVS_COARSE * _DIVS_FINE_MULTIPLIER # 12*30 = 360
     # ICON_10 = QIcon()
@@ -562,25 +531,6 @@ class PercentageIcon:
             PercentageIcon.ICONS[i] = _circular_progress_QIcon_cached_helper(i * PercentageIcon._DIVS_FINE_MULTIPLIER)
         PercentageIcon.KEYS = sorted(list(PercentageIcon.ICONS.keys()))
         PercentageIcon.KEYS_PERCENTAGE = [k / PercentageIcon._DIVS_COARSE for k in PercentageIcon.KEYS]
-
-
-def circular_progress_QIcon_cached(percentage: float) -> QIcon:
-    """
-    Returns a cached QIcon representing a circular progress indicator.
-
-    :param percentage: A float value between 0 and 1 representing the progress.
-    :return: A QIcon object representing the circular progress.
-    :raises ValueError: If the percentage is not between 0 and 1.
-    """
-    # return circular_progress_QIcon_cached_helper(round(percentage * PercentageIcon._DIVS_COARSE))
-    if not (0 <= percentage <= 1):
-        raise ValueError("Percentage must be between 0 and 1.")
-    l = PercentageIcon.KEYS_PERCENTAGE[PercentageIcon._DIVS_COARSE_CUTOFF_LEFT]
-    r = PercentageIcon.KEYS_PERCENTAGE[PercentageIcon._DIVS_COARSE_CUTOFF_RIGHT]
-    if l < percentage < r:
-        return _circular_progress_QIcon_cached_helper(round(percentage * PercentageIcon._DIVS_FINE))
-    else:
-        return _circular_progress_QIcon_cached_helper(round(percentage * PercentageIcon._DIVS_COARSE * PercentageIcon._DIVS_FINE_MULTIPLIER))
 
 
 @functools_lru_cache(maxsize=PercentageIcon._DIVS_FINE + 1)

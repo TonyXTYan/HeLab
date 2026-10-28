@@ -1,21 +1,30 @@
 import os
-import random
-import re
-import subprocess
 import sys
 import tempfile
 import logging
 from typing import List
-import hashlib
 from helab._version import __version__
 from helab.build_info import get_build_info
 
 from typing import Optional
 
-from PyQt6.QtCore import QSettings, QDir, QDirIterator
+from PyQt6.QtCore import QSettings, QDir
+from helab.utils.settings_store import app_settings
+# Settings' keys (re-exported: they were defined here) and defaults: helab/utils/settings_defaults.py.
+from helab.utils.settings_defaults import (
+    AUTO_SCAN_VISIBLE_SETTING as AUTO_SCAN_VISIBLE_SETTING,
+    CHECK_LEVEL_SETTING as CHECK_LEVEL_SETTING,
+    DIR_CACHES_SETTING as DIR_CACHES_SETTING,
+    DIR_TEMPS_SETTING as DIR_TEMPS_SETTING,
+    DISK_BUDGET_SETTING as DISK_BUDGET_SETTING,
+    LIVE_AUTOSAVE_SETTING as LIVE_AUTOSAVE_SETTING,
+    LIVE_INTERVAL_SETTING as LIVE_INTERVAL_SETTING,
+    LOAD_MODE_SETTING as LOAD_MODE_SETTING,
+    PLOT_AUTO_RELOAD_SETTING as PLOT_AUTO_RELOAD_SETTING,
+    RAM_BUDGET_SETTING as RAM_BUDGET_SETTING,
+    SIMULTANEOUS_IO_SETTING as SIMULTANEOUS_IO_SETTING,
+    LOG_KEEP_SETTING, read_setting, setting_default)
 # from PyQt6.QtGui import QFontDatabase, QFont
-
-from joblib.externals.loky.process_executor import MAX_DEPTH
 
 # try:
 #     helab_mono_font = QFont("SF Mono", 12)
@@ -80,42 +89,34 @@ APP_VERSION = get_version()
 APP_COMMIT_HASH = get_git_commit_hash()
 
 
-QSETTINGS_ORG_NAME = "ANU_HE_BEC_GROUP"
-QSETTINGS_APP_NAME = "HeLab"
-
 # What happens to a folder's load when another folder is selected.
-LOAD_MODE_SETTING = "load_on_select_mode"
 LOAD_MODE_LABELS = {"cancel": "Cancel the current load",
                     "finish": "Finish the current load in the background",
                     "queue": "Queue folders kept selected for 3 s"}
-DEFAULT_LOAD_MODE = "finish"
+DEFAULT_LOAD_MODE: str = setting_default(LOAD_MODE_SETTING)
 
 # How much the quick check of a folder's cached data (folder not modified since it was
 # cached) also checks of its TXY files' sizes and times; Full lists the folder every time.
-CHECK_LEVEL_SETTING = "cached_data_check_level"
 CHECK_LEVEL_LABELS = {"swift": "Swift: the last file",
                       "fast": "Fast: the first and last files",
                       "medium": "Medium: first, last and at least 3 random files (1%)",
                       "high": "High: first, last and at least 10 random files (3%)",
                       "full": "Full: every file (lists the folder)"}
-DEFAULT_CHECK_LEVEL = "medium"
+DEFAULT_CHECK_LEVEL: str = setting_default(CHECK_LEVEL_SETTING)
 
-SIMULTANEOUS_IO_SETTING = "simultaneous_folder_io_operations"
-AUTO_SCAN_VISIBLE_SETTING = "auto_basic_scan_visible_folders"
-DEFAULT_SIMULTANEOUS_IO = 1
+DEFAULT_SIMULTANEOUS_IO: int = setting_default(SIMULTANEOUS_IO_SETTING)
 MAX_SIMULTANEOUS_IO = 32
 
 
 # The disk cache budget in bytes (Settings → Cache from S7). It counts live data only.
-DISK_BUDGET_SETTING = "disk_cache_budget"
-DEFAULT_DISK_BUDGET = 8 << 30
-MIN_DISK_BUDGET = 1 << 30
+DEFAULT_DISK_BUDGET: int = setting_default(DISK_BUDGET_SETTING)
+MIN_DISK_BUDGET = 10**9  # 1 GB: budgets are SI, as every size HeLab shows (Tony, 2026-10-26)
 
 
 def read_disk_budget(settings: QSettings) -> int:
     """The saved disk cache budget, or the default for a missing or malformed value."""
     try:
-        value = int(settings.value(DISK_BUDGET_SETTING, DEFAULT_DISK_BUDGET))
+        value = int(read_setting(settings, DISK_BUDGET_SETTING))
     except (TypeError, ValueError, OverflowError):
         return DEFAULT_DISK_BUDGET
     return max(MIN_DISK_BUDGET, value)
@@ -123,11 +124,10 @@ def read_disk_budget(settings: QSettings) -> int:
 
 # The RAM budget for loaded folders not shown in a tab, saved as steps of 1/128 of the
 # computer's RAM so it still makes sense after a RAM upgrade.
-RAM_BUDGET_SETTING = "ram_budget_steps"
 RAM_STEPS = 128
-DEFAULT_RAM_STEPS = 16
+DEFAULT_RAM_STEPS: int = setting_default(RAM_BUDGET_SETTING)
 MAX_RAM_STEPS = 64
-MIN_RAM_BUDGET = 1 << 30
+MIN_RAM_BUDGET = 10**9  # 1 GB (SI, as the disk budget)
 
 
 def total_ram() -> int:
@@ -149,7 +149,7 @@ def read_ram_budget_steps(settings: QSettings, total: int | None = None) -> int:
     """The saved RAM budget in steps, or the default, within the allowed range."""
     low, high = ram_step_range(total)
     try:
-        value = int(settings.value(RAM_BUDGET_SETTING, DEFAULT_RAM_STEPS))
+        value = int(read_setting(settings, RAM_BUDGET_SETTING))
     except (TypeError, ValueError, OverflowError):
         value = DEFAULT_RAM_STEPS
     return max(low, min(high, value))
@@ -164,20 +164,71 @@ def read_io_concurrency(settings: QSettings) -> int:
     """Use a safe default for missing or malformed saved limits."""
     try:
         # Independent legacy limits do not imply an intended shared limit.
-        value = int(settings.value(SIMULTANEOUS_IO_SETTING, DEFAULT_SIMULTANEOUS_IO))
+        value = int(read_setting(settings, SIMULTANEOUS_IO_SETTING))
     except (TypeError, ValueError, OverflowError):
         return 1
     return max(1, min(MAX_SIMULTANEOUS_IO, value))
 
 
 def read_check_level(settings: QSettings) -> str:
-    level = settings.value(CHECK_LEVEL_SETTING, DEFAULT_CHECK_LEVEL, type=str)
+    level = read_setting(settings, CHECK_LEVEL_SETTING, typed=True)
     return level if level in CHECK_LEVEL_LABELS else DEFAULT_CHECK_LEVEL
 
 
 def read_load_mode(settings: QSettings) -> str:
-    mode = settings.value(LOAD_MODE_SETTING, DEFAULT_LOAD_MODE, type=str)
+    mode = read_setting(settings, LOAD_MODE_SETTING, typed=True)
     return mode if mode in LOAD_MODE_LABELS else DEFAULT_LOAD_MODE
+
+
+# Live (roadmaps/live-monitoring.md): seconds from the end of one check of the watched folder to
+# the start of the next (Settings → General), and how many new shots wait in RAM before the
+# folder is saved to the disk cache (Settings → Cache).
+DEFAULT_LIVE_INTERVAL: float = setting_default(LIVE_INTERVAL_SETTING)
+MIN_LIVE_INTERVAL, MAX_LIVE_INTERVAL = 0.5, 600.0
+DEFAULT_LIVE_AUTOSAVE: int = setting_default(LIVE_AUTOSAVE_SETTING)
+MAX_LIVE_AUTOSAVE = 100_000
+
+
+def read_live_interval(settings: QSettings) -> float:
+    import math
+    try:
+        value = float(read_setting(settings, LIVE_INTERVAL_SETTING))
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_LIVE_INTERVAL
+    return max(MIN_LIVE_INTERVAL, min(MAX_LIVE_INTERVAL, value)) if math.isfinite(value) else DEFAULT_LIVE_INTERVAL
+
+
+# Log files to keep (Settings → General): every session's, rotated copies counted; at startup the
+# oldest beyond it are deleted (``helab.utils.app_log.tidy_logs``).
+DEFAULT_LOG_KEEP: int = setting_default(LOG_KEEP_SETTING)
+MAX_LOG_KEEP = 100_000
+
+
+def read_log_keep(settings: QSettings) -> int:
+    try:
+        value = int(read_setting(settings, LOG_KEEP_SETTING))
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_LOG_KEEP
+    return max(1, min(MAX_LOG_KEEP, value))
+
+
+def read_live_autosave(settings: QSettings) -> int:
+    try:
+        value = int(read_setting(settings, LIVE_AUTOSAVE_SETTING))
+    except (TypeError, ValueError, OverflowError):
+        return DEFAULT_LIVE_AUTOSAVE
+    return max(1, min(MAX_LIVE_AUTOSAVE, value))
+
+
+# Settings → Cache: a plot released to free RAM reloads when it is shown again (on by default;
+# helab/analysis/budget.py).
+
+
+def read_plot_auto_reload(settings: QSettings) -> bool:
+    value = read_setting(settings, PLOT_AUTO_RELOAD_SETTING)
+    if isinstance(value, str):
+        return value.strip().lower() not in ("false", "0", "no", "off", "")
+    return bool(value)
 
 
 
@@ -192,8 +243,6 @@ logging.debug(f"{QDir_WORKING_DIRECTORY = }")
 logging.debug(f"{QDir_USER_DIRECTORY = }")
 logging.debug(f"{QDir_ROOT_DIRECTORY = }")
 logging.debug(f"{QDir_TEMP_DIRECTORY = }")
-
-TEMPFILE_PREFIX = tempfile.gettempdir()
 
 
 def default_app_dir(kind: str) -> str:
@@ -228,14 +277,6 @@ DIR_CACHES_CANDIDATES = [
 # logging.debug(f"{DIR_TEMPS_CANDIDATES = }")
 # logging.debug(f"{DIR_CACHES_CANDIDATES = }")
 
-INDICATOR_DOTS = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"
-INDICATOR_DOTS_ALL = "⠃⠅⠆⠇⠉⠊⠋⠌⠍⠎⠏⠑⠒⠓⠔⠕⠖⠗⠘⠙⠚⠛⠜⠝⠞⠟⠡⠢⠣⠤⠥⠦⠧⠨⠩⠪⠫⠬⠭⠮⠯⠰⠱⠲⠳⠴⠵⠶⠷⠸⠹⠺⠻⠼⠽⠾⠿"
-def INDICATOR_DOT_RANDOM(n: int = 1) -> str:
-    if not (1 <= n <= len(INDICATOR_DOTS)):
-        raise ValueError(f"n must be between 1 and {len(INDICATOR_DOTS)}, inclusive.")
-    return ''.join(random.sample(INDICATOR_DOTS, n))
-
-
 def usable_directory(path: str, *, create: bool = False) -> bool:
     """A directory HeLab can write to, optionally created first.
 
@@ -267,8 +308,8 @@ def get_path_from_setting_or_use_default(key: str, candidates: List[str], settin
     """
 
     if settings is None:
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
-    value = settings.value(key, type=str)
+        settings = app_settings()
+    value = read_setting(settings, key, typed=True)
     if value and isinstance(value, str):
         # A path saved under another account (e.g. an elevated session) may exist but be read-only.
         if usable_directory(value):
@@ -303,8 +344,8 @@ def migrate_legacy_temp_dir(key: str, kind: str, settings: Optional[QSettings] =
     stays in use and the move is retried next launch.
     """
     if settings is None:
-        settings = QSettings(QSETTINGS_ORG_NAME, QSETTINGS_APP_NAME)
-    value = settings.value(key, type=str)
+        settings = app_settings()
+    value = read_setting(settings, key, typed=True)
     if not value or not isinstance(value, str) or not os.path.isdir(value):
         return
     legacy = (os.path.realpath(os.path.dirname(value)) == os.path.realpath(tempfile.gettempdir())
@@ -357,8 +398,8 @@ if _dir_temps_override:
     os.makedirs(_dir_temps_override, exist_ok=True)
     DIR_TEMPS = _dir_temps_override
 else:
-    migrate_legacy_temp_dir("dir_temps", "temps")
-    DIR_TEMPS = get_path_from_setting_or_use_default("dir_temps", DIR_TEMPS_CANDIDATES, create=True)
+    migrate_legacy_temp_dir(DIR_TEMPS_SETTING, "temps")
+    DIR_TEMPS = get_path_from_setting_or_use_default(DIR_TEMPS_SETTING, DIR_TEMPS_CANDIDATES, create=True)
 
 def resolve_cache_dir(settings: Optional[QSettings] = None, *, persist: bool = False) -> tuple[str, str, bool]:
     """The cache folder to use: the saved one if it is usable and safe, else a default; why the
@@ -368,7 +409,7 @@ def resolve_cache_dir(settings: Optional[QSettings] = None, *, persist: bool = F
     if _dir_caches_override:
         os.makedirs(_dir_caches_override, exist_ok=True)
         return _dir_caches_override, "", True
-    path = get_path_from_setting_or_use_default("dir_caches", DIR_CACHES_CANDIDATES, settings, create=True,
+    path = get_path_from_setting_or_use_default(DIR_CACHES_SETTING, DIR_CACHES_CANDIDATES, settings, create=True,
                                                 persist=persist)
     return refuse_unsafe_cache_dir(path, DIR_CACHES_CANDIDATES)
 
@@ -382,7 +423,7 @@ def start_cache_dir(settings: Optional[QSettings] = None, *, usable: bool = True
         set_cache_dir(cache_dir(), reason, False)
         return
     if not _dir_caches_override:
-        migrate_legacy_temp_dir("dir_caches", "caches", settings)
+        migrate_legacy_temp_dir(DIR_CACHES_SETTING, "caches", settings)
     set_cache_dir(*resolve_cache_dir(settings, persist=True))
 # The cache folder when HeLab started. It can change while HeLab runs (a cache move, or a
 # move recovered at startup): read the current one with ``cache_dir()``.
@@ -419,11 +460,6 @@ def app_folder() -> str:
 # DIR_CACHES = os.path.join(CURRENT_WORKING_DIRECTORY, 'helab_caches')
 # DIR_TEMP = "/tmp/cache"
 
-OS_DIR_CACHE_TTL = 60*60 # seconds
-
-# MAX_DEPTH_INT = int(sys.maxsize)>>10
-MAX_DEPTH_INT = 1<<15
-
 DEV_POTENTIAL_DATA_PATHS = [
     '/Volumes/dld_output',
     '/Volumes/tonyNVME Gold/dld output',
@@ -438,64 +474,12 @@ DEV_POTENTIAL_DATA_PATHS = [
     'C:\\Users\\XinTong\\Documents',
     'O:\\',
     '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/good',
-    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/bad'
-    '',
+    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/bad',
 ]
 
 # This is a display hint; availability is resolved by an isolated I/O helper
 # after the window is shown. Never stat a remote mount at module import.
 DEFAULT_DATA_PATH = DEV_POTENTIAL_DATA_PATHS[0]
-
-
-DEV_PATH_TO_MATLAB = "/Applications/MATLAB_R2024b.app"
-DEV_PATH_TO_TDC_AUTOCONVERTER_GIT_FOLDER = "/Users/tonyyan/Documents/_ANU/_He_BEC_Group/tdc_autoconverter"
-DEV_PATH_TO_TDC_AUTO_CONVERT_M = "/Users/tonyyan/Documents/_ANU/_He_BEC_Group/tdc_autoconverter/tdc_auto_convert.m"
-DEV_PATH_TO_TDC_CONVERT_FILELIST_M = "/Users/tonyyan/Documents/_ANU/_He_BEC_Group/tdc_autoconverter/tdc_convert_filelist.m"
-
-
-BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
-
-def base62_encode(number: int) -> str:
-    if number == 0:
-        return BASE62_ALPHABET[0]
-    
-    base62 = []
-    while number:
-        number, remainder = divmod(number, 62)
-        base62.append(BASE62_ALPHABET[remainder])
-    
-    return ''.join(reversed(base62))
-
-def base62_decode(base62: str) -> int:
-    number = 0
-    for char in base62:
-        number = number * 62 + BASE62_ALPHABET.index(char)
-    return number
-
-
-def hash_int(path: str) -> int:
-    # return int(hashlib.sha256(path.encode()).hexdigest(), 16)
-    hash_bytes = hashlib.sha256(path.encode()).digest()
-    return int.from_bytes(hash_bytes, 'big')
-
-def hash_bit(path: str) -> str:
-    return bin(hash_int(path))[2:]
-
-def hash_bit_to_int(code: str) -> int:
-    return int(code, 2)
-
-def hash_str(path: str) -> str:
-    # return hashlib.sha256(path.encode()).hexdigest()
-    
-    # hash_bytes = hashlib.sha256(path.encode()).digest()
-    # return base64.b64encode(hash_bytes).decode('utf-8').replace('/', '_').replace('+', '-')
-    
-    hash_bytes = hashlib.sha256(path.encode()).digest()
-    hash_int = int.from_bytes(hash_bytes, 'big')
-    return base62_encode(hash_int)
-
-def hash_str_to_int(code: str) -> int:
-    return base62_decode(code)
 
 
 def assert_warn(condition: bool, message: str) -> None:

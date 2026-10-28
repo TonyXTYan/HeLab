@@ -1,25 +1,45 @@
 import os
 import socket
 import threading
+from dataclasses import dataclass
 from typing import Optional, Dict, Any
 
 import dash
-from dash import html, Output, Input, dcc
+from dash import html, no_update, Output, Input, State, dcc
+from dash.exceptions import PreventUpdate
 from plotly.graph_objs import Figure
 from werkzeug.serving import BaseWSGIServer, make_server
 
-from helab.utils.synchronised_dict import SynchronisedDict
+NOT_FOUND = "Plot not found. It is removed when its plot is closed in HeLab."
+
+
+@dataclass(frozen=True)
+class PlotSnapshot:
+    """A plot's figure and its revision, stored and read as one value: a page is never sent one
+    figure tagged with another's revision (it would then wait for ever for the figure it lacks)."""
+    revision: int
+    figure: Figure
 
 
 class DashServer:
+    """Serves each plot's Plotly figure at ``/plot/<id>`` (the plot dock's web view and Open in
+    browser show the same page). A plot's newer figure (``update_plot``, e.g. a rerun as Live
+    adds shots) replaces the shown one in place: each page asks every ``POLL_MS`` whether its
+    plot has a newer revision, and Dash swaps the figure in without reloading the page, so the
+    view's rotation, zoom and pan stay (figures keep a constant ``layout.uirevision``). Once the
+    plot is closed (``remove_plot``), a page still open says so, drops the figure and stops
+    polling."""
 
     HOST_NAME = "127.0.0.1"
     HOST_PORT = 8050  # preferred; another free port is used when it is taken
+    POLL_MS = 1000
 
 
     def __init__(self) -> None:
         self.app = dash.Dash(__name__, suppress_callback_exceptions=True)
-        self.plots: SynchronisedDict[str, Figure] = SynchronisedDict()
+        # Each plot's latest snapshot, replaced whole by each update (pages read it on threads).
+        self._plots: dict[str, PlotSnapshot] = {}
+        self._plots_lock = threading.Lock()
         self.setup_layout()
         # The server starts on first use, not at import: importing the GUI (as
         # tests and every parallel test worker do) must not take a port.
@@ -35,17 +55,78 @@ class DashServer:
         @self.app.callback(Output('page-content', 'children'),
                            Input('url', 'pathname'))
         def display_page(pathname: Optional[str]) -> Any:
-            print(f"{pathname = }")
-            if pathname and pathname.startswith('/plot/'):
-                plot_id = pathname.split('/plot/')[1]
-                fig = self.plots.get(plot_id)
-                if fig:
-                    return dcc.Graph(figure=fig)
-            return html.Div("Plot not found.")
+            return self.page(pathname)
+
+        @self.app.callback(Output('plot-graph', 'figure'), Output('plot-revision', 'data'),
+                           Output('plot-graph', 'style'), Output('plot-closed', 'children'),
+                           Output('plot-poll', 'disabled'),
+                           Input('plot-poll', 'n_intervals'), State('url', 'pathname'),
+                           State('plot-revision', 'data'), prevent_initial_call=True)
+        def refresh(_: Any, pathname: Optional[str], shown: Any) -> Any:
+            outputs = self.poll(pathname, shown)
+            if outputs is None:
+                raise PreventUpdate  # Nothing newer: the page stays as it is.
+            return outputs
+
+    def poll(self, pathname: Optional[str], shown: Any) -> Optional[tuple[Any, ...]]:
+        """What a page's poll changes (figure, revision, graph style, closed text, poll disabled):
+        a newer snapshot's figure and revision; for a closed plot, an empty hidden graph, the
+        not-found text and no more polls; None when nothing changed."""
+        plot_id = self.plot_id_of(pathname)
+        if plot_id is None:
+            return None
+        snapshot = self.snapshot(plot_id)
+        if snapshot is None:
+            return {"data": [], "layout": {}}, no_update, {"display": "none"}, NOT_FOUND, True
+        if isinstance(shown, int) and snapshot.revision <= shown:
+            return None
+        return snapshot.figure, snapshot.revision, no_update, no_update, no_update
+
+    def page(self, pathname: Optional[str]) -> Any:
+        """A plot's page: its figure, the revision it is (from one snapshot) and the poll."""
+        plot_id = self.plot_id_of(pathname)
+        snapshot = self.snapshot(plot_id) if plot_id else None
+        if snapshot is None:
+            return html.Div(NOT_FOUND)
+        return html.Div([
+            html.Div(id='plot-closed'),
+            dcc.Graph(id='plot-graph', figure=snapshot.figure, style={"height": "96vh"}),
+            dcc.Store(id='plot-revision', data=snapshot.revision),
+            dcc.Interval(id='plot-poll', interval=self.POLL_MS)])
+
+    @staticmethod
+    def plot_id_of(pathname: Optional[str]) -> Optional[str]:
+        if not pathname or not pathname.startswith('/plot/'):
+            return None
+        return pathname.split('/plot/')[1]
+
+    def snapshot(self, plot_id: str) -> Optional[PlotSnapshot]:
+        """The plot's figure and revision, read together (None: no such plot, or closed)."""
+        with self._plots_lock:
+            return self._plots.get(plot_id)
+
+    def newer_snapshot(self, pathname: Optional[str], shown: Any) -> Optional[PlotSnapshot]:
+        """The snapshot of the plot at ``pathname``, if newer than the revision ``shown``."""
+        plot_id = self.plot_id_of(pathname)
+        snapshot = self.snapshot(plot_id) if plot_id else None
+        if snapshot is None or (isinstance(shown, int) and snapshot.revision <= shown):
+            return None
+        return snapshot
 
     def add_plot(self, plot_id: str, fig: Figure) -> None:
         self.start()
-        self.plots[plot_id] = fig
+        with self._plots_lock:
+            previous = self._plots.get(plot_id)
+            self._plots[plot_id] = PlotSnapshot((previous.revision if previous else 0) + 1, fig)
+
+    def update_plot(self, plot_id: str, fig: Figure) -> None:
+        """A newer figure of a shown plot: its pages swap it in place within ``POLL_MS``."""
+        self.add_plot(plot_id, fig)
+
+    def remove_plot(self, plot_id: str) -> None:
+        """Forget a figure (its plot dock closed), freeing its data."""
+        with self._plots_lock:
+            self._plots.pop(plot_id, None)
 
     def _bind(self) -> socket.socket:
         """Listen on HOST_PORT, or on any free port if it is in use (e.g. by another HeLab)."""

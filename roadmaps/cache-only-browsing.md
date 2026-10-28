@@ -4,6 +4,18 @@ Horizon: medium term; may move earlier if off-site use is frequent.
 Added: 2026-10-08. Direction agreed; detailed design is draft.
 Priority and completion: [overview](_readme.md).
 
+**Done 2026-10-26** (`agent/cache-only`, C0–C3, merge `9bb1ff7`; Harbor, reviewed by Vernier in four
+rounds): File › Work Offline. Design and decisions D1–D10 (Tony agreed all as proposed, D8 refreshing
+every tab): [design.md](../.ai/sessions/2026-10-26-claude-cache-only/design.md); handoff and on-screen
+checks: [handoff.md](../.ai/sessions/2026-10-26-claude-cache-only/handoff.md). Built: other tabs'
+results during Refresh without I/O (C1, `9c75340`), saved listings (C2), mount hints for unmounted
+paths (D1) and the gate (C3; AGENTS.md › Work Offline). Open decisions resolved: explicit switching
+only, remembered across restarts; going offline turns Live off and cancels source work, saves
+already asked for finish. Still an idea: automatic switching after a reachability failure.
+Follow-ups: `scan` and `details` writing listings too (folders checked but never expanded become
+navigable offline); a Disk cache off session offline (today error rows, "The disk cache is off for
+this session").
+
 ## Purpose and current foundation
 
 Browse folders and analyse retained data when the lab volume is unmounted or

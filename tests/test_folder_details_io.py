@@ -15,6 +15,8 @@ from PyQt6.QtWidgets import QApplication
 from helab.utils.folder_cache import get_folder_cache
 from helab.utils.io_service import IORequest, IOService
 from helab.views.FolderDetailsPanel import FolderDetailsPanel, LoadBar
+# At collection, before the QApplication exists: it imports QtWebEngine, which must load first.
+from helab.views.HelabMainWindow import HelabMainWindow
 
 
 def frozen(monkeypatch: pytest.MonkeyPatch) -> IOService:
@@ -101,7 +103,6 @@ def test_the_main_window_names_the_loads_tab_and_shows_its_folder(
     import time as clock
     from PyQt6.QtWidgets import QTabWidget
     from helab.views.FolderExplorer import FolderExplorer
-    from helab.views.HelabMainWindow import HelabMainWindow
     service = frozen(monkeypatch)
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
     monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)

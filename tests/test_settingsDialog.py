@@ -42,7 +42,7 @@ def test_settings_dialog_tab_widget(qtbot: QtBot, settings_dialog: SettingsDialo
     assert settings_dialog.tabs is not None
     
     # Verify default tabs
-    expected_tabs = ["General", "Scripts", "Cache", "Data roots"]
+    expected_tabs = ["General", "Lab parameters", "Scripts", "Cache", "Data roots"]
     assert [settings_dialog.tabs.tabText(i) for i in range(settings_dialog.tabs.count())] == expected_tabs
 
 def test_cache_tab_controls(qtbot: QtBot, settings_dialog: SettingsDialog) -> None:
@@ -126,7 +126,7 @@ def test_without_a_disk_cache_the_budget_is_just_saved(qtbot: QtBot, tmp_path: P
     qtbot.addWidget(dialog)
     dialog.cache_tab.disk_budget.setValue(12.0)
     dialog.save_settings()
-    assert read_disk_budget(settings) == 12 << 30
+    assert read_disk_budget(settings) == 12 * 10**9
 
 
 @pytest.mark.parametrize("value, expected", [(None, 1), ("invalid", 1), (0, 1), (-2, 1), (1000, 32)])
@@ -152,3 +152,22 @@ def test_shared_limit_defaults_safely_when_only_legacy_limits_exist(
     assert read_io_concurrency(settings) == 2
     assert not settings.contains("simultaneous_folder_scans")
     assert not settings.contains("simultaneous_folder_loads")
+
+
+def test_the_placeholder_settings_are_gone_and_their_saved_values_removed(
+    qtbot: QtBot, tmp_path: Path,
+) -> None:
+    """Settings → General had two placeholders ("Enable feature X", "Example Text"); a value an older
+    HeLab saved for them is removed when settings are saved (R-13)."""
+    from PyQt6.QtWidgets import QCheckBox, QLineEdit
+    from helab.utils.settings_defaults import RETIRED
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    settings.setValue("example_checkbox", True)
+    settings.setValue("example_text", "hello")
+    dialog = SettingsDialog(settings=settings)
+    qtbot.addWidget(dialog)
+    assert not any(box.text() == "Enable feature X" for box in dialog.general_tab.findChildren(QCheckBox))
+    assert not any(edit.placeholderText() == "Enter some text" for edit in dialog.general_tab.findChildren(QLineEdit))
+    assert {"example_checkbox", "example_text"} <= set(RETIRED)
+    dialog.save_settings()
+    assert not settings.contains("example_checkbox") and not settings.contains("example_text")

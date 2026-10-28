@@ -7,7 +7,7 @@ import logging
 import math
 import os
 import time
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterator, Mapping
 
 import numpy as np
 import numpy.typing as npt
@@ -20,9 +20,11 @@ from helab.models.StatusReport import StatusReport
 from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
 from helab.utils.io_service import IORequest
 from helab.utils import large_folder
-from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, PENDING_ROOT_TOOLTIP, PENDING_SUMMARY, PLACE_ROOT_ACTION,
-                                      PLACE_ROOT_TOOLTIP, REVIEW_ROOT_TOOLTIP, Dataset, pending_root_text,
-                                      marker_path, store_options)
+from helab.utils.colours import AMBER as AMBER  # Shared; the views import it from here too.
+from helab.utils import folder_cache
+from helab.utils.folder_cache import (NEEDS_ROOT_TOOLTIP, OFFLINE_TOOLTIP, PENDING_ROOT_TOOLTIP, PENDING_SUMMARY,
+                                      PLACE_ROOT_ACTION, PLACE_ROOT_TOOLTIP, REVIEW_ROOT_TOOLTIP, Dataset,
+                                      pending_root_text, marker_path)
 from helab.utils.number_format import byte_size
 from helab.utils.constants import DEFAULT_LOAD_MODE
 from helab.utils.load_clock import LoadClock
@@ -30,10 +32,23 @@ from helab.utils.time_format import byte_rate, clock as stopwatch, duration, rel
 from helab.utils.cache_freshness import CacheFreshness, data_as_of, freshness_tooltip, metadata_date
 from helab.utils.scan_history import history_tooltip
 from helab.views.ElidedLabel import ElidedLabel
+from helab.views.explorer_live import LiveController, LiveSession
+from helab.views.explorer_text import large_text, plural
 
 # Where a load's data came from, as the cache summary and Folder details name it.
-LOAD_ORIGINS = {"disk": "disk cache", "files": "TXY files", "merged": "disk cache + new TXY files",
-                "updated": "memory + new TXY files", "memory": "memory"}
+LOAD_ORIGINS = {"disk": "disk cache", "files": "TXY files", "memory": "memory"}
+
+
+def load_origin(source: str, counts: Mapping[str, int]) -> str:
+    """Where the shown data came from ("" if unknown). A merged or updated load names what it
+    reused and how many TXY files it read (``load_counts``): "disk cache + 2 TXY files read",
+    "memory + disk cache + 1 TXY file read", or "disk cache" / "memory" when it read none."""
+    if source not in ("merged", "updated"):
+        return LOAD_ORIGINS.get(source, "")
+    parts = ["disk cache"] if source == "merged" else ["memory", *(["disk cache"] if counts.get("reused_disk") else [])]
+    if read := counts.get("read", 0):
+        parts.append(f"{read:,} TXY file{'' if read == 1 else 's'} read")
+    return " + ".join(parts)
 # A folder without cached data that wasn't loaded automatically: the disk cache is 80% full.
 AUTO_LOAD_PAUSED = "Auto-load paused — disk cache 80% full"
 AUTO_LOAD_PAUSED_TOOLTIP = ("Load this folder now. Automatic loading of folders without cached data is paused "
@@ -50,15 +65,10 @@ MISMATCH_RETRY_TOOLTIP = ("Check this folder again. If the wrong drive was mount
                           "its cached shots are then found and it loads as usual.")
 MISMATCH_REVIEW_TOOLTIP = ("Cached data doesn't match this folder: shots it had are missing now. Show it in the "
                            "list of mismatched folders, where you can load it as it is now.")
-AMBER = "#b26a00"
-
-
-def large_text(estimate: int, refused: bool) -> str:
-    """How the summary line, Folder details and the status bar name a large folder."""
-    if refused:
-        return f"Too large to load · ~{byte_size(estimate)} in RAM, over 30% of RAM"
-    return f"Large folder · ~{byte_size(estimate)} in RAM"
-
+LIVE_RETRY_TOOLTIP = "Check the folder again and go on watching it"
+# Work Offline (cache-only browsing, File › Work Offline): what reads source folders is off
+# (``OFFLINE_TOOLTIP`` says so).
+OFFLINE_NOT_KEPT = "Data not kept (offline): work online to load it"
 
 # Spinner colours: a listing or status check is blue, a load green; lighter on a selected row.
 # The status bar's spinner, for all I/O, is grey.
@@ -157,18 +167,19 @@ class ScanDelegate(QStyledItemDelegate):
 
 class FolderExplorer(QWidget):
     rootPathChanged = pyqtSignal(str)
-    itemExpandedSignal = pyqtSignal(QModelIndex)
     selectionPathChanged = pyqtSignal(str)
     loadStateChanged = pyqtSignal()
     dataLoaded = pyqtSignal(str)
     # Review… for a folder whose cached data doesn't match it: the main window shows its row in the list.
     reviewMismatchRequested = pyqtSignal(str)
     reviewRootRequested = pyqtSignal(str)  # A pending location: Same folder or a copy?
+    # Live turned on or off, or stopped by an error (the toolbar's Live action follows).
+    liveChanged = pyqtSignal()
     DWELL_MS = 3000
     # Finish and Cancel modes: while loads are busy (running, queued or stopping, or one started
     # moments ago), an automatic load waits until the selection has stayed this long, plus
     # SETTLE_STEP for each queued I/O task, at most SETTLE_MAX seconds; when idle it starts at once.
-    SETTLE_SECONDS = 0.3
+    SELECTION_SETTLE_SECONDS = 0.3
     SETTLE_STEP = 0.1
     SETTLE_MAX = 1.0
     MAX_BACKGROUND_LOADS = 8
@@ -215,6 +226,9 @@ class FolderExplorer(QWidget):
         # Folders whose next load compares every file with the cache (Retry / Refresh), not
         # just the folder's mtime: a file rewritten in place doesn't change the folder's mtime.
         self._full_check_paths: set[str] = set()
+        # Folders whose selection wasn't listed (``_check_replaces_listing``): their load's result
+        # updates the row.
+        self._listing_replaced: set[str] = set()
         # The disk cache is read at most once per selection of a folder, or once more after its
         # volume is verified if the first read waited for that (``_volumes_verified``).
         self._cache_read_path: str | None = None
@@ -258,6 +272,11 @@ class FolderExplorer(QWidget):
         self._auto_load_at = -math.inf
         self.model = SnapshotFileSystemModel(self)
         self.bg_owner = f"{self.model.owner}:bg"
+        # Live: checks run in the foreground lane (this tab's), saves in the background.
+        self.live_owner = f"{self.model.owner}:live"
+        self.live_save_owner = f"{self.model.owner}:live-save"
+        # Live's sessions, its timer (a child of this tab) and its checks and saves.
+        self.live_control = LiveController(self)
         if not self.model.cache.foreground_owners:
             # The first tab; FolderTabWidget hands the foreground to the current tab.
             self.claim_foreground()
@@ -378,10 +397,13 @@ class FolderExplorer(QWidget):
         self.model.cache.autoLoadPauseChanged.connect(self._auto_load_pause_changed)
         self.model.cache.folderPrefsChanged.connect(self._folder_prefs_changed)
         self.model.cache.folderPrefsFailed.connect(self._folder_prefs_failed)
+        self.model.cache.folderConstantsFailed.connect(self._folder_constants_failed)
         self.model.cache.mountWarningChanged.connect(self._mount_warning_changed)
         self.model.cache.volumesVerified.connect(self._volumes_verified)
         self.model.cache.rootDecided.connect(self._root_decided)
         self.model.cache.rootDuplicatesChanged.connect(self._update_activity)
+        self.model.cache.offlineChanged.connect(self._offline_changed)
+        self.model.cache.saveEnded.connect(self._live_save_ended)
         self.model.activityChanged.connect(self._update_activity)
         self.animation = QTimer(self)
         self.animation.timeout.connect(self._animate)
@@ -421,8 +443,9 @@ class FolderExplorer(QWidget):
             self.claim_foreground()
 
     def foreground_owners(self) -> set[str]:
-        """In queue mode this tab's queued loads run one by one in the foreground lane."""
-        return {self.model.owner} | ({self.bg_owner} if self.load_mode == "queue" else set())
+        """In queue mode this tab's queued loads run one by one in the foreground lane. Live
+        checks run there too; Live's saves are background work."""
+        return {self.model.owner, self.live_owner} | ({self.bg_owner} if self.load_mode == "queue" else set())
 
     @property
     def is_foreground(self) -> bool:
@@ -445,8 +468,10 @@ class FolderExplorer(QWidget):
     def open_to_path(self, path: str) -> None:
         if self.closed or not path.strip():
             return
+        self.stop_live()
         self._deep.clear()
         self._deep_depth.clear()
+        self._listing_replaced.clear()
         self._basic_active = False
         self._basic_result = ""
         self._visible_seen.clear()
@@ -467,6 +492,8 @@ class FolderExplorer(QWidget):
     def refresh_folder(self, path: str) -> None:
         """Right-click Retry / Refresh: list the folder again (no timeout), and check its cached
         or shown data file by file. The selected folder's shown data is checked now."""
+        if self.model.cache.offline:
+            return  # (Not offered while working offline.)
         self.model.request_scan(path, priority=True, force=True, no_timeout=True)
         if not (self.model.cache.disk_cached(path) or self.folder_opened_path == path):
             return
@@ -477,6 +504,9 @@ class FolderExplorer(QWidget):
                 self._unchecked_path = unchecked  # Nothing will check it (e.g. auto-load is off).
 
     def _retry(self) -> None:
+        if self.live is not None:
+            self.resume_live()
+            return
         # A load retry keeps its per-file timeouts; a hung read is genuinely stuck.
         if (self.load_error or self.auto_load_paused_path == self.selected_path_globally
                 or self.large_state(self.selected_path_globally) or self.auto_load_off(self.selected_path_globally)):
@@ -496,13 +526,14 @@ class FolderExplorer(QWidget):
         node = self.model.node(index)
         if node:
             self.model.request_scan(node.path, priority=True)
-        self.itemExpandedSignal.emit(index)
         self._schedule_visible_checks()
 
     def on_selection_changed(self, selected: QItemSelection, deselected: QItemSelection) -> None:
         indexes = selected.indexes()
         if indexes:
             path = self.model.filePath(indexes[0])
+            if self.live is not None and path != self.live.path:
+                self.stop_live()  # Another folder selected (the tree is locked: e.g. Show in tab).
             if path != self.selected_path_globally:
                 self._release_load()
                 self._cancelled_load_path = self._cache_read_path = None
@@ -514,7 +545,9 @@ class FolderExplorer(QWidget):
                         and not self.model.cache.counts_as_checked(dataset, node.signature if node else "")):
                     # Back at the folder still shown: its data is checked again, as from memory.
                     self._unchecked_path = path
-            if not self._check_replaces_listing(path):
+            if self._check_replaces_listing(path):
+                self._listing_replaced.add(path)
+            else:
                 self.model.request_scan(path, priority=True)
             self.selectionPathChanged.emit(path)
 
@@ -536,17 +569,27 @@ class FolderExplorer(QWidget):
     def _check_replaces_listing(self, path: str) -> bool:
         """Selecting a folder with saved counts and a disk cache does not list it:
         the cached data is shown, and loading checks the folder (one stat when
-        unmodified). Expanding a folder still lists it."""
+        unmodified). Nor does selecting a folder without subfolders whose checked
+        data is in RAM: its load's quick check covers it (``memory_check``). If the
+        check finds changes, the load's own listing updates the row. Expanding a
+        folder still lists it."""
         node = self.model.nodes.get(path)
-        return (self.auto_load_ram and node is not None and node.report is not None
-                and self.model.cache.disk_cached(path))
+        cache = self.model.cache
+        if not (self.auto_load_ram and node is not None and node.report is not None):
+            return False
+        if cache.disk_cached(path):
+            return True
+        dataset = cache.latest_dataset(path)
+        return (node.has_dirs is False and dataset is not None and cache.verified(dataset)
+                and bool(dataset.metadata.get("listed_at")) and path not in cache.mismatched
+                and not cache.folder_prefs(path)["no_auto_load"])
 
     def _status_ready(self, path: str) -> None:
         if path == self.selected_path_globally and not (
                 self._basic_active and path in self._basic_seen | self._basic_roots):
             node = self.model.nodes.get(path)
             dataset = self.displayed_dataset
-            if (node and self.folder_opened_path == path and dataset is not None and dataset.path == path
+            if (node and self.folder_opened_path == path and not self.watching(path) and dataset is not None and dataset.path == path
                     and self._changed_since_load(node, dataset)):
                 # Keep the displayed data while a fresh load replaces it.
                 self.folder_opened_path = None
@@ -695,9 +738,9 @@ class FolderExplorer(QWidget):
         self._full_check_paths.discard(path)
         # The user's answer in the mismatched-folders window (``MissingShotsWindow``).
         allow_missing = self.model.cache.take_allow_missing(path)
-        return {"cache": store_options(), "signature": node.signature if node else "",
+        return {"cache": folder_cache.store_options(), "signature": node.signature if node else "",
                 "no_cache": self.model.cache.folder_prefs(path)["no_cache"], "full_check": full_check,
-                # Its cached read runs now: the check counts those shots as held (see io_helper.load).
+                # Its cached read runs now: the check counts those shots as held (see io_ops.loading.load).
                 "cache_base": self.model.cache.has_request(self.model.owner, "cached", path),
                 "check_level": self.model.cache.check_level, "allow_missing": allow_missing,
                 **self._large_payload(path, deliberate)}
@@ -723,6 +766,10 @@ class FolderExplorer(QWidget):
             self._allowing = None  # A yes covers only what this call submitted.
 
     def _load_to_ram_cache(self, path: str, dwell: bool, explicit: bool) -> bool:
+        if self.watching(path):
+            return False  # Live keeps its data current.
+        if self.model.cache.offline:
+            return self._show_offline(path, explicit)
         # A scan finishing after Cancel must not restart automatic loading.
         if dwell and path == self._cancelled_load_path:
             return False
@@ -960,14 +1007,64 @@ class FolderExplorer(QWidget):
 
     def settle_seconds(self, path: str) -> float:
         """How long an automatic load of ``path`` waits for the selection to settle: 0 when no load
-        is running, queued or stopping and none started in the last SETTLE_SECONDS; otherwise
-        SETTLE_SECONDS plus SETTLE_STEP per queued I/O task (not this folder's own), at most SETTLE_MAX."""
+        is running, queued or stopping and none started in the last SELECTION_SETTLE_SECONDS; otherwise
+        SELECTION_SETTLE_SECONDS plus SETTLE_STEP per queued I/O task (not this folder's own), at most SETTLE_MAX."""
         service = self.model.service
         if not (service.load_busy() or service.load_stopping()
-                or time.monotonic() - self._auto_load_at < self.SETTLE_SECONDS):
+                or time.monotonic() - self._auto_load_at < self.SELECTION_SETTLE_SECONDS):
             return 0.0
         queued = sum(1 for request in service.pending if request.path != path)
-        return min(self.SETTLE_MAX, self.SETTLE_SECONDS + self.SETTLE_STEP * queued)
+        return min(self.SETTLE_MAX, self.SELECTION_SETTLE_SECONDS + self.SETTLE_STEP * queued)
+
+    def _show_offline(self, path: str, explicit: bool) -> bool:
+        """Working offline, a folder's data shows from RAM, else from one cached read, never from
+        the folder: unchecked, as cached data is before its check (it can't have one now). Whether
+        a cached read is pending. A folder not auto-loaded by choice shows nothing until asked."""
+        if not explicit and self.model.cache.folder_prefs(path)["no_auto_load"]:
+            pending = False
+        elif self.folder_opened_path != path or self.folder_opened_data is None:
+            pending = self._show_cached(path, explicit)
+        else:
+            pending = False
+        if self.folder_opened_path == path and self.folder_opened_data is not None:
+            self._unchecked_path = path
+        if path == self.selected_path_globally:
+            self._update_activity()
+            self.loadStateChanged.emit()
+        return pending
+
+    def _offline_changed(self, offline: bool) -> None:
+        """Work Offline on: the load it cancelled leaves no error; the selection shows its data from
+        RAM or the disk cache. Off: the main window lists the tabs again (Refresh), and selecting
+        a folder checks its data as usual."""
+        if self.closed:
+            return
+        if offline:
+            self._stop_dwell()
+            self.loading = self.load_paused = False
+            self.load_error = ""
+            for path in list(self.model.load_states):
+                self.model.set_load_state(path, "")
+            self._bg_paths.clear()
+            if self.selected_path_globally:
+                self._show_offline(self.selected_path_globally, False)
+        self._update_activity()
+        self.loadStateChanged.emit()
+
+    def offline_data_note(self, path: str) -> str:
+        """Working offline, why ``path`` shows no data ("" when it does, or while its cached read runs)."""
+        cache = self.model.cache
+        if (not cache.offline or self.folder_opened_path == path and self.folder_opened_data is not None
+                or cache.has_request(self.model.owner, "cached", path)):
+            return ""
+        if path in cache.mismatched:
+            return "Cached data doesn't match the folder (offline)"
+        if cache.disk_cached(path):
+            return "Cached data couldn't be read (offline)"
+        node = self.model.nodes.get(path)
+        if node is not None and (node.txy_count or node.report is not None and node.report.d_txy_shots):
+            return OFFLINE_NOT_KEPT
+        return ""
 
     def _show_cached(self, path: str, deliberate: bool = False, read: bool = True) -> bool:
         """Display this folder's dataset from memory, or start reading it from the
@@ -1001,7 +1098,7 @@ class FolderExplorer(QWidget):
         self._cache_read_path = path
         self._auto_load_at = time.monotonic()
         return cache.submit(self.model.owner, self.model.generation, path, "cached",
-                            {"cache": store_options(), "verified_volumes": cache.verified_volumes(),
+                            {"cache": folder_cache.store_options(), "verified_volumes": cache.verified_volumes(),
                              **self._large_payload(path, deliberate)}, priority=True)
 
     def _volumes_verified(self) -> None:
@@ -1030,7 +1127,6 @@ class FolderExplorer(QWidget):
         report.problematic_txy_ns = list(dataset.metadata.get("problematic", []))
         report.loaded_txy_files_count = int(dataset.metadata.get("files", 0))
         report.loaded_txy_rows_count = int(dataset.metadata.get("rows", 0))
-        report.time_load_ram = datetime.now()
         report.data_dict_bytes = self.load_bytes
         report.extra_icons = ["ram_opened"]
         node = self.model.nodes.get(path)
@@ -1079,6 +1175,8 @@ class FolderExplorer(QWidget):
         """Explicit load: never cancels another load; runs now when idle, otherwise queues."""
         if path == self.selected_path_globally:
             return self.load_to_ram_cache(path, dwell=False, explicit=True)
+        if self.model.cache.offline:
+            return False  # Working offline: only the selected folder's cached data shows.
         if path in self._bg_paths or (self.loading and self._load_path == path):
             return True
         try:
@@ -1125,6 +1223,9 @@ class FolderExplorer(QWidget):
         self.loadStateChanged.emit()
 
     def _io_event(self, request: IORequest, event: dict[str, Any]) -> None:
+        if not self.closed and request.owner in (self.live_owner, self.live_save_owner):
+            self.live_control._live_event(request, event)
+            return
         if not self.closed and request.owner == self.bg_owner:
             self._background_event(request, event)
             return
@@ -1240,14 +1341,25 @@ class FolderExplorer(QWidget):
             self._set_large(request.path, None)
             self._display(request.path, dataset, event)
             node = self.model.nodes.get(request.path)
-            if node and node.cached_report and not event.get("unchanged"):
-                # The folder changed since its saved counts; list it for the tree.
-                self.model.request_scan(request.path, priority=True)
+            replaced = request.path in self._listing_replaced
+            self._listing_replaced.discard(request.path)
+            if node and (node.cached_report or replaced) and not event.get("unchanged"):
+                # The folder changed since its saved counts, or since the row's status when its
+                # selection didn't list it. This load's own listing and fingerprint are its status
+                # (unless it has subfolders, whose names a listing brings).
+                summary = self.model.cache.scan_summaries.get(request.path)
+                if not (summary and summary.get("signature") == event.get("signature")
+                        and self.model.adopt_load_status(request.path, summary)):
+                    self.model.request_scan(request.path, priority=True)
         elif kind in ("error", "cancelled"):
             self.loading = self.load_paused = False
             self._loading_data.clear()
             self.load_error = event.get("message", "Cancelled — Retry")
             self.model.set_load_state(request.path, "")
+            if request.path in self._listing_replaced:
+                self._listing_replaced.discard(request.path)
+                if kind == "error":
+                    self.model.request_scan(request.path, priority=True)  # The row shows what's there.
         elif kind == "too_large":
             # Stopped before reading anything (S8).
             self.loading = self.load_paused = False
@@ -1259,6 +1371,50 @@ class FolderExplorer(QWidget):
         self._update_activity()
         self.loadStateChanged.emit()
 
+    # Live (roadmaps/live-monitoring.md): ``LiveController`` (helab/views/explorer_live.py) owns it;
+    # these are the tab's Live interface for the main window, Folder details and the summary.
+
+    @property
+    def live(self) -> LiveSession | None:
+        """The session of the folder watched while Live is on (None while off)."""
+        return self.live_control.live
+
+    @live.setter
+    def live(self, session: LiveSession | None) -> None:
+        self.live_control.live = session
+
+    def watching(self, path: str | None) -> bool:
+        """Live is on for ``path`` (checking, or stopped by an error until Retry)."""
+        return self.live_control.watching(path)
+
+    def live_unavailable(self, path: str) -> str:
+        """Why Live can't watch ``path`` now ("" if it can)."""
+        return self.live_control.live_unavailable(path)
+
+    def live_state(self) -> tuple[bool, str]:
+        """Whether the toolbar's Live can be used now (to turn Live on or off), and its tooltip."""
+        return self.live_control.live_state()
+
+    def start_live(self) -> bool:
+        """Turn Live on for the selected folder. Whether it started."""
+        return self.live_control.start_live()
+
+    def stop_live(self, save: bool = True) -> None:
+        """Turn Live off; its new shots are saved in the background unless not ``save``."""
+        self.live_control.stop_live(save)
+
+    def resume_live(self) -> None:
+        """Retry after an error: check the folder again (listing it) and go on."""
+        self.live_control.resume_live()
+
+    def live_reread_note(self, path: str) -> str:
+        """Shots of ``path`` that Live read again in the last minute ("" if none)."""
+        return self.live_control.live_reread_note(path)
+
+    def _live_save_ended(self, path: str, outcome: str) -> None:
+        """``FolderCache.saveEnded``, connected to this tab (so it ends with the tab) for Live."""
+        self.live_control._live_save_ended(path, outcome)
+
     def _shared_dataset_changed(self, path: str) -> None:
         if path == self.selected_path_globally:
             node = self.model.nodes.get(path)
@@ -1267,7 +1423,8 @@ class FolderExplorer(QWidget):
                 # Only when the shown data was dropped (cache cleared, folder changed);
                 # cached data shown before its check is not the folder's current dataset.
                 shown = self.displayed_dataset
-                if self.folder_opened_path == path and (shown is None or not self.model.cache.holds(shown)):
+                if (self.folder_opened_path == path and not self.watching(path)
+                        and (shown is None or not self.model.cache.holds(shown))):
                     self.folder_opened_path = None
                 # Keep the previous arrays/plots until a successful replacement.
             elif (node and dataset.signature == node.signature and self.auto_load_ram
@@ -1384,6 +1541,9 @@ class FolderExplorer(QWidget):
     @property
     def activity_brief(self) -> str:
         """This tab's most important activity in a few words, for the main status bar."""
+        if self.live is not None:
+            name = os.path.basename(self.live.path.rstrip(os.sep)) or self.live.path
+            return f"Live stopped: {name}" if self.live.error else f"Live {name} · {plural(self.live.new, 'new shot')}"
         if self.loading and self._load_path:
             name = os.path.basename(self._load_path.rstrip(os.sep)) or self._load_path
             if self.load_queued:
@@ -1530,29 +1690,33 @@ class FolderExplorer(QWidget):
         large = self.large_state(path) if path == self.selected_path_globally else None
         offer_large = large is not None and not large[1] and not self.load_error
         idle = not (self.loading or self.load_waiting or retrying)
-        self.retry_button.setVisible(bool(self.load_error or scan_error or root_error or paused or offer_large or off)
-                                     and idle)
+        live_error = bool(self.live is not None and self.live.error)
+        self.retry_button.setVisible(bool(self.load_error or scan_error or root_error or paused or offer_large or off
+                                          or live_error) and idle)
         retry_path = self.listing_retry_path
-        self.retry_button.setText("Load anyway…" if offer_large else
+        self.retry_button.setText("Retry" if live_error else "Load anyway…" if offer_large else
                                   "Load" if (paused or off) and not self.load_error else "Retry")
-        self.retry_button.setEnabled(bool(self.load_error) or paused or offer_large or off
+        self.retry_button.setEnabled(bool(self.load_error) or paused or offer_large or off or live_error
                                      or not self.model.refresh_pending(retry_path))
-        self.no_auto_load_button.setVisible(large is not None and not off and idle and bool(store_options()))
+        self.no_auto_load_button.setVisible(large is not None and not off and idle and bool(folder_cache.store_options()))
         mismatched = path in self.model.cache.mismatched
         self.review_button.setVisible(mismatched and idle)
         self.root_review_button.setVisible(self.model.cache.pending_root(path) is not None and not mismatched)
-        self.retry_button.setToolTip(MISMATCH_RETRY_TOOLTIP if mismatched and self.load_error else
+        self.retry_button.setToolTip(LIVE_RETRY_TOOLTIP if live_error else
+                                     MISMATCH_RETRY_TOOLTIP if mismatched and self.load_error else
                                      "Load this folder again" if self.load_error else
                                      LARGE_TOOLTIP if offer_large else
                                      AUTO_LOAD_PAUSED_TOOLTIP if paused else
                                      AUTO_LOAD_OFF_TOOLTIP if off else
                                      "Wait for this folder's refresh to finish" if not self.retry_button.isEnabled() else
                                      "List this folder again, without a time limit")
-        scan_message = self.scan_message
+        watching = self.watching(path)
+        # (Live's own relisting of the tree is no news: its data is the folder's, as of its last check.)
+        scan_message = "" if watching else self.scan_message
         history = self.model.cache.scan_history(path)
         dataset = self.displayed_dataset
         shown = dataset is not None and dataset.path == path
-        changed = bool(shown and node and report and not node.cached_report and
+        changed = bool(shown and node and report and not node.cached_report and not watching and
                        self._changed_since_load(node, dataset)) if dataset else False
         unchecked = shown and self.folder_opened_path == path and self._unchecked_path == path
         # Data shown before its check keeps its counts while the check runs.
@@ -1598,7 +1762,7 @@ class FolderExplorer(QWidget):
                 if self.folder_opened_path != path:
                     text += " · Previous data"
             else:
-                text += " · Not loaded"
+                text += f" · {self.offline_data_note(path) or 'Not loaded'}"
             if self.load_error:
                 text += f" · {self.load_error}"
             elif self.load_waiting:
@@ -1668,6 +1832,30 @@ class FolderExplorer(QWidget):
             freshness_tooltip(
             "Last successful status scan", node.scanned_at if node else None, node.modified if node else None,
             status_freshness, "Use Check folder status to recheck counts and status.")))))
+        live = self.live_control.session(path)
+        stopped = False
+        if self.model.cache.offline and live is None:
+            # Working offline: what shows is saved, never checked now.
+            listed = node.offline_listed_at if node else None
+            self.folder_freshness_label.setText(
+                "Offline · cached data only" + (f" · listed {self._relative_age(time.time() - listed)}"
+                                                if listed else " · not listed while online"
+                                                if node and node.offline_unlisted else ""))
+            self.folder_freshness_label.setToolTip(
+                "Working offline (File › Work Offline): HeLab reads only its disk cache. Folders show what "
+                "was saved when they were last listed, checked or loaded; nothing is checked against the "
+                "folders until you work online again.")
+        elif live is not None:
+            # Live replaces the line: what it checked, found and saved.
+            text, tooltip, stopped = self.live_control.live_line(live)
+            self.folder_freshness_label.setText(text)
+            self.folder_freshness_label.setToolTip(tooltip)
+        elif reread := self.live_reread_note(path):
+            # Live has stopped, and its last save read shots again: said for a minute here too.
+            self.folder_freshness_label.setText(f"{self.folder_freshness_label.text()} · {reread}")
+        style = f"color: {AMBER};" if stopped else ""
+        if self.folder_freshness_label.styleSheet() != style:
+            self.folder_freshness_label.setStyleSheet(style)
 
     def _fit_selected_label(self) -> None:
         """Share line 1: the selected path gets its full width or at least 2/5 of the free space."""
@@ -1726,14 +1914,16 @@ class FolderExplorer(QWidget):
                                   self.load_counts.get("reused_disk", 0) > 0)
             text = ("Cached data loaded" if reused else "Cached data found") + suffix
         else:
-            text = "No cached data"
+            text = "No cached data (offline)" if cache.offline else "No cached data"
         freshness = self.model.data_freshness(node) if node else CacheFreshness.UNKNOWN
-        if unchecked:
+        if unchecked and cache.offline:
+            text += " · not checked (offline)"
+        elif unchecked:
             text += " · Check failed" if self.load_error else " · Checking for changes…"
         elif cache.disk_cached(path) and freshness.value:
             text += f" · {freshness.value}"
         self.folder_cache_label.setText(text)
-        origin = LOAD_ORIGINS.get(self.load_source)
+        origin = load_origin(self.load_source, self.load_counts)
         details = self.load_count_details if current else []
         exact = (datetime.fromtimestamp(saved_at).astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
                  if isinstance(saved_at, (int, float)) else "")
@@ -1801,7 +1991,8 @@ class FolderExplorer(QWidget):
         return self.model.viewport_paths()
 
     def _check_visible_folders(self) -> None:
-        if self.closed or self.model.refreshing or not self.auto_scan_visible or not self.isVisible():
+        if (self.closed or self.model.refreshing or not self.auto_scan_visible or not self.isVisible()
+                or self.model.cache.offline):
             return
         paths = self._viewport_paths()
         self._visible_seen.intersection_update(paths)
@@ -1833,6 +2024,8 @@ class FolderExplorer(QWidget):
 
     def start_basic_scan(self, scope: str = "view", depth: int = 0) -> None:
         self.cancel_basic_scan()
+        if self.model.cache.offline:
+            return  # Working offline: no status check reads a folder.
         if scope == "view":
             paths = [self.view_path, *self._viewport_paths()]
         else:
@@ -1898,7 +2091,7 @@ class FolderExplorer(QWidget):
     def context_menu_action_deep_calc_status(self, path: str, max_depth: int = 0,
                                             invalidate_cache: bool = True) -> None:
         node = self.model.nodes.get(path)
-        if node:
+        if node and not self.model.cache.offline:
             self.cancel_basic_scan()
             self._basic_active = True
             self._basic_seen.clear()
@@ -1913,21 +2106,33 @@ class FolderExplorer(QWidget):
             return
         path = self.model.filePath(index)
         menu = QMenu(self)
+        offline = self.model.cache.offline
         menu.addAction("Open folder", lambda: self.open_to_path(path))
-        menu.addAction("Open in File Manager", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(path)))
+        reveal = menu.addAction("Open in File Manager", lambda: QDesktopServices.openUrl(QUrl.fromLocalFile(path)))
+        if reveal and offline:
+            reveal.setEnabled(False)  # A file manager would read the folder (and wake its share).
+            reveal.setToolTip(OFFLINE_TOOLTIP)
         clipboard = QApplication.clipboard()
         if clipboard:
             menu.addAction("Copy Pathname", lambda: clipboard.setText(path))
         # One folder the user asked for: no timeout, with elapsed time and Cancel.
         retry = menu.addAction("Retry / Refresh", lambda: self.refresh_folder(path))
         if retry:
-            retry.setEnabled(not self.model.refresh_pending(path))
+            retry.setEnabled(not self.model.refresh_pending(path) and not offline)
+            if offline:
+                retry.setToolTip(OFFLINE_TOOLTIP)
         submenu = menu.addMenu("Check folder status")
-        if submenu:
+        if submenu and offline:
+            submenu.setEnabled(False)
+            submenu.setToolTip(OFFLINE_TOOLTIP)
+        elif submenu:
             for depth in (0, 1, 2, 3, 32768):
                 submenu.addAction("All subfolders" if depth == 32768 else f"Depth {depth}", lambda checked=False, d=depth: self.context_menu_action_deep_calc_status(path, d))
             submenu.addAction("Custom depth…", lambda: self._choose_scan_depth_for(path))
-        menu.addAction("Load data", lambda: self.queue_load(path))
+        load = menu.addAction("Load data", lambda: self.queue_load(path))
+        if load and offline and path != self.selected_path_globally:
+            load.setEnabled(False)
+            load.setToolTip("Working offline: select the folder to see its cached data")
         prefs = self.model.cache.folder_prefs(path)
         # Folder flags and cached data live in the disk cache: a RAM-only folder has neither.
         ram_only = self.model.cache.no_root(path) is not None
@@ -1939,6 +2144,10 @@ class FolderExplorer(QWidget):
                 flag.setToolTip(NEEDS_ROOT_TOOLTIP if ram_only else "This folder only, never its subfolders")
                 flag.setEnabled(not ram_only)
                 flag.toggled.connect(lambda on, k=key: self.set_folder_flag(path, k, on))
+        constants = menu.addAction("Folder constants…", lambda: self.show_folder_constants(path))
+        if constants:
+            constants.setToolTip("Fall distance, fall time and trap frequencies for this folder and its "
+                                 "subfolders" + (" (RAM only: this session)" if ram_only else ""))
         clear = menu.addAction("Clear loaded data cache", lambda: self.clear_data_cache(path))
         if clear and ram_only:
             clear.setEnabled(False)
@@ -1960,8 +2169,10 @@ class FolderExplorer(QWidget):
     def place_root_state(self, path: str) -> tuple[bool, str]:
         """Whether Place .helab-root here… is offered for this folder, and its tooltip (memory only)."""
         cache = self.model.cache
-        if not store_options():
+        if not folder_cache.store_options():
             return False, "The disk cache is off for this session"
+        if cache.offline:
+            return False, OFFLINE_TOOLTIP
         root = cache.root_of(path)
         if root is not None and root[0] == path:
             return False, "This folder already has a .helab-root"
@@ -1974,14 +2185,14 @@ class FolderExplorer(QWidget):
         """Right-click › Place .helab-root here…: confirm (with the checks' warnings), then write the
         marker in the chosen folder, or adopt the one there. Whether it was submitted."""
         from helab.views.DataRootDialogs import ask_place_root
-        if self.closed or not store_options():
+        if self.closed or not folder_cache.store_options() or self.model.cache.offline:
             return False
         target = ask_place_root(self, self.model.cache, path)
         if target is None:
             return False
         # The folder right-clicked is listed again too when the marker went to its drive's top.
         return self.model.cache.submit(self.model.owner, self.model.generation, target, "root_create",
-                                       {"cache": store_options(), "clicked": path}, priority=True)
+                                       {"cache": folder_cache.store_options(), "clicked": path}, priority=True)
 
     def _review_root(self) -> None:
         if (pending := self.model.cache.pending_root(self.selected_path_globally)) is not None:
@@ -2005,8 +2216,8 @@ class FolderExplorer(QWidget):
         kind, path = event["kind"], request.path
         if kind == "root_manual":
             # Non-modal: the user places the file, then Retry / Refresh finds it.
-            ManualMarkerDialog(self, str(event["path"]), str(event["name"]), str(event["contents"]),
-                               str(event.get("reason", ""))).show()
+            ManualMarkerDialog(self, self.model.cache, str(event["path"]), str(event["name"]),
+                               str(event["contents"]), str(event.get("reason", ""))).show()
         elif kind in ("root_created", "root_adopted"):
             # Its listing (and the subfolders' saved results) under the new root; folders not in
             # this tab's tree are skipped.
@@ -2038,6 +2249,25 @@ class FolderExplorer(QWidget):
         cache.set_folder_prefs(path, no_cache=prefs["no_cache"], no_auto_load=prefs["no_auto_load"],
                                remove_cached=remove, owner=self.model.owner)
         self.loadStateChanged.emit()
+
+    def show_folder_constants(self, path: str) -> None:
+        """Right-click › Folder constants… (window-modal; saved by a helper on Save)."""
+        from helab.views.FolderConstantsDialog import FolderConstantsDialog
+        dialog = FolderConstantsDialog(path, self.model.cache, owner=self.model.owner, parent=self)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.open()
+
+    def _folder_constants_failed(self, path: str, message: str, owner: str) -> None:
+        """Constants this tab set couldn't be saved; FolderCache has put the saved ones back."""
+        if self.closed or owner != self.model.owner:
+            return
+        name = os.path.basename(path.rstrip(os.sep)) or path
+        text = f"HeLab couldn't save the constants for {name}: {message}. Try again."
+        if self.report_flag_failure is not None:
+            self.report_flag_failure(path, text)
+        else:
+            QMessageBox.warning(self, "Folder constants not saved", text)
 
     def _ask_remove_cached(self, path: str, size: int | None) -> bool:
         name = os.path.basename(path.rstrip(os.sep)) or path
@@ -2121,7 +2351,7 @@ class FolderExplorer(QWidget):
         self.model.cache.cancel(self.model.owner, "load")
         self.load_error = ""
         if not self.model.cache.submit(self.model.owner, self.model.generation, path, "invalidate",
-                                         {"cache": store_options()}, priority=True):
+                                         {"cache": folder_cache.store_options()}, priority=True):
             self.load_error = "Cache request queue full — Retry"
         self.loadStateChanged.emit()
 
@@ -2149,6 +2379,7 @@ class FolderExplorer(QWidget):
         """Return to the displayed path without resetting the tree or its expansion."""
         if self.closed:
             return
+        self.stop_live()
         self._release_load()
         self._cancelled_load_path = self._cache_read_path = None
         self.get_selection_model().clear()
@@ -2216,6 +2447,9 @@ class FolderExplorer(QWidget):
     def close_cleanup(self) -> None:
         if self.closed:
             return
+        # Closing a tab stops Live; its new shots are saved in the background all the same.
+        self.stop_live()
+        self.live_control._live_timer.stop()
         if self.is_foreground:
             self.model.cache.set_foreground(set())
         self._cancel_background()
@@ -2231,10 +2465,13 @@ class FolderExplorer(QWidget):
         self.model.cache.autoLoadPauseChanged.disconnect(self._auto_load_pause_changed)
         self.model.cache.folderPrefsChanged.disconnect(self._folder_prefs_changed)
         self.model.cache.folderPrefsFailed.disconnect(self._folder_prefs_failed)
+        self.model.cache.folderConstantsFailed.disconnect(self._folder_constants_failed)
         self.model.cache.mountWarningChanged.disconnect(self._mount_warning_changed)
         self.model.cache.volumesVerified.disconnect(self._volumes_verified)
         self.model.cache.rootDecided.disconnect(self._root_decided)
         self.model.cache.rootDuplicatesChanged.disconnect(self._update_activity)
+        self.model.cache.offlineChanged.disconnect(self._offline_changed)
+        self.model.cache.saveEnded.disconnect(self._live_save_ended)
         self.model.cache.release(self.model.owner)
         self.folder_opened_data = None
         self.displayed_dataset = None

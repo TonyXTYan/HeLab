@@ -179,9 +179,9 @@ Answers are remembered per PC, so a confirmed location doesn't ask again:
 
 ## Status
 
-Stages D1–D4 implemented on `dev/data-roots` (2026-10-18), each reviewed;
-native checks are in `.ai/MANUAL_TODO.md` (Data roots). Later on
-`dev/root-placement`: the placement rule (C:\ allowed); Settings → Data
+Merged in v0.0.5a1 (`main` `5a8ae6f`, 2026-10-19): stages D1–D4 (2026-10-18),
+each reviewed; native checks are in `.ai/MANUAL_TODO.md` (Data roots). Then,
+from `dev/root-placement`: the placement rule (C:\ allowed); Settings → Data
 roots' Show, Copy path, Delete .helab-root… and Clear cached data…; and
 warnings for unanswered duplicates (tree badge, row tooltip, summary line,
 Review…). Smaller follow-ups: [session notes](../.ai/sessions/2026-10-16-claude-data-roots/follow-ups.md).

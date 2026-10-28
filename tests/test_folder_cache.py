@@ -25,15 +25,17 @@ from helab.views.FolderExplorer import FolderExplorer
 from helab.views.CentralHint import CentralHint
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.HelabMainWindow import HelabMainWindow
-from helab import io_helper
-from helab.io_helper import list_folder, load, scan
+from helab.io_ops import infra, stores
+from helab.io_ops.browse import list_folder
+from helab.io_ops.loading import load
+from helab.io_ops.scanning import scan
 from helab.utils.cache_store import CacheStore, DatasetRow, unpack_dataset
 from helab.resources.icons import IconsInitUtil, StatusIcons
 
 
 def saved_dataset(options: dict[str, Any], path: str) -> tuple[DatasetRow, dict[int, Any]] | None:
     """The folder's cached dataset row and its shots, or None."""
-    with io_helper._cache_store(options["directory"], [path]) as store:
+    with stores._cache_store(options["directory"], [path]) as store:
         found = store.read_dataset(path)
     assert not found.failed, found.error
     if found.value is None:
@@ -87,7 +89,7 @@ def loaded_event(events: list[dict[str, Any]]) -> dict[str, Any]:
 def status_window(explorer: FolderExplorer | None, parent: QWidget) -> Any:
     """The main window's status-bar widgets, without a full main window and its startup jobs."""
     return SimpleNamespace(
-        _closing=False, _status_notice=None, action_tab_live_checked=True, _update_cancel_loading_action=lambda: None,
+        _closing=False, _status_notice=None, _update_live_action=lambda: None, _update_cancel_loading_action=lambda: None,
         tab_widget=SimpleNamespace(currentWidget=lambda: explorer, set_tab_switching_enable=lambda: None),
         status_bar_message_left=ElidedLabel("", parent), status_bar_spinner=QLabel(parent),
         status_bar_spinner_angle=0, status_bar_progress=QProgressBar(parent), _spinner_pixmap=QPixmap)
@@ -114,6 +116,8 @@ def test_two_tabs_share_snapshot_arrays_and_default_resolution(
     assert first.folder_opened_data is not None
     second = explorer_for_test(qtbot, path)
     qtbot.waitUntil(lambda: second.folder_opened_data is not None)
+    # Its listing and data come from replays in posted batches: let them all arrive.
+    qtbot.waitUntil(lambda: not cache._deliveries)
     assert not service.pending
     assert second.folder_opened_data is not None
     assert first.folder_opened_data is not second.folder_opened_data
@@ -175,8 +179,8 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     tabs.addTab(first, "First")
     # Exercise Folder details and the plot-area hint with real widgets, without creating
     # native settings, a watchdog, or a full main window and its startup jobs.
-    window: Any = SimpleNamespace(_closing=False, tab_widget=tabs, central_placeholder=CentralHint(parent=tabs),
-                                  folder_details=FolderDetailsPanel(tabs), dock_widgets=[])
+    window: Any = SimpleNamespace(_closing=False, tab_widget=tabs, folder_details=FolderDetailsPanel(tabs),
+                                  plots=SimpleNamespace(central_placeholder=CentralHint(parent=tabs), dock_widgets=[]))
     now = [100.0]
     monkeypatch.setattr("helab.utils.load_clock.monotonic", lambda: now[0])
     qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
@@ -193,8 +197,8 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     HelabMainWindow._update_folder_details(window)
     assert window.folder_details.text("state") == "Queued"
     assert window.folder_details.text("time") == ""  # Queued time is not running time.
-    assert window.central_placeholder.text() == f"Queued {tmp_path.name}…"
-    assert window.central_placeholder.hint.toolTip() == first.loading_tooltip
+    assert window.plots.central_placeholder.text() == f"Queued {tmp_path.name}…"
+    assert window.plots.central_placeholder.hint.toolTip() == first.loading_tooltip
     service.pending.remove(request)
     service.resultReady.emit(request, {"kind": "started"})
     assert first.loading_message == "Preparing…"
@@ -221,7 +225,7 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     note_owners, note = cache.load_note(request)
     assert first.model.owner in note_owners and "d_txy_forc124.txt" in note
     service.resultReady.emit(request, {"kind": "file_finished", "filename": str(tmp_path / "d_txy_forc124.txt")})
-    assert window.central_placeholder.text() == f"Loading {tmp_path.name}…"
+    assert window.plots.central_placeholder.text() == f"Loading {tmp_path.name}…"
     second = explorer_for_test(qtbot, path)
     qtbot.waitUntil(lambda: second.loading)
     assert second.loading_message == message  # Join an already-running shared load.
@@ -271,7 +275,7 @@ def test_loading_counts_and_queue_tooltips_follow_shared_jobs(
     service.resultReady.emit(request, {"kind": "paused"})
     HelabMainWindow._update_folder_details(window)
     assert window.folder_details.text("state") == "Paused · Verifying files… 2"
-    assert window.central_placeholder.text() == f"Loading paused: {tmp_path.name}…"
+    assert window.plots.central_placeholder.text() == f"Loading paused: {tmp_path.name}…"
     third.close_cleanup()
     fourth.close_cleanup()
     first.close_cleanup()
@@ -797,6 +801,29 @@ def test_invalidation_rejects_late_load_results_and_rechecks(
     service.shutdown()
 
 
+def test_a_status_check_finding_new_files_leaves_a_running_load_to_finish(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """A folder being acquired: another tab's status check completes with a new signature while
+    this tab's load runs. The load lists the folder itself, so it isn't cancelled; its result is
+    kept when it matches the check's signature (one from before the change would be discarded)."""
+    service = service_for_test(monkeypatch)
+    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
+    cache, path = get_folder_cache(service), str(tmp_path)
+    explorer = explorer_for_test(qtbot, path)
+    qtbot.waitUntil(lambda: ("list", path) in cache.jobs)
+    finish_scan(cache, path)
+    qtbot.waitUntil(lambda: ("load", path) in cache.jobs)
+    load_request = producer(cache, path, "load")
+    cache.submit("other", 0, path, "scan", {}, force=True)
+    finish_scan(cache, path, signature="v2")
+    assert not load_request.cancelled.is_set() and ("load", path) in cache.jobs
+    finish_load(cache, path, signature="v2")
+    assert explorer.folder_opened_data is not None and cache.current_dataset(path) is not None
+    explorer.close_cleanup()
+    service.shutdown()
+
+
 def test_memory_budget_evicts_unused_entries_but_pins_open_data(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -889,11 +916,10 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
     original = service.submit
 
     def record(owner: str, generation: int, path: str, operation: str,
-               payload: dict[str, Any] | None = None, *, priority: bool = False,
-               timeout: float = 15.0) -> bool:
+               payload: dict[str, Any] | None = None, **kwargs: Any) -> bool:
         if operation not in ("roots_verify", "volumes_verify"):
             operations.append(operation)
-        return original(owner, generation, path, operation, payload, priority=priority, timeout=timeout)
+        return original(owner, generation, path, operation, payload, **kwargs)
 
     monkeypatch.setattr(service, "submit", record)
     (tmp_path / "d1.txt").write_text("")
@@ -951,15 +977,15 @@ def test_real_helpers_reuse_warm_tab_without_scan_or_decompression(
 def test_disk_cache_reused_after_process_restart_and_rejects_changed_files(tmp_path: Path) -> None:
     source = tmp_path / "source"
     source.mkdir()
-    from helab import io_helper
-    with io_helper._cache_store(str(tmp_path / "cache"), [str(source)]):
+    from helab.io_ops import stores
+    with stores._cache_store(str(tmp_path / "cache"), [str(source)]):
         pass
     converted = source / "d_txy_forc1.txt"
     converted.write_text("1,2,3\n")
     program = """
 import json, sys
 import pandas as pd
-from helab.io_helper import load
+from helab.io_ops.loading import load
 request = json.load(sys.stdin)
 if request["require_cache"]:
     def forbid_csv(*args, **kwargs):
@@ -1017,29 +1043,29 @@ def test_changed_folder_reads_only_new_or_modified_txy_files(
     (source / "d_txy_forc2.txt").write_text("20,20,20\n")
     (source / "d_txy_forc3.txt").unlink()
     (source / "d_txy_forc5.txt").write_text("50,50,50\n")
-    original_read_csv = pd.read_csv
+    original_read = infra._read_txy_file
     read: list[str] = []
 
-    def record_read_csv(filename: str, *args: Any, **kwargs: Any) -> Any:
+    def record_read(filename: str, reason: str) -> Any:
         read.append(os.path.basename(filename))
-        return original_read_csv(filename, *args, **kwargs)
+        return original_read(filename, reason)
 
-    monkeypatch.setattr(pd, "read_csv", record_read_csv)
+    monkeypatch.setattr(infra, "_read_txy_file", record_read)
     # Shot 3 is gone, which never happens to write-once TXY files: nothing is read until the user
     # says to load the folder as it is now.
     (tmp_path / "asked").mkdir()
-    asked: list[dict[str, Any]] = []
+    asked: list[Any] = []
     load(str(source), str(tmp_path / "asked"), asked.append, options)
     missing = next(event for event in asked if event["kind"] == "shots_missing")
     assert missing["missing"] == [3] and missing["missing_count"] == 1 and missing["known_count"] == 4
     assert not read and not any(event["kind"] in ("loaded", "shot") for event in asked)
     output = tmp_path / "second"
     output.mkdir()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, options, allow_missing=True)
     assert sorted(read) == ["d_txy_forc2.txt", "d_txy_forc5.txt"]
     assert next(event for event in events if event["kind"] == "load_source") == {"kind": "load_source", "source": "merged",
-                         "cache_reason": "Reused 2 shots from disk cache; read 2 new or changed TXY files"}
+                         "cache_reason": "Reused 2 shots from disk cache; 2 new or changed TXY files to read"}
     assert loaded_event(events)["source"] == "merged"
     assert loaded_event(events)["problematic"] == [4]
     assert loaded_event(events)["load_counts"] == {
@@ -1073,17 +1099,17 @@ def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
     memory = [[shot, info.st_size, info.st_mtime_ns] for shot in (1, 2, 3)
               for info in ((source / f"d_txy_forc{shot}.txt").stat(),)]
     (source / "d_txy_forc3.txt").write_text("30,30,30\n")
-    original_read_csv = pd.read_csv
+    original_read = infra._read_txy_file
     read: list[str] = []
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
 
-    def record_read_csv(filename: str, *args: Any, **kwargs: Any) -> Any:
+    def record_read(filename: str, reason: str) -> Any:
         # Before ``loaded`` only changed files are read; afterwards the disk
         # cache (empty here) is completed in the background.
         read.append(os.path.basename(filename) + ("" if any(e["kind"] == "loaded" for e in events) else "*"))
-        return original_read_csv(filename, *args, **kwargs)
+        return original_read(filename, reason)
 
-    monkeypatch.setattr(pd, "read_csv", record_read_csv)
+    monkeypatch.setattr(infra, "_read_txy_file", record_read)
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     load(str(source), str(output), events.append, options, memory)
     assert read == ["d_txy_forc3.txt*", "d_txy_forc1.txt", "d_txy_forc2.txt"]
@@ -1094,7 +1120,7 @@ def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
         "reused_memory": 2, "reused_disk": 0, "new": 0, "modified": 1, "removed": 0,
         "read": 1, "new_loaded": 0, "modified_loaded": 1,
     }
-    assert loaded["cache_reason"] == "Reused 2 shots from memory; read 1 new or changed TXY files"
+    assert loaded["cache_reason"] == "Reused 2 shots from memory; 1 new or changed TXY file to read"
     assert events[-1] == {"kind": "disk_cached", "disk_cached": True}
     saved = saved_dataset(options, str(source))
     assert saved is not None and sorted(saved[1]) == [1, 2, 3]
@@ -1124,7 +1150,7 @@ def test_scan_reports_cached_children_without_loading_or_probing_them(
 
     monkeypatch.setattr("os.scandir", record_scandir)
     monkeypatch.setattr(blosc, "decompress", forbid_decompression)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(root), events.append, options)
     assert scanned == [str(root)]
     assert next(e for e in events if e["kind"] == "entries")["entries"][0]["disk_cached"] is True
@@ -1186,10 +1212,10 @@ def test_disk_clear_epoch_prevents_older_load_from_repopulating_cache(tmp_path: 
 
     events: list[dict[str, Any]] = []
 
-    def clear_during_delivery(event: dict[str, Any]) -> None:
+    def clear_during_delivery(event: Any) -> None:
         events.append(event)
         if event["kind"] == "shot":
-            with io_helper._cache_store(options["directory"], [str(source)]) as store:
+            with stores._cache_store(options["directory"], [str(source)]) as store:
                 store.remove(("datasets",), [str(source)])
 
     load(str(source), str(output), clear_during_delivery, options)
@@ -1205,7 +1231,7 @@ def test_save_date_persists_and_cache_reuse_does_not_rewrite_it(tmp_path: Path) 
     (source / "d_txy_forc1.txt").write_text("1,2,3\n")
     path = str(source)
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(path, str(output), events.append, options)
     saved = next(event["cache_info"] for event in events if event["kind"] == "cache_saved")
     assert saved["action"] == "created"
@@ -1250,7 +1276,7 @@ def test_failed_save_keeps_the_previous_dataset(
         raise OSError("disk full") if failure == "file" else sqlite3.OperationalError("disk I/O error")
 
     monkeypatch.setattr(CacheStore, "write_dataset_file" if failure == "file" else "_upsert_dataset", fail)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(path, str(output), events.append, options)
     assert loaded_event(events)["files"] == 1
     assert any(event["kind"] == "cache_save_failed" for event in events)
@@ -1272,7 +1298,7 @@ def test_new_file_during_background_save_caches_loaded_shots_as_possibly_old(tmp
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
     events: list[dict[str, Any]] = []
 
-    def add_after_load(event: dict[str, Any]) -> None:
+    def add_after_load(event: Any) -> None:
         events.append(event)
         if event["kind"] == "loaded":
             time.sleep(0.02)  # The new shot's folder mtime must follow the load's file listing.
@@ -1298,12 +1324,12 @@ def test_corrupt_disk_cache_reports_failure_and_loads_source(tmp_path: Path) -> 
     converted.write_text("1,2,3\n")
     info = converted.stat()
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
-    with io_helper._cache_store(options["directory"], [str(source)]) as store:
+    with stores._cache_store(options["directory"], [str(source)]) as store:
         guard = store.start_dataset_job(str(source))
         file = store.write_dataset_file(b"invalid compressed dataset")
         store.save_dataset(str(source), file, {"ram_bytes": 24, "rows": 1, "shots": 1,
             "fingerprint": [[1, info.st_size, info.st_mtime_ns]], "problematic": [], "info": {}}, guard)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     load(str(source), str(output), events.append, options)
     warning = next(event for event in events if event["kind"] == "cache_warning")
     assert warning["message"].startswith("Cache read failed:")
@@ -1320,7 +1346,7 @@ def test_changed_source_during_load_is_not_published_to_disk_cache(tmp_path: Pat
     file.write_text("1,2,3\n")
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
 
-    def change_during_delivery(event: dict[str, Any]) -> None:
+    def change_during_delivery(event: Any) -> None:
         if event["kind"] == "shot":
             file.write_text("100,200,300\n")
 
@@ -1336,9 +1362,9 @@ def test_shot_added_during_live_load_is_left_for_the_next_load(tmp_path: Path) -
     for shot in (1, 2):
         (source / f"d_txy_forc{shot}.txt").write_text("1,2,3\n")
     options: dict[str, Any] = {"directory": str(tmp_path / "cache")}
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
 
-    def next_shot_arrives(event: dict[str, Any]) -> None:
+    def next_shot_arrives(event: Any) -> None:
         events.append(event)
         if event["kind"] == "shot" and not (source / "d_txy_forc3.txt").exists():
             (source / "d_txy_forc3.txt").write_text("4,5,6\n")
@@ -1365,7 +1391,7 @@ def test_scan_and_load_use_same_fingerprint_for_symlinked_data(tmp_path: Path) -
     target = tmp_path / "converted.txt"
     target.write_text("1,2,3\n")
     (source / "d_txy_forc1.txt").symlink_to(target)
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     scan(str(source), events.append)
     signature = events[-1]["signature"]
     events.clear()

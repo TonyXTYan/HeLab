@@ -9,8 +9,23 @@ def relative_age(seconds: float) -> str:
 
 
 def duration(seconds: float) -> str:
-    elapsed = max(0, int(seconds))
-    return f"{elapsed} s" if elapsed < 60 else f"{elapsed // 60} min {elapsed % 60} s"
+    """Elapsed whole seconds, in ``span``'s two largest units: ``42 s``, ``12 min 5 s``,
+    ``1 h 15 min`` (Tony, 2026-10-26: an hour unit, as ``span`` has)."""
+    return span(max(0, int(seconds)))
+
+
+def span(seconds: float) -> str:
+    """A length of time to the nearest second, its two largest units: ``4 s``, ``2 min 5 s``,
+    ``1 h 3 min``, ``2 d 5 h``."""
+    total = max(0, round(seconds))
+    days, rest = divmod(total, 86400)
+    hours, rest = divmod(rest, 3600)
+    minutes, secs = divmod(rest, 60)
+    if days:
+        return f"{days} d {hours} h"
+    if hours:
+        return f"{hours} h {minutes} min"
+    return f"{minutes} min {secs} s" if minutes else f"{secs} s"
 
 
 def clock(seconds: float) -> str:
@@ -21,7 +36,8 @@ def clock(seconds: float) -> str:
 
 
 def byte_rate(per_second: float) -> str:
-    """Three significant figures: ``850 B/s``, ``12.5 MB/s``, ``1.20 GB/s``."""
+    """Three significant figures, in SI units as ``number_format.byte_size``: ``850 B/s``,
+    ``12.5 MB/s``, ``1.20 GB/s``."""
     value = max(0.0, per_second)
     for unit in ("B", "kB", "MB", "GB"):
         if value < 999.5 or unit == "GB":

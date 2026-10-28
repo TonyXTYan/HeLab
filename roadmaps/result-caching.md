@@ -14,8 +14,8 @@ rules. The TXY **dataset** cache is a different store with its own rules: see
 
 ## Rules
 
-1. **Results are separate from the TXY dataset cache.** Clearing, budgets and
-   eviction of one never touch the other. Clearing the result cache never
+1. **Results are separate from the TXY dataset cache.** Clearing and eviction
+   of one never touch the other (they share one disk budget, rule 6). Clearing the result cache never
    removes explicit exports.
 2. **Three retention policies.** Each result is held **in RAM only**, **cached
    on disk**, or **exported/kept** by an explicit user action as a durable file.
@@ -44,7 +44,8 @@ rules. The TXY **dataset** cache is a different store with its own rules: see
    with an indicator while a permitted rerun runs
    ([analysis workflow](analysis-workflow.md#folder-following-analysis-behaviour-decided-2026-10-14)).
 6. **Bounded RAM and disk.** RAM results are bounded and evicted least recently
-   used, except those a view shows. The disk result cache has its own budget.
+   used, except those a view shows. Saved results count toward the disk cache's
+   budget (Tony, 2026-10-22).
    Nothing on disk is removed automatically until user-controlled clearing and
    retention exist, matching the dataset cache's "nothing removed without
    asking".
@@ -68,16 +69,20 @@ Each stage is one or more reviewable code slices.
 
 | Stage | Delivers | Needs |
 |---|---|---|
-| R1 | RAM-only results for the first analysis (3D scatter), bound to the dataset view; job record shows the policy | [Analysis workflow](analysis-workflow.md), dataset view ([refactoring](refactoring.md)) |
-| R2 | Disk-cached one-off results (`cache_supported`), reuse key, outdated indicator, result-cache budget and Settings → Cache section | R1 |
-| R3 | Live RAM updates (`live_supported`): coverage tracking and missing-shot updates, last completed revision shown | R1, [Live](live-monitoring.md#stages) L1 |
+| R1 (done 2026-10-19) | RAM-only results for the first analysis (3D scatter), bound to the dataset view; job record shows the policy | [Analysis workflow](analysis-workflow.md), dataset view ([refactoring](refactoring.md)) |
+| R2 (done 2026-10-23, `agent/result-cache-r2`, merge `5617381`) | Disk-cached one-off results (`cache_supported`: Correlations, Release time), exact lookup key with the execution environment, outdated marker, results in the one disk budget with Make room / Discard, Clear cached analysis in Settings → Cache and Data roots, the reuse setting, the folder-row badge, reopened plots included; one store identity rule with presets (`FolderCache.store_answer`). Handoff: `.ai/sessions/2026-10-22-claude-result-cache-r2/handoff.md` | R1 |
+| R3 | Live RAM updates (`live_supported`): coverage tracking and missing-shot updates, last completed revision shown. Coverage recorded on every result (shots and fingerprints, `Coverage.diff`) and the reuse key assembled (`AnalysisResult.reuse_key`), 2026-10-19; missing-shot updates still to come | R1, [Live](live-monitoring.md#stages) L1 |
 | R4 | **Auto-update cache** (`live_cache_supported`): coalesced revision writes, save at Live stop, the final one-off save for other scripts | R2, R3 |
 | R5 | Publishing completed revisions to other machines | R4, [network extension](network-runners-and-web.md#cross-machine-result-sharing) |
 
 ## Open decisions
 
-- Result storage format and location (likely beside the dataset store, owned
-  by helpers like it), and the result-cache budget default.
+- Decided (2026-10-26, Tony): a result waiting for Make room lasts 1 h
+  (`PENDING_MAX_AGE`, like waiting dataset saves) and the plot says why when it
+  expires. A lookup on a drive not yet verified this session computes at 15 s and
+  its save waits up to 120 s for verification.
+- Decided (2026-10-23): `store-v3` `results` + `pending_results` tables and
+  `results/` `.npz` files, owned by helpers; no separate budget.
 - Coalescing rule for Auto-update cache (every N revisions, time, or both).
 - Initial default policy per analysis type; which script instances supply the
   latest Live result when several exist.

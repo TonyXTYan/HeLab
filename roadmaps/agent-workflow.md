@@ -17,20 +17,38 @@ his settings and cache, the packaged release, or each other.
   reviews the roadmap and active work, proposes tasks and writes briefs, creates
   floors and recruits workers on them, reviews and integrates. It doesn't edit
   feature code. It asks Tony before starting a worker.
+- **Assistant** (added 2026-10-19): a second Ground terminal for Tony's
+  questions, small urgent Ground changes and quick features (hardened later
+  on a floor), so the Coordinator's context stays on the floors. It doesn't
+  create floors or recruit, and it tells the Coordinator about decisions that
+  change the plan and about Ground commits.
 - **Workers**: one task each. A worker starts a **new branch from the commit
   Tony or the coordinator chose** (`agent/<task>`), in its own worktree (a
   Maestri floor), clone or cloud environment, may **commit there freely**, and
   **pushes once, when its work is done** (each push runs the full CI matrix),
-  to `TonyXTYan/HeLab` only, never `HeBECANU`.
+  to `TonyXTYan/HeLab` only, never `HeBECANU`. Agent branches are never
+  deleted, locally or on GitHub.
+- **Quick Fixer** (added 2026-10-22): a worker for small, well-scoped jobs one
+  at a time (flaky or crashing tests, CI failures, small bugs), several to a
+  brief. It finds the cause before changing code, and pushes once when the
+  brief's jobs are done, or earlier when the Coordinator asks (2026-10-28).
 - **Tony's checkout and branches**: committing there, merging into his branches
   or `main`, landing a floor and opening a PR need Tony's approval.
 - **Documentation**: a worker writes only its own session folder
   (`.ai/sessions/<date>-<tool>-<task>/`: brief, notes, handoff with proposed doc
-  changes). It doesn't edit AGENTS.md, `roadmaps/`, `.ai/MANUAL_TODO.md` or
-  `.ai/memory/`; the coordinator updates those when merging.
+  changes, questions for Tony and follow-ups). It doesn't edit AGENTS.md,
+  `.ai/architecture/`, `roadmaps/`, `.ai/MANUAL_TODO.md`,
+  `.ai/DECISIONS_TODO.md`, `.ai/AI_TODO.md` or `.ai/memory/`; the coordinator
+  updates those when merging.
 - **Review**: by a different model from the author where possible; the
   reviewer reads the actual diff and reruns critical checks. Branches are
   integrated one at a time, with the full suite after each.
+- **Models** (decided 2026-10-19): Claude agents (coordinator, assistant,
+  workers, reviewers) run **Opus 5.5** by default, at the effort the
+  coordinator judges the task needs. **Fable** (any Fable model) runs only
+  with Tony's approval: no Fable recruit or Fable subagent without asking
+  him first (a forked subagent inherits its parent's model). A Codex
+  reviewer for Claude's work is unaffected.
 - **Brief**: objective and acceptance criteria, base commit, owned paths and
   paths not to touch, contracts used or changed, checks to run, handoff.
 - **Register**: the coordinator keeps live state (task, agent, floor, branch,
@@ -51,15 +69,21 @@ hook, landing): [.ai/maestri-setup.md](../.ai/maestri-setup.md).
      wired to the ground checkout by absolute paths: its `bin/` scripts start
      with ground's `venv.nosync/bin/python3.13`, `activate` sets ground's
      `VIRTUAL_ENV`, and its editable install points at ground's `helab/`. It is
-     usable with two guards: pytest must import the floor's code (proposed:
-     `pythonpath = .` in a pytest config, so `pytest` and `python -m pytest`
-     both test the checkout they run in; helpers already follow the GUI's
-     checkout via `PYTHONPATH`), and the app runs as `python -m helab`, not
-     the `helab` entry point. A branch that changes `requirements.txt` gets a
-     fresh venv instead (`uv venv --seed --python 3.13 venv && uv pip install
-     -r requirements.txt -e .`, 16 s measured 2026-10-15 with uv's cache), so
+     usable with two guards: pytest must import the floor's code (**done**
+     2026-10-22, `agent/ci-robustness-2` `50fa36b`: `pytest.ini` sets
+     `pythonpath = .`, so `pytest` and `python -m pytest` both test the
+     checkout they run in; helpers already follow the GUI's checkout via
+     `PYTHONPATH`), and the app runs as `python -m helab`, not the `helab`
+     entry point. A branch that changes dependencies
+     (`requirements.txt` and its refreshed `requirements.lock`) gets a fresh
+     venv instead (`uv venv --seed --python 3.13 venv && uv pip install
+     -r requirements.lock -e .`, 16 s measured 2026-10-15 with uv's cache), so
      it never installs into ground's venv.
    - **Profile**: a private settings/app/cache folder for the floor (below).
+   - **Stale bytecode**: delete the copied `__pycache__` folders, which carry Ground's
+     paths into tracebacks (Live L3 notes, 2026-10-19; seen again on the CI Robustness
+     floor, a traceback naming `../../../HeLab/tests/…`, 2026-10-22). A setup hook step
+     does it ([setup](../.ai/maestri-setup.md#4-floor-setup-hook)).
    - **Tests**: own `--basetemp`, and about `-n 4` per worker when several run.
    - CodeGraph: initialise `.codegraph/` in the floor if the worker uses it.
 4. The worker commits as it goes; when done it writes its handoff, pushes its
@@ -98,7 +122,14 @@ enforces it.
 table, for example `helab/utils/settings_defaults.py`, with the key, type,
 default and a short description). It is the starting point for every new
 profile, and it serves the release too: **Restore default** actions and
-tooltips showing the default value all read it.
+tooltips showing the default value all read it. **Done** 2026-10-22
+(`agent/ci-robustness-2` `0f4df65`): `helab/utils/settings_defaults.py` and
+`read_setting`, which every settings read goes through
+(`tests/test_settings_defaults.py`). Left: Restore default per setting and
+default-value tooltips (each editor needs its key; path rows show
+`default_app_dir(kind)`, and `dir_caches` goes through a cache move; tooltips
+need display text per row:
+[what they need](../.ai/sessions/2026-10-22-claude-ci-robustness-2/handoff.md#restore-default-and-default-tooltips-not-done-what-theyd-need)).
 
 **Profiles.** One resolved at startup, before any settings, cache or Dash
 import (including the frozen helper entry), gives the settings file and the
@@ -124,11 +155,13 @@ app folder (caches, temps, locks, `cache-move.json`):
   variable (name to decide, e.g. `HELAB_PROFILE_DIR`) can set settings, caches,
   temps and app folder from one root, and the existing `HELAB_DIR_*` and
   `HELAB_APP_DIR_OVERRIDE` variables keep working.
-- **One settings factory.** Replace the direct `QSettings(QSETTINGS_ORG_NAME,
-  QSETTINGS_APP_NAME)` calls (`main.py`, `constants.py`, `HelabMainWindow.py`,
-  `SettingsDialog.py`) with one function returning the profile's settings;
-  helpers already open settings from `settings_spec`. A test fails if anything
-  else constructs the native store.
+- **One settings factory.** **Done 2026-10-21** (TonyXTYan/HeLab#7): `app_settings()`
+  (`helab/utils/settings_store.py`) replaces the direct `QSettings(org, app)` calls
+  in `main.py`, `constants.py`, `HelabMainWindow.py` and `SettingsDialog.py`, and
+  `tests/test_settings_store.py` fails if anything else constructs the native store.
+  Tests get a private ini through `HELAB_TEST_SETTINGS_FILE`. Left: make it return
+  the profile's settings (`HELAB_SETTINGS_OVERRIDE`); helpers already open settings
+  from `settings_spec`.
 - The packaged release behaves as now, plus Restore default and default-value
   tooltips from the defaults table.
 

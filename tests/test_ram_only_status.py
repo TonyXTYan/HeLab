@@ -10,8 +10,9 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QIcon
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
-from helab.io_helper import list_folder, save_scan_history, scan
+from helab.io_ops import stores
+from helab.io_ops.browse import list_folder
+from helab.io_ops.scanning import save_scan_history, scan
 from helab.resources.icons import IconsInitUtil, StatusIcons
 from helab.utils import cache_paths
 from helab.utils.cache_paths import Mount
@@ -22,7 +23,7 @@ from helab.views.FolderExplorer import FolderExplorer
 
 pytestmark = pytest.mark.no_auto_data_root
 
-Events = list[dict[str, Any]]
+Events = list[Any]
 
 
 def data_folder(path: Path) -> Path:
@@ -95,7 +96,7 @@ def test_a_cache_that_cannot_open_still_skips_scans_that_are_not_manual(
 
     def cannot_open(*args: Any, **kwargs: Any) -> Any:
         raise StoreError("Disk cache could not be opened: unable to open database file")
-    monkeypatch.setattr(io_helper, "_cache_store", cannot_open)
+    monkeypatch.setattr(stores, "_cache_store", cannot_open)
     events: Events = []
     scan(str(folder), events.append, {"directory": str(tmp_path / "store")}, manual=False, automatic=automatic)
     assert events[-1] == {"kind": "scan_mode", "mode": "skipped"}
@@ -116,12 +117,12 @@ def producer(cache: FolderCache, path: str, operation: str) -> IORequest:
 
 
 def replay(qtbot: QtBot, cache: FolderCache, path: str, operation: str,
-           helper: Callable[[IORequest, Callable[[dict[str, Any]], None]], None],
+           helper: Callable[[IORequest, Callable[[Any], None]], None],
            end: dict[str, Any] | None = None) -> None:
     """Send a real helper's events for the queued request (it gets the request's payload)."""
     request = producer(cache, path, operation)
 
-    def send(event: dict[str, Any]) -> None:
+    def send(event: Any) -> None:
         cache.service.resultReady.emit(request, event)
     helper(request, send)
     cache.service.resultReady.emit(request, end or {"kind": "done"})
@@ -129,7 +130,7 @@ def replay(qtbot: QtBot, cache: FolderCache, path: str, operation: str,
     qtbot.waitUntil(lambda: not any(r.path == path for r in cache._deliveries))
 
 
-def run_scan(path: str) -> Callable[[IORequest, Callable[[dict[str, Any]], None]], None]:
+def run_scan(path: str) -> Callable[[IORequest, Callable[[Any], None]], None]:
     return lambda request, send: scan(path, send, request.payload["cache"],
                                       manual=request.payload["scan_manual"],
                                       automatic=request.payload.get("automatic", False))
@@ -141,7 +142,7 @@ def tab(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
     """A tab on the RAM-only folder's parent, whose store is the test's own."""
     IconsInitUtil.initialise_icons()
     folder, options = ram_only
-    monkeypatch.setattr("helab.models.SnapshotFileSystemModel.store_options", lambda: options)
+    monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: options)
     service = frozen_service(monkeypatch)
     data_folder(folder.parent / "other")
     root = str(folder.parent)
@@ -196,7 +197,7 @@ def test_a_failure_without_disk_cache_stays_in_ram_and_blocks_the_next_automatic
     model.request_scan(other, metadata_only=True)
     qtbot.waitUntil(lambda: ("scan", other) in cache.jobs)
 
-    def timed_out(request: IORequest, send: Callable[[dict[str, Any]], None]) -> None:
+    def timed_out(request: IORequest, send: Callable[[Any], None]) -> None:
         events: Events = []
         scan(other, events.append, options, manual=False, automatic=True)
         for event in events[:events.index({"kind": "scan_mode", "mode": "scan"}) + 1]:

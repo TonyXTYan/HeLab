@@ -18,9 +18,11 @@ from helab.utils.constants import DEFAULT_LOAD_MODE, LOAD_MODE_LABELS, LOAD_MODE
 from helab.utils.constants import AUTO_SCAN_VISIBLE_SETTING, SIMULTANEOUS_IO_SETTING, read_disk_budget
 from helab.utils.folder_cache import FolderCache, get_folder_cache, store_options
 from helab.utils.io_service import IORequest, IOService
+from helab.utils.settings_store import app_settings
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.FolderTabWidget import FolderTabWidget
 from helab.views.HelabMainWindow import HelabMainWindow
+from helab.views.plots.workspace import PlotWorkspace
 from helab.views.SettingsDialog import SettingsDialog
 
 
@@ -286,6 +288,7 @@ class CancelTestWindow(HelabMainWindow):
     def __init__(self) -> None:
         QMainWindow.__init__(self)
         self._closing = False
+        self.plots = PlotWorkspace(self)  # Settings applies the RAM budget's (none here).
         self._setup_left_toolbar()
         self.tab_widget = FolderTabWidget(self)
         self.setCentralWidget(self.tab_widget)
@@ -386,9 +389,8 @@ def test_folder_status_toolbar_keeps_scope_cancel_and_up_out_of_path_row(
 def test_folder_io_menu_and_settings_apply_to_existing_and_new_tabs(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    settings = app_settings()  # The test's own ini (tests/conftest.py, ``private_settings``).
     settings.setValue(SIMULTANEOUS_IO_SETTING, 2)
-    monkeypatch.setattr("helab.views.HelabMainWindow.QSettings", lambda *args: settings)
     service = service_for_test(monkeypatch)
     monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
     monkeypatch.setattr("helab.models.SnapshotFileSystemModel.get_io_service", lambda: service)
@@ -434,7 +436,7 @@ def test_folder_io_menu_and_settings_apply_to_existing_and_new_tabs(
     assert service.max_operations == 4
     # The store had the new disk budget before Settings saved it; the app uses it from now on.
     # Then an inventory, for room plans under the new budget.
-    assert store_options()["budget"] == 10 << 30 and admin[-2:] == ["budget", "inventory"]
+    assert store_options()["budget"] == 10 * 10**9 and admin[-2:] == ["budget", "inventory"]
     assert abs(store_options()["budget_set_at"] - time.time()) < 60
     # Reset saves the default budget at once; cancelled, the store is still told.
     def reset_and_cancel() -> None:
@@ -444,7 +446,7 @@ def test_folder_io_menu_and_settings_apply_to_existing_and_new_tabs(
         dialog.reject()
     QTimer.singleShot(0, reset_and_cancel)
     window.show_settings_dialog()
-    assert store_options()["budget"] == 8 << 30 and admin[-2:] == ["budget", "inventory"]
+    assert store_options()["budget"] == 8 * 10**9 and admin[-2:] == ["budget", "inventory"]
     assert not action.isChecked() and not first.auto_scan_visible and not second.auto_scan_visible
     action.trigger()
     window.add_new_folder_explorer_tab(target_path=str(tmp_path))
@@ -461,8 +463,6 @@ def test_folder_io_menu_and_settings_apply_to_existing_and_new_tabs(
 def test_cancel_controls_target_current_tab_only(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, control: str,
 ) -> None:
-    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    monkeypatch.setattr("helab.views.HelabMainWindow.QSettings", lambda *args: settings)
     service, cache, first, (a, b, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "cancel")
     monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
     second = explorer_for_test(qtbot, b)
@@ -509,8 +509,6 @@ def test_cancel_controls_target_current_tab_only(
 def test_escape_closes_dialog_without_cancelling_load(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
-    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    monkeypatch.setattr("helab.views.HelabMainWindow.QSettings", lambda *args: settings)
     service, cache, explorer, (a, *_) = make_explorer(qtbot, monkeypatch, tmp_path, "cancel")
     monkeypatch.setattr("helab.views.HelabMainWindow.get_io_service", lambda: service)
     select(explorer, a)
@@ -641,16 +639,17 @@ def test_queue_mode_keeps_queued_loads_in_the_foreground(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     service, cache, explorer, _ = make_explorer(qtbot, monkeypatch, tmp_path, "finish")
-    assert cache.foreground_owners == {explorer.model.owner}
+    # (Its Live checks too, when Live is on.)
+    assert cache.foreground_owners == {explorer.model.owner, explorer.live_owner}
     explorer.load_mode = "queue"
-    assert cache.foreground_owners == {explorer.model.owner, explorer.bg_owner}
+    assert cache.foreground_owners == {explorer.model.owner, explorer.live_owner, explorer.bg_owner}
     other = FolderExplorer(str(tmp_path), str(tmp_path), str(tmp_path), [0])
     qtbot.addWidget(other)
     assert not other.is_foreground  # The first tab keeps it until another becomes current.
     other.claim_foreground()
     assert other.is_foreground and not explorer.is_foreground
     explorer.load_mode = "finish"
-    assert cache.foreground_owners == {other.model.owner}
+    assert cache.foreground_owners == {other.model.owner, other.live_owner}
     other.close_cleanup()
     finish(explorer, service)
 
@@ -667,7 +666,7 @@ def test_an_automatic_load_waits_for_the_selection_to_settle_only_while_loads_ar
     assert ("load", a) in cache.jobs and not explorer.settling  # Idle: at once.
     start_load(cache, a)
     complete_load(cache, a)
-    explorer._auto_load_at -= FolderExplorer.SETTLE_SECONDS  # A while later.
+    explorer._auto_load_at -= FolderExplorer.SELECTION_SETTLE_SECONDS  # A while later.
     select(explorer, b)
     assert ("load", b) in cache.jobs and not explorer.settling
     cache._observe_cache(c, {"disk_cached": True, "cache_info": {"saved_at": time.time(), "signature": "v1"}})
@@ -731,7 +730,7 @@ def test_a_status_update_during_the_settle_wait_keeps_its_deadline(
     assert explorer.settling and ("load", b) not in cache.jobs
     if loads == "idle":
         complete_load(cache, a)
-        explorer._auto_load_at -= FolderExplorer.SETTLE_SECONDS
+        explorer._auto_load_at -= FolderExplorer.SELECTION_SETTLE_SECONDS
         assert explorer.settle_seconds(b) == 0.0  # Selected now, B would load at once.
     qtbot.wait(100)  # Part of the wait passes: a restarted timer would have more time left.
     before = explorer._dwell.remainingTime()

@@ -32,13 +32,29 @@ setup(
     packages=find_packages(),
     cmdclass={"build_py": BuildPy},
     include_package_data=True,
-    package_data={"helab.resources": ["*.svg"], "helab": [BUILD_INFO_FILENAME]},
+    # The window's icon too (R-12; HeLab.spec bundles it for the packaged app).
+    package_data={"helab.resources": ["*.svg", "ai-icon.icns"], "helab": [BUILD_INFO_FILENAME]},
     install_requires=[
         "PyQt6>=6.7.1",
         "pytablericons>=1.0.1",
         "Pympler>=1.1",
         "packaging",
-        # Add other dependencies from requirements-pip.txt
+        # What helab imports at runtime; requirements.lock pins the tested versions, and
+        # requirements.txt adds the development and build tools.
+        "PyQt6-WebEngine",
+        "blosc",
+        "coloredlogs",
+        "dash",
+        "matplotlib",
+        "numpy",
+        "pandas",
+        "pillow",
+        "plotly",
+        "psutil",
+        "pyqtgraph",
+        "scipy",
+        "uncertainties",
+        "werkzeug",
     ],
     entry_points={
         "console_scripts": [

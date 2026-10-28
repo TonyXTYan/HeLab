@@ -1,6 +1,7 @@
 # Refactoring for independent feature work
 
-Added: 2026-10-13. Revised: 2026-10-15. Draft; nothing implemented.
+Added: 2026-10-13. Revised: 2026-10-21. Milestones 1 and 3 done; milestone 2 mostly done
+(TonyXTYan/HeLab#7).
 Priority and completion: [overview](_readme.md).
 Detailed design, code survey and proposed validation:
 [2026-10-14 session notes](../.ai/sessions/2026-10-14-codex-planning-for-future/refactoring.md).
@@ -52,15 +53,36 @@ otherwise edit the same code.
    shot map, provenance, read-only arrays) as the seam between browser/cache
    and analysis, while building the first analysis (the
    [3D scatter](analysis-workflow.md#first-analysis-3d-scatter-decided-2026-10-15)).
-   It adds code beside the browser rather than moving it.
+   It adds code beside the browser rather than moving it. **Done 2026-10-19**
+   (`helab/analysis/dataset_view.py`; contract in the plots floor's handoff,
+   `.ai/sessions/2026-10-19-claude-dataset-view-plots/handoff.md`).
 2. **Split where work collides.** When two planned tasks need the same state
    (`FolderCache`, `FolderExplorer`, `HelabMainWindow` wiring), extract the
    smallest boundary that lets them proceed separately: characterize the
    change path first (including calls through attributes and test patches),
-   then move ownership behind a typed contract.
+   then move ownership behind a typed contract. **Mostly done 2026-10-21**
+   (TonyXTYan/HeLab#7, [handoff](../.ai/sessions/2026-10-20-claude-refactor-prep/handoff.md)),
+   in slices:
+   - A: import and analysis-id guards, plus pinned dependencies (`requirements.lock`).
+   - B: `ScriptTreeSelector` became `helab/views/plots/`.
+   - C: a Qt-free analysis core (`live_feed`, `budget_core`, `runner_core`).
+   - D: Basic plots' `analysis/orders.py` and `overlay.py`.
+   - E: `app_settings()` and `PlotWorkspace`.
+   - F: `helab/io_helper.py` became a dispatcher over `helab/io_ops/`.
+   - G: typed helper events (`io_ops/events.py`).
+   - H, its Live part only: `LiveController`.
+
+   Left of H, for when a browser feature needs it:
+   - the load logic behind a controller;
+   - `FolderCache`'s stores (flags and constants, pending saves and budget);
+   - splitting `_on_event`, last.
+
+   Also left: typing the GUI side of the helper events (`resultReady` as `HelperEvent`).
 3. **Pilot.** Run two independent tasks in parallel with the
    [agent workflow](agent-workflow.md),
-   then revise boundaries and the workflow from what conflicted.
+   then revise boundaries and the workflow from what conflicted. **Done
+   2026-10-19** (Live L1 and dataset view plots): the two branches merged
+   without conflicts; the only shared file was `HelabMainWindow`.
 
 The [session notes](../.ai/sessions/2026-10-14-codex-planning-for-future/refactoring.md#candidate-implementation-slices)
 list candidate slices to draw from when a collision calls for one.

@@ -13,7 +13,7 @@ from pytestqt.qtbot import QtBot
 from PyQt6.QtCore import QSettings
 from PyQt6.QtWidgets import QDialog, QMessageBox, QWidget
 
-from helab.io_helper import cache_admin
+from helab.io_ops.admin import cache_admin
 from helab.utils.cache_store import CacheStore, DatasetRecord, _record_bytes, trim_estimate
 from helab.utils.constants import (
     DISK_BUDGET_SETTING, RAM_BUDGET_SETTING, read_disk_budget, read_io_concurrency, read_ram_budget,
@@ -28,7 +28,7 @@ from helab.views.SettingsDialog import SettingsDialog
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.FolderExplorer import AUTO_LOAD_PAUSED, FolderExplorer
 
-GB = 1 << 30
+GB = 10**9
 DAY = 86400.0
 
 
@@ -53,7 +53,7 @@ def inventory(usage: int = 3 * GB, **changes: Any) -> dict[str, Any]:
     now = time.time()
     value: dict[str, Any] = {
         "layout_version": 2, "store_id": "s", "read_only": False, "root": "/cache", "usage": usage,
-        "budget": 8 * GB, "records_bytes": 1 << 20,
+        "budget": 8 * GB, "records_bytes": 1 * 10**6,
         "datasets": {"count": 3, "bytes": 3 * GB, "ram_bytes": 4 * GB, "last_used": now - 7200},
         "summaries": {"count": 445}, "subtrees": {"count": 33}, "histories": {"count": 10, "blocked": 3},
         "pending": [], "retired": {"count": 0, "bytes": 0}, "orphans": {"count": 0, "bytes": 0},
@@ -140,7 +140,7 @@ def test_clear_asks_first_runs_once_and_refreshes(
         assert title == expected[0] and expected[1] in text and expected[2] in text
         request = admin_request(service, "clear")
         assert request.payload["params"] == {
-            "kinds": ["datasets", "summaries", "histories", "subtrees"] if kind == "all" else [kind]}
+            "kinds": ["datasets", "summaries", "histories", "subtrees", "listings"] if kind == "all" else [kind]}
         # While it runs, nothing else can start.
         assert tab.busy and not tab.clear_all_button.isEnabled() and not tab.refresh_button.isEnabled()
         tab.clear(["datasets"])
@@ -415,7 +415,7 @@ def test_the_helper_records_a_lower_budget_only_if_the_data_fits(tmp_path: Path)
     set_at = time.time()
     options: dict[str, Any] = {"directory": root, "budget": GB, "budget_set_at": set_at - 60}
     for budget, recorded in ((usage - 1000, False), (usage + 1000, True)):
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         cache_admin(options, "budget", events.append, budget=budget, budget_set_at=set_at, fit=True)
         assert events[-1]["recorded"] is recorded and events[-1]["usage"] == usage
         with CacheStore(root) as store:
@@ -507,7 +507,7 @@ def test_80_percent_dialog_once_per_crossing_and_ignore_lasts_the_session(
         assert cache.auto_load_paused and warnings == [True]
         qtbot.waitUntil(lambda: dialogs.dialog is not None)
         box = dialogs.dialog
-        assert box is not None and "80% full (800 B of 1000 B)" in box.text()
+        assert box is not None and "80% full (800 B of 1.0 kB)" in box.text()
         # Still over 80%: no second dialog for this crossing.
         usage_event(cache, 850)
         assert warnings == [True]
@@ -530,9 +530,17 @@ def test_80_percent_dialog_once_per_crossing_and_ignore_lasts_the_session(
         # ...until usage rises another 10% of the budget.
         usage_event(cache, 920)
         assert cache.auto_load_paused and warnings == [True, True, True]
-        # An older measurement arriving late changes nothing; another store's (recreated) does.
+        # An older measurement arriving late changes nothing; another store's (recreated) counts
+        # once the cache folder says it holds that store (FolderCache.store_answer).
         usage_event(cache, 100, writes=0)
         assert cache.disk_usage == 920 and cache.auto_load_paused
+        usage_event(cache, 930, writes=0, store_id="new")
+        assert cache.disk_usage == 920
+        probe = next(r for r in service.pending if r.operation == "cache_admin" and r.payload["action"] == "identity")
+        for event in ({"kind": "admin_result", "action": "identity", "store": "new"}, {"kind": "done"}):
+            service.resultReady.emit(probe, event)
+        service.pending.remove(probe)
+        assert cache.disk_usage is None  # The old store's usage goes with it.
         usage_event(cache, 930, writes=0, store_id="new")
         assert cache.disk_usage == 930
         # A larger budget resumes at once.
@@ -546,9 +554,9 @@ def test_80_percent_dialog_once_per_crossing_and_ignore_lasts_the_session(
 
 def pending(pending_id: str, path: str, reason: str = "over_budget", **changes: Any) -> dict[str, Any]:
     entry = {"kind": "cache_full" if reason == "over_budget" else "cache_approval", "pending_id": pending_id,
-             "path": path, "reason": reason, "bytes": 420 << 20, "usage": 7900 << 20, "budget": 8 * GB,
-             "job_seq": 1, "replaces": 300 << 20, "usage_seq": ["s", 1], "created_at": time.time(),
-             "room": {"paths": ["/a", "/b"], "bytes": 1200 << 20, "oldest_last_used": 1.0,
+             "path": path, "reason": reason, "bytes": 420 * 10**6, "usage": 7900 * 10**6, "budget": 8 * GB,
+             "job_seq": 1, "replaces": 300 * 10**6, "usage_seq": ["s", 1], "created_at": time.time(),
+             "room": {"paths": ["/a", "/b"], "bytes": 1200 * 10**6, "oldest_last_used": 1.0,
                       "newest_last_used": time.mktime((2026, 8, 3, 12, 0, 0, 0, 0, -1)), "possible": True}}
     entry.update(changes)
     return entry
@@ -578,7 +586,7 @@ def test_one_cache_dialog_at_a_time_each_answering_its_own_save(
         qtbot.wait(10)  # The 80% warning (usage is 7.7 of 8 GB) waits for the saves' questions.
         box = dialogs.dialog
         assert box is not None and asking(dialogs) == ("p1", "over_budget")
-        assert box.text() == "Not enough room in the disk cache for first (420 MB, 7.7 GB of 8.0 GB used)."
+        assert box.text() == "Not enough room in the disk cache for first (420 MB, 7.9 GB of 8.0 GB used)."
         assert "cached data for 2 folders (1.2 GB) not used since 3 Aug" in box.informativeText()
         assert len(parent.findChildren(QMessageBox)) == 1
         next(b for b in box.buttons() if b.text() == "Make room").click()
@@ -616,7 +624,7 @@ def test_save_update_rechecks_and_turns_into_make_room(
         hold(service, cache, pending("p1", path, "needs_approval", room=None))
         box = dialogs.dialog
         assert box is not None
-        assert box.text() == "run changed: save the update to the disk cache (+120 MB, 7.8 GB of 100 GB)?"
+        assert box.text() == "run changed: save the update to the disk cache (+120 MB, 8.0 GB of 100 GB)?"
         assert cache.cache_status(path).error == "Cache update waiting for your answer"
         next(b for b in box.buttons() if b.text() == "Save update").click()
         adopt = admin_request(service, "adopt")
@@ -695,7 +703,7 @@ def test_saves_restored_from_the_store_ask_with_its_numbers(
     monkeypatch.setattr("helab.utils.folder_cache._disk_budget", budget)
     # Set now: newer than any budget an earlier test recorded in this worker's store.
     monkeypatch.setattr("helab.utils.folder_cache._disk_budget_set_at", time.time())
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(store_options(), "inventory", events.append)
     service, cache = frozen_cache(monkeypatch)
     parent = QWidget()
@@ -740,7 +748,7 @@ def test_make_room_asks_again_when_its_plan_or_the_budget_changes(
         adopt = admin_request(service, "adopt")
         assert adopt.payload["params"]["room_paths"] == ["/a", "/b"]
         # The store's plan differs from what was shown: nothing removed, asked again with it.
-        new_room = {"paths": ["/a", "/b", "/c"], "bytes": 1800 << 20, "oldest_last_used": 1.0,
+        new_room = {"paths": ["/a", "/b", "/c"], "bytes": 1800 * 10**6, "oldest_last_used": 1.0,
                     "newest_last_used": 2.0, "possible": True}
         finish(service, adopt, {"kind": "admin_result", "action": "adopt", "adopted": False, "path": path,
                                 "bytes": 1, "room": new_room, "next_deadline": None})
@@ -848,7 +856,7 @@ def test_helpers_report_usage_with_results(tmp_path: Path) -> None:
             "ram_bytes": 1, "rows": 1, "shots": 1, "fingerprint": [], "problematic": [], "info": {}}, guard)
         usage = store.usage()
     for action, params in (("sweep", {}), ("trim", {"budget": GB}), ("discard", {"pending_id": "none"})):
-        events: list[dict[str, Any]] = []
+        events: list[Any] = []
         cache_admin(options, action, events.append, **params)
         result = events[-1]
         assert result["usage"] == usage and result["usage_seq"][0] == store.store_id, action
@@ -866,7 +874,7 @@ def test_a_slow_inventory_never_undoes_a_newer_clear(
             "ram_bytes": 1, "rows": 1, "shots": 1, "fingerprint": [], "problematic": [], "info": {}},
             store.start_dataset_job("/a"))
         slow = store.inventory(budget)  # Measured now; its helper is still sizing files.
-    cleared: list[dict[str, Any]] = []
+    cleared: list[Any] = []
     cache_admin(options, "clear", cleared.append)
     after = cleared[-1]["usage"]
     assert slow["usage"] >= 0.8 * budget > after
@@ -894,7 +902,7 @@ def test_a_running_load_saves_within_a_budget_lowered_after_it_started(tmp_path:
         usage = store.usage()
     started = time.time() - 60  # The load's request, with the old, large budget.
     lowered = usage + 50_000
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin({"directory": root, "budget": lowered, "budget_set_at": started + 30}, "budget", events.append)
     assert events[-1]["budget"] == lowered
     with CacheStore(root) as store:
@@ -950,7 +958,7 @@ def test_a_trim_records_its_budget_only_if_it_runs(tmp_path: Path, monkeypatch: 
             cache_admin(options, "trim", lambda event: None, budget=5000, budget_set_at=set_at)
     with CacheStore(root) as store:
         assert store.record_budget(GB, set_at - 30) == GB  # Not recorded.
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     cache_admin(options, "trim", events.append, budget=5000, budget_set_at=set_at)
     with CacheStore(root) as store:
         assert store.record_budget(GB, set_at - 30) == 5000 and store.usage() > 5000 > 0

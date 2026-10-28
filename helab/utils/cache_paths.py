@@ -179,6 +179,3 @@ class CachePaths:
         join = ntpath.join if sys.platform == "win32" else os.path.join
         return join(mount.path, *(unquote(part) for part in relative.split("/") if part))
 
-
-def current_cache_paths() -> CachePaths:
-    return CachePaths(current_mounts())

@@ -184,11 +184,15 @@ CASES: dict[str, tuple[Case, list[str]]] = {
                   HEAD + ["Last check cancelled · showing earlier results", "Here: 2 shots, all converted",
                           "Subfolders: none"] + CHECKED_LINES + ["Use Retry / Refresh to try again."]),
 }
+STAMPED = time.time()  # When CASES' ages were taken.
 
 
 @pytest.mark.parametrize("case", CASES)
-def test_row_tooltip(model: SnapshotFileSystemModel, case: str) -> None:
+def test_row_tooltip(model: SnapshotFileSystemModel, case: str, monkeypatch: pytest.MonkeyPatch) -> None:
     build, expected = CASES[case]
+    # CASES' ages were stamped at import: the tooltip takes its ages then too, however late this runs
+    # (AFTER's "1h ago" reads "2h ago" from 10 minutes on: Windows CI runs this module that late).
+    monkeypatch.setattr(time, "time", lambda: STAMPED)
     node, operation = build(model)
     if operation:
         model._tree_requests[PATH] = IORequest("owner", 0, PATH, operation, {}, 60)
@@ -228,3 +232,13 @@ def test_history_save_warning_line(model: SnapshotFileSystemModel) -> None:
 def test_stamp_formats_exact_time_and_age() -> None:
     assert _stamp(NOW - 7200) == f"{datetime.fromtimestamp(NOW - 7200):%Y-%m-%d %H:%M:%S} (2h ago)"
     assert _stamp(None) == _stamp(1e20) == "date not recorded"
+
+
+def test_a_corrupt_far_future_folder_date_shows_no_date_instead_of_raising(model: SnapshotFileSystemModel) -> None:
+    """A share can hold a folder with a corrupt mtime the OS can't convert (Windows' localtime refuses
+    those past about year 3000): its row renders (an exception in ``data()`` aborts HeLab)."""
+    node = leaf(modified=1e20)
+    model.root = node
+    index = model.createIndex(0, model.COLUMN_DATE_MODIFIED, node)
+    assert model.data(index) == ""
+    assert f"Folder modified: {stamp(1e20)}" in model._tooltip(node, "").splitlines()

@@ -46,6 +46,19 @@ session reviewed by Codex until clean.
   "Auto-load off for this folder · Load data". Kept through Clear all and purges; the Cache
   tab's Folder preferences row clears them.
 
+## Saved analysis results (result cache R2, Tony 2026-10-22/23)
+
+- Saved results count toward the one disk budget, no separate budget. Opt-in scripts:
+  Correlations and Release time (measured run times).
+- One that doesn't fit asks **Make room** / **Discard** (not refused). Make room removes only the
+  least recently shown other saved results, never datasets, never a newer copy waiting or being
+  saved; no extra skip for results used this session or on screen.
+- Settings → Cache › Reuse saved analysis results, on by default; folder-row badge REPORT.
+- Store identity (presets and results, `FolderCache.store_answer`): the cache folder decides which
+  store is in use, never a clock or a counter (Tony: refine rather than fail closed). Answers from
+  another store wait for one identity probe; writes are held meanwhile and name their store; a
+  failed probe leaves the store unknown until the next answer's probe succeeds.
+
 ## Lessons from the reviews (keep these when changing the code)
 
 - Order measurements and choices by the store's own counters or saved times (`usage_seq`,
@@ -56,3 +69,8 @@ session reviewed by Codex until clean.
   the store records it before Settings saves it).
 - Destructive steps act only on what they can prove is theirs (a move's marked copy, its own
   record id, a lock holder's token).
+
+## Plot RAM budget (Tony, 2026-10-19/20)
+
+- Plots count toward the existing RAM budget (a fraction of the machine's RAM). 50 % of it: status-bar warning only; 75 %: a non-modal window, once per crossing (re-armed below 70 %); 80 %: release plots, least recently shown first, after datasets no tab shows. Never close a plot; never release the shown, running or Live plot.
+- A released plot keeps a static picture with Reload; it reloads automatically when shown again (Settings → Cache, default on), only from RAM or the local disk cache, never the source folder (no "Reload from folder"), exactly the shots it drew.

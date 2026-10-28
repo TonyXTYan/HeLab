@@ -22,18 +22,24 @@ from helab.models.StatusReport import StatusReport
 from helab.resources.icons import StatusIcons
 from helab.utils.io_service import IORequest, IOService, get_io_service
 from helab.utils.number_format import byte_size
-from helab.utils.folder_cache import SCANS, data_root_text, get_folder_cache, store_options
+from helab.utils import folder_cache
+from helab.utils.folder_cache import SCANS, analysis_cached_text, data_root_text, get_folder_cache
 from helab.utils.time_format import relative_age
 from helab.utils.cache_freshness import CacheFreshness, cache_freshness, data_as_of, metadata_date
 
 
+def _date_text(timestamp: float) -> str:
+    """A source file's or folder's time as local time, "" if the OS can't convert it (a corrupt
+    far-future mtime on a share: Windows' localtime refuses those past about year 3000)."""
+    try:
+        return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
+    except (ValueError, OverflowError, OSError):
+        return ""
+
+
 def _stamp(timestamp: float | None) -> str:
     """An exact local time with its age, e.g. "2026-10-09 00:16:08 (2h ago)"."""
-    if timestamp is None:
-        return "date not recorded"
-    try:
-        exact = datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S")
-    except (ValueError, OverflowError, OSError):
+    if timestamp is None or not (exact := _date_text(timestamp)):
         return "date not recorded"
     return f"{exact} ({relative_age(time.time() - timestamp)})"
 
@@ -84,6 +90,10 @@ class FolderNode:
     # Whether the folder had subfolders at its last listing (saved with its summary);
     # None if unknown. An unlisted folder known to have none shows no expand arrow.
     has_dirs: bool | None = None
+    # Working offline: when the saved listing shown was made, and whether the folder was never
+    # listed while online (its subfolders unknown; only those leading to data roots show).
+    offline_listed_at: float | None = None
+    offline_unlisted: bool = False
 
 
 class SnapshotFileSystemModel(QAbstractItemModel):
@@ -115,7 +125,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache = get_folder_cache(self.service)
         style = QApplication.style()
         self._folder_icon = style.standardIcon(QStyle.StandardPixmap.SP_DirIcon) if style else QIcon()
-        self._cache_options: dict[str, Any] = store_options()
+        self._cache_options: dict[str, Any] = folder_cache.store_options()
         self.owner = uuid4().hex
         self.generation = 0
         self.root: FolderNode | None = None
@@ -151,9 +161,11 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.savedRefreshed.connect(self._saved_refreshed)
         self.cache.cacheRemoved.connect(self._cache_removed)
         self.cache.dataRootsChanged.connect(self._data_root_changed)
+        self.cache.resultCountsChanged.connect(self._result_counts_changed)
         # Locations waiting for Same folder or Copy: their rows show ROOT_PENDING (memory only).
         self._pending_roots = {str(entry["path"]) for entry in self.cache.root_duplicates.values()}
         self.cache.rootDuplicatesChanged.connect(self._root_duplicates_changed)
+        self.cache.offlineChanged.connect(self._offline_changed)
 
     def node(self, index: QModelIndex) -> FolderNode | None:
         return cast(FolderNode, index.internalPointer()) if index.isValid() else None
@@ -355,7 +367,7 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             if column == self.COLUMN_NAME:
                 return os.path.basename(node.path.rstrip(os.sep)) or node.path
             if column == self.COLUMN_DATE_MODIFIED and node.modified is not None:
-                return datetime.fromtimestamp(node.modified).strftime("%Y-%m-%d %H:%M:%S")
+                return _date_text(node.modified)
             if column == self.COLUMN_STATUS_NUMBER:
                 return str(node.report.count) if node.report and node.report.count >= 0 else ""
             if column == self.COLUMN_STATUS_ICON and node.error:
@@ -404,6 +416,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                 shown.append(badge)
             if cached in StatusIcons.ICONS_EXTRA:
                 shown.append(StatusIcons.ICONS_EXTRA[cached])
+            if self.cache.analysis_cached(node.path) is not None:
+                shown.append(StatusIcons.ICONS_EXTRA["report"])  # Saved analysis results reuse will use.
             return shown
         return None
 
@@ -468,6 +482,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if disk_cached:
             saved_at = metadata_date(self.cache.cache_status(node.path).info.get("saved_at"))
             lines.append("Data cache: " + _stamp(saved_at) + _FRESHNESS[self.data_freshness(node)])
+        if text := analysis_cached_text(self.cache, node.path):
+            lines.append(text)
         if self.cache.current_dataset(node.path):
             lines.append("Data: shared RAM dataset open (read-only arrays)")
         clock = bool(self.display_status(node)) and not busy and not load_state and self.display_older(node)
@@ -478,7 +494,12 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             lines.append(warning)
         if warning := self.cache.cache_read_errors.get(node.path):
             lines.append(f"Saved results unknown: {warning}")
-        if not busy and not load_state and not history["blocked"]:
+        if self.cache.offline and not busy:
+            saved_at = node.offline_listed_at or node.scanned_at
+            lines.append("Offline: not listed while online" if node.offline_unlisted and not node.children else
+                         f"Offline: showing saved results from {_stamp(saved_at)}" if saved_at is not None
+                         else "Offline: nothing saved for this folder")
+        elif not busy and not load_state and not history["blocked"]:
             if node.error:
                 lines.append("Use Retry / Refresh to try again.")
             elif report is None and not node.subtree:
@@ -518,6 +539,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         """What is known about the subfolders: listed in this tab, else saved."""
         info = node.subtree_info
         saved = info is not None and not node.subtree_live
+        if node.offline_unlisted and not node.children:
+            return "not listed while online"
         if node.loaded or node.children:
             total = len(node.children)
             if total == 0:
@@ -600,6 +623,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         """Called after viewport changes, never by data() or other render queries."""
         if self.closed or self.root is None:
             return False
+        if self.cache.offline:
+            return True  # Working offline: generic icons (and those already in memory).
         missing = [path for path in dict.fromkeys(paths)
                    if path in self.nodes and path not in self.cache.folder_icons][:64]
         if not missing:
@@ -680,6 +705,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
 
     def _request_details(self, node: FolderNode, *, manual: bool) -> None:
         """Browse step 2 in the background: signature, dates and subfolder details."""
+        if self.cache.offline:
+            return  # Working offline: the saved results are all there is.
         if self.refreshing and not manual:
             self._refresh_details.add(node.path)
             return
@@ -737,8 +764,14 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         if kind in ("done", "error", "cancelled"):
             self._scan_seen.pop(request, None)
         owns_tree = self._tree_requests.get(node.path) is request
-        if kind == "cancelled" and request.payload.get("refresh_cancelled"):
-            # Refresh discards optional automatic work without presenting a failure.
+        if kind == "offline":
+            # Working offline: a check that would read the folder wasn't run; the row keeps what it shows.
+            node.error = ""
+            self.changed(node)
+            return
+        if kind == "cancelled" and (request.payload.get("refresh_cancelled") or request.payload.get("offline")):
+            # Refresh discards optional automatic work without presenting a failure; so does Work
+            # Online a saved listing or offline answer not delivered yet (its folder is listed anew).
             if owns_tree:
                 self._release_row(node)
             node.error = ""
@@ -842,24 +875,12 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                     self._update_ancestors(node)
                 node.empty = event.get("empty", node.empty)
                 node.has_dirs = event.get("has_dirs", node.has_dirs)
+                # A saved listing (working offline) says when it was made; a listing online clears that.
+                node.offline_listed_at = event.get("listed_at") if event.get("offline") else None
+                node.offline_unlisted = bool(event.get("offline")) and not event.get("listed")
                 self.changed(node)
                 return
-            node.cached_report = False
-            node.saved_modified = metadata_date(event.get("modified"))
-            node.raw_count, node.txy_count = len(event["raw"]), len(event["txy"])
-            extras = list(node.report.extra_icons) if node.report else []
-            node.checked_at = event.get("checked_at", time.monotonic())
-            node.report = StatusReport(node.path, event["status"], event["count"], extras,
-                                       list(event["raw"]), list(event["txy"]),
-                                       datetime.fromtimestamp(time.time() - max(0, time.monotonic() - node.checked_at)))
-            node.scanned_at = metadata_date(event.get("scanned_at"))
-            if "modified" in event:
-                self._observe_modified(node, event["modified"], node.scanned_at)
-            # Unknown ("") after a names-only listing until details or a load supply it.
-            node.signature = event.get("signature", "")
-            node.empty = event.get("empty")
-            node.has_dirs = event.get("has_dirs", node.has_dirs)
-            self._update_ancestors(node)
+            self._apply_status(node, event)
             if not event.get("metadata_only"):
                 self.statusReady.emit(node.path)
         elif kind == "done":
@@ -896,6 +917,38 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             node.error = event.get("message", "Cancelled — Retry")
         self.changed(node)
 
+    def _apply_status(self, node: FolderNode, event: dict[str, Any]) -> None:
+        """A check's status of the folder (a listing's, a scan's or a load's) on its row."""
+        node.cached_report = False
+        node.offline_listed_at, node.offline_unlisted = None, False
+        node.saved_modified = metadata_date(event.get("modified"))
+        node.raw_count, node.txy_count = len(event["raw"]), len(event["txy"])
+        extras = list(node.report.extra_icons) if node.report else []
+        node.checked_at = event.get("checked_at", time.monotonic())
+        node.report = StatusReport(node.path, event["status"], event["count"], extras,
+                                   list(event["raw"]), list(event["txy"]),
+                                   datetime.fromtimestamp(time.time() - max(0, time.monotonic() - node.checked_at)))
+        node.scanned_at = metadata_date(event.get("scanned_at"))
+        if "modified" in event:
+            self._observe_modified(node, event["modified"], node.scanned_at)
+        # Unknown ("") after a names-only listing until details or a load supply it.
+        node.signature = event.get("signature", "")
+        node.empty = event.get("empty")
+        node.has_dirs = event.get("has_dirs", node.has_dirs)
+        self._update_ancestors(node)
+
+    def adopt_load_status(self, path: str, status: dict[str, Any]) -> bool:
+        """A load's listing and fingerprint of a folder without subfolders (its ``scan_summary``)
+        on the row, instead of listing the folder again: it is that folder's full status. Whether
+        it was used (a folder with subfolders is listed for their names)."""
+        node = self.nodes.get(path)
+        if self.closed or node is None or status.get("has_dirs") is not False or not status.get("details"):
+            return False
+        self._apply_status(node, status)
+        node.loaded = True  # (No subfolders to list.)
+        self.changed(node)
+        return True
+
     def _release_row(self, node: FolderNode) -> None:
         """The row's request ended: the newest of this tab's other active requests
         for the folder (e.g. a check still running after Refresh's listing) takes
@@ -919,10 +972,42 @@ class SnapshotFileSystemModel(QAbstractItemModel):
                       else "running" if job and job.state == "started" else "queued")
 
     def _shared_snapshot_changed(self, path: str) -> None:
+        """Another tab's listing or check finished, or a load changed the folder's snapshot. A
+        snapshot in RAM shows here without I/O, also while this tab refreshes (``apply_snapshot``);
+        one a load found outdated, or none (cleared), asks for a check, which Refresh holds back."""
         if path in self.nodes and not any(self.cache.has_request(self.owner, operation, path) for operation in SCANS):
+            if self.apply_snapshot(path):
+                return
             snapshot = self.cache.snapshot(path)
             self.request_scan(path, force=bool(snapshot and snapshot.checked_at == 0
                                                and not self.cache.scan_history(path)["blocked"]), automatic=True)
+
+    def apply_snapshot(self, path: str) -> bool:
+        """Show the folder's snapshot in RAM on its row, as its listing or status check would, with
+        no source I/O (``FolderCache.replay_snapshot``). Whether there was one to show."""
+        node = self.nodes.get(path)
+        if self.closed or node is None:
+            return False
+        listing_only = path in self.cache.listing_notifications
+        metadata_only = not listing_only and path in self.cache.metadata_notifications
+        if not self.cache.replay_snapshot(self.owner, self.generation, path,
+                                          metadata_only=metadata_only, listing_only=listing_only):
+            return False
+        node.error = ""
+        node.scan_skipped = False
+        return True
+
+    def _offline_changed(self, offline: bool) -> None:
+        """Work Offline on: listings and checks it cancelled leave their rows as they were (no
+        "Cancelled"); a top folder not listed yet shows its saved listing. Off: Refresh follows."""
+        if self.closed or not offline:
+            return
+        for node in self.nodes.values():
+            if node.state == "cancelled":
+                node.state, node.error = "idle", ""
+                self.changed(node)
+        if self.root is not None and not self.root.loaded:
+            self.request_scan(self.root.path, priority=True)
 
     def _cache_removed(self, paths: list[str] | None, kinds: list[str]) -> None:
         """Saved results removed from the disk cache stop showing; what this tab checked
@@ -967,6 +1052,14 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         node = self.nodes.get(path)
         if not self.closed and node is not None and not node.subtree_live:
             self._update_ancestors(node)
+
+    def _result_counts_changed(self, paths: list[str] | None) -> None:
+        """Folders' saved analysis results changed (or reuse was turned on or off): their badges."""
+        if self.closed:
+            return
+        for node in (list(self.nodes.values()) if paths is None else
+                     [self.nodes[path] for path in paths if path in self.nodes]):
+            self.changed(node)
 
     def _shared_dataset_changed(self, path: str) -> None:
         node = self.nodes.get(path)
@@ -1147,4 +1240,6 @@ class SnapshotFileSystemModel(QAbstractItemModel):
         self.cache.savedRefreshed.disconnect(self._saved_refreshed)
         self.cache.cacheRemoved.disconnect(self._cache_removed)
         self.cache.dataRootsChanged.disconnect(self._data_root_changed)
+        self.cache.resultCountsChanged.disconnect(self._result_counts_changed)
         self.cache.rootDuplicatesChanged.disconnect(self._root_duplicates_changed)
+        self.cache.offlineChanged.disconnect(self._offline_changed)

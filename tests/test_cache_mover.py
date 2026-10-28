@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
-from typing import Any, Iterator
+from typing import Any, Callable, Iterator, TypeVar
 
 import psutil
 import pytest
@@ -90,6 +90,22 @@ def test_a_hold_stops_and_holds_every_helper_that_opens_the_cache(monkeypatch: p
         service.shutdown()
 
 
+def test_a_closed_service_is_free_once_its_helpers_have_exited() -> None:
+    """Shutting down stops the timer that frees a stopped helper's slot (``_forget``), so the
+    request stays retired: the reaper's exit flag alone says the cache is free. The app-wide
+    service shut down by one test with a presets read running stayed busy for the worker's whole
+    run, and the next test waiting for ``store_free`` timed out on every attempt."""
+    service = IOService()
+    service.timer.stop()
+    request = IORequest("a", 0, "/x", "cache_admin", {"cache": {"directory": "/old"}, "action": "presets"}, 60.0)
+    request.process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"], text=True)
+    service.active.append(request)
+    assert service.cache_busy()
+    service.shutdown()  # (As a test's main window quitting does, to the app-wide one.)
+    qtbot_wait(request.exited.is_set)
+    assert request in service.retired and not service.cache_busy()
+
+
 # The locks
 
 HOLD = "import sys, time\nfrom helab.utils.cache_locks import FileLock\nlock = FileLock(sys.argv[1])\n" \
@@ -100,6 +116,19 @@ def hold_in_another_process(path: str, seconds: float = 30) -> subprocess.Popen[
     process = subprocess.Popen([sys.executable, "-c", HOLD, path, str(seconds)], stdout=subprocess.PIPE, text=True)
     assert process.stdout is not None and process.stdout.readline().strip() == "held"
     return process
+
+
+T = TypeVar("T")
+
+
+def free_soon(take: Callable[[], T], seconds: float = 10.0) -> T:
+    """``take()`` once it succeeds. Windows releases a killed process's file locks a little
+    after the process ends ("depends upon available system resources", LockFileEx), so a lock
+    may still be held right after ``wait()``; POSIX releases it at once."""
+    deadline = time.monotonic() + seconds
+    while not (result := take()) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    return result
 
 
 def test_a_lock_is_exclusive_and_released_when_its_process_ends(tmp_path: Path) -> None:
@@ -116,7 +145,7 @@ def test_a_lock_is_exclusive_and_released_when_its_process_ends(tmp_path: Path) 
     finally:
         other.kill()
         other.wait()
-    assert first.try_lock()
+    assert free_soon(first.try_lock)
     first.unlock()
 
 
@@ -130,6 +159,7 @@ def test_a_move_is_refused_while_another_helab_or_a_move_helper_runs(tmp_path: P
     finally:
         other.kill()
         other.wait()
+    assert free_soon(lambda: other_instances(app) == [])
     # A move helper still running (e.g. deleting the old folder) blocks the next move.
     helper = hold_in_another_process(cache_locks.move_lock(app).path)
     try:
@@ -138,8 +168,8 @@ def test_a_move_is_refused_while_another_helab_or_a_move_helper_runs(tmp_path: P
     finally:
         helper.kill()
         helper.wait()
-    lock, reason = lock_for_move(app, "move")
-    assert lock is not None and not reason and other_instances(app) == []
+    lock = free_soon(lambda: lock_for_move(app, "move")[0])
+    assert lock is not None and other_instances(app) == []
     lock.unlock()
 
 
@@ -212,7 +242,7 @@ class Run:
 
     def checked(self, method: str = cache_move.COPY) -> IORequest:
         self.mover.change(self.target, self.parent)
-        self.send(self.request("check"), {"kind": "move_check", "problem": "", "method": method, "bytes": 706 << 20,
+        self.send(self.request("check"), {"kind": "move_check", "problem": "", "method": method, "bytes": 706 * 10**6,
                                           "free": 1 << 40})
         return self.request("move")
 
@@ -231,7 +261,7 @@ def test_the_mover_checks_confirms_holds_moves_and_switches_in_place(
         run.service.retired.append(stopping)
         run.mover.change(run.target, run.parent)
         run.send(run.request("check"), {"kind": "move_check", "problem": "", "method": cache_move.COPY,
-                                        "bytes": 706 << 20, "free": 1 << 40})
+                                        "bytes": 706 * 10**6, "free": 1 << 40})
         assert run.service.cache_hold and not any(r.payload["move"]["action"] == "move" for r in run.service.pending)
         run.service.retired.remove(stopping)
         run.mover._wait.timeout.emit()
@@ -414,7 +444,7 @@ def test_an_abort_that_cant_rename_back_resumes_where_the_store_is(
 
 
 def test_the_helper_reports_where_the_store_is_after_a_failed_move(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app, source, target = str(tmp_path / "app"), tmp_path / "caches", tmp_path / "moved"
     make_cache(source)
     set_step = cache_move.set_step
@@ -433,12 +463,12 @@ def test_the_helper_reports_where_the_store_is_after_a_failed_move(tmp_path: Pat
     monkeypatch.setattr(os, "rename", stuck)
     held = cache_locks.cache_lock(app)
     assert held.try_lock("m")
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     try:
         cache_move_job({"action": "move", "app_dir": app, "from": str(source), "to": str(target),
                         "method": cache_move.RENAME, "id": "m", "token": "m"}, events.append)
         # An abort asked for afterwards (e.g. after the move helper ended abruptly) says so too.
-        aborted: list[dict[str, Any]] = []
+        aborted: list[Any] = []
         cache_move_job({"action": "abort", "app_dir": app, "from": str(source), "to": str(target),
                         "method": cache_move.RENAME, "id": "m", "token": "m"}, aborted.append)
         assert aborted[-1]["store_at"] == str(target) and aborted[-1]["left"] == [str(target)]
@@ -493,8 +523,9 @@ def test_queued_requests_open_no_cache_once_it_is_off(monkeypatch: pytest.Monkey
         service.shutdown()
 
 
+@pytest.mark.skipif(sys.platform != "win32" and os.geteuid() == 0, reason="root ignores read-only permissions")
 def test_recovery_isnt_usable_after_a_failed_settings_write(tmp_path: Path) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app, source, target = str(tmp_path / "app"), tmp_path / "caches", tmp_path / "moved"
     make_cache(source)
     record = cache_move.start(str(source), str(target), app, cache_move.RENAME)
@@ -506,7 +537,7 @@ def test_recovery_isnt_usable_after_a_failed_settings_write(tmp_path: Path) -> N
     settings.sync()
     os.chmod(folder / "settings.ini", 0o444)
     os.chmod(folder, 0o555)  # Saving the setting fails.
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     held = cache_locks.cache_lock(app)
     assert held.try_lock("startup-2")
     try:
@@ -560,7 +591,7 @@ def test_the_cache_path_is_saved_only_at_startup(tmp_path: Path, monkeypatch: py
 
 
 def test_cleanup_and_abort_touch_only_their_own_move(tmp_path: Path) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app = str(tmp_path / "app")
     newer = {"from": str(tmp_path / "b"), "to": str(tmp_path / "c"), "method": cache_move.RENAME,
              "step": "renamed", "store_id": "s", "id": "newer"}
@@ -569,7 +600,7 @@ def test_cleanup_and_abort_touch_only_their_own_move(tmp_path: Path) -> None:
     assert held.try_lock("older")  # The HeLab that asked holds the cache.
     try:
         for action in ("cleanup", "abort"):
-            events: list[dict[str, Any]] = []
+            events: list[Any] = []
             cache_move_job({"action": action, "app_dir": app, "from": str(tmp_path / "a"), "to": str(tmp_path / "b"),
                             "id": "older", "token": "older"}, events.append)
             assert events[-1]["left"] == [] and cache_move.read_record(app) == newer
@@ -590,7 +621,7 @@ def test_cleanup_and_abort_touch_only_their_own_move(tmp_path: Path) -> None:
 
 
 def test_startup_recovery_runs_in_a_helper_and_saves_the_setting(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from helab.io_helper import cache_move_job
+    from helab.io_ops.admin import cache_move_job
     app, source, target = str(tmp_path / "app"), tmp_path / "caches", tmp_path / "moved"
     store_id = make_cache(source)
     monkeypatch.setattr(cache_move, "same_disk", lambda a, b: False)
@@ -599,7 +630,7 @@ def test_startup_recovery_runs_in_a_helper_and_saves_the_setting(tmp_path: Path,
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     settings.setValue("dir_caches", str(source))
     settings.sync()
-    events: list[dict[str, Any]] = []
+    events: list[Any] = []
     held = cache_locks.cache_lock(app)
     assert held.try_lock("startup-1")
     try:

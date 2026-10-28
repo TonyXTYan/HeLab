@@ -11,7 +11,11 @@ import uuid
 import pytest
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
+from helab.io_ops import stores
+from helab.io_ops.admin import cache_admin
+from helab.io_ops.browse import list_folder
+from helab.io_ops.markers import reassign_root
+from helab.io_ops.scanning import scan
 from helab.utils import cache_paths, data_roots
 from helab.utils.cache_paths import Mount
 from helab.utils.cache_store import CacheStore
@@ -45,16 +49,16 @@ def two(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> tuple[Path, Path, st
     monkeypatch.setattr(cache_paths, "current_mounts", lambda: [
         Mount("//host/first", str(first), "smbfs", True), Mount("//host/second", str(second), "smbfs", True)])
     cache = {"directory": str(tmp_path / "cache")}
-    io_helper.list_folder(str(first), lambda _: None, cache)
+    list_folder(str(first), lambda _: None, cache)
     run = str(first / "run")
-    with io_helper._cache_store(cache["directory"], [run]) as store:
+    with stores._cache_store(cache["directory"], [run]) as store:
         store.save_record("summaries", run, {"version": 1, "owner": "first"}, store.guard([run], ["summaries"]))
     return first, second, identifier, cache
 
 
 def duplicate(second: Path, cache: dict[str, Any]) -> dict[str, Any]:
-    events: list[dict[str, Any]] = []
-    io_helper.list_folder(str(second), events.append, cache)
+    events: list[Any] = []
+    list_folder(str(second), events.append, cache)
     return next(event for event in events if event["kind"] == "root_duplicate")
 
 
@@ -69,18 +73,37 @@ def test_a_second_location_waits_with_hints(two: tuple[Path, Path, str, dict[str
     assert duplicate_hints(event) == ("same server · different file number on the server · "
                                       "marker identical (a copy would be too)")
     with pytest.raises(data_roots.NoDataRoot):  # RAM only until answered.
-        with io_helper._cache_store(cache["directory"], [str(second / "run")]):
+        with stores._cache_store(cache["directory"], [str(second / "run")]):
             pass
 
 
 def test_same_folder_shares_the_cached_data(two: tuple[Path, Path, str, dict[str, Any]]) -> None:
     first, second, identifier, cache = two
     duplicate(second, cache)
-    events: list[dict[str, Any]] = []
-    io_helper.cache_admin(cache, "root_same", events.append, location="smb://host/second", uuid=identifier)
+    events: list[Any] = []
+    cache_admin(cache, "root_same", events.append, location="smb://host/second", uuid=identifier)
     confirmed = next(event for event in events if event["kind"] == "root_confirmed")
     assert confirmed["path"] == str(second)
-    with io_helper._cache_store(cache["directory"], [str(second / "run")]) as store:
+    with stores._cache_store(cache["directory"], [str(second / "run")]) as store:
+        assert store.read_record("summaries", str(second / "run")).value == {"version": 1, "owner": "first"}
+
+
+def test_a_pending_location_whose_duplicate_is_forgotten_is_confirmed_by_its_next_listing(
+    two: tuple[Path, Path, str, dict[str, Any]],
+) -> None:
+    """Pending exists only because another confirmed location has the UUID: with none left, there is
+    nothing to compare it with, so the next listing confirms it instead of asking again."""
+    first, second, identifier, cache = two
+    duplicate(second, cache)
+    cache_admin(cache, "forget_root", lambda _: None, location="smb://host/first")
+    events: list[Any] = []
+    list_folder(str(second), events.append, cache)
+    assert not [event for event in events if event["kind"] == "root_duplicate"]
+    assert [(event["location"], event["uuid"]) for event in events if event["kind"] == "root_found"] == [
+        ("smb://host/second", identifier)]
+    with CacheStore(cache["directory"], root_mode=True) as store:
+        assert store.root_at("smb://host/second") == (identifier, "first", "confirmed")
+    with stores._cache_store(cache["directory"], [str(second / "run")]) as store:  # Not RAM only now.
         assert store.read_record("summaries", str(second / "run")).value == {"version": 1, "owner": "first"}
 
 
@@ -89,8 +112,8 @@ def test_a_copy_keeping_the_known_location_gets_a_new_root_and_starts_empty(
 ) -> None:
     first, second, identifier, cache = two
     duplicate(second, cache)
-    events: list[dict[str, Any]] = []
-    io_helper.reassign_root(str(second), cache, identifier, "smb://host/first", events.append)
+    events: list[Any] = []
+    reassign_root(str(second), cache, identifier, "smb://host/first", events.append)
     reassigned = next(event for event in events if event["kind"] == "root_reassigned")
     new = data_roots.read_marker(str(second)).uuid
     assert reassigned["uuid"] == new != identifier and reassigned["moved"] == ["smb://host/second"]
@@ -98,7 +121,7 @@ def test_a_copy_keeping_the_known_location_gets_a_new_root_and_starts_empty(
     with CacheStore(cache["directory"], root_mode=True) as store:
         assert store.root_at("smb://host/second") == (new, "second", "confirmed")
         assert store.root_at("smb://host/first") == (identifier, "first", "confirmed")
-    with io_helper._cache_store(cache["directory"], [str(second / "run"), str(first / "run")]) as store:
+    with stores._cache_store(cache["directory"], [str(second / "run"), str(first / "run")]) as store:
         assert store.read_record("summaries", str(second / "run")).value is None
         assert store.read_record("summaries", str(first / "run")).value == {"version": 1, "owner": "first"}
 
@@ -108,14 +131,14 @@ def test_a_copy_keeping_the_new_location_rewrites_the_known_folder(
 ) -> None:
     first, second, identifier, cache = two
     duplicate(second, cache)
-    events: list[dict[str, Any]] = []
-    io_helper.reassign_root(str(first), cache, identifier, "smb://host/second", events.append)
+    events: list[Any] = []
+    reassign_root(str(first), cache, identifier, "smb://host/second", events.append)
     new = data_roots.read_marker(str(first)).uuid
     assert data_roots.read_marker(str(second)).uuid == identifier
     assert {"kind": "root_found", "path": str(second), "location": "smb://host/second", "uuid": identifier,
             "label": "first"} in events
     assert any(event["kind"] == "root_changed" and event["path"] == str(first) for event in events)
-    with io_helper._cache_store(cache["directory"], [str(second / "run"), str(first / "run")]) as store:
+    with stores._cache_store(cache["directory"], [str(second / "run"), str(first / "run")]) as store:
         assert store._path_key(str(first)) == f"root://{new}"
         # The data stays with the original UUID, now reached through the second location.
         assert store.read_record("summaries", str(second / "run")).value == {"version": 1, "owner": "first"}
@@ -127,7 +150,7 @@ def test_a_marker_changed_since_is_not_rewritten(two: tuple[Path, Path, str, dic
     write_marker(second, str(uuid.uuid4()))
     before = (second / ".helab-root").read_bytes()
     with pytest.raises(ValueError, match="changed since HeLab found it"):
-        io_helper.reassign_root(str(second), cache, identifier, "smb://host/first", lambda _: None)
+        reassign_root(str(second), cache, identifier, "smb://host/first", lambda _: None)
     assert (second / ".helab-root").read_bytes() == before
 
 
@@ -137,8 +160,8 @@ def test_a_read_only_copy_gets_the_new_contents_to_place(two: tuple[Path, Path, 
     duplicate(second, cache)
     second.chmod(stat.S_IRUSR | stat.S_IXUSR)
     try:
-        events: list[dict[str, Any]] = []
-        io_helper.reassign_root(str(second), cache, identifier, "smb://host/first", events.append)
+        events: list[Any] = []
+        reassign_root(str(second), cache, identifier, "smb://host/first", events.append)
     finally:
         second.chmod(stat.S_IRWXU)
     manual = next(event for event in events if event["kind"] == "root_manual")
@@ -251,13 +274,36 @@ def test_a_marker_left_half_replaced_is_not_listed_as_data(tmp_path: Path) -> No
     folder = tmp_path / "share"
     (folder / "run").mkdir(parents=True)
     (folder / ".helab-root.0123abcd.tmp").write_text("{")  # A crash before os.replace.
-    events: list[dict[str, Any]] = []
-    io_helper.list_folder(str(folder), events.append)
+    events: list[Any] = []
+    list_folder(str(folder), events.append)
     names = [entry["name"] for event in events if event["kind"] == "entries" for entry in event["entries"]]
     assert names == ["run"]
     empty = tmp_path / "empty"
     empty.mkdir()
     (empty / ".helab-root.0123abcd.tmp").write_text("{")
-    scanned: list[dict[str, Any]] = []
-    io_helper.scan(str(empty), scanned.append)
+    scanned: list[Any] = []
+    scan(str(empty), scanned.append)
     assert next(event for event in scanned if event["kind"] == "status")["empty"] is True
+
+
+def test_working_offline_its_a_copy_is_off(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, cache: FolderCache) -> None:
+    """Work Offline (cache-only browsing, D6): It's a copy… writes a new marker in the folder."""
+    from helab.utils import folder_cache
+    from helab.utils.folder_cache import OFFLINE_TOOLTIP
+    window = RootDuplicatesWindow(cache)
+    qtbot.addWidget(window)
+    sighting(cache)
+    item = window.tree.topLevelItem(0)
+    assert item is not None
+    window.tree.setCurrentItem(item)
+    try:
+        cache.set_offline(True)
+        assert not window.copy_button.isEnabled() and window.copy_button.toolTip() == OFFLINE_TOOLTIP
+        assert window.same_button.isEnabled()  # (Same folder is a disk cache write.)
+        window.choose_keep = lambda entry: pytest.fail("asked which side keeps the data")
+        window.copy()
+        assert ("root_reassign", SECOND) not in cache.jobs
+        cache.set_offline(False)
+        assert window.copy_button.isEnabled()
+    finally:
+        folder_cache._offline = False

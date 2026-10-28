@@ -1,85 +1,121 @@
-import os
-from typing import List, cast
+import hashlib
+from pathlib import Path
 
 import pytest
-from PyQt6.QtWidgets import QApplication, QDockWidget, QMainWindow, QTreeWidgetItem
-from PyQt6.QtCore import Qt
+from PyQt6.QtWidgets import QFileDialog, QMainWindow, QPushButton, QTreeWidgetItem
 from pytestqt.qtbot import QtBot
 
-from helab.scripts.base import HelabAnalysisScript, ScriptMetadata
 from helab.scripts.scripts_manager import ScriptsManager
-from helab.models import TreePanelWidget
-from helab.views.HelabMainWindow import HelabMainWindow
+from helab.views.plots.script_tree import TreePanelWidget
+from helab.views.plots.settings_panel import PlotSettingsPanel
+from helab.views.plots.workspace import PlotWorkspace
 
-# Mock HelabMainWindow for testing
-class MockHelabMainWindow(QMainWindow):
-    def __init__(self) -> None:
-        super().__init__()
-        self.middle_mainwindow = QMainWindow()
-        self.dock_widgets: List[QDockWidget] = []
+# A user's script folder: an older-style script with plain actions.
+USER_SCRIPT = '''
+from typing import Any, List
+from helab.scripts.base import HelabAnalysisScript, ScriptMetadata
 
-def test_script_loading(qtbot: QtBot) -> None:
-    """Test loading and managing analysis scripts"""
-    manager = ScriptsManager()
-    
-    # Load example scripts
-    example_dir = os.path.join(os.path.dirname(__file__), '..', 'helab', 'scripts', 'examples')
-    manager.load_directory(example_dir)
-    
-    # Verify groups were loaded
-    groups = manager.get_groups()
-    assert "Examples" in groups
-    assert "Advanced" in groups
-    
-    # Check scripts in Examples group
-    example_scripts = manager.get_scripts_in_group("Examples")
-    assert len(example_scripts) == 1
-    assert example_scripts[0].name == "Basic Analysis"
-    
-    # Check scripts in Advanced group
-    advanced_scripts = manager.get_scripts_in_group("Advanced")
-    assert len(advanced_scripts) == 1
-    assert advanced_scripts[0].name == "Advanced Analysis"
+CALLS: List[str] = []
 
-def test_tree_panel_widget(qtbot: QtBot) -> None:
-    """Test TreePanelWidget functionality"""
-    # Create mock main window
-    mock_main = MockHelabMainWindow()
-    widget = TreePanelWidget(cast(HelabMainWindow, mock_main))
-    qtbot.addWidget(widget)
-    
-    # Load example scripts
-    example_dir = os.path.join(os.path.dirname(__file__), '..', 'helab', 'scripts', 'examples')
-    widget.script_manager.load_directory(example_dir)
-    
-    # Check if widget has required attributes
-    assert hasattr(widget, 'group_selector'), "Widget should have group_selector"
-    assert hasattr(widget, 'tree_widget'), "Widget should have tree_widget"
-    
-    # Check group selector
-    assert widget.group_selector.count() == 2, "Should have two groups"
-    
-    # Select Examples group
-    widget.group_selector.setCurrentText("Examples")
-    qtbot.wait(100)  # Allow time for the group change to process
-    
-    # Find Examples group item
-    example_group = None
+class Logged(HelabAnalysisScript):
+    def get_metadata(self) -> ScriptMetadata:
+        return self.create_metadata("Logged", "Records its actions", "Lab", __file__, "lab.logged", "2")
+
+    def get_actions(self) -> List[str]:
+        return ["First", "Second"]
+
+    def execute_action(self, action_name: str, **kwargs: Any) -> None:
+        CALLS.append(action_name)
+'''
+
+def plot_area() -> PlotWorkspace:
+    """A plot area of its own window, for the Scripts panel."""
+    return PlotWorkspace(QMainWindow())
+
+
+@pytest.fixture
+def script_folder(tmp_path: Path) -> Path:
+    folder = tmp_path / "lab_scripts"
+    folder.mkdir()
+    (folder / "logged.py").write_text(USER_SCRIPT)
+    (folder / "notes.txt").write_text("not a script")
+    return folder
+
+
+def group_items(widget: TreePanelWidget) -> dict[str, list[str]]:
+    groups: dict[str, list[str]] = {}
     for i in range(widget.tree_widget.topLevelItemCount()):
         item = widget.tree_widget.topLevelItem(i)
-        if isinstance(item, QTreeWidgetItem) and item.text(0) == "Examples":
-            example_group = item
-            break
-            
-    assert example_group is not None, "Examples group should exist"
-    assert example_group.childCount() == 1, "Should have one script"
-    
-    script_item = example_group.child(0)
-    assert isinstance(script_item, QTreeWidgetItem), "Script item should be QTreeWidgetItem"
-    assert script_item.text(0) == "Basic Analysis", "Script should be named 'Basic Analysis'"
-    
-    # Verify buttons are present
-    action1_widget = widget.tree_widget.itemWidget(script_item, 1)
-    action2_widget = widget.tree_widget.itemWidget(script_item, 2)
-    assert action1_widget is not None, "Action 1 button should exist"
-    assert action2_widget is not None, "Action 2 button should exist"
+        assert isinstance(item, QTreeWidgetItem)
+        children = [item.child(j) for j in range(item.childCount())]
+        groups[item.text(0)] = [child.text(0) for child in children if child is not None]
+    return groups
+
+
+def test_script_loading(script_folder: Path) -> None:
+    """A folder's scripts are loaded, grouped and identified by their file's hash."""
+    manager = ScriptsManager()
+    manager.load_directory(str(script_folder))
+    assert manager.get_groups() == ["Lab"]
+    (metadata,) = manager.get_scripts_in_group("Lab")
+    assert (metadata.name, metadata.analysis_id, metadata.version) == ("Logged", "lab.logged", "2")
+    assert metadata.file_hash == hashlib.sha256((script_folder / "logged.py").read_bytes()).hexdigest()
+    assert manager.get_script(metadata.script_id) is not None
+
+
+def test_tree_panel_lists_only_working_scripts(qtbot: QtBot) -> None:
+    """HeLab's bundled analyses in two groups, the first shown: Basic plots v1, and the DLD front
+    panel port's plots; each with its Plot button (Density images also Find hot spots); no
+    placeholder groups."""
+    widget = TreePanelWidget(plot_area())
+    qtbot.addWidget(widget)
+    assert [widget.group_selector.itemText(i) for i in range(widget.group_selector.count())] == [
+        "Basic plots v1", "DLD Front Panel Port"]
+    assert group_items(widget) == {"Basic plots v1": ["3D scatter", "Counts per shot", "T, X, Y histograms",
+                                                     "Transfer fractions"]}
+    widget.group_selector.setCurrentText("DLD Front Panel Port")
+    assert group_items(widget) == {"DLD Front Panel Port": [
+        "3D scatter", "Counts per shot", "T, X, Y histograms", "Mean X, Y against T", "T spectrum", "Density images",
+        "Shot times", "Shot trends", "Transfer fractions", "Release time", "Velocity distributions", "Correlations"]}
+    plots = widget.tree_widget.topLevelItem(0)
+    assert plots is not None
+    for i in range(plots.childCount()):
+        button = widget.tree_widget.itemWidget(plots.child(i), 1)
+        assert isinstance(button, QPushButton) and button.text() == "Plot"
+        item = plots.child(i)
+        assert item is not None
+        second = widget.tree_widget.itemWidget(item, 2)
+        if item.text(0) == "Density images":
+            assert isinstance(second, QPushButton) and second.text() == "Find hot spots"
+        else:
+            assert second is None
+
+
+def test_load_scripts_adds_a_working_group(qtbot: QtBot, script_folder: Path,
+                                           monkeypatch: pytest.MonkeyPatch) -> None:
+    widget = TreePanelWidget(plot_area())
+    qtbot.addWidget(widget)
+    monkeypatch.setattr(QFileDialog, "getExistingDirectory", lambda *args, **kwargs: str(script_folder))
+    widget.load_dir_button.click()
+    assert sorted(widget.group_selector.itemText(i) for i in range(widget.group_selector.count())) == [
+        "Basic plots v1", "DLD Front Panel Port", "Lab"]
+    widget.group_selector.setCurrentText("Lab")
+    assert group_items(widget) == {"Lab": ["Logged"]}
+    lab = widget.tree_widget.topLevelItem(0)
+    assert lab is not None and lab.child(0) is not None
+    for column, action in ((1, "First"), (2, "Second")):
+        button = widget.tree_widget.itemWidget(lab.child(0), column)
+        assert isinstance(button, QPushButton) and button.text() == action
+        button.click()
+    metadata = widget.script_manager.get_scripts_in_group("Lab")[0]
+    script_class = widget.script_manager.get_script(metadata.script_id)
+    assert script_class is not None
+    # Loaded from its file, not imported: its module is reached through its functions.
+    assert script_class.execute_action.__globals__["CALLS"] == ["First", "Second"]
+
+
+def test_settings_panel_starts_with_a_hint(qtbot: QtBot) -> None:
+    panel = PlotSettingsPanel()
+    qtbot.addWidget(panel)
+    assert panel.stack.currentWidget() is panel.hint and panel.chooser_row.isHidden()
+    assert panel.current_plot() is None

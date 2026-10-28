@@ -208,6 +208,39 @@ def test_a_corrupt_copy_fails_verification_and_the_source_stays(
     assert cache_move.read_record(app) is None
 
 
+@pytest.mark.parametrize("table", ["results", "pending_results"])
+@pytest.mark.parametrize("damage", ["missing", "size"])
+def test_a_copy_with_a_damaged_result_file_fails_verification(
+    folders: tuple[str, str, str, str], table: str, damage: str, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    app, source, target, store_id = folders
+    force(COPY, monkeypatch)
+    path = "root://aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/run"
+    with CacheStore(store_root(source)) as store:
+        file = store.write_result_file(os.urandom(5000))
+        saved = store.save_result(path, "k1", "f1", {}, file, store.start_result_job(path), analysis_id="a",
+                                  action="Plot", computed_at=1.0, budget=0 if table == "pending_results" else None)
+        assert saved.saved == (table == "results") and bool(saved.pending_id) == (table == "pending_results")
+    assert cache_move.verify(source, store_id) == ""
+    copy_tree = cache_move._copy_tree
+
+    def damaged(*args: Any) -> None:
+        copy_tree(*args)
+        victim = os.path.join(store_root(args[1]), *file.split("/"))  # The copy's result file.
+        if damage == "missing":
+            os.remove(victim)
+        else:
+            with open(victim, "r+b") as handle:
+                handle.truncate(10)
+    monkeypatch.setattr(cache_move, "_copy_tree", damaged)
+    record = cache_move.start(source, target, app, COPY)
+    problem = "a data file is missing from the copy" if damage == "missing" else "a copied data file has the wrong size"
+    with pytest.raises(MoveError, match=f"failed verification: {problem} \\({file}\\)"):
+        cache_move.move(record, app, no_progress, never)
+    assert cache_move.abort(app, cache_move.read_record(app) or record) == []
+    assert not os.path.exists(target) and cache_move.valid_at(source, store_id)
+
+
 def test_files_put_in_the_target_after_the_check_are_never_deleted(
     folders: tuple[str, str, str, str], monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -262,7 +295,7 @@ def test_recovery_never_trusts_a_folder_now_somewhere_unsafe(
     setting = Setting(source)
     cache_move.move(cache_move.start(source, target, app, COPY), app, no_progress, never)  # Verified.
     # Meanwhile the target became a link into a synced folder.
-    monkeypatch.setattr(cache_move, "cache_location_problem",
+    monkeypatch.setattr("helab.utils.cache_location.cache_location_problem",
                         lambda path: "in a synced folder (Dropbox)" if path == target else "")
     assert "kept using" in cache_move.recover(app, setting.read, setting.write)
     assert setting.value == source and cache_move.valid_at(source, store_id)  # The safe source survives.
@@ -439,7 +472,7 @@ def test_the_target_is_checked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) 
     assert "isn't empty" in cache_move.check_target(str(source), str(full))["problem"]
     synced = tmp_path / "Dropbox" / "caches"
     assert "in a synced folder (Dropbox)" in cache_move.check_target(str(source), str(synced))["problem"]
-    monkeypatch.setattr(cache_move, "cache_location_problem", lambda path: "on a network drive (smbfs)")
+    monkeypatch.setattr("helab.utils.cache_location.cache_location_problem", lambda path: "on a network drive (smbfs)")
     assert "on a network drive (smbfs)" in cache_move.check_target(str(source), str(tmp_path / "net"))["problem"]
     monkeypatch.undo()
     fine = cache_move.check_target(str(source), str(tmp_path / "new" / "caches"))

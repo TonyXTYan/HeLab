@@ -15,7 +15,7 @@ import pytest
 from PyQt6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
-from helab import io_helper
+from helab.io_ops.markers import create_root, remove_root
 from helab.utils import cache_paths, data_roots
 from helab.utils.cache_paths import Mount
 from helab.utils.cache_store import CacheStore
@@ -26,7 +26,7 @@ from helab.views.DataRootsTab import DELETE, NOT_MOUNTED_TOOLTIP, DataRootsTab
 
 pytestmark = pytest.mark.no_auto_data_root
 
-Events = list[dict[str, Any]]
+Events = list[Any]
 
 
 def options(tmp_path: Path) -> dict[str, Any]:
@@ -44,7 +44,7 @@ def share(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 
 def placed(share: Path, tmp_path: Path) -> str:
     events: Events = []
-    io_helper.create_root(str(share), options(tmp_path), events.append)
+    create_root(str(share), options(tmp_path), events.append)
     return str(next(event for event in events if event["kind"] == "root_created")["uuid"])
 
 
@@ -63,7 +63,7 @@ def test_deleting_removes_the_marker_and_forgets_its_locations_but_not_other_sha
         store.record_root("smb://other/data", identifier, "smb", "share", decision="confirmed")
         store.record_root("smb://host/share-2", str(uuid.uuid4()), "smb", "share-2", decision="confirmed")
     events: Events = []
-    io_helper.remove_root(str(share), options(tmp_path), identifier, "smb://host/share", events.append)
+    remove_root(str(share), options(tmp_path), identifier, "smb://host/share", events.append)
     assert not (share / ".helab-root").exists()
     removed = next(event for event in events if event["kind"] == "root_removed")
     assert sorted(removed["forgotten"]) == ["smb://host/share", "smb://host/share/run"]
@@ -91,7 +91,7 @@ def test_deleting_refuses_a_marker_that_is_not_the_rows(share: Path, tmp_path: P
         marker.unlink()
     with pytest.raises(ValueError, match={"replaced": "changed since", "invalid": "never deletes it",
                                           "directory": "isn't a file", "missing": "no .helab-root"}[change]):
-        io_helper.remove_root(str(share), options(tmp_path), identifier, "smb://host/share", lambda _: None)
+        remove_root(str(share), options(tmp_path), identifier, "smb://host/share", lambda _: None)
     assert marker.exists() == (change != "missing")
     assert locations(tmp_path) == {"smb://host/share": identifier}
 
@@ -102,7 +102,7 @@ def test_without_permission_the_file_stays_and_is_named(share: Path, tmp_path: P
     share.chmod(stat.S_IRUSR | stat.S_IXUSR)
     try:
         events: Events = []
-        io_helper.remove_root(str(share), options(tmp_path), identifier, "smb://host/share", events.append)
+        remove_root(str(share), options(tmp_path), identifier, "smb://host/share", events.append)
     finally:
         share.chmod(stat.S_IRWXU)
     refused = next(event for event in events if event["kind"] == "root_remove_refused")
@@ -143,7 +143,6 @@ def page(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
         admin.append((action, params))
         return f"job-{len(admin)}"
     monkeypatch.setattr(cache, "cache_admin", cache_admin)
-    monkeypatch.setattr(tab_module, "store_options", lambda: options(tmp_path))
     monkeypatch.setattr("helab.utils.folder_cache.store_options", lambda: options(tmp_path))
     settings = DataRootsTab(cache)
     qtbot.addWidget(settings)
@@ -169,7 +168,8 @@ def test_row_menu_and_delete_button_follow_whether_the_row_is_mounted(page: Data
     select(page, 0)
     items = menu_items(page)
     show = tab_module.show_label()
-    assert list(items) == [show, "Copy path", "Clear cached data…", "Forget location…", DELETE]
+    assert list(items) == [show, "Copy path", "Clear cached data…", "Clear cached analysis…", "Forget location…",
+                           DELETE]
     assert all(enabled for enabled, _ in items.values()) and "hidden" in items[show][1]
     assert page.delete_button.isEnabled() and page.forget_button.isEnabled()
     page.copy_selected()
@@ -260,3 +260,37 @@ def test_a_refused_delete_names_the_file(page: DataRootsTab) -> None:
     assert alerts == [f"HeLab can't delete {marker} (Permission denied). Delete it by hand "
                       f"({tab_module.show_label()} finds it), then Refresh this list."]
     assert page.message == f"Could not delete {marker}" and not page._job
+
+
+def test_working_offline_show_and_delete_are_off_and_nothing_is_launched(
+        page: DataRootsTab, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Work Offline (cache-only browsing, D6): revealing the marker would start a file manager on the
+    share, and deleting it writes there."""
+    from helab.utils import folder_cache
+    from helab.utils.folder_cache import OFFLINE_TOOLTIP
+    launched: list[str] = []
+
+    def launch(program: str, arguments: list[str]) -> bool:
+        launched.append(program)
+        return True
+
+    def open_folder(folder: str) -> bool:
+        launched.append(folder)
+        return True
+    page.launch, page.open_folder = launch, open_folder
+    select(page, 0)
+    assert page.cache is not None
+    try:
+        page.cache.set_offline(True)
+        assert not page.delete_button.isEnabled() and page.delete_button.toolTip() == OFFLINE_TOOLTIP
+        actions = {action.text(): action for action in page.context_menu().actions()}
+        assert not actions[tab_module.show_label()].isEnabled() and not actions[tab_module.DELETE].isEnabled()
+        assert actions[tab_module.show_label()].toolTip() == OFFLINE_TOOLTIP
+        assert not page.show_selected() and not launched
+        page.delete_selected()  # Asks nothing and writes nothing.
+        assert not page._remove_job
+        page.cache.set_offline(False)
+        assert page.delete_button.isEnabled()
+        assert {action.text(): action for action in page.context_menu().actions()}[tab_module.show_label()].isEnabled()
+    finally:
+        folder_cache._offline = False

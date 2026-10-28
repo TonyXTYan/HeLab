@@ -97,6 +97,8 @@ jobs:
     with:
       os: ${{ matrix.os }}
       python-minor: '13'
+      # Only the release job downloads the builds; other runs just check they build.
+      upload: ${{ needs.get-version.outputs.should_release == 'true' }}
       build-sha: ${{ needs.get-version.outputs.build_sha }}
       build-ref: ${{ needs.get-version.outputs.build_ref }}
       build-branch: ${{ needs.get-version.outputs.build_branch }}

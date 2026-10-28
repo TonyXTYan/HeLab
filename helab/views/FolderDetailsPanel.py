@@ -12,15 +12,16 @@ from PyQt6.QtGui import QColor, QFont, QHideEvent, QMouseEvent, QPainter, QPaint
 from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QProgressBar, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from helab.models.StatusReport import StatusReport
-from helab.utils.folder_cache import data_root_row
+from helab.utils.folder_cache import analysis_cached_text, data_root_row
 from helab.utils.number_format import fnum
 from helab.utils.io_service import IOService
 from helab.utils.time_format import clock as stopwatch, relative_age
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderExplorer import (
-    AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, LOAD_ORIGINS, REFUSED_TOOLTIP,
-    LOAD_SPINNER, FolderExplorer, large_text,
+    AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP,
+    LOAD_SPINNER, FolderExplorer, load_origin,
 )
+from helab.views.explorer_text import large_text
 
 
 # Marks the large-folder part of a state row, which is then amber.
@@ -274,9 +275,20 @@ class FolderDetailsPanel(QScrollArea):
             rows["state"] = (f"{rows['state'][0]} · {LARGE_MARK}{large_text(*large)}"
                              + ("" if large[1] else " · Load anyway…"),
                              REFUSED_TOOLTIP if large[1] else LARGE_TOOLTIP)
+        if reread := explorer.live_reread_note(path):
+            # Live read shots again that changed after it read them (for a minute).
+            state, tip = rows.get("state", ("", ""))
+            rows["state"] = (f"{state} · {reread}" if state else reread, "\n".join(filter(None, (
+                tip, f"{reread}: their writer was likely paused longer than the settle age, so Live read "
+                     "them unfinished. The log names each one's old and new size and mtime."))))
         cache = explorer.model.cache
         # Which .helab-root the folder uses, or RAM only (the tab's own folder when none is selected).
         rows["cache"] = data_root_row(cache, path)
+        if (analysis := analysis_cached_text(cache, path)) and rows["cache"][0]:
+            # Saved analysis results that reuse will use, as the row's REPORT badge says.
+            text, tooltip = rows["cache"]
+            rows["cache"] = (f"{text} · {analysis}", f"{tooltip}\n\n{analysis}: plots of this folder with the "
+                                                     "same data and settings show them without computing again.")
         if path in cache.pending_saves and (waiting := cache.cache_status(path).error):
             # A save held for the user's answer (Make room / Save update); one question at a time.
             rows["cache"] = (waiting, "The disk cache asks before this save: Make room or Save update, or don't "
@@ -367,7 +379,7 @@ class FolderDetailsPanel(QScrollArea):
                     "Load time: running time, without queued or paused time" if took is not None else "",
                     "The folder was not modified since the disk cache; nothing was read"
                     if meta.get("unchanged") else ""))))
-        origin = LOAD_ORIGINS.get(explorer.load_source) if opened else None
+        origin = load_origin(explorer.load_source, explorer.load_counts) if opened else None
         if origin:
             rows["source"] = (origin, "\n".join(filter(None, (
                 explorer.load_cache_reason, " · ".join(explorer.load_count_details), explorer.load_cache_warning))))
