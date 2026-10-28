@@ -37,4 +37,4 @@ number.
 | 2 | 2026-10-28 | Side (claude) + 3 subagents, Ground | audit of agents, roles, docs and logs (`…/audit.md`) | dev/v0.0.6 | old letters J–Q → Q2.1–Q2.8, 9–13 → A2.1–A2.5 |
 | 3 | 2026-10-28 | Side (claude) + subagent, Ground | instructions audit (`…/instructions-audit.md`) | dev/v0.0.6 | old letters R–W → Q3.1–Q3.6, 14–16 → A3.1–A3.3 |
 | 4 | 2026-10-28 | Side (claude), Ground | the ID scheme itself (Tony in Chat) | dev/v0.0.6 | Q4.1 |
-| 5 | 2026-10-28 | Side (claude), Ground | automating the smoke pass with computer use (`sessions/2026-10-28-claude-smoke-automation/plan.md`) | dev/v0.0.6 | A5.1, Q5.1 |
+| 5 | 2026-10-28 | Side (claude), Ground | automating the smoke pass with computer use (`sessions/2026-10-28-claude-smoke-automation/plan.md`) | dev/v0.0.6 | A5.1, Q5.1, Q5.2 |

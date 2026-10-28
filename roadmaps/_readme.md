@@ -40,6 +40,11 @@ still to choose (Tony, with the coordinator's proposal).
   `v0.0.5a1` draft stays unpublished. Then comes the version bump, the PR to `main` and
   publishing the draft.
 
+- [ ] Unsupervised smoke runs: menu-bar actions, an in-app save-screenshot command,
+  accessibility labels, a debug/smoke menu, then a `--smoke` control channel (design first),
+  so a model drives M1.1–M1.8 without taking the cursor. Approved by Tony 2026-10-28 (Q5.2)
+  ([plan](smoke-automation.md)) (2026-10-28).
+
 - [ ] Release repos: develop and release on `TonyXTYan/HeLab`; fast-forward
   `HeBECANU/HeLab` `main` only for lab-ready versions, which drafts the same
   release there; stop pushing dev branches to `HeBECANU`. Confirmed by Tony

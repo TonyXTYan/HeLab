@@ -62,12 +62,15 @@ look over. M1.3 is the one that needs timing (a run acquiring).
 ```text
 MACHINE        = <name>, <macOS or Windows version>
 HELAB_COMMIT   = <git log -1 --format=%h on that machine>
-START_COMMAND  = <e.g. ~/HeLab/venv/bin/helab  or  C:\...\venv\Scripts\helab.exe>
+START_COMMAND  = <macOS: open -n <checkout>/dist/HeLab.app (the built app: a source run has no
+                  bundle ID and can't be driven, and quit any other HeLab first, since they
+                  share the bundle ID); Windows: C:\...\venv\Scripts\helab.exe>
 SHARE_PATH     = <e.g. /Volumes/dld_output  or  Z:\>
 DATA_ROOT      = <a folder at or below a .helab-root, e.g. /Volumes/dld_output/2026>
 CACHED_FOLDER  = <a run folder below DATA_ROOT, moderate size (< 2 GB of TXY)>
 OTHER_FOLDER   = <another run folder below DATA_ROOT>
-PHYSICS_FOLDER = <a BEC or thermal run, for M1.7>
+PHYSICS_FOLDER = <a BEC or thermal run, for M1.7; about 500 shots or fewer: a 1,007-shot
+                  folder (22.5 M rows) took 7 min to load and 15.5 min for Release time>
 RAM_ONLY_FOLDER= <a folder with no .helab-root above it, or "none">
 ACQUIRING      = <yes: the folder being written now | no>
 RECORD_TRACE   = <yes | no>  (Help › Record I/O trace for the whole run)
@@ -84,8 +87,9 @@ instead), `SKIP` (with the reason) or `REVIEW` (the screenshot is for Tony).
    titled HeLab with a folder tree on the left. **Shot:** M1.1-1.
 2. **Do:** if RECORD_TRACE is yes: Help › Record I/O trace (this session). **See:** a status-bar
    note that the trace is recording.
-3. **Do:** Help › About HeLab. **See:** the version `0.0.5a1` (or the release version once it's
-   bumped) and a commit starting with HELAB_COMMIT. **Shot:** M1.1-3. Close the dialog.
+3. **Do:** About HeLab, in the HeLab menu on macOS (Help on Windows). **See:** the version
+   `0.0.5a1` (or the release version once it's bumped) and a commit starting with HELAB_COMMIT.
+   **Shot:** M1.1-3. Close the dialog. (HeLab reopens the last session: folder and plots.)
 4. **Do:** the Settings button (left toolbar) › the Cache tab. **See:** an inventory with rows
    and sizes, not an error. **Shot:** M1.1-4. Close Settings without changing anything.
 
@@ -117,14 +121,16 @@ If ACQUIRING is no: `SKIP` ("no run acquiring") and go to M1.4.
 
 ### M1.4 Presets and reopened plots
 1. **Do:** select CACHED_FOLDER. Open the T histogram from "DLD Front Panel Port" twice. In the
-   first plot's settings (the Settings panel at top right), change one number, e.g. its bins.
-   Then use its Presets row › Save as new preset… and name it `smoke`. **See:** the second
-   plot's Presets row lists `smoke`. **Shot:** M1.4-1.
-2. **Do:** in the second plot, apply `smoke`, then change one setting. **See:** a dot by that
-   setting and a button "Save 1 change ▾". **Shot:** M1.4-2.
+   first plot's settings (the Settings panel at top right), change one number, e.g. its bins
+   to 50 (Tab commits a value; Return alone doesn't). Then press the panel's **Save…** button
+   and name it `smoke`. **See:** the second plot's Preset row lists `smoke`. **Shot:** M1.4-1.
+2. **Do:** in the second plot, apply `smoke` (Apply button), then change one setting (e.g. tick
+   Log Y). **See:** a blue dot by that setting and a button "Save 1 change ▾". **Shot:** M1.4-2.
 3. **Do:** Presets menu › Save Folder and Plots as Preset…, named `smoke-arrangement`. Close one
-   plot. Then Presets menu › `smoke-arrangement` › Replace. **See:** both plots are back.
-   **Shot:** M1.4-3 (`REVIEW`: is the placement right?).
+   plot (the "x" on its dock title bar; the tab's "x" icon may not respond). Then Presets menu ›
+   `smoke-arrangement` (an item, not a submenu), and choose **Replace** in the dialog
+   (Replace / Cancel / Add). **See:** both plots are back. **Shot:** M1.4-3 (`REVIEW`: is the
+   placement right?).
 4. **Do:** quit HeLab with the plots open, then start it again. **See:** the plots come back,
    waiting for or showing CACHED_FOLDER's data. **Shot:** M1.4-4.
 
@@ -134,9 +140,11 @@ If ACQUIRING is no: `SKIP` ("no run acquiring") and go to M1.4.
    ends "saved in the disk cache". **Shot:** M1.5-1.
 2. **Do:** quit and start HeLab, select CACHED_FOLDER and open Release time again. **See:** it
    draws within a few seconds, and its source line says "from disk cache". **Shot:** M1.5-2.
-3. **Do:** Settings › Data roots, select DATA_ROOT's row, then Clear cached analysis… and confirm.
-   **See:** a confirmation dialog first; afterwards the row's Cached column still shows data.
-   **Shot:** M1.5-3. Close Settings.
+3. **Ask the supervisor first:** this clears every saved analysis result under DATA_ROOT,
+   including the machine's own from earlier work. **Do:** Settings › Data roots, select
+   DATA_ROOT's row (not another root), then Clear cached analysis… and confirm. **See:** a
+   confirmation dialog first ("Clears N saved results…"); afterwards the row's Cached column
+   still shows data. **Shot:** M1.5-3. Close Settings with Cancel.
 
 ### M1.6 Work Offline
 1. **Do:** File › Work Offline. **See:** "Offline · cached data only" in the status bar, and
@@ -154,7 +162,9 @@ If ACQUIRING is no: `SKIP` ("no run acquiring") and go to M1.4.
 1. **Do:** select PHYSICS_FOLDER. From "DLD Front Panel Port", open each plot in turn: T, X, Y
    histograms, Density images, Mean X, Y, T spectrum, Shot times, Shot trends, Release time,
    Velocity distributions, Correlations, Transfer fractions. Wait for each to draw (up to 3
-   minutes; Correlations may take longer). **See:** every plot draws, with no "failed" line.
+   minutes; Release time and Velocity distributions may take longer on a big folder, so allow
+   up to 20 minutes and start the next plot only after the previous one has drawn). **See:**
+   every plot draws, with no "failed" line (amber notes are fine; copy them into the results).
    **Shot:** M1.7-<plot> for each (`REVIEW`: ms/mm axis labels, wrapped titles, ħ, physics).
 2. **Do:** close the plots.
 
@@ -196,11 +206,21 @@ Trace folder: …
 - Waiting: take a screenshot every 10–20 s up to the stated limit. Don't click while waiting.
 - Keep `results.md` updated after each check, so an interrupted run keeps what it found.
 - Budget about 45–60 minutes per machine. M1.3 depends on the run.
+- Dropdowns (the script Group, preset popups): click an empty part of the script list, press
+  shift+Tab twice to focus the Group combo, then Down. Don't open the popup: while it is open
+  every click and key fails until a person clicks.
+- Quit: after File › Quit, check the process has gone before starting HeLab again; two instances
+  share one bundle ID. Cmd+Q needs the system-keys grant.
+- Screenshots: the background tools can't save files yet (see
+  [roadmap](../../../roadmaps/smoke-automation.md)); quote the seen text in `results.md`.
 
 ## Before the first real run
 
 1. A dry run on Tony's Mac, with a larger model watching, to fix wording in the runbook where
-   the screen differs (A5.1).
+   the screen differs (A5.1). First pass done 2026-10-28: results in
+   [smoke-mac/results.md](../2026-10-28-claude-smoke-mac/results.md); what blocked unsupervised
+   driving, ten build suggestions and the runbook fixes in
+   [smoke-mac/computer-use-notes.md](../2026-10-28-claude-smoke-mac/computer-use-notes.md).
 2. On a lab PC: check the computer-use tool can see and control a Qt window there (a scaled
    display, the black QtWebEngine pane), and that the small model reads Qt's text reliably at
    that resolution.

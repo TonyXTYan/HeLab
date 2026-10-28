@@ -31,6 +31,14 @@ How to use this list:
 
 ## Recently decided
 
+Tony's answers in Chat, 2026-10-28, after the first dry run of the smoke runbook (block 5):
+
+- **Q5.2 yes, all of it:** the build changes for unsupervised smoke runs become a roadmap item
+  ([plan](../roadmaps/smoke-automation.md)): menu-bar actions (Q5.2.1), the test control channel
+  (Q5.2.2, design first), an in-app save-screenshot command (Q5.2.3), the rest as they come
+  (Q5.2.4), plus his additions: Apple accessibility labels and a dedicated debug menu (shape is
+  Q5.2.5). The runbook fixes from the notes were applied.
+
 Tony's answers in Chat, 2026-10-28:
 
 - **Q1.1 yes:** the release gate is the smoke pass (M1.1–M1.8) on a Mac and a lab PC, plus CI
@@ -109,6 +117,9 @@ Finding numbers refer to the
   Proposed: Haiku 5.5. Use Sonnet 5.5 if Haiku misreads the screen in the dry run (A5.1).
   Also: which computer-use tool runs it on each machine (the Claude desktop app's computer use
   on the Mac; check a lab PC can run it)?
+- **Q5.2.5 Shape of the debug/smoke menu** (from Q5.2, answered in Recently decided): extend the
+  existing Debug menu, or a separate "Smoke" menu shown only with a flag? Proposed: a "Smoke"
+  menu behind `HELAB_SMOKE=1`, so release users never see it.
 
 ## After the release (not blocking)
 
