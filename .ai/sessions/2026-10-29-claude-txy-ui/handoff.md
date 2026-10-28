@@ -20,6 +20,15 @@ dates suggest for its folder (shown, never applied, Q6.10).
 skipped, no RERUN**; `mypy --strict` helab and tests and `pyright helab tests` clean on darwin, win32
 and linux.
 
+**CI** (run 40760983511 on `dd4a3e1`, after a fix of two of this floor's tests that keyed their folder
+without a drive letter on Windows): green on macOS, Windows and Ubuntu (3.13): Windows 8077 passed,
+694 skipped; macOS 8106 passed, 669 skipped, **2 RERUNs** of one known test,
+`test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]` (rerun
+reason: `'Cached data loaded · Cached just now · Freshness unknown'` instead of `'… Cached just now'`,
+`test_folder_summary.py:414`; already in `roadmaps/known-issues.md`); Ubuntu 8104 passed, 671 skipped.
+The earlier run 40756198403 (before the merge) failed on Windows: those two tests, and helab-core's
+convert typing and convert tests, fixed by the merge.
+
 **Checks before that** (at `e4f52e3`): `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
 **8103 passed, 669 skipped, no RERUN** (the skips are the compiled/MLX backends' tests, as on Ground).
 `mypy --strict` helab and tests and `pyright helab tests` clean for darwin and linux; for win32 /
