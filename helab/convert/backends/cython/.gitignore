@@ -1,0 +1,4 @@
+# The compiled kernel (python native/cython/build.py); never committed.
+_kernel*.so
+_kernel*.pyd
+_kernel*.dylib
