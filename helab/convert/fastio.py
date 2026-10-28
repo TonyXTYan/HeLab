@@ -126,7 +126,7 @@ def _fields(values: Floats) -> npt.NDArray[np.uint8]:
 
 
 def _format_rows(hits: Hits) -> bytes:
-    text = (("%.8g,%.8g,%.8g\n" * hits.shape[0]) % tuple(hits.ravel().tolist())).encode("ascii")
+    text: bytes = (("%.8g,%.8g,%.8g\n" * hits.shape[0]) % tuple(hits.ravel().tolist())).encode("ascii")
     if not bool(np.isfinite(hits).all()):
         text = text.replace(b"nan", b"NaN").replace(b"inf", b"Inf")
     return text
