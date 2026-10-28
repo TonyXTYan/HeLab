@@ -204,3 +204,9 @@ Each entry: time, question, decision, why, how to reverse.
   Ground suite: 6089 passed, 153 skipped (the Cython tests skip on Ground: extension not built,
   by design), no RERUN; types clean. Not pushed (end of stage 2). Next: MLX (cleared by Osprey),
   then Numba, Rust and NumPy as their reviews clear.
+- 03:41, **MLX landed:** `agent/txy-mlx` merged into `dev/v0.0.7` as `32158c2` (floor kept). Ground
+  suite: 6198 passed, 262 skipped (Cython and the MLX GPU tests skip on Ground: not built or
+  not installed, by design), no RERUN; types clean. Backends now: reference, cython, mlx. Numba
+  and Rust cleared, merging `dev/v0.0.7`; NumPy fixing Merlin's minor items (CoCo's call: the
+  shared TXY formatter refuses non-float64 hits with ValueError, since its fast path reinterprets
+  bits).
