@@ -11,9 +11,10 @@ run in parallel. ``reconstruct_numba_pieces`` cuts one shot into pieces at gaps 
 match window and matches them serially, in a thread pool or with numba's ``prange``, for the
 within-shot measurements; the registered backend runs the whole shot as one piece.
 
-``cache=True``: the compiled code is saved beside the kernels (``__pycache__``), or, in a frozen
-app, in numba's user-wide cache folder (``NUMBA_CACHE_DIR`` when set); the first call in a fresh
-process without that cache compiles (about a second; ``results.md`` in the floor's session folder).
+The compiled code is cached on disk: in the folder given to ``set_cache_folder`` before the
+backend's first use (HeLab's helper passes one under ``cache_dir()``; this package stays free of
+``helab.utils``), else where numba chooses. Without a usable cache the first call in a process
+compiles (about 1.5 s); with it, it loads (about 0.1 s).
 
 Qt-free; NumPy, and numba when installed.
 """
@@ -22,6 +23,8 @@ from __future__ import annotations
 from concurrent.futures import Executor
 import functools
 import importlib
+from pathlib import Path
+import threading
 from types import ModuleType
 from typing import Literal
 
@@ -31,10 +34,37 @@ import numpy.typing as npt
 from helab.convert.backends.reference import offsets
 from helab.convert.profile import DetectorProfile
 from helab.convert.raw import RawPulses
-from helab.convert.reconstruct import Backend, Hits, NoRowsError, register_backend
+from helab.convert.reconstruct import Backend, BackendError, Hits, NoRowsError, register_backend
 
 NAME = "numba"
+KERNELS = "helab.convert.backends.numba_kernels"
 Within = Literal["serial", "threads", "prange"]
+
+_cache_lock = threading.Lock()
+_cache_folder: Path | None = None
+_cache_folder_taken = False
+
+
+def set_cache_folder(folder: Path | str | None) -> None:
+    """Cache the compiled kernels in ``folder`` (created when missing), or, with None, where numba
+    chooses. Call it before the backend's first use in the process: the kernels take it when they
+    are first imported, and asking for another folder after that raises ``BackendError``."""
+    global _cache_folder
+    chosen = None if folder is None else Path(folder)
+    with _cache_lock:
+        if _cache_folder_taken and chosen != _cache_folder:
+            where = "numba's own folder" if _cache_folder is None else str(_cache_folder)
+            raise BackendError(f"The numba kernels already cache in {where}; set the cache folder before the "
+                               "backend's first use")
+        _cache_folder = chosen
+
+
+def take_cache_folder() -> Path | None:
+    """The folder ``set_cache_folder`` gave, fixed from now on (``numba_kernels`` calls this as it loads)."""
+    global _cache_folder_taken
+    with _cache_lock:
+        _cache_folder_taken = True
+        return _cache_folder
 
 
 @functools.cache
@@ -48,7 +78,9 @@ def import_problem() -> str | None:
 
 
 def _kernels() -> ModuleType:
-    return importlib.import_module("helab.convert.backends.numba_kernels")
+    # importlib, not sys.modules: another thread may still be executing the module (the import
+    # lock makes this one wait for it).
+    return importlib.import_module(KERNELS)
 
 
 def unavailable(profile: DetectorProfile | None) -> str | None:

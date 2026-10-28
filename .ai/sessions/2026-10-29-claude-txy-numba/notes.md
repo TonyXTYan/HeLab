@@ -117,9 +117,9 @@ both. Staleness is safe: the index is stamped with the SHA-256 of the source fil
 function's bytecode hash and the CPU name and features, so a changed kernel or another CPU model
 recompiles.
 
-**Gitignore:** the repo's `.gitignore` has `*.pyc` but not `*.nbi`/`*.nbc`, so these files show
-as untracked in `helab/convert/backends/__pycache__/`. Not mine to change (proposed in the
-handoff).
+**Gitignore:** the repo's `.gitignore` had `*.pyc` but not `*.nbi`/`*.nbc`, so these files
+showed as untracked in `helab/convert/backends/__pycache__/`; added on this branch at CoCo's
+request.
 
 **Frozen (PyInstaller), measured on a scratch onedir build** (`.ai/temp/pyi-numba/probe.spec`, a
 probe that converts one file and reports numba's cache locator):
@@ -144,11 +144,22 @@ probe that converts one file and reports numba's cache locator):
   `cache=False` (`numba_kernels.cached = False`): measured frozen, it converts correctly and
   compiles every run (1.1 s).
 
-Options for stage 4 (in the handoff): accept numba's user-wide folder; or, frozen, give the
-kernels an absolute `co_filename` under HeLab's own cache folder (ship the source there or point
-`NUMBA_CACHE_DIR` at it with the file present) so the cache lives with HeLab's and is removed
-with it; or warm up once at startup in a helper. AOT (`numba.pycc`) is pending deprecation since
-numba 0.57 and still present in 0.68 with a warning; not recommended.
+**The seam (Side's decision: the cache goes under HeLab's `cache_dir()`).**
+`numba_backend.set_cache_folder(folder)` records the folder; `numba_kernels` takes it once as it
+first loads (`take_cache_folder`, under a lock; another folder after that raises `BackendError`)
+and, when one is given, puts a locator of its own first in numba's `CacheImpl._locator_classes`.
+It answers only for `numba_kernels`' functions (any other numba code in the process keeps numba's
+choice), writes straight into the folder, and keeps numba's stamp (`_SourceFileBackedLocatorMixin`:
+the SHA-256 of the source file, of the executable when frozen) and line-number disambiguator. When
+the folder can't be created or written it raises, which `_compile` turns into `cache=False`: never
+a silent fallback to numba's own folders. It uses two numba-private names
+(`_SourceFileBackedLocatorMixin`, `_CacheLocator`, plus the `_locator_classes` list), so a numba
+upgrade must keep `tests/test_convert_backend_numba.py`'s cache tests passing. Measured frozen,
+launched from a neutral folder: all eight cache files in the given folder, none in numba's;
+compile 1.3 s, then 0.07 s loads; identical bytes. A source checkout and the app sharing one
+folder overwrite each other's index (different stamps; from numba's `_load_index`, not measured), so each recompiles once after the other
+ran. AOT (`numba.pycc`) is pending deprecation since numba 0.57 (present in 0.68 with a warning):
+not used.
 
 **Coverage in CI:** there is no AOT step and nothing CI must build: the JIT runs wherever numba is
 installed. CI doesn't install numba (it isn't in the lock), so CI runs only the without-numba

@@ -105,6 +105,54 @@ print("ok")
     assert done.returncode == 0 and done.stdout.strip() == "ok", done.stderr
 
 
+CACHE_SCRIPT = """
+import sys
+from pathlib import Path
+from helab.convert.backends import numba_backend
+from helab.convert.profile import MATLAB_2019
+from helab.convert.raw import parse_raw
+from helab.convert.reconstruct import BackendError, reconstruct
+folder = Path(sys.argv[1])
+numba_backend.set_cache_folder(folder)
+data = b"5,1000\\r\\n0,10000\\r\\n1,10400\\r\\n2,10100\\r\\n3,10300\\r\\n"
+assert (reconstruct(parse_raw(data), MATLAB_2019, "numba") == reconstruct(parse_raw(data), MATLAB_2019)).all()
+from helab.convert.backends import numba_kernels
+numba_backend.set_cache_folder(folder)  # the same folder again is fine
+try:
+    numba_backend.set_cache_folder(folder / "other")
+except BackendError:
+    pass
+else:
+    raise AssertionError("another folder after first use")
+stats = numba_kernels.convert.stats
+print(numba_kernels.cached, sum(stats.cache_hits.values()), sum(stats.cache_misses.values()))
+"""
+
+
+def _run_cache_script(folder: Path) -> list[str]:
+    env = {name: value for name, value in os.environ.items() if name != "NUMBA_CACHE_DIR"}
+    done = subprocess.run([sys.executable, "-c", CACHE_SCRIPT, str(folder)], capture_output=True, text=True,
+                          timeout=300, env=env, cwd=ROOT)
+    assert done.returncode == 0, done.stderr
+    return done.stdout.split()
+
+
+@needs_numba
+def test_the_compiled_code_is_cached_in_the_folder_the_caller_sets(tmp_path: Path) -> None:
+    folder = tmp_path / "caches" / "numba"
+    assert _run_cache_script(folder) == ["True", "0", "1"]  # compiled, then saved there
+    assert {path.suffix for path in folder.iterdir()} == {".nbi", ".nbc"}
+    assert any(path.name.startswith("numba_kernels.convert-") for path in folder.iterdir())
+    assert _run_cache_script(folder) == ["True", "1", "0"]  # loaded from there by a new process
+
+
+@needs_numba
+def test_an_unwritable_cache_folder_compiles_without_a_cache(tmp_path: Path) -> None:
+    (tmp_path / "a-file").write_text("")
+    # Not numba's own folders either: no cache at all, and the output is still the reference's.
+    assert _run_cache_script(tmp_path / "a-file" / "numba") == ["False", "0", "1"]
+
+
 @needs_numba
 def test_many_threads_first_using_the_backend_at_once_all_get_the_reference(tmp_path: Path) -> None:
     # A fresh process and an empty cache folder: 24 threads race through the lazy import of numba

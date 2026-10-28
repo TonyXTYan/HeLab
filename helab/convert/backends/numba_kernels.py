@@ -26,25 +26,72 @@ output:
 ``workqueue`` on macOS) must not be entered from two Python threads at once; the registered
 backend runs one piece, serially, and leaves threads to the caller.
 
+The compiled code is cached (``cache=True``) in the folder ``numba_backend.set_cache_folder``
+gave before this module was imported (HeLab: under ``cache_dir()``), by a locator of ours put first
+in numba's list and answering only for this module's functions: numba's own ``NUMBA_CACHE_DIR``
+needs the source file to exist, which a frozen app's relative ``co_filename`` doesn't, so frozen
+it would fall back to its user-wide folder named from the launch folder. Ours keeps numba's stamp
+(the SHA-256 of this file, or of the executable when frozen). With no folder given, numba chooses
+(beside this file, else its user-wide folder). When the folder can't be written, the kernels
+compile without a cache in every process (``cached`` False) rather than fail.
+
 Qt-free; NumPy and numba only.
 """
 from __future__ import annotations
 
 import importlib
 import math
+from pathlib import Path
 from typing import Any, Callable, TypeVar, cast
 
 import numpy as np
 import numpy.typing as npt
 
+from helab.convert.backends import numba_backend
+
 _numba: Any = importlib.import_module("numba")
+_caching: Any = importlib.import_module("numba.core.caching")
 prange: Any = _numba.prange
 
 Floats = npt.NDArray[np.float64]
 Ints = npt.NDArray[np.int64]
 F = TypeVar("F", bound=Callable[..., Any])
+# The folder the compiled code is cached in (None: numba's choice), fixed at this import.
+CACHE_FOLDER: Path | None = numba_backend.take_cache_folder()
 # False when numba had nowhere to write its cache and the kernels compile in every process.
 cached = True
+
+
+def _locator_init(self: Any, py_func: Any, py_file: str) -> None:
+    self._py_file = py_file
+    self._lineno = py_func.__code__.co_firstlineno
+    self._cache_path = str(CACHE_FOLDER)
+
+
+def _locator_cache_path(self: Any) -> str:
+    path: str = self._cache_path
+    return path
+
+
+def _locator_from_function(cls: Any, py_func: Any, py_file: str) -> Any:
+    if CACHE_FOLDER is None or getattr(py_func, "__module__", None) != __name__:
+        return None
+    locator = cls(py_func, py_file)
+    try:
+        locator.ensure_cache_path()
+    except OSError as error:
+        # Not None: numba would try its other folders. _compile compiles without a cache instead.
+        raise RuntimeError(f"Can't write the numba cache folder {CACHE_FOLDER}: {error}") from error
+    return locator
+
+
+# numba's _SourceFileBackedLocatorMixin gives the stamp (the file's SHA-256; the executable's when
+# frozen) and the line number as disambiguator; the folder is ours.
+_FolderLocator: Any = type("_FolderLocator", (_caching._SourceFileBackedLocatorMixin, _caching._CacheLocator), {
+    "__init__": _locator_init, "get_cache_path": _locator_cache_path,
+    "from_function": classmethod(_locator_from_function)})
+if CACHE_FOLDER is not None:
+    _caching.CacheImpl._locator_classes.insert(0, _FolderLocator)
 
 
 def _compile(function: F, parallel: bool) -> F:
@@ -52,8 +99,8 @@ def _compile(function: F, parallel: bool) -> F:
     try:
         return cast(F, _numba.njit(cache=True, nogil=True, parallel=parallel)(function))
     except RuntimeError:
-        # numba found no folder it can write its cache to (a read-only checkout and user cache
-        # folder): compile in every process instead (about 1.5 s on the first call) rather than fail.
+        # No folder numba can write its cache to (the one given, or a read-only checkout and user
+        # cache folder): compile in every process instead (about 1.5 s on the first call).
         cached = False
         return cast(F, _numba.njit(nogil=True, parallel=parallel)(function))
 
