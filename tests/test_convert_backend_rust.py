@@ -9,11 +9,14 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 import json
+import logging
 import math
 from pathlib import Path
 import random
 import threading
 import time
+import types
+from typing import cast
 
 import numpy as np
 import pytest
@@ -68,6 +71,50 @@ def test_without_the_compiled_module_the_backend_says_why_and_wont_run(monkeypat
     assert "reference" in available_backends(MATLAB_2019)
     with pytest.raises(BackendError, match="can't run"):
         reconstruct(parse_raw(b"5,1000\r\n"), MATLAB_2019, "rust")
+
+
+@pytest.mark.parametrize("error", [OSError("dlopen: wrong architecture"), RuntimeError("init failed"),
+                                   AttributeError("no PyInit"), ValueError("numpy ABI")])
+def test_any_error_loading_the_module_makes_the_backend_unavailable_and_is_logged(
+        monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture, error: Exception) -> None:
+    def broken() -> rust.Native:
+        raise error
+
+    monkeypatch.setattr(rust, "_native", None)
+    monkeypatch.setattr(rust, "_missing", None)
+    monkeypatch.setattr(rust, "_import_native", broken)
+    with caplog.at_level(logging.WARNING, logger=rust.__name__):
+        reason = get_backend("rust").unavailable(MATLAB_2019)
+        assert "rust" not in available_backends(MATLAB_2019)
+    assert reason is not None and type(error).__name__ in reason and str(error) in reason
+    assert any(str(error) in record.getMessage() for record in caplog.records)
+    with pytest.raises(BackendError, match="can't run"):
+        reconstruct(parse_raw(b"5,1000\r\n"), MATLAB_2019, "rust")
+
+
+def test_a_module_lacking_a_function_is_out_of_date(monkeypatch: pytest.MonkeyPatch) -> None:
+    def old() -> rust.Native:
+        return cast(rust.Native, types.SimpleNamespace(__version__="0.0.1", reconstruct=print))
+
+    monkeypatch.setattr(rust, "_native", None)
+    monkeypatch.setattr(rust, "_missing", None)
+    monkeypatch.setattr(rust, "_import_native", old)
+    reason = rust.unavailable(MATLAB_2019)
+    assert reason is not None and "out of date" in reason and "cut_points" in reason
+
+
+@needs_rust
+def test_absurd_threads_and_piece_sizes_are_clamped_or_refused_not_fatal() -> None:
+    pulses = parse_raw((CASES / "phantom_multi" / "d1.txt").read_bytes())
+    expected = reconstruct_reference(pulses, MATLAB_2019)
+    for threads, piece_rows in ((2 ** 62, 0), (2 ** 63, 1), (2 ** 64 - 1, 2 ** 64 - 1), (1, 2 ** 63)):
+        assert same_hits(rust.reconstruct_rust(pulses, MATLAB_2019, threads, piece_rows)[0], expected)
+    for threads, piece_rows in ((2 ** 64, 0), (-1, 0), (1, -1)):
+        with pytest.raises(OverflowError):
+            rust.reconstruct_rust(pulses, MATLAB_2019, threads, piece_rows)
+    deep = MATLAB_2019.replace(search_depth=2 ** 40)  # past ±N it's the same search
+    assert same_hits(rust.reconstruct_rust(pulses, deep)[0], reconstruct_reference(pulses, MATLAB_2019.replace(
+        search_depth=2 * len(pulses) + 2)))
 
 
 @needs_rust

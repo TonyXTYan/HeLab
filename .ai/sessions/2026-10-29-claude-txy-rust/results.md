@@ -50,7 +50,7 @@ call). Logs: `.ai/temp/rust/timing2/` (gitignored).
 | 20 | First call, fresh interpreter: import `helab.convert.backends.rust` (pulls helab.convert, NumPy) / import `helab_convert_rs` / first call / second call | 33 ms / 0.7 ms / 0.11 ms / 0.007 ms (no JIT) | – | 12.6 |
 | 21 | Rust raw parser `parse_strict` (report only) vs Python `parse_raw`, in memory | **1,910 MB/s** vs 69 MB/s; 309 of 309 files strict, identical arrays | – | 12.6 |
 | 22 | Rust TXY formatter `format_txy` (report only) vs Python, in memory | **596 MB/s** vs 184 MB/s (raw MB/s; 51.9 MB of TXY), identical bytes | – | 12.6 |
-| 23 | Size added to a PyInstaller build | ≈ 0.44 MB: the abi3 `.so` (440,864 B; wheel 223,549 B); no other dependency (NumPy is already in). **Estimated from the wheel**, not a scratch build | – | – |
+| 23 | Size added to a PyInstaller build | ≈ 0.47 MB: the abi3 `.so` (474,128 B with `panic = "unwind"`, review round 1; 440,864 B before, wheel 223,549 B); no other dependency (NumPy is already in). **Estimated from the wheel**, not a scratch build | – | – |
 
 Notes on the rows:
 

@@ -2,7 +2,8 @@
 byte the same output.
 
 The compiled module ``helab_convert_rs`` is imported on first use; without it the backend stays
-registered and ``unavailable`` says why, so HeLab and the tests run without it. Build it into a
+registered and ``unavailable`` says why (any error while loading it counts, logged), so HeLab and
+the tests run without it. Build it into a
 venv with ``maturin develop --release`` in ``native/rust/``. It copies its inputs and releases the
 GIL while it works (``releases_gil``), so threads converting different shots run in parallel.
 
@@ -17,6 +18,7 @@ Qt-free; standard library and NumPy only (the compiled module needs NumPy too).
 from __future__ import annotations
 
 import importlib
+import logging
 import threading
 from typing import Protocol, cast
 
@@ -49,6 +51,8 @@ class Native(Protocol):
     def format_txy(self, hits: Floats) -> bytes: ...
 
 
+_FUNCTIONS = ("reconstruct", "cut_points", "parse_strict", "format_txy")
+_log = logging.getLogger(__name__)
 _native: Native | None = None
 _missing: str | None = None
 # Threads converting shots at once may be the first to ask: one imports, the others wait for it,
@@ -68,9 +72,18 @@ def native() -> Native | None:
             if _native is None and _missing is None:
                 try:
                     module = _import_native()
+                    lacking = [name for name in _FUNCTIONS if not callable(getattr(module, name, None))]
+                    if lacking:
+                        raise ImportError(f"{MODULE} {getattr(module, '__version__', '?')} lacks {', '.join(lacking)}")
                 except ImportError as error:
-                    _missing = (f"{MODULE} isn't installed ({error}); "
+                    _missing = (f"{MODULE} isn't installed or is out of date ({error}); "
                                 "build it with `maturin develop --release` in native/rust")
+                    _log.info("rust backend unavailable: %s", _missing)
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except BaseException as error:  # PyO3's PanicException derives from BaseException
+                    _missing = f"{MODULE} failed to load: {type(error).__name__}: {error}"
+                    _log.warning("rust backend unavailable: %s", _missing, exc_info=True)
                 else:
                     _native = module
     return _native

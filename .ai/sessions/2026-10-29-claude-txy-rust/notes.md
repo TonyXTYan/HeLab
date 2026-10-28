@@ -7,7 +7,7 @@ Handoff: [handoff.md](handoff.md).
 
 | Path | What |
 |---|---|
-| `native/rust/Cargo.toml`, `Cargo.lock` | the crate `helab-convert-rs` (lib `helab_convert_rs`, cdylib + rlib): `pyo3 0.30` (`abi3-py311`), `numpy 0.30`; release profile `lto = "fat"`, `codegen-units = 1`, `panic = "abort"`, `strip = true` |
+| `native/rust/Cargo.toml`, `Cargo.lock` | the crate `helab-convert-rs` (lib `helab_convert_rs`, cdylib + rlib): `pyo3 0.30` (`abi3-py311`), `numpy 0.30`; release profile `lto = "fat"`, `codegen-units = 1`, `panic = "unwind"` (review round 1), `strip = true` |
 | `native/rust/pyproject.toml` | maturin build backend (`maturin develop --release` / `maturin build --release`), `pyo3/extension-module` feature passed by maturin only, so `cargo test` links |
 | `native/rust/.gitignore` | `target/`, `*.so`, `*.pyd` |
 | `native/rust/src/reconstruct.rs` | the matching (no PyO3): `prepare` (sort, t_zero, dead time), `match_piece`, `cut_points`, `reconstruct` (pieces on `std::thread::scope` threads, phantom row, final sort); the module doc holds the split proof |
@@ -15,7 +15,7 @@ Handoff: [handoff.md](handoff.md).
 | `native/rust/src/lib.rs` | the PyO3 module: `reconstruct`, `cut_points`, `parse_strict`, `format_txy`, `__version__`; inputs copied under the GIL, work in `py.detach` (PyO3 0.30's name for `allow_threads`) |
 | `helab/convert/backends/rust.py` | the backend: typed `Native` Protocol over the lazily imported module (`_import_native`, the test seam; loaded once under a lock, so threads asking first all get it: tested with 32 threads on a slowed import, one import), `unavailable`, `reconstruct_rust(pulses, profile, threads, piece_rows)`, registers `rust` with `releases_gil=True` |
 | `helab/convert/reconstruct.py` | one `_MODULES` line (`"rust": "helab.convert.backends.rust"`); the dict is now one entry per line so the five floors' lines merge |
-| `tests/test_convert_backend_rust.py` | 197 tests; without the module 195 skip with "rust extension not built (stage 4 packaging): helab_convert_rs; …" and 2 run (registration, the unavailable path) |
+| `tests/test_convert_backend_rust.py` | 203 tests; without the module 196 skip with "rust extension not built (stage 4 packaging): helab_convert_rs; …" and 7 run (registration, the unavailable and broken-load paths) |
 | `compare_samples.py`, `bench_rust.py` (this folder) | the sample comparison and the extra timings |
 
 Build: `source venv/bin/activate && cd native/rust && maturin develop --release` (≈10 s warm, ≈1 min

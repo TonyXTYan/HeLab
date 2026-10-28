@@ -241,7 +241,7 @@ pub fn cut_points(t: &[f64], window: f64, piece_rows: usize) -> Vec<usize> {
         while k < n {
             if t[k - 1].is_finite() && t[k].is_finite() && t[k] - t[k - 1] > window {
                 bounds.push(k);
-                k += piece_rows;
+                k = k.saturating_add(piece_rows);
             } else {
                 k += 1;
             }
@@ -251,12 +251,15 @@ pub fn cut_points(t: &[f64], window: f64, piece_rows: usize) -> Vec<usize> {
     bounds
 }
 
+/// More threads than this are asked for as this many (and never more than there are pieces).
+pub const MAX_THREADS: usize = 256;
+
 /// A piece's bounds and its own channels.
 type Slice<'a> = (usize, usize, &'a mut [f64]);
 
 /// The hits, `n × 3` row-major (T s, X m, Y m), sorted by T; and the number of pieces matched.
-/// `threads` > 1 matches pieces on that many threads; `piece_rows` 0 with `threads` > 1 picks
-/// about four pieces per thread.
+/// `threads` > 1 matches pieces on that many threads (at most `MAX_THREADS`, and the piece
+/// count); `piece_rows` 0 with `threads` > 1 picks about four pieces per thread.
 pub fn reconstruct(channels: &[f64], times: &[f64], p: &Params, threads: usize, piece_rows: usize) -> (Vec<f64>, usize) {
     reconstruct_rows(file_rows(channels, times), p, threads, piece_rows)
 }
@@ -268,9 +271,10 @@ pub fn reconstruct_rows(rows: Vec<(f64, f64)>, p: &Params, threads: usize, piece
         return (Vec::new(), 0);
     }
     let Sorted { mut ch, t } = prepare(rows, p);
-    let search = offsets(p.search_depth);
-    let threads = threads.max(1);
-    let piece_rows = if piece_rows == 0 && threads > 1 { n.div_ceil(threads * 4) } else { piece_rows };
+    // Offsets past ±N never land on a row, so a deeper search than 2N + 2 is the same search.
+    let search = offsets(p.search_depth.min(n.saturating_mul(2).saturating_add(2)));
+    let threads = threads.clamp(1, MAX_THREADS);
+    let piece_rows = if piece_rows == 0 && threads > 1 { n.div_ceil(threads.saturating_mul(4)) } else { piece_rows };
     let bounds = cut_points(&t, p.search_window, piece_rows);
 
     // Each piece gets its own slice of ch: pieces never touch each other's rows.

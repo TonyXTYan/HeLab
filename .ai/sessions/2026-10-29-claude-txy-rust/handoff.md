@@ -11,7 +11,7 @@ every sample shot through `check_samples.py --backend rust` (303 identical + the
 exceptions, each proof held again), and all 309 shots under both built-ins in four variants
 (whole; cut at every allowed gap on 1 and 8 threads; automatic pieces on 8 threads), compared as
 array bytes against the reference. It releases the GIL, imports lazily, and HeLab and the tests
-run without it: 195 of its 197 tests skip with "rust extension not built (stage 4 packaging): helab_convert_rs; …".
+run without it: 196 of its 203 tests skip with "rust extension not built (stage 4 packaging): helab_convert_rs; …".
 
 Speed (machine busy, load ~8, four other backend floors running; see results.md):
 reconstruction **969 MB/s serial** (1.6 GB/s on large shots), about 75× the reference's 12.8 in
@@ -20,7 +20,7 @@ bound by the shared Python read (≈ 70 MB/s) and write (≈ 160 MB/s), not the 
 raw parser and formatter (report only) run at 1,910 and 596 MB/s: with fast I/O one core would
 reach ≈ 320 MB/s. Threads stay at ≈ 47 MB/s (Python I/O holds the GIL); splitting one shot gains
 ≤ 1.3×. No JIT: first call 0.1 ms after a 0.7 ms import. Adds ≈ 0.44 MB to a PyInstaller build
-(estimated from the wheel).
+(estimated from the wheel; 0.47 MB since `panic = "unwind"`).
 
 One speed-up beyond the port: raw rows are nearly in time order, so the stable sort starts with
 an insertion pass (budget 16 moves per row, then the stable merge sort; equal keys never swap, so
@@ -38,7 +38,8 @@ the order is the stable sort's either way): 31 → 5.5 ms on the 1.6 M-row shot.
 - `helab/convert/reconstruct.py`: the one `_MODULES` line. I wrote the dict one entry per line so
   each floor's line merges as its own hunk; a landing that meets another floor's one-line edit
   keeps every entry.
-- `tests/test_convert_backend_rust.py` (new).
+- `tests/test_convert_backend_rust.py` (new); `tests/test_headless_imports.py`: `backends.rust` added
+  to `PURE` (CoCo asked, review round 1).
 - This folder: brief, notes, results, handoff, `compare_samples.py`, `bench_rust.py`,
   `requirements-bench.txt`.
 
@@ -90,8 +91,8 @@ On the final build (load ≈ 12, four other floors running):
   needs `hiddenimports=[…, "helab_convert_rs"]`; the abi3 `.so`/`.pyd` is collected as a binary and
   must be signed with the app on macOS. maturin's wheel is a package (`helab_convert_rs/__init__.py`
 plus `helab_convert_rs.abi3.so`), so list `helab_convert_rs.helab_convert_rs` too if PyInstaller
-misses it. Size added: ≈ 0.44 MB (the `.so`, 440,864 B; wheel 223,549 B; estimated from the
-wheel, not a scratch build).
+misses it. Size added: ≈ 0.47 MB (the `.so`: 440,864 B with `panic = "abort"`, 474,128 B with `"unwind"`
+since review round 1; wheel 223,549 B before; estimated from the wheel, not a scratch build).
 - **Tests in CI**: they skip today (nothing builds the module). To run them, a job step
   `pip install maturin && maturin develop --release -m native/rust/Cargo.toml` (or install the
   built wheel) before pytest.
@@ -106,8 +107,6 @@ wheel, not a scratch build).
   trailing failed attempt is taken across pieces). A line that a stable sort may start with an
   insertion pass, since raw files are nearly in time order (≈ 1 move per row), as long as it hands
   over to a stable sort (equal keys never swapped).
-- `tests/test_headless_imports.py` `PURE`: add `"backends.rust"` to the `helab.convert` list (it
-  imports only the standard library, NumPy and the compiled module).
 - AGENTS.md code map row for `helab/convert/`: mention `native/rust/` (or a `native/` row once
   other floors add theirs).
 
@@ -130,3 +129,18 @@ wheel, not a scratch build).
 ## RERUNs
 
 None: no test needed a rerun in any run on this floor (two full suites, 6275 and 6276 passed).
+
+## Review round 1 (Shrike: no blocker; CoCo; MLX review's pyright check)
+
+| Item | Fix |
+|---|---|
+| Shrike 1: `panic = "abort"` and an unchecked `threads * 4`: `threads=2**62` killed the process | `panic = "unwind"` (a panic is a PyO3 `PanicException`, never a dead helper); `threads` clamped to `MAX_THREADS` (256) and the piece count, `saturating_mul`/`saturating_add` in the piece arithmetic; the search depth capped at 2N + 2 (offsets past ±N never land on a row, so the output is the same). Test: `threads` 2^62, 2^63, 2^64 − 1 and `piece_rows` 2^63 give the reference's hits; 2^64 and negative raise `OverflowError`; `search_depth` 2^40 equals the reference at 2N + 2. |
+| Shrike 2: only `ImportError` caught while loading | Any error while loading (BaseException except KeyboardInterrupt/SystemExit, since PyO3's `PanicException` is a BaseException) makes the backend unavailable with the reason and is logged (warning; info for not built); a module lacking one of its functions is "out of date". Never propagates out of `unavailable()`/`available_backends()`. Tests: OSError, RuntimeError, AttributeError, ValueError while loading; an old module. |
+| CoCo: PURE | `backends.rust` in `tests/test_headless_imports.py` `PURE`. |
+| MLX review: pyright where the extension isn't installed | `pyright helab tests` with a temporary config (`.ai/temp/pyright-ground/`) on Ground's venv (no `helab_convert_rs`) and the floor as execution root: **0 errors**; a control file importing `helab_convert_rs` statically fails there with reportMissingImports, so the check bites. The backend imports the extension only through `importlib`, so no stub is needed. |
+
+Checks after round 1 (load 18–32): full suite **6282 passed, 4 skipped, no RERUN**; `mypy helab/
+--strict`, `mypy tests --strict`, `pyright helab tests` clean, and pyright on Ground's venv clean;
+`cargo test` 5 passed, clippy no warnings; `check_samples.py --backend rust` 303 + 6 listed, differ
+0; `compare_samples.py` 309 × 4 × 2 profiles, 0 differ. `panic = "unwind"` costs nothing measurable:
+serial reconstruct alone 1,074 MB/s (1,885 large) at load 32, against 1,105 (1,902) at load 13.
