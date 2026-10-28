@@ -7,6 +7,7 @@ Helpers run in-process, as in ``test_live``: each queued request gets the real h
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import time
@@ -142,7 +143,7 @@ def test_a_raw_file_arriving_during_live_is_converted_once_written_not_before(
     # The folder's first conversion this session only records (``seen`` is []).
     request, sent = cycle(qtbot, explorer, path, tmp_path)
     assert request.payload["seen"] == [] and request.payload["path"] == path and not of(sent, "shot_converted")
-    assert request.payload["profile"] == MATLAB_2019.to_dict() and request.payload["output"] == "cache"
+    assert request.payload["profile"] == MATLAB_2019.to_dict() and request.payload["destination"] == "cache"
 
     # Shot 1 arrives whole; shot 2 is still being written (no final newline yet).
     whole = raw_bytes(10_000, 20_000)
@@ -380,6 +381,36 @@ def test_a_converted_shot_reaches_the_live_data(qtbot: QtBot, service: IOService
         explorer.close_cleanup()
 
 
+@pytest.mark.xfail(strict=True, reason="helab-core's request field 'output' is overwritten by IOService (each "
+                                       "helper's private folder); Keel renames it 'destination' on "
+                                       "agent/txy-helab-core: remove this mark once that is merged")
+def test_a_conversion_the_app_asks_for_runs_in_a_helper_process(qtbot: QtBot, tmp_path: Path) -> None:
+    """Through the app's own IOService and a real helper process, as Live asks for it: the payload
+    survives what the service adds to it (each helper's private folder is its ``output``)."""
+    folder = tmp_path / "run"
+    folder.mkdir()
+    write_raw(folder, 1, raw_bytes(10_000, 20_000))
+    real = IOService()
+    cache = folder_cache.get_folder_cache(real)
+    got: list[tuple[str, dict[str, Any]]] = []
+    cache.resultReady.connect(lambda request, event: got.append((request.owner, event)))
+    try:
+        for owner in ("first", "second"):  # The first only records; the second converts.
+            assert cache.convert(owner, str(folder))
+            qtbot.waitUntil(lambda: any(who == owner and event["kind"] in ("done", "error", "cancelled")
+                                        for who, event in got), timeout=30_000)
+        second = [event for who, event in got if who == "second"]
+        assert not [event for event in second if event["kind"] == "error"], second
+        plan = next(event for event in second if event["kind"] == "convert_plan")
+        assert plan["output"] in ("cache", "temp")
+        converted = [event for event in second if event["kind"] == "shot_converted"]
+        assert [event["shot"] for event in converted] == [1] and converted[0]["hits"] == 2
+        assert os.path.getsize(converted[0]["txy"]) == converted[0]["txy_size"]
+    finally:
+        cache.shutdown()
+        real.shutdown()
+
+
 # Start at launch (Q9.6)
 
 
@@ -407,7 +438,8 @@ def window(qtbot: QtBot) -> Any:
 
 
 def test_launch_folders_open_and_the_first_starts_live_with_auto_convert(
-        qtbot: QtBot, tmp_path: Path, notifier: FakeNotifier) -> None:
+        qtbot: QtBot, tmp_path: Path, notifier: FakeNotifier, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
     from test_presets_window import quit_window
     first, second = tmp_path / "first", tmp_path / "second"
     for folder in (first, second):
@@ -424,6 +456,9 @@ def test_launch_folders_open_and_the_first_starts_live_with_auto_convert(
         assert isinstance(explorer, FolderExplorer) and explorer.selected_path_globally == str(first)
         qtbot.waitUntil(lambda: explorer.live is not None, timeout=30_000)
         assert explorer.live is not None and explorer.live.path == str(first) and explorer.live.convert is not None
+        qtbot.wait(100)
+        assert [record.getMessage() for record in caplog.records if record.getMessage().startswith("Live on:")] == [
+            f"Live on: {first}"]  # Once: starting shows its data, which signals the watcher again.
         assert explorer.live_control.auto_converting() and main.action_tab_live.isChecked()
         other = main.tab_widget.widget(main.tab_widget.currentIndex() - 1)
         assert isinstance(other, FolderExplorer) and other.selected_path_globally == str(second)

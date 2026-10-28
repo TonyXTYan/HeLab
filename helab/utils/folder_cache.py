@@ -1039,7 +1039,10 @@ class FolderCache(QObject):
         path = self.key(path)
         profile = self.convert_profile if self.convert_profile is not None else builtin_profile().to_dict()
         payload: dict[str, Any] = {"path": path, "profile": profile, "temps": constants.DIR_TEMPS,
-                                   "cache": store_options(), "output": constants.read_convert_output(app_settings()),
+                                   "cache": store_options(),
+                                   # (The setting, cache or temp: ``destination``, since every helper's
+                                   # ``output`` is its private folder, set by IOService.)
+                                   "destination": constants.read_convert_output(app_settings()),
                                    "beside": self.write_beside(path), "seen": []}
         lists = self.convert_lists.get(path)
         if lists is not None:
