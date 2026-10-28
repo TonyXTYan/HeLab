@@ -45,7 +45,7 @@ class SettingsDialog(QDialog):
         self.tabs.setMovable(False)
         self.tabs.setStyleSheet("""
             QTabBar::tab {
-                width: 150px;
+                width: 125px;
             }""")
 
         # tab_bar = self.tabs.tabBar()
