@@ -2,12 +2,3 @@
 	path = legacy/tdc_autoconverter
 	url = https://github.com/HeBECANU/tdc_autoconverter
 	branch = master
-[submodule "legacy/Momentum_Bells_test"]
-	path = legacy/Momentum_Bells_test
-	url = https://github.com/HeBECANU/Momentum_Bells_test
-	branch = OneDrive-Yogesh
-[submodule "legacy/DLD_front_panel"]
-	path = legacy/DLD_front_panel
-	url = https://github.com/HeBECANU/DLD_front_panel
-	branch = LaserMac-BECMachine-cloudstor
-	ignore = dirty

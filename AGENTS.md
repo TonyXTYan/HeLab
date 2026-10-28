@@ -73,7 +73,7 @@ Python 3.13 is required (CI gates on it). Use uv, as in the README's "Setup (any
 uv python install 3.13
 uv venv --seed --python 3.13 venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 uv pip install -r requirements.lock -e .   # pinned; requirements.txt lists direct deps (README: refreshing the lock)
-git submodule update --init legacy/tdc_autoconverter   # the others (~440 MB) only for porting work
+git submodule update --init legacy/tdc_autoconverter   # DLD_front_panel, Momentum_Bells_test: cloned by hand (README)
 ```
 
 `venv/` may be a symlink to `venv.nosync/` (out of iCloud sync on macOS); both are gitignored.
@@ -212,4 +212,4 @@ one line, with detail in tooltips.
 | `helab/utils/app_log.py`, `gui_watchdog.py`, `events.py`, `dash_server.py` | logging, stall dumps, notifications, the Plotly server | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |
 | `tests/conftest.py` | isolation: data guard, private store, settings, folders | [testing](.ai/architecture/testing.md) |
 | `.github/workflows/` | CI: 3.13 on macOS, Windows, Ubuntu; compat 3.11/3.12/3.14 on PRs | [release-and-ci](.ai/architecture/release-and-ci.md) |
-| `legacy/` | MATLAB references: tdc_autoconverter, Momentum_Bells_test, DLD_front_panel | [dld-analyses](.ai/architecture/dld-analyses.md) |
+| `legacy/` | MATLAB references: tdc_autoconverter (submodule); Momentum_Bells_test, DLD_front_panel (cloned by hand, README) | [dld-analyses](.ai/architecture/dld-analyses.md) |

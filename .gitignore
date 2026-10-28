@@ -109,6 +109,10 @@ venv
 side_projects/rga_visualiser/RGAData
 venv.nosync
 legacy/tdc_launcher/*
+# MATLAB references cloned by hand (README, "Legacy references"): not submodules, since a
+# nested submodule of DLD_front_panel stopped Dependabot's scan (Q6.4).
+legacy/DLD_front_panel/
+legacy/Momentum_Bells_test/
 
 *.lnk
 .ai/session-export-*/

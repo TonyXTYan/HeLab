@@ -152,6 +152,28 @@ Finding numbers refer to the
     2023 lab edit with an x1 dead time of 0.5 µs). Where can agents find them, read-only?
   - Q6.3.2: where it runs. Proposed: on the acquisition PC beside MATLAB's converter first,
     writing to a separate folder so the outputs can be compared, and then replacing it.
+- **Q6.4 Dependabot can't scan the repo** (found 2026-10-28 after the v0.0.6a1 merge).
+  - The 42 open alerts (41 Pillow, 5 of them critical; 1 setuptools) are all for
+    `requirements-pip.txt`, which the merge deleted. `requirements.lock` pins pillow 13.0.0 and
+    setuptools 84.2.0, both fixed versions.
+  - They stay open because Dependabot's rescan fails. It clones submodules recursively, and
+    `legacy/DLD_front_panel` → `lib/Core_BEC_Analysis` → `bin/MBeautifier` pins `dea7508…`,
+    which upstream no longer has. Its last good graph run was 2026-10-18. Until this is fixed,
+    nothing watches `requirements.lock`.
+  - Dependabot PR #8 (setuptools in the deleted file) is obsolete.
+
+  Options:
+  - (a) dismiss the alerts as "not used" and close #8 (tidies the page only);
+  - (b) make the repo scannable: drop the `DLD_front_panel` and `Momentum_Bells_test`
+    submodules and say in the README where to clone them for porting, or move the legacy
+    references into their own repo;
+  - (c) submit `requirements.lock` to the dependency graph from a workflow (alerts only, no
+    fix PRs).
+
+  Proposed: (a) now and (b) in v0.0.7. **Decided** (Tony, 2026-10-28): "a,b,c go". (a) was done the
+  same day (42 alerts dismissed as not used, #8 closed). (b) and (c) are on dev/v0.0.7: the two
+  legacy references are cloned by hand (README), and `.github/workflows/dependency-graph.yml`
+  submits the lock. Once v0.0.7 is on main, check that Dependabot's graph run passes.
 
 ## After the release (not blocking)
 

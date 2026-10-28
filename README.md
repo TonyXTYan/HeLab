@@ -124,6 +124,14 @@ Notes:
 - Bare `python` on lab PCs is often an old interpreter (for example Python 2.7). Use the one in `venv`.
 - On Windows, start HeLab from the desktop, not over SSH. An SSH session as an administrator runs elevated, and it can leave cache folders that a normal launch can't write to.
 - The submodule (`legacy/tdc_autoconverter`) is MATLAB reference code only. HeLab runs without it. In an existing clone, fetch it with `git submodule update --init --recursive`.
+- Legacy references for porting work (not submodules, and not needed to run HeLab): clone them into `legacy/` at the commits the port was read from:
+  ```bash
+  git clone --recurse-submodules -b LaserMac-BECMachine-cloudstor https://github.com/HeBECANU/DLD_front_panel legacy/DLD_front_panel
+  git -C legacy/DLD_front_panel checkout 6c7352c1cd950e9fc9c35e28a60eb8379b97b85b
+  git clone -b OneDrive-Yogesh https://github.com/HeBECANU/Momentum_Bells_test legacy/Momentum_Bells_test
+  git -C legacy/Momentum_Bells_test checkout fdfcb6b589c73ac0bce36b3571e06ddf86a0b002
+  ```
+  One of DLD_front_panel's nested submodules (`lib/Core_BEC_Analysis/bin/MBeautifier`) pins a commit its upstream no longer has, so that one submodule fails to clone; the rest of the reference is there.
 - Without uv: if Python 3.13 is already installed, `python3.13 -m venv venv` then `pip install -r requirements.lock -e .` also works. With conda: `conda create -n HeLab python=3.13`, `conda activate HeLab`, then the same `pip install`.
 - Updating dependencies: edit `requirements.txt`, then refresh the lock with `uv pip compile requirements.txt --universal --python-version 3.13 --upgrade -o requirements.lock` and install it. Commit both; CI's Python 3.13 jobs install the lock (the 3.11, 3.12 and 3.14 compatibility jobs install `requirements.txt` unpinned).
 - macOS with iCloud Drive syncing this folder: create the environment as `venv.nosync` and symlink it (`ln -s venv.nosync venv`), which keeps the constantly changing venv files out of iCloud. Activation and imports work the same either way.
