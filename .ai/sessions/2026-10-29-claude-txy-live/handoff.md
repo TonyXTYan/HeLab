@@ -26,10 +26,9 @@ folder as `payload["output"]`, which overwrote `ConvertRequest.output` (cache/te
 conversion the app asked for failed ("Unknown converter output '/var/folders/…/helab_io_…'").
 helab-core's tests call the helper directly, not through IOService. CoCo's call: Keel renames the
 request field to `destination` (ConvertRequest, `convert_folder`, CLI, tests) with an end-to-end
-test; `FolderCache.convert` already sends `destination`. Until that is merged, Live's conversions
-in the app still fail (auto-convert stops with that message), and
-`test_a_conversion_the_app_asks_for_runs_in_a_helper_process` (a real IOService helper process) is
-a strict xfail that flips when it arrives (A~1).
+test; `FolderCache.convert` sends `destination`. Merged (`dev/v0.0.7` at `e064a53`): the strict xfail on
+`test_a_conversion_the_app_asks_for_runs_in_a_helper_process` (a real IOService helper process)
+flipped as planned and its mark is gone; a second real-app run converts (below).
 
 **Checks:** see "Checks" at the end.
 
@@ -44,7 +43,7 @@ a strict xfail that flips when it arrives (A~1).
 | `helab/utils/folder_cache.py` | `auto_convert` (folders converting this session), `convert_lists` (last summary per folder, bounded), `convert(owner, path)` (builds the payload: profile, backend, temps, cache, `destination` from the output setting, beside flag, the lists), `_remember_convert` (from `convert_summary`), and the module function `convert_choice()` (the built-in `matlab-2019` and `pipeline.APP_BACKEND` until the UI floor's settings land). New methods only: the load path is untouched (the UI floor edits it). |
 | `helab/utils/settings_defaults.py` | Rows `live_launch_folders` (JSON list, "") and `convert_low_hits` (int, 100). |
 | `helab/views/HelabMainWindow.py` | Two lines (CoCo's approval): the import and `QTimer.singleShot(40, lambda: live_launch.start(self))`. |
-| `tests/test_live_convert.py` (new) | 15 tests, 2 of them strict xfails (below). `tests/test_settings_defaults.py`: the two rows listed as read outside a bare window. |
+| `tests/test_live_convert.py` (new) | 15 tests, one a strict xfail (below). `tests/test_settings_defaults.py`: the two rows listed as read outside a bare window. |
 
 ## How it behaves
 
@@ -168,12 +167,10 @@ Stage 4 / L4: Live's auto-convert toggle, start at launch and low-count alerts d
 - **Q~4** (Tony): the Live line says "waiting for the first shot" next to "auto-convert 3
   converted" until Live's checks read HeLab's TXY (the UI floor). Nothing to do if Q6.6 lands
   with this; otherwise the line could count converted shots as the folder's.
-- **A~1** (Coordinator, after merging): two strict xfails flip (XPASS fails strict) and their marks
-  go: `test_a_conversion_the_app_asks_for_runs_in_a_helper_process` once Keel's `destination`
-  rename is merged; `test_a_converted_shot_reaches_the_live_data` once the UI floor's Q6.6 loading
-  is merged (it drives four ticks after a raw file arrives and expects shot 1 in the tab's data).
-  Then a real-app run as below (start at launch, raw files copied in) should show the shots
-  converting and joining the data.
+- **A~1** (Coordinator, after merging the UI floor): the strict xfail
+  `test_a_converted_shot_reaches_the_live_data` flips (XPASS fails strict) once the UI floor's Q6.6
+  loading is merged, and its mark goes (it drives four ticks after a raw file arrives and expects
+  shot 1 in the tab's data). Then a real-app run as below should show the shots joining the data.
 - **A~2** (at integration with the UI floor): `folder_cache.convert_choice()` becomes one line
   reading the UI floor's settings (`read_convert_profile(settings)`, `read_convert_backend(settings)`
   in `constants.py`, CoCo's split). A profile change makes `done`/`kept` stale for the next
@@ -206,26 +203,38 @@ a low-count shot notifies once, not again for the same shot, never at 0; the lau
 (order, duplicates, unreadable); launch folders open and the first starts Live with auto-convert
 (a real window, `in_tests=True`; plain `start` does nothing under pytest); a missing launch folder
 notifies once and isn't retried; offline nothing starts and it says so; Live starts once at launch
-(the log); the two strict-xfail seams (a conversion through a real IOService helper; a converted
-shot reaching the Live data).
+(the log); a conversion through the app's own IOService and a real helper process; the
+strict-xfail seam (a converted shot reaching the Live data).
 
 ## Real-app check (floor settings, synthetic folder under `.ai/temp/live-gui`)
 
 `live_launch_folders` set to an empty folder, HeLab launched with `floor-env.sh`: the folder opened
 in a tab and Live started with auto-convert ("Live at launch", "Live on" in the log; twice before
-the re-entrancy fix). Raw files copied in (500 hits, 30 hits, one without its final newline); the
-first conversion failed on the `output` collision above, and auto-convert stopped with the message
-on the Live line, as designed. The Live line and the Auto-convert button were also checked on a
+the re-entrancy fix). Raw files copied in (500 hits, 30 hits, one without its final newline): the
+first run's conversion failed on the `output` collision above, and auto-convert stopped with the
+message on the Live line, as designed. **Second run, after merging `e064a53`:** "Live on" once;
+shots 1 and 2 converted (`<temps>/converted-txy/<hash>/d_txy_helab_1.txy`, `_2.txy` and their
+records; temp because the folder has no `.helab-root`, Q12.1); the half-written d3 not converted;
+one system notification, "Shot 2 of run: 30 hits (fewer than 100), converted by HeLab"; d3's writer
+then finished and it converted ~15 s later; no WARNING or ERROR in the log. The Live line and the Auto-convert button were also checked on a
 grab of the summary (`.ai/temp/visual/`): its label, checked look and menu arrow.
 
 ## Checks
 
-At `937c2bd` (base `01776d6`, dev/v0.0.7 not merged yet): `pytest -n 4 --reruns 5 --reruns-delay 1
---basetemp=.ai/temp/pytest`: 8049 passed, 669 skipped (unbuilt backends, by design), 2 xfailed (the
-two strict seams), **no RERUN**. An earlier run (at `ae44c57`) had 1 failure, my arrival test, in all
-5 reruns: its tick helper waited for a conversion while a check that a converted shot had asked for
-was unanswered (a race in the test, fixed in `46ff46e`; not an app bug). Types: `mypy helab/
---strict`, `mypy tests --strict`, `pyright helab tests` clean on macOS and with `--platform linux` /
-`--pythonplatform Linux`; with `--platform win32` / `--pythonplatform Windows` only helab-core's
-known errors (`helab/io_ops/convert.py:344–346`, Keel's fix). Branch CI: pushed for a run on all
-three OSes (result to CoCo).
+At `0cec3aa` (`dev/v0.0.7` `e064a53` merged): `pytest -n 4 --reruns 5 --reruns-delay 1
+--basetemp=.ai/temp/pytest`: 8053 passed, 669 skipped (unbuilt backends, by design), 1 xfailed (the
+seam waiting for the UI floor), **no RERUN**. Types: `mypy helab --strict`, `mypy tests --strict` and
+`pyright helab tests` clean for each of `--platform darwin/win32/linux` and `--pythonplatform
+Darwin/Windows/Linux`.
+
+Earlier: a run at `ae44c57` had 1 failure, my arrival test, in all 5 reruns: its tick helper waited
+for a conversion while a check that a converted shot had asked for was unanswered (a race in the
+test, fixed in `46ff46e`; not an app bug). At `937c2bd` (before the merge): 8049 passed, 669
+skipped, 2 xfailed, no RERUN.
+
+**Branch CI** run 40755151334 (`f0a9155`, before the merge): macOS and Ubuntu tests green; Windows
+tests failed only on helab-core's known set (`test_convert_helab.py`: the source-guard and
+`--once` tests; `test_typing.py`'s five checks on `convert.py:344–346`), fixed in `e064a53`; all
+15 of `test_live_convert.py` passed or xfailed as meant on Windows. Its one other RERUN:
+`test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such` (already in
+known-issues). The merged branch is pushed for a new run (result to CoCo).
