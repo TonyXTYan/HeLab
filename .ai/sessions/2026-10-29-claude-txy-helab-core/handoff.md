@@ -15,7 +15,12 @@ helper's output is byte-identical to MATLAB's for 95 of 96 shots of three sets (
 **Checks** (at `HEAD` of `agent/txy-helab-core`): `pytest -n 4 --reruns 5 --reruns-delay 1
 --basetemp=.ai/temp/pytest`: 8022 passed, 669 skipped (the compiled and MLX backends' tests, not
 built or installed here, by design), **no RERUN**; `mypy helab/ --strict`, `mypy tests --strict`,
-`pyright helab tests`: clean. Manual: Ctrl-C (SIGINT to the process group, as a terminal sends it)
+`pyright helab tests`: clean. After Gannet's fixes and the merge of `dev/v0.0.7` (`b08627a`): 8034
+passed, 669 skipped, no RERUN with `--basetemp=.ai/temp/pytest`; with `--basetemp` in the session's
+scratchpad (outside the checkout and outside `tempfile.gettempdir()`), 8035 passed, 669 skipped,
+**1 RERUN**: `test_helabMainWindow.py::test_the_view_menu_has_no_thread_status_item_and_its_setting_is_retired`,
+reason "Tests never touch real data, but this test's I/O asked for: ['<basetemp>/popen-gw2/test_window_icon_is_found_from0']"
+(A~6). Types clean. Manual: Ctrl-C (SIGINT to the process group, as a terminal sends it)
 during a 4-worker conversion stops in ~0.15 s with exit 0, no worker left and no partial file.
 
 ## What was built
@@ -279,6 +284,13 @@ Q~1–Q~5 were **decided by Side overnight as proposed, for Tony to confirm** (2
   profile manager.
 - **A~5** (Live floor): send each `convert_summary`'s lists back as `seen`/`done`/`skip`, so done
   shots aren't checked again and unfinished ones aren't read again.
+- **A~6** (known issue, not from this floor): with `--basetemp` outside both the checkout and
+  `tempfile.gettempdir()`, `test_window_icon_is_found_from_any_launch_folder` `chdir`s into its
+  `tmp_path`, which `constants.DEV_POTENTIAL_DATA_PATHS` then lists (the working folder), so a
+  helper of that window asking for it is refused by the source guard after the test ends, and the
+  next test on the worker fails once (passed on rerun). Fix: let the guard allow pytest's basetemp
+  (e.g. conftest adds it to the allowed folders), or restore the window's helpers before the test
+  returns. For `roadmaps/known-issues.md`.
 - **M~1** (Tony, lab): run `helab convert --watch <a copy of a run folder> --output temp` on the
   acquisition PC while files arrive (or copy them in one by one), and check that no shot is read
   early on the lab's share (mtime granularity, Windows file sharing: a raw file open for writing
