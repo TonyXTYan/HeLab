@@ -363,7 +363,7 @@ class FolderExplorer(QWidget):
         for line in (self.folder_counts_row, self.selected_folder_label, self.folder_summary_label,
                      self.folder_cache_label, self.folder_freshness_label, self.live_row):
             line.setFixedHeight(line_height)
-        for button in (*self.summary_buttons, self.auto_convert_button):
+        for button in self.summary_buttons:
             button.setFont(small_font)
             button.setFixedHeight(line_height)
             button.setStyleSheet("""
@@ -372,6 +372,16 @@ class FolderExplorer(QWidget):
                 QToolButton:pressed { background: palette(mid); }
                 QToolButton:focus { border-color: palette(highlight); }
             """)
+        # (Its menu arrow needs a part of its own.)
+        self.auto_convert_button.setFont(small_font)
+        self.auto_convert_button.setFixedHeight(line_height)
+        self.auto_convert_button.setStyleSheet("""
+            QToolButton { padding: 0px 3px; padding-right: 15px; border: 1px solid palette(mid); border-radius: 2px; }
+            QToolButton:hover { background: palette(midlight); }
+            QToolButton:pressed, QToolButton:checked { background: palette(mid); }
+            QToolButton::menu-button { width: 12px; border-left: 1px solid palette(mid); }
+        """)
+        self.auto_convert_button.setFixedWidth(QFontMetrics(small_font).horizontalAdvance("Auto-convert") + 24)
         self._summary_button_width = max(button.sizeHint().width() for button in self.summary_buttons)
         for button in self.summary_buttons:
             button.setFixedWidth(self._summary_button_width)
