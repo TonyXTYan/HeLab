@@ -7,8 +7,9 @@ and returns a ``ShotTiming``; ``time_shots`` runs a list of them with a ``Parall
 - ``processes``: across shots, in a pool of worker processes;
 - ``threads``: across shots, in a thread pool (worth timing only for a backend that releases
   the GIL, ``Backend.releases_gil``);
-- ``within-shot``: one shot cut at pulse gaps longer than the match window, the pieces
-  reconstructed in parallel (stage 2: each backend that offers it).
+- ``within-shot``: shots one after another, each cut at pulse gaps the match can't cross and its
+  pieces reconstructed in parallel (``split``; a process pool, or threads for a backend that
+  releases the GIL).
 
 ``summarise`` gives raw MB/s (SI, 10^6 bytes) per stage and overall, and per-shot latency.
 Stage 2 calls this per backend and per parallelism level; stage 1 times the reference serially.
@@ -28,7 +29,8 @@ from typing import Iterable, Sequence
 
 from helab.convert.profile import DetectorProfile
 from helab.convert.raw import parse_raw
-from helab.convert.reconstruct import DEFAULT_BACKEND, NoRowsError, reconstruct
+from helab.convert.reconstruct import DEFAULT_BACKEND, NoRowsError, get_backend, reconstruct
+from helab.convert.split import reconstruct_split
 from helab.convert.txy import format_txy, write_atomic
 
 
@@ -63,14 +65,19 @@ class ShotJob:
     txy_path: Path
 
 
-def time_shot(job: ShotJob, profile: DetectorProfile, backend: str = DEFAULT_BACKEND) -> ShotTiming:
+def time_shot(job: ShotJob, profile: DetectorProfile, backend: str = DEFAULT_BACKEND,
+              split: Executor | None = None, pieces: int | None = None) -> ShotTiming:
+    """One shot; with ``split``, reconstructed in up to ``pieces`` pieces on that executor."""
     clock = time.perf_counter
     start = clock()
     data = job.raw_path.read_bytes()
     pulses = parse_raw(data)
     read_done = clock()
     try:
-        hits = reconstruct(pulses, profile, backend)
+        if split is None:
+            hits = reconstruct(pulses, profile, backend)
+        else:
+            hits = reconstruct_split(pulses, profile, backend, executor=split, max_pieces=pieces)
     except NoRowsError:
         done = clock()
         return ShotTiming(job.label, len(data), None, read_done - start, done - read_done, 0.0)
@@ -86,9 +93,12 @@ def time_shots(jobs: Sequence[ShotJob], profile: DetectorProfile, backend: str =
                parallelism: Parallelism = Parallelism.SERIAL, workers: int | None = None) -> list[ShotTiming]:
     if parallelism is Parallelism.SERIAL:
         return [time_shot(job, profile, backend) for job in jobs]
-    if parallelism is Parallelism.WITHIN_SHOT:
-        raise NotImplementedError("Parallelism within one shot comes with stage 2's backends")
     count = workers or os.cpu_count() or 1
+    if parallelism is Parallelism.WITHIN_SHOT:
+        pieces: Executor = (ThreadPoolExecutor(count) if get_backend(backend).releases_gil
+                            else ProcessPoolExecutor(count))
+        with pieces:
+            return [time_shot(job, profile, backend, pieces, count) for job in jobs]
     pool: Executor = (ProcessPoolExecutor(count) if parallelism is Parallelism.PROCESSES
                       else ThreadPoolExecutor(count))
     with pool:

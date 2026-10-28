@@ -80,7 +80,7 @@ def test_the_checker_names_the_first_differing_line_and_the_hit_counts() -> None
     assert not missing.identical and missing.describe() == "differs: ours 0 hits, reference no file"
 
 
-@pytest.mark.parametrize("parallelism", [Parallelism.SERIAL, Parallelism.THREADS, Parallelism.PROCESSES])
+@pytest.mark.parametrize("parallelism", list(Parallelism))
 def test_timing_runs_each_stage_and_writes_the_txy(tmp_path: Path, parallelism: Parallelism) -> None:
     out = tmp_path / "out"
     out.mkdir()
@@ -109,8 +109,9 @@ def test_timing_follows_matlab_for_empty_files_and_results(tmp_path: Path) -> No
     assert not (out / "b.txy").exists()
     time_shot(ShotJob("trigger", trigger, out / "c.txy"), builtin_profile("matlab-2023-lab-edit"))
     assert (out / "c.txy").read_bytes() == b""
-    with pytest.raises(NotImplementedError):
-        time_shots([ShotJob("x", trigger, out / "d.txy")], MATLAB_2019, parallelism=Parallelism.WITHIN_SHOT)
+    within = time_shots([ShotJob("x", trigger, out / "d.txy")], MATLAB_2019, parallelism=Parallelism.WITHIN_SHOT,
+                        workers=1)
+    assert within[0].hits == 0 and not (out / "d.txy").exists()
 
 
 def test_a_cut_fault_is_proved_by_converting_the_cut_raw_file() -> None:

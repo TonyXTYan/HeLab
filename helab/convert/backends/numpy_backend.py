@@ -212,24 +212,23 @@ def _settle(x1: Index, t: Floats, ch: Floats, search: Index, profile: DetectorPr
     if not todo.shape[0]:
         return
     marks = bytearray(used.tobytes())
-    t_list: list[float] | None = None
-    ch_list: list[float] = []
+    lists: tuple[list[float], list[float], list[int]] | None = None  # made on the first search
     for p, i, x2, y1, y2, state in zip(todo.tolist(), x1[todo].tolist(), x2_row[todo].tolist(),
                                        y1_row[todo].tolist(), y2_row[todo].tolist(), outcome[todo].tolist()):
         if not marks[x2] and (state == NO_Y or (not marks[y1] and not marks[y2])):
             if state == HIT:
                 marks[i] = marks[x2] = marks[y1] = marks[y2] = 1
             continue
-        if t_list is None:
-            t_list, ch_list = t.tolist(), ch.tolist()
-        x2, y1, y2 = _search_one(i, t_list, ch_list, marks, search.tolist(), profile)
+        if lists is None:
+            lists = t.tolist(), ch.tolist(), search.tolist()
+        x2, y1, y2 = _search_one(i, *lists, marks, profile)
         x2_row[p], y1_row[p], y2_row[p] = x2, y1, y2
         outcome[p] = NONE if x2 < 0 else NO_Y if y1 < 0 else HIT
         if y1 >= 0:
             marks[i] = marks[x2] = marks[y1] = marks[y2] = 1
 
 
-def _search_one(i: int, t: list[float], ch: list[float], marks: bytearray, search: list[int],
+def _search_one(i: int, t: list[float], ch: list[float], search: list[int], marks: bytearray,
                 profile: DetectorProfile) -> tuple[int, int, int]:
     """The reference's search for the x1 at row i (L451–560), a marked row's channel being NaN:
     its x2 and y rows, −1 where none."""
