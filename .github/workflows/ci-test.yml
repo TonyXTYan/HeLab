@@ -165,25 +165,18 @@ jobs:
           fi
           python -m pip install --upgrade pip
           # Python 3.13 (required) installs the pinned lock; compatibility jobs, and a recovery
-          # build of a tag older than the lock, install requirements.txt unpinned.
+          # build of a tag older than the lock, install requirements.txt unpinned. Both without
+          # the converter's optional backends and their build tools: the backends job tests those,
+          # and this suite runs in the environment it had before they shipped (their tests skip).
+          optional='^(numba|llvmlite|mlx|mlx-metal|cython|maturin)([^a-z0-9_.-]|$)'
           if [ "${{ inputs.python-minor }}" = "13" ] && [ -f requirements.lock ]; then
-            pip install -r requirements.lock
+            grep -v -i -E "$optional" requirements.lock > "$RUNNER_TEMP/requirements-tests.txt"
           else
-            pip install -r requirements.txt
+            grep -v -i -E "$optional" requirements.txt > "$RUNNER_TEMP/requirements-tests.txt"
           fi
+          pip install -r "$RUNNER_TEMP/requirements-tests.txt"
           pip install -e .
-
-      # The converter's optional packages out again (requirements.lock has them for the build):
-      # the backends job tests them, and this suite runs as before they shipped.
-      - name: Leave out the converter's optional backends
-        shell: bash
-        run: |
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            source venv/Scripts/activate
-          else
-            source venv/bin/activate
-          fi
-          pip uninstall -y numba llvmlite mlx mlx-metal
+          pip list | grep -i -E "$optional" && { echo "::error::a converter backend package is installed"; exit 1; } || true
 
       - name: Run Tests
         shell: bash
