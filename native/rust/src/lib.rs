@@ -41,11 +41,11 @@ fn py_reconstruct<'py>(
     threads: usize,
     piece_rows: usize,
 ) -> PyResult<(Bound<'py, PyArray2<f64>>, usize)> {
-    let channels = channels.as_slice()?.to_vec();
-    let times = times.as_slice()?.to_vec();
+    let (channels, times) = (channels.as_slice()?, times.as_slice()?);
     if channels.len() != times.len() {
         return Err(PyValueError::new_err("channels and times differ in length"));
     }
+    let rows = reconstruct::file_rows(channels, times);
     let params = Params {
         channel_x1: channel_corners.0,
         channel_x2: channel_corners.1,
@@ -67,7 +67,7 @@ fn py_reconstruct<'py>(
         centred,
         matlab_overflow_row,
     };
-    let (hits, pieces) = py.detach(|| reconstruct::reconstruct(&channels, &times, &params, threads, piece_rows));
+    let (hits, pieces) = py.detach(|| reconstruct::reconstruct_rows(rows, &params, threads, piece_rows));
     let rows = hits.len() / 3;
     Ok((hits.into_pyarray(py).reshape([rows, 3])?, pieces))
 }

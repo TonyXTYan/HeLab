@@ -86,22 +86,43 @@ pub struct Sorted {
     pub t: Vec<f64>,
 }
 
-/// L58–66 and L2023:429–458: sort by time (stable, NaN last), subtract the first raw row's time,
-/// then drop all but the first pulse of each dead-time group per corner.
-pub fn prepare(channels: &[f64], times: &[f64], p: &Params) -> Sorted {
-    let n = times.len();
-    let mut rows: Vec<(f64, f64)> = times.iter().copied().zip(channels.iter().copied()).collect();
-    rows.sort_by(|a, b| nan_last(a.0, b.0));
-    let mut t: Vec<f64> = Vec::with_capacity(n);
-    let mut ch: Vec<f64> = Vec::with_capacity(n);
-    let t_zero = if p.subtract_time_zero && n > 0 { Some(times[0]) } else { None };
-    for &(time, channel) in &rows {
-        t.push(match t_zero {
-            Some(zero) => time - zero,
-            None => time,
-        });
-        ch.push(channel);
+/// Sorts `(time, channel)` rows by time, stably, NaN last. The TDC writes nearly in time order (a
+/// raw file's rows move about one place each on average), so an insertion sort goes first; past a
+/// budget of moves it hands over to the merge sort. Insertion never swaps equal times, so equal
+/// times are still in file order when it hands over, and the stable merge sort ends in the same
+/// order as on the file's rows.
+pub fn sort_rows(rows: &mut [(f64, f64)]) {
+    let mut budget = rows.len().saturating_mul(16);
+    for i in 1..rows.len() {
+        let mut j = i;
+        while j > 0 && nan_last(rows[j - 1].0, rows[j].0) == Ordering::Greater {
+            rows.swap(j - 1, j);
+            j -= 1;
+            budget = budget.saturating_sub(1);
+        }
+        if budget == 0 {
+            rows.sort_by(|a, b| nan_last(a.0, b.0));
+            return;
+        }
     }
+}
+
+/// The file's `(time, channel)` rows in file order, as `prepare` and `reconstruct_rows` take them.
+pub fn file_rows(channels: &[f64], times: &[f64]) -> Vec<(f64, f64)> {
+    times.iter().copied().zip(channels.iter().copied()).collect()
+}
+
+/// L58–66 and L2023:429–458: sort the file's rows by time (stable, NaN last), subtract the first
+/// raw row's time, then drop all but the first pulse of each dead-time group per corner.
+pub fn prepare(mut rows: Vec<(f64, f64)>, p: &Params) -> Sorted {
+    let n = rows.len();
+    let t_zero = rows.first().map(|row| row.0);
+    sort_rows(&mut rows);
+    let mut ch: Vec<f64> = rows.iter().map(|row| row.1).collect();
+    let t: Vec<f64> = match t_zero {
+        Some(zero) if p.subtract_time_zero => rows.iter().map(|row| row.0 - zero).collect(),
+        _ => rows.iter().map(|row| row.0).collect(),
+    };
     drop(rows);
 
     if p.dead_time_bins.iter().any(Option::is_some) {
@@ -230,11 +251,16 @@ pub fn cut_points(t: &[f64], window: f64, piece_rows: usize) -> Vec<usize> {
 /// `threads` > 1 matches pieces on that many threads; `piece_rows` 0 with `threads` > 1 picks
 /// about four pieces per thread.
 pub fn reconstruct(channels: &[f64], times: &[f64], p: &Params, threads: usize, piece_rows: usize) -> (Vec<f64>, usize) {
-    let n = times.len();
+    reconstruct_rows(file_rows(channels, times), p, threads, piece_rows)
+}
+
+/// `reconstruct` of the file's rows (`file_rows`).
+pub fn reconstruct_rows(rows: Vec<(f64, f64)>, p: &Params, threads: usize, piece_rows: usize) -> (Vec<f64>, usize) {
+    let n = rows.len();
     if n == 0 {
         return (Vec::new(), 0);
     }
-    let Sorted { mut ch, t } = prepare(channels, times, p);
+    let Sorted { mut ch, t } = prepare(rows, p);
     let search = offsets(p.search_depth);
     let threads = threads.max(1);
     let piece_rows = if piece_rows == 0 && threads > 1 { n.div_ceil(threads * 4) } else { piece_rows };
@@ -311,6 +337,33 @@ mod tests {
     #[test]
     fn offsets_alternate() {
         assert_eq!(offsets(6), vec![-1, 1, -2, 2, -3, 3]);
+    }
+
+    #[test]
+    fn sort_rows_is_the_stable_sort_whichever_way_it_goes() {
+        // Nearly sorted (insertion), reversed and scrambled (over budget: merge sort), with ties,
+        // −0 beside 0 and NaN; the channel numbers the rows, so stability shows.
+        let mut seed: u64 = 7;
+        let mut next = || { seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407); seed >> 33 };
+        for case in 0..3 {
+            let rows: Vec<(f64, f64)> = (0..5000)
+                .map(|k| {
+                    let r = next();
+                    let time = match case {
+                        0 => (k / 3) as f64 + (r % 3) as f64,
+                        1 => (5000 - k) as f64 / 4.0,
+                        _ => (r % 50) as f64,
+                    };
+                    let time = if r % 97 == 0 { f64::NAN } else if r % 89 == 0 { -0.0 } else if r % 83 == 0 { 0.0 } else { time };
+                    (time, k as f64)
+                })
+                .collect();
+            let mut expected = rows.clone();
+            expected.sort_by(|a, b| nan_last(a.0, b.0));
+            let mut got = rows.clone();
+            sort_rows(&mut got);
+            assert!(got.iter().zip(&expected).all(|(a, b)| a.0.to_bits() == b.0.to_bits() && a.1 == b.1), "case {case}");
+        }
     }
 
     #[test]

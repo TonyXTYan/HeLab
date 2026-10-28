@@ -193,6 +193,22 @@ def test_random_shots_split_any_way_equal_the_reference(seed: int) -> None:
 
 
 @needs_rust
+@pytest.mark.parametrize("order", ["reversed", "shuffled"])
+def test_a_file_far_from_time_order_sorts_as_the_reference(order: str) -> None:
+    # Too many moves for the insertion sort: the merge sort finishes, with the same stable order.
+    rng = random.Random(order)
+    for _ in range(10):
+        shot = random_shot(rng, 150, dense=False)
+        index = list(range(len(shot)))[::-1] if order == "reversed" else rng.sample(range(len(shot)), len(shot))
+        pulses = RawPulses(channels=np.ascontiguousarray(shot.channels[index]),
+                           times=np.ascontiguousarray(shot.times[index]))
+        for profile in PROFILES:
+            reference = reconstruct_reference(pulses, profile)
+            for threads, piece_rows in SPLITS:
+                assert same_hits(rust.reconstruct_rust(pulses, profile, threads, piece_rows)[0], reference)
+
+
+@needs_rust
 def test_a_phantom_row_from_an_earlier_piece_survives_a_later_piece_without_attempts() -> None:
     # No trigger: each hit's y1 comes first, so skipping the first sorted row costs nothing. Three
     # hits, a lone x pair, then one MCP pulse far away: N = 15, floor(N/4) = 3 = R, so row R + 1
