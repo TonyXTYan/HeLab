@@ -86,6 +86,60 @@ print(json.dumps(sorted(name for name in ("numba", "llvmlite", "PyQt6", "matplot
 
 
 @needs_numba
+def test_without_a_writable_cache_folder_it_compiles_instead_of_failing() -> None:
+    # As a frozen app whose user cache folder is read-only: numba finds no cache locator.
+    script = """
+import numba.core.caching as caching
+caching.CacheImpl._locator_classes = []
+from helab.convert.backends import numba_kernels
+from helab.convert.profile import MATLAB_2019
+from helab.convert.raw import parse_raw
+from helab.convert.reconstruct import reconstruct
+assert not numba_kernels.cached
+data = b"5,1000\\r\\n0,10000\\r\\n1,10400\\r\\n2,10100\\r\\n3,10300\\r\\n"
+assert (reconstruct(parse_raw(data), MATLAB_2019, "numba") == reconstruct(parse_raw(data), MATLAB_2019)).all()
+print("ok")
+"""
+    done = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True, timeout=300,
+                          env=dict(os.environ), cwd=ROOT)
+    assert done.returncode == 0 and done.stdout.strip() == "ok", done.stderr
+
+
+@needs_numba
+def test_many_threads_first_using_the_backend_at_once_all_get_the_reference(tmp_path: Path) -> None:
+    # A fresh process and an empty cache folder: 24 threads race through the lazy import of numba
+    # and the kernels, compiling and writing the cache, released together by a barrier.
+    script = """
+import sys, threading
+from concurrent.futures import ThreadPoolExecutor
+from helab.convert.profile import MATLAB_2019, builtin_profile
+from helab.convert.raw import parse_raw
+from helab.convert.reconstruct import available_backends, reconstruct
+data = open(sys.argv[1], "rb").read()
+pulses = parse_raw(data)
+expected = {name: reconstruct(pulses, builtin_profile(name)).tobytes()
+            for name in ("matlab-2019", "matlab-2023-lab-edit")}
+assert "numba" not in sys.modules and "helab.convert.backends.numba_kernels" not in sys.modules
+barrier = threading.Barrier(24)
+def one(k):
+    barrier.wait()
+    name = ("matlab-2019", "matlab-2023-lab-edit")[k % 2]
+    if k % 3 == 0:
+        assert "numba" in available_backends(builtin_profile(name))
+    return reconstruct(pulses, builtin_profile(name), "numba").tobytes() == expected[name]
+with ThreadPoolExecutor(24) as pool:
+    results = list(pool.map(one, range(24)))
+assert all(results), results
+print("ok")
+"""
+    env = dict(os.environ, NUMBA_CACHE_DIR=str(tmp_path / "numba-cache"))
+    raw = str(CASES / "ambiguous_y" / "d1.txt")
+    done = subprocess.run([sys.executable, "-c", script, raw], capture_output=True, text=True, timeout=300, env=env,
+                          cwd=ROOT)
+    assert done.returncode == 0 and done.stdout.strip() == "ok", done.stderr
+
+
+@needs_numba
 def test_the_backend_is_available_and_releases_the_gil() -> None:
     backend = get_backend("numba")
     assert backend.releases_gil and "numba" in available_backends(MATLAB_2019)

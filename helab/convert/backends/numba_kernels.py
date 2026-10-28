@@ -43,14 +43,27 @@ prange: Any = _numba.prange
 Floats = npt.NDArray[np.float64]
 Ints = npt.NDArray[np.int64]
 F = TypeVar("F", bound=Callable[..., Any])
+# False when numba had nowhere to write its cache and the kernels compile in every process.
+cached = True
+
+
+def _compile(function: F, parallel: bool) -> F:
+    global cached
+    try:
+        return cast(F, _numba.njit(cache=True, nogil=True, parallel=parallel)(function))
+    except RuntimeError:
+        # numba found no folder it can write its cache to (a read-only checkout and user cache
+        # folder): compile in every process instead (about 1.5 s on the first call) rather than fail.
+        cached = False
+        return cast(F, _numba.njit(nogil=True, parallel=parallel)(function))
 
 
 def _jit(function: F) -> F:
-    return cast(F, _numba.njit(cache=True, nogil=True)(function))
+    return _compile(function, parallel=False)
 
 
 def _jit_parallel(function: F) -> F:
-    return cast(F, _numba.njit(cache=True, nogil=True, parallel=True)(function))
+    return _compile(function, parallel=True)
 
 
 @_jit
