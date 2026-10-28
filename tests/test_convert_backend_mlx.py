@@ -267,12 +267,49 @@ def test_integer_limits_are_the_float_tests() -> None:
 
 @needs_gpu
 def test_threads_give_the_same_bytes() -> None:
-    """MLX is called from several threads at once (the timing harness's thread mode)."""
-    shots = [fuzz_pulses(seed, rows=2000) for seed in range(12)]
-    expected = [format_txy(reconstruct(p, MATLAB_2019, "mlx")) for p in shots]
-    with ThreadPoolExecutor(4) as pool:
-        got: list[Any] = list(pool.map(lambda p: format_txy(reconstruct(p, MATLAB_2019, "mlx")), shots * 2))
-    assert got == expected * 2
+    """MLX is called from many threads at once (the timing harness's thread mode)."""
+    shots = [fuzz_pulses(seed, rows=2000) for seed in range(16)]
+    expected = [format_txy(reconstruct_reference(p, MATLAB_2019)) for p in shots]
+    with ThreadPoolExecutor(16) as pool:
+        got: list[Any] = list(pool.map(lambda p: format_txy(reconstruct(p, MATLAB_2019, "mlx")), shots * 4))
+    assert got == expected * 4
+
+
+FIRST_LOAD = """
+import sys, threading
+from pathlib import Path
+from helab.convert.pipeline import convert_raw
+from helab.convert.profile import MATLAB_2019
+paths = sys.argv[1:]
+datas = [Path(path).read_bytes() for path in paths]
+expected = [convert_raw(data, MATLAB_2019, "reference") for data in datas]
+start = threading.Barrier(16)
+failures = []
+def convert(k):
+    start.wait()
+    try:
+        if convert_raw(datas[k % len(datas)], MATLAB_2019, "mlx") != expected[k % len(datas)]:
+            failures.append(f"thread {k}: different bytes")
+    except Exception as error:
+        failures.append(f"thread {k}: {error!r}")
+threads = [threading.Thread(target=convert, args=(k,)) for k in range(16)]
+for thread in threads: thread.start()
+for thread in threads: thread.join()
+assert "mlx" in sys.modules
+print("ok" if not failures else "; ".join(failures))
+"""
+
+
+@needs_gpu
+@pytest.mark.parametrize("attempt", range(3))
+def test_sixteen_threads_loading_the_backend_at_once(attempt: int) -> None:
+    """The first use from many threads at the same moment, in a fresh process: the registry's
+    import, MLX's start (``_START``) and the first GPU calls race only there."""
+    raws = [str(path) for path in sample_pairs()[:4]]
+    done = subprocess.run([sys.executable, "-c", FIRST_LOAD, *raws], capture_output=True, text=True, timeout=120,
+                          env=dict(os.environ), cwd=ROOT)
+    assert done.returncode == 0, done.stderr
+    assert done.stdout.splitlines()[-1] == "ok"
 
 
 def _ints(values: list[int]) -> npt.NDArray[np.int64]:

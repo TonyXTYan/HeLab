@@ -45,6 +45,7 @@ import importlib.util
 import math
 import platform
 import sys
+import threading
 from typing import TYPE_CHECKING
 
 import numpy as np
@@ -231,6 +232,7 @@ def first_choices_numpy(prep: Prepared) -> Choices:
 def first_choices_mlx(prep: Prepared) -> Choices:
     """Step 2 on the GPU: the same search as ``first_choices_numpy``, in MLX (int64 gathers and
     differences, int32 tests). Only the chosen offsets come back."""
+    _start_mlx()
     import mlx.core as mx
 
     lim, search_np, n = prep.limits, prep.search, prep.rows
@@ -419,18 +421,30 @@ def reconstruct_mlx(pulses: RawPulses, profile: DetectorProfile, gpu: bool = Tru
     return assemble(prep, resolve(prep, first), profile)
 
 
+# The first import of mlx and the first device query happen once, under this lock: threads
+# converting their first shots at the same time (the timing harness's thread mode, a helper's
+# pool) must not start MLX twice or see it half started.
+_START = threading.Lock()
+
+
+def _start_mlx() -> None:
+    with _START:
+        import mlx.core  # noqa: F401
+
+
 @functools.cache
 def _platform_unavailable() -> str | None:
     if sys.platform != "darwin" or platform.machine() != "arm64":
         return f"MLX needs Apple Silicon (this is {sys.platform} {platform.machine()})"
     if importlib.util.find_spec("mlx") is None:
         return "MLX isn't installed (pip install mlx)"
-    try:
-        import mlx.core as mx
-        if not mx.metal.is_available():
-            return "MLX finds no Metal GPU"
-    except Exception as error:  # noqa: BLE001 - any import or device failure means "can't run"
-        return f"MLX can't start: {error}"
+    with _START:
+        try:
+            import mlx.core as mx
+            if not mx.metal.is_available():
+                return "MLX finds no Metal GPU"
+        except Exception as error:  # noqa: BLE001 - any import or device failure means "can't run"
+            return f"MLX can't start: {error}"
     return None
 
 
