@@ -269,3 +269,15 @@ skipped, 1 xfailed (17:23).
 | Folder details: "Auto-convert" beside "Auto-convert stopped: …" | The row says "Stopped: …". |
 | Q~3: two low-count rules can notify for one shot | Said in Q~3. |
 | The launch tabs' Live-line note missing from the proposed `live.md` paragraph | Added (with the kept reasons). |
+
+Checks after the review fixes (`1a39bfe`): full suite 8055 passed, 669 skipped, 1 xfailed, no RERUN
+locally; types clean for darwin, win32, linux. **Branch CI** run 40764414177: green on all three OSes;
+Ubuntu (8053 passed) and Windows (8026 passed) with no RERUN; **macOS 3 RERUNs**, all passed on rerun,
+in tests this floor didn't touch (for `roadmaps/known-issues.md`, **A~5**):
+- `tests/test_convert_helab.py::test_a_hung_backend_stops_sending_heartbeats` (twice, helab-core's):
+  "assert ([])" at `test_convert_helab.py:879`: no `converting` heartbeat was recorded at all within
+  the slowed 0.6 s compute (heartbeat interval patched to 0.02 s) on a loaded runner.
+- `tests/test_gui_responsiveness.py::test_stalled_process_keeps_heartbeat_and_shutdown_responsive`:
+  "assert 0.2199689590000844 < 0.2" at `test_gui_responsiveness.py:228` (a 0.2 s responsiveness bound,
+  missed by 20 ms).
+The previous run, 40763457550 (`8f01f07`), was green on all three OSes with no RERUN.
