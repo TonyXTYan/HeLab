@@ -3,7 +3,8 @@
 
 Built by ``native/cython/build.py`` into ``helab/convert/backends/cython/_kernel``; called only by
 ``helab/convert/backends/cython/__init__.py``, which holds the profile logic and the within-shot
-split. Every function releases the GIL for its work. The arithmetic is the reference's, operation
+split. Every function releases the GIL for all its work on rows (sorting, matching, copying,
+scaling); it holds it only to check its arguments and allocate the arrays it returns. The arithmetic is the reference's, operation
 for operation, in doubles; the build turns off floating-point contraction (FMA) and fast-math, so
 the results are the same bits. Line numbers ``L…`` are MATLAB's 2019 file, as in the reference.
 
@@ -308,28 +309,47 @@ def assemble(list pieces, bint phantom, double phantom_x1, double phantom_x2, do
     are ``(out, hits)`` in row order; ``phantom`` adds MATLAB's grown zero row with these x
     columns last. Rows with a NaN T are dropped, then T = t·bin_time, X = (x1′ − x2′)·v⊥x·bin_time,
     Y likewise, sorted by T stably with NaN last. Returns an (n, 3) float64 array."""
-    cdef Py_ssize_t total = 0, count, p, r, k, kept = 0
+    cdef Py_ssize_t total = 0, count, p, r, k = 0, kept = 0, npieces = len(pieces)
     cdef double[:, ::1] rows
-    for item in pieces:
-        total += <Py_ssize_t> item[1]
+    # Each piece's rows as a pointer and a count, taken with the GIL and copied without it.
+    # ``held`` keeps every buffer acquired until the copy is done.
+    held = []
+    cdef const double **sources = <const double **> malloc((npieces if npieces > 0 else 1) * sizeof(double *))
+    cdef Py_ssize_t *counts = <Py_ssize_t *> malloc((npieces if npieces > 0 else 1) * sizeof(Py_ssize_t))
+    if sources == NULL or counts == NULL:
+        free(sources)
+        free(counts)
+        raise MemoryError()
+    for p in range(npieces):
+        rows = pieces[p][0]
+        count = pieces[p][1]
+        if count < 0 or count > rows.shape[0] or rows.shape[1] != 5:
+            free(sources)
+            free(counts)
+            raise ValueError("assemble: a piece's hit count or shape")
+        held.append(rows)
+        sources[p] = &rows[0, 0] if count > 0 else NULL
+        counts[p] = count
+        total += count
     if phantom:
         total += 1
     staged_array = np.empty((total, 5), dtype=np.float64)
     cdef double[:, ::1] staged = staged_array
-    k = 0
-    for item in pieces:
-        rows = item[0]
-        count = item[1]
-        for r in range(count):
-            for p in range(5):
-                staged[k, p] = rows[r, p]
-            k += 1
-    if phantom:
-        staged[k, 0] = 0.0
-        staged[k, 1] = phantom_x1
-        staged[k, 2] = phantom_x2
-        staged[k, 3] = 0.0
-        staged[k, 4] = 0.0
+    cdef double *staged_p = &staged[0, 0] if total > 0 else NULL
+    with nogil:
+        for p in range(npieces):
+            if counts[p] > 0:
+                memcpy(&staged_p[k * 5], sources[p], counts[p] * 5 * sizeof(double))
+                k += counts[p]
+        if phantom:
+            staged_p[k * 5 + 0] = 0.0
+            staged_p[k * 5 + 1] = phantom_x1
+            staged_p[k * 5 + 2] = phantom_x2
+            staged_p[k * 5 + 3] = 0.0
+            staged_p[k * 5 + 4] = 0.0
+    free(sources)
+    free(counts)
+    del held
     scaled_array = np.empty((total, 3), dtype=np.float64)
     cdef double[:, ::1] scaled = scaled_array
     cdef double *key = <double *> malloc((total if total > 0 else 1) * sizeof(double))

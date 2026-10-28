@@ -24,7 +24,7 @@ Branch `agent/txy-cython` from `372f2ac`. Brief: [brief.md](brief.md). Detail: [
   longer than `search_window` and matches the pieces in threads; the proof is in the module
   docstring and notes.md.
 - **`helab/convert/reconstruct.py`**: one `_MODULES` line, the only change to shared code.
-- **`tests/test_convert_backend_cython.py`** (153 tests). The tests that run the kernel skip
+- **`tests/test_convert_backend_cython.py`** (159 tests). The tests that run the kernel skip
   with the reason when it isn't built. The rest run everywhere: registration, HeLab without the
   kernel, the offsets, the cuts and the import purity check.
 
@@ -58,6 +58,23 @@ Packages (floor venv only): `Cython==3.3.0`, build time only; `setuptools` was a
 - `from package import _kernel` returns a package global of that name rather than the submodule.
   The cache is named `_module`.
 
+## Review round 1 (Wren, on 2ba2a54: no blocker), all fixed
+
+| Item | Fix |
+|---|---|
+| 1: `kernel()` returned `ModuleType`, so the kernel calls were `Any` and the stub never applied | `kernel()` returns a `Kernel` Protocol. Under `TYPE_CHECKING` the `.pyi` module is assigned to it, so mypy and pyright check that the stub and the Protocol agree. A wrong argument (a `str` for `bin_time`) and a stub that disagrees with the Protocol both fail mypy and pyright (tried, then reverted). |
+| 2: `unavailable()` checked only the channels for exact doubles | No other field can be an int: `DetectorProfile.__post_init__` makes every float field a Python float, so the reference and the kernel use the same doubles. Noted in `unavailable()`; a test passes every float field as an int (one of them 2^53 + 1) and checks that both backends agree. |
+| 3: `assemble` copied the pieces with the GIL held | Each piece's pointer and count are taken with the GIL, then copied with `memcpy` without it. The docstrings now say the GIL is held only for argument checks and allocation. |
+| 4: the Windows toolset; a CI check of the built kernel | notes.md: VS 2022 (17.0+), never an older toolset with `/arch:AVX2`. A~1: the packaging CI checks that the built kernel gives the reference's bytes on `tests/data/convert/`. |
+| Side: skip reason | "cython extension not built (stage 4 packaging): …"; A~3 (`d53bf65`). |
+| CoCo (from the Rust review): any load error | `kernel()` catches every exception while loading or checking the kernel (a binary for another Python or arch, a broken file, an I/O error) and the backend is unavailable with the error named. Nothing propagates out of `unavailable()` or `available_backends()`; tested with five error types. |
+| CoCo: `PURE` | `"backends.cython"` added to `tests/test_headless_imports.py` (one line, done here instead of proposed). |
+| CoCo (from the MLX review): pyright without the package | Run against Ground's venv (no Cython, no built kernel) with a temporary config in `.ai/temp/pyright-ground/`: 0 errors and 0 warnings in `helab` and `tests` outside the always-excluded `legacy_plotly`. The one warning the missing binary gave (`reportMissingModuleSource` on the `TYPE_CHECKING` import of the stub) is silenced on that line. mypy strict with the binary moved aside: clean. |
+
+After the fixes, `check_samples.py --backend cython --positions all` gives 303 identical plus the
+6 proved exceptions. Against the reference on all 309 shots × both profiles × 1, 4 and 64 threads:
+1,854 conversions, 0 differ.
+
 ## Proposed doc changes (for the Coordinator)
 
 - **`.ai/architecture/converter.md`**, module table: add a `backends/cython` row. "The reference's
@@ -77,8 +94,6 @@ Packages (floor venv only): `Cython==3.3.0`, build time only; `setuptools` was a
   scripts (stage 2) | converter.md".
 - **roadmaps/txy-converter.md**, Stage 2: cython done (results.md). The finding for the
   recommendation is that after a compiled backend, reading and writing are the bottleneck.
-- **`tests/test_headless_imports.py`**: add `"backends.cython"` to the `helab.convert` names in
-  `PURE`. My test checks the same in a subprocess, since the file isn't mine to edit.
 - **known-issues**: nothing new. There was no RERUN locally; CI's first run on this branch will
   skip the kernel tests, since CI has no build step yet.
 
@@ -92,7 +107,11 @@ Packages (floor venv only): `Cython==3.3.0`, build time only; `setuptools` was a
   `_MODULES` backend), build one binary per Python minor version, and use `ARCHFLAGS` for
   universal2. Windows needs the MSVC Build Tools (VS 2022), never `/fp:fast` or `/fp:contract`;
   Linux needs GCC or clang with the Python headers and `-ffp-contract=off` (notes.md, "Building
-  on other platforms").
+  on other platforms"). The CI must also check that the kernel it built gives the reference's
+  bytes on `tests/data/convert/`, on every OS and Python it builds for:
+  `tests/test_convert_backend_cython.py` does that once the kernel tests can't skip (A~3), so a
+  compiler or flag that changes the last bits fails the build. Windows needs MSVC from VS 2022
+  (17.0+), never an older toolset with `/arch:AVX2` (Wren).
 - **A~3** (stage 4, packaging floor; Side): build the cython extension in CI on all three OSes
   and make its tests **required** there. Today every kernel test skips with the reason
   "cython extension not built (stage 4 packaging): …" (148 of the converter tests when it's

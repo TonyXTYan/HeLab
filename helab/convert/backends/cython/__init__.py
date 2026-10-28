@@ -3,8 +3,9 @@
 ``backends/reference.py`` loop for loop in C (``native/cython/_kernel.pyx``, built by
 ``python native/cython/build.py`` into ``_kernel`` here; the binary is never committed). The
 kernel sorts, cuts dead time, matches and assembles; this module turns the profile into the
-kernel's numbers and splits one shot for ``threads`` > 1. Every kernel call releases the GIL, so
-threads converting different shots run in parallel (``releases_gil``).
+kernel's numbers and splits one shot for ``threads`` > 1. Every kernel call releases the GIL for its
+work on rows (it holds it only for argument checks and allocation), so threads converting different
+shots run in parallel (``releases_gil``).
 
 Byte for byte the reference's output: the kernel does the same double operations in the same
 order (the build turns FMA contraction and fast-math off), the same stable NaN-last sorts, the
@@ -42,6 +43,7 @@ import importlib
 from pathlib import Path
 import threading
 from types import ModuleType
+from typing import TYPE_CHECKING, Protocol, cast
 
 import numpy as np
 import numpy.typing as npt
@@ -53,15 +55,41 @@ from helab.convert.reconstruct import Backend, Hits, NoRowsError, register_backe
 _SOURCE = Path(__file__).resolve().parents[4] / "native" / "cython" / "_kernel.pyx"
 _BUILD_HINT = "python native/cython/build.py (needs Cython, setuptools and a C compiler)"
 
-_module: ModuleType | None = None  # not "_kernel": that name is the submodule's
+
+
+class Kernel(Protocol):
+    """The compiled kernel's functions, as ``_kernel.pyi`` types them (checked below)."""
+    SOURCE_SHA256: str
+
+    def prepare(self, channels: npt.NDArray[np.float64], times: npt.NDArray[np.float64], subtract_time_zero: bool,
+                dead_channels: npt.NDArray[np.float64], dead_tolerances: npt.NDArray[np.float64],
+                ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]: ...
+
+    def match(self, ch: npt.NDArray[np.float64], t: npt.NDArray[np.float64], lo: int, hi: int, start: int,
+              search: npt.NDArray[np.intp], window: float, x_limit: float, y_limit: float, xy_limit: float,
+              c_x1: float, c_x2: float, c_y1: float, c_y2: float, time_sum_t_x: float, time_sum_t_y: float,
+              centred: bool, out: npt.NDArray[np.float64]) -> tuple[int, bool, float, float]: ...
+
+    def assemble(self, pieces: list[tuple[npt.NDArray[np.float64], int]], phantom: bool, phantom_x1: float,
+                 phantom_x2: float, bin_time: float, v_x: float, v_y: float) -> npt.NDArray[np.float64]: ...
+
+
+if TYPE_CHECKING:
+    # The stub must satisfy the Protocol (mypy and pyright check a module against it).
+    # Only the stub when the kernel isn't built (CI, a fresh checkout): resolved, no source.
+    from helab.convert.backends.cython import _kernel as _stub  # pyright: ignore[reportMissingModuleSource]
+    _STUB_IS_A_KERNEL: Kernel = _stub
+
+_module: Kernel | None = None  # not "_kernel": that name is the submodule's
 _why_not: str | None = None
 _loaded = False
 _lock = threading.Lock()  # threads converting shots may make the first call together
 
 
-def kernel() -> ModuleType | None:
-    """The compiled kernel, imported on first use; None when it isn't built, or is older than its
-    source in this checkout (``unavailable`` then says why)."""
+def kernel() -> Kernel | None:
+    """The compiled kernel, imported on first use; None when it isn't built, is older than its
+    source in this checkout or fails to load in any other way (``unavailable`` then says why).
+    Never raises: a broken binary leaves the backend unavailable, not HeLab or the registry."""
     global _module, _why_not, _loaded
     if _loaded:
         return _module
@@ -69,14 +97,18 @@ def kernel() -> ModuleType | None:
         if not _loaded:
             try:
                 module = _import_kernel()
-            except ImportError as error:
-                _why_not = f"the compiled kernel isn't built ({error}); build it with {_BUILD_HINT}"
-            else:
                 built = getattr(module, "SOURCE_SHA256", None)
-                if _SOURCE.is_file() and built != hashlib.sha256(_SOURCE.read_bytes()).hexdigest():
+                stale = _SOURCE.is_file() and built != hashlib.sha256(_SOURCE.read_bytes()).hexdigest()
+            except ModuleNotFoundError as error:
+                _why_not = f"the compiled kernel isn't built ({error}); build it with {_BUILD_HINT}"
+            except Exception as error:  # a binary for another Python or arch, a broken file, an I/O error
+                _why_not = (f"the compiled kernel failed to load ({type(error).__name__}: {error}); rebuild it "
+                            f"with {_BUILD_HINT}")
+            else:
+                if stale:
                     _why_not = f"the compiled kernel is older than {_SOURCE.name}; rebuild it with {_BUILD_HINT}"
                 else:
-                    _module = module
+                    _module = cast(Kernel, module)  # its types: _kernel.pyi, checked against Kernel
             _loaded = True  # last: a thread that sees it sees _module and _why_not set
     return _module
 
@@ -95,6 +127,9 @@ def _reset() -> None:
 def unavailable(profile: DetectorProfile | None) -> str | None:
     if kernel() is None:
         return _why_not or "the compiled kernel isn't loaded"
+    # The profile's float fields (windows, sums, tolerances, v⊥, bin time) are Python floats
+    # whatever was passed (DetectorProfile.__post_init__), so the reference and the kernel use the
+    # same doubles; only the int fields need a check. search_depth only sizes the offsets.
     if profile is not None:
         for name in ("channel_x1", "channel_x2", "channel_y1", "channel_y2"):
             channel = getattr(profile, name)
@@ -160,9 +195,7 @@ def reconstruct_cython(pulses: RawPulses, profile: DetectorProfile, threads: int
 
     def run(piece: int) -> tuple[int, bool, float, float]:
         lo, hi = bounds[piece], bounds[piece + 1]
-        result: tuple[int, bool, float, float] = module.match(channels, times, lo, hi, max(lo, first), *settings,
-                                                              outs[piece])
-        return result
+        return module.match(channels, times, lo, hi, max(lo, first), *settings, outs[piece])
 
     if len(outs) == 1:
         results = [run(0)]
@@ -178,9 +211,8 @@ def reconstruct_cython(pulses: RawPulses, profile: DetectorProfile, threads: int
     total = sum(result[0] for result in results)
     phantom = pending is not None and profile.matlab_overflow_row and total + 1 > n // 4
     x1_column, x2_column = pending if pending is not None else (0.0, 0.0)
-    out: Hits = module.assemble([(rows, result[0]) for rows, result in zip(outs, results)], phantom, x1_column,
-                                x2_column, profile.bin_time, profile.v_perp_x, profile.v_perp_y)
-    return out
+    return module.assemble([(rows, result[0]) for rows, result in zip(outs, results)], phantom, x1_column,
+                           x2_column, profile.bin_time, profile.v_perp_x, profile.v_perp_y)
 
 
 def _run(pulses: RawPulses, profile: DetectorProfile) -> Hits:

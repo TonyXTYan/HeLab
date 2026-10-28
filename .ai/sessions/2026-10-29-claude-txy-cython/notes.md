@@ -119,9 +119,11 @@ pieces in 598 of 618 shot-profiles.
   which ships them). Keep `-ffp-contract=off`: GCC's default contracts across statements on
   aarch64 (x86-64 without `-mfma` has no FMA, but don't rely on it). Wheels: cibuildwheel with
   manylinux images.
-- **Windows**: MSVC Build Tools (VS 2022, "Desktop development with C++"), run from a shell with
-  the compiler on PATH (setuptools finds it through vswhere). `/fp:precise` is the default and
-  doesn't contract; never add `/fp:fast` or `/fp:contract`. Output `_kernel.cp313-win_amd64.pyd`.
+- **Windows**: MSVC Build Tools from **VS 2022 (17.0 or later)**, "Desktop development with C++",
+  run from a shell with the compiler on PATH (setuptools finds it through vswhere). From 17.0,
+  `/fp:precise` (the default) doesn't contract into FMA; older toolsets could contract under
+  `/fp:precise` once `/arch:AVX2` was on, so never build with an older toolset and `/arch:AVX2`.
+  Never add `/fp:fast` or `/fp:contract`. Output `_kernel.cp313-win_amd64.pyd`.
 - **Every platform**: `pip install Cython setuptools` at build time only, then
   `python native/cython/build.py`; one binary per Python minor version (CI's compat jobs on
   3.11/3.12/3.14 need their own build, or the tests there skip). A free-threaded Python (3.13t,

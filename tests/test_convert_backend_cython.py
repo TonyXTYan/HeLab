@@ -8,6 +8,7 @@ native/cython/build.py``); the rest check that HeLab works without it. Synthetic
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+import dataclasses
 import json
 import os
 from pathlib import Path
@@ -26,7 +27,8 @@ from helab.convert.backends.reference import offsets, reconstruct_reference
 from helab.convert.pipeline import convert_raw
 from helab.convert.profile import MATLAB_2019, MATLAB_2023_LAB_EDIT, BUILTIN_PROFILES, DetectorProfile
 from helab.convert.raw import RawPulses, parse_raw
-from helab.convert.reconstruct import BackendError, NoRowsError, backends, get_backend, reconstruct
+from helab.convert.reconstruct import (BackendError, NoRowsError, available_backends, backends, get_backend,
+                                       reconstruct)
 from helab.convert.txy import format_txy
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -79,7 +81,7 @@ def test_the_backend_is_registered_and_releases_the_gil() -> None:
 
 def test_without_the_kernel_it_says_why_and_helab_goes_on(monkeypatch: pytest.MonkeyPatch) -> None:
     def missing() -> ModuleType:
-        raise ImportError("No module named 'helab.convert.backends.cython._kernel'")
+        raise ModuleNotFoundError("No module named 'helab.convert.backends.cython._kernel'")
 
     monkeypatch.setattr(cython_backend, "_import_kernel", missing)
     cython_backend._reset()
@@ -91,6 +93,25 @@ def test_without_the_kernel_it_says_why_and_helab_goes_on(monkeypatch: pytest.Mo
             reconstruct(parse_raw(b"5,100\r\n"), MATLAB_2019, "cython")
         # The reference still runs.
         assert convert_raw(b"5,100\r\n", MATLAB_2019) is None
+    finally:
+        cython_backend._reset()
+
+
+@pytest.mark.parametrize("error", [ImportError("dlopen: incompatible architecture"), OSError("I/O error"),
+                                   RuntimeError("module init failed"), SystemError("bad"), AttributeError("x")])
+def test_any_error_loading_the_kernel_leaves_it_unavailable_with_the_reason(
+        monkeypatch: pytest.MonkeyPatch, error: Exception) -> None:
+    def broken() -> ModuleType:
+        raise error
+
+    monkeypatch.setattr(cython_backend, "_import_kernel", broken)
+    cython_backend._reset()
+    try:
+        why = cython_backend.unavailable(MATLAB_2019)
+        assert why is not None and "failed to load" in why and type(error).__name__ in why and str(error) in why
+        assert "cython" not in available_backends(MATLAB_2019) and "reference" in available_backends()
+        with pytest.raises(BackendError, match="failed to load"):
+            reconstruct(parse_raw(b"5,100\r\n"), MATLAB_2019, "cython")
     finally:
         cython_backend._reset()
 
@@ -133,6 +154,21 @@ def test_threads_making_the_first_call_together_all_get_the_kernel(monkeypatch: 
             assert list(pool.map(lambda _: first_use(), range(8))) == [(True, None)] * 8
     finally:
         cython_backend._reset()
+
+
+@needs_kernel
+def test_a_profiles_numbers_given_as_ints_reach_both_backends_as_the_same_doubles() -> None:
+    # DetectorProfile makes every float field a Python float, so the reference never compares an
+    # int exactly where the kernel has its rounded double; only the int fields need unavailable().
+    floats = [field.name for field in dataclasses.fields(DetectorProfile) if field.type == "float"]
+    assert {"search_window", "match_time_sum_x", "match_tolerance_x", "xy_sum_tolerance", "bin_time"} <= set(floats)
+    big = 2 ** 53 + 1  # not a double: float() rounds it
+    as_ints: dict[str, object] = {name: int(getattr(MATLAB_2019, name)) for name in floats if name != "bin_time"}
+    profile = MATLAB_2019.replace(**{**as_ints, "match_tolerance_y": big})
+    assert all(type(getattr(profile, name)) is float for name in floats)
+    assert cython_backend.unavailable(profile) is None
+    pulses = parse_raw((CASES / "basic" / "d1.txt").read_bytes())
+    assert txy_or_error(pulses, profile, 1) == txy_or_error(pulses, profile)
 
 
 @needs_kernel
