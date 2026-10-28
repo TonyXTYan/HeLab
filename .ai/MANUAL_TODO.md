@@ -133,11 +133,14 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
 
 ## Maestri floor hooks (added 2026-10-28)
 
-- [ ] **M8.1 Update the floor setup hooks in the Maestri app** to match
+- [x] **M8.1 Update the floor setup hooks in the Maestri app** to match
   [maestri-setup.md §4](maestri-setup.md#4-floor-setup-hook) (the hooks live only in the app, so the guide is
   their record): hook 1 now refuses a `venv` that resolves outside the floor; hook 5b is new
   (`HELAB_TEST_SETTINGS_FILE`, Q2.5); hook 7 initialises only `legacy/tdc_autoconverter`, without
-  `--recursive`. Then create a test floor and check `.ai/local/floor-env.sh` has four lines.
+  `--recursive`. Then create a test floor and check `.ai/local/floor-env.sh` has four lines. Done
+  2026-10-29: the third test floor got all hooks (own venv, four `floor-env.sh` lines, HeLab
+  opening the floor's settings file, no stale bytecode, the submodule), and teardown removed its
+  folders.
 
 ## Data roots (v0.0.5a1, added 2026-10-18)
 
