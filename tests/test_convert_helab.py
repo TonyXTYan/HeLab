@@ -655,9 +655,17 @@ def test_convert_once_from_the_command_line(source: Path, tmp_path: Path) -> Non
 
 @pytest.fixture
 def watching(source: Path) -> Iterator[subprocess.Popen[str]]:
-    process = subprocess.Popen([sys.executable, "-m", "helab", "convert", "--watch", str(source), "--output",
-                                "beside", "--interval", "0.2"], stderr=subprocess.PIPE, text=True, cwd=ROOT,
-                               env=dict(os.environ))
+    # A shell starts a background job (`pytest … &`) with SIGINT ignored, which children inherit and
+    # Python then leaves alone, so the watcher would never see Ctrl-C. Start it as from a terminal:
+    # a handled SIGINT is reset to the default by exec, and Python installs its handler.
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        process = subprocess.Popen([sys.executable, "-m", "helab", "convert", "--watch", str(source), "--output",
+                                    "beside", "--interval", "0.2"], stderr=subprocess.PIPE, text=True, cwd=ROOT,
+                                   env=dict(os.environ))
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGINT, previous)
     yield process
     if process.poll() is None:
         process.kill()
