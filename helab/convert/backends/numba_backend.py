@@ -46,11 +46,15 @@ _cache_folder_taken = False
 
 
 def set_cache_folder(folder: Path | str | None) -> None:
-    """Cache the compiled kernels in ``folder`` (created when missing), or, with None, where numba
-    chooses. Call it before the backend's first use in the process: the kernels take it when they
-    are first imported, and asking for another folder after that raises ``BackendError``."""
+    """Cache the compiled kernels in ``folder`` (absolute; created when missing), or, with None,
+    where numba chooses. Call it before the backend's first use in the process: the kernels take it
+    when they are first imported, and asking for another folder after that raises ``BackendError``
+    (a long-lived process keeps its folder: after a cache-folder move, new processes use the new
+    one). A relative folder is refused (``ValueError``): it would depend on the working folder."""
     global _cache_folder
     chosen = None if folder is None else Path(folder)
+    if chosen is not None and not chosen.is_absolute():
+        raise ValueError(f"The numba cache folder must be absolute, not {str(chosen)!r}")
     with _cache_lock:
         if _cache_folder_taken and chosen != _cache_folder:
             where = "numba's own folder" if _cache_folder is None else str(_cache_folder)

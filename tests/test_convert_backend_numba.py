@@ -20,6 +20,7 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 
+from helab.convert.backends import numba_backend
 from helab.convert.backends.numba_backend import (Within, import_problem, piece_bounds, reconstruct_numba,
                                                   reconstruct_numba_pieces)
 from helab.convert.check import check_txy
@@ -33,6 +34,16 @@ CASES = ROOT / "tests" / "data" / "convert" / "cases"
 VARIANTS = {"2019": "matlab-2019", "2023": "matlab-2023-lab-edit"}
 PROBLEM = import_problem()
 needs_numba = pytest.mark.skipif(PROBLEM is not None, reason=f"the numba backend can't run here: {PROBLEM}")
+
+
+@pytest.fixture(scope="session", autouse=True)
+def numba_cache_folder(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    """The compiled kernels are cached under the test run's temp folder, never beside the source
+    (``helab/convert/backends/__pycache__``). Session-wide: the kernels take the folder once per
+    process. The subprocess tests set their own folder or none."""
+    folder = tmp_path_factory.mktemp("numba-cache")
+    numba_backend.set_cache_folder(folder)
+    return folder
 
 
 def case_names() -> list[str]:
@@ -110,6 +121,21 @@ print(numba_kernels.cached)
                           timeout=300, env=dict(os.environ), cwd=ROOT)
     assert done.returncode == 0 and done.stdout.strip() == "False", done.stderr
     assert not (tmp_path / "numba").exists() or not any((tmp_path / "numba").iterdir())
+
+
+def test_a_relative_cache_folder_is_refused() -> None:
+    with pytest.raises(ValueError, match="absolute"):
+        numba_backend.set_cache_folder("caches/numba")
+    with pytest.raises(ValueError, match="absolute"):
+        numba_backend.set_cache_folder(Path("."))
+
+
+@needs_numba
+def test_the_tests_cache_the_kernels_outside_the_source_tree(numba_cache_folder: Path) -> None:
+    reconstruct(parse_raw(b"5,1000\r\n0,10000\r\n1,10400\r\n"), MATLAB_2019, "numba")
+    from helab.convert.backends import numba_kernels
+    assert numba_kernels.CACHE_FOLDER == numba_cache_folder
+    assert any(path.suffix == ".nbi" for path in numba_cache_folder.iterdir())
 
 
 def test_registering_the_backend_imports_no_numba_or_heavy_module() -> None:

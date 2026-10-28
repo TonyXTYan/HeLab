@@ -43,7 +43,7 @@ rows used).
 ## Checks
 
 - `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` (numba installed, at load
-  ~10 from the other floors): latest **6290 passed, 8 skipped, no RERUN**; after the cache seam 6286; at the
+  ~10 from the other floors): latest **6292 passed, 8 skipped, no RERUN** (after Kite's fixes); then 6290; after the cache seam 6286; at the
   pushed `7ef5935` 6284 passed; earlier 6282; no RERUN in any run. The 8 skips: 4 in my file and 2 in
   `test_convert_profile.py` are the single-value fields `x2_handling`/`y_handling`; 2 predate this floor.
 - `mypy helab/ --strict` (175 files), `mypy tests --strict` (145), `pyright helab tests`: clean.
@@ -110,15 +110,28 @@ one).
   warm the cache once in a helper at startup.
 - **A~4** (stage 4, helab-core floor; Side's Q~1): in the helper process, before the numba
   backend's first use, call `numba_backend.set_cache_folder(cache_dir() / "numba")` (or the name
-  the cache layout prefers). It is taken when the kernels first load and fixed for the process
-  (another folder later raises `BackendError`), so a cache-folder move takes effect in new helper
-  processes. An unwritable folder compiles without a cache (about 1.5 s per process), never
-  numba's own folders. The housekeeping list in AGENTS.md may want a line: the numba folder holds
+  the cache layout prefers; it must be absolute, a relative one raises `ValueError`). It is taken
+  when the kernels first load and fixed for the process (another folder later raises
+  `BackendError`). **After a cache-folder move**, a long-lived helper (Live) that has already
+  loaded the kernels keeps writing to the old `<cache>/numba` (`numba_kernels.CACHE_FOLDER` is
+  fixed at import, and numba's `ensure_cache_path` recreates the folder with `makedirs` if the move
+  took it away; Kite): stage 4 must restart or replace such helpers after a move, or accept a stray
+  old folder (compiled code only, safe to delete). An unwritable folder compiles without a cache
+  (about 1.5 s per process), never numba's own folders. The housekeeping list in AGENTS.md may want a line: the numba folder holds
   only compiled code, safe to delete (recompiled on next use; stale entries are overwritten, not
   accumulated: one `.nbi` and one `.nbc` per kernel).
 - **A~2**: done on this branch at CoCo's request: `backends.numba_backend` is in
   `tests/test_headless_imports.py`'s `PURE`. `numba_kernels` can't be listed: it needs numba.
 - **A~3**: if the NumPy floor's shared `split.py` lands, `reconstruct_numba_pieces` can take its
   cut instead of `choose_bounds` (same rule), and `timing`'s `WITHIN_SHOT` can drive it.
+- **A~5** (tests, conftest-wide; Kite): with no cache folder set, numba writes about 13
+  `.nbi`/`.nbc` files per run into `helab/convert/backends/__pycache__`. My test file now sets
+  a session-wide temp folder (`numba_cache_folder` fixture), so the suite writes none there
+  (checked: 0 after a run). Proposed for `tests/conftest.py`: a session-scoped autouse fixture that
+  calls `numba_backend.set_cache_folder(<session temp>/numba-cache)` (cheap: it imports no numba),
+  so any later test that touches the numba backend inherits it; then my file's fixture can go.
+- **Landing** (Kite 5): `dev/v0.0.7` gets one `_MODULES` entry and one `PURE` entry from each
+  backend floor; keep every one when merging (`helab/convert/reconstruct.py`,
+  `tests/test_headless_imports.py`).
 - **M~1** (lab PCs, if numba ships): run the numba backend (or the frozen probe) on the Lab Side
   and Main PCs (Windows, Sandy Bridge): first-compile time, cache location, identical output.
