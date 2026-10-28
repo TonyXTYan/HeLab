@@ -62,16 +62,23 @@ stalls). Payload (`io_ops.convert.ConvertRequest`):
 | `beside_confirmed` | command line only: beside for this run without the flag |
 | `backend` | default `pipeline.APP_BACKEND` (`numpy`); unavailable → the operation errors before any read |
 | `shots` | only these shot numbers (None: every raw file) |
-| `seen`, `done`, `skip` | the previous `convert_summary`'s `waiting`, `current`, `unconvertible`, sent back |
+| `seen` | **required**: the previous `convert_summary`'s `waiting` list; `[]` for a folder's first conversion (which then only records: every file not already current waits for the next check). None only from `helab convert --once` (one check, files unmodified for `ONCE_SETTLE_SECONDS` = 60 s). Live and every other caller in the app always send a list; a request without the key is refused. |
+| `done`, `kept`, `skip` | the previous summary's `current`, `kept`, `unconvertible`, sent back: not checked again while unchanged |
 | `redo` | `stale` (default: convert when the provenance says so) or `always` |
 | `workers` | processes (default `DEFAULT_WORKERS`: min(4, cores/2); 1 in a frozen app, see A~1) |
 
-**Settle rules** (A10.1): converted only when unmodified for `fingerprints.SETTLE_SECONDS` and not
-dated in the future, and with the same (size, mtime) at the listing, before the read and after it
-(fstat); with `seen` given (not None), also the same as at the previous check, so a file seen for
-the first time waits one check (Live's interval). Content: ends with `\n`, first line on
-`profile.channel_trigger`. Unfinished files are not read again while unchanged (their `seen`
-entry carries the reason). No rows once settled: `shot_unconvertible` `no_rows` (Q10.2).
+**Settle rules** (A10.1): converted only when unmodified for `fingerprints.SETTLE_SECONDS` by this
+computer's clock, with the same (size, mtime) at the previous check (`seen`) and this one, and again
+before and after the read (fstat), so two checks are a check interval apart, not microseconds (the
+age alone is fooled by a source clock behind ours or a share's stale attribute cache: Gannet M2). A
+file seen for the first time waits one check (Live's interval); a shot with a current TXY is told
+apart first and needs no read. With `seen` None (`--once` only) the age must be 60 s. A file dated
+more than `fingerprints.FUTURE_SECONDS` ahead waits as `future`, and `clock_skew` (the existing
+kind, `fingerprints._clock_ahead`; the app tells the user once per location) is sent once per
+conversion. Content: ends with `\n`, first line on `profile.channel_trigger`. Unfinished files are
+not read again while unchanged (their `seen` entry carries the reason). No rows once settled:
+`shot_unconvertible` `no_rows` (Q10.2). Heartbeats while a shot computes stop after its budget
+(`compute_budget`: 60 s plus 1 s per MB), so a hung backend times out (Gannet L4).
 
 ### Events (`helab/io_ops/events.py`)
 
@@ -79,11 +86,13 @@ entry carries the reason). No rows once settled: `shot_unconvertible` `no_rows` 
 |---|---|---|
 | `convert_plan` | once, after the listing | `output` (`beside`/`cache`/`temp`), `fallback` (why not the one asked), `folder` (HeLab's folder: provenance, and the TXY unless beside), `txy_folder`, `key` (root key or ""), `profile` {name, version, hash, calibrated}, `backend`, `workers`, `raw`, `todo` |
 | `shot_converted` | a TXY written | `shot`, `raw_name`, `raw_size`, `raw_mtime_ns`, `raw_sha256`, `output`, `txy`, `txy_size`, `provenance` (its JSON path), `hits` (Live's low-count check reads this), `replaced` (why an older HeLab TXY was replaced, or ""), `profile`, `backend`, `seconds` {read, parse, reconstruct, format, write} |
-| `shot_waiting` | not converted yet | `shot`, `raw_name`, `raw_size`, `raw_mtime_ns`, `reason` (`settling`, `changed`, `no_final_newline`, `not_trigger_first`, `read_failed`), `message` |
+| `shot_waiting` | not converted yet | `shot`, `raw_name`, `raw_size`, `raw_mtime_ns`, `reason` (`settling`, `future`, `changed`, `no_final_newline`, `not_trigger_first`, `read_failed`), `message` |
 | `shot_unconvertible` | settled, can't be converted | same fields; `reason` `no_rows` or `failed` |
 | `shot_kept` | beside: a HeLab TXY already there that this conversion doesn't stand behind | `shot`, `txy`, `reason` |
 | `convert_progress` | after each shot (≤ 4/s) | `done`, `todo`, `converted`, `raw_bytes` |
-| `convert_summary` | the end, before `done` | `output`, `folder`, `txy_folder`, `converted`, `current`, `waiting`, `unconvertible` (lists of `[name, size, mtime_ns]`, `waiting` with reason and message after), `kept` (shots), `seconds` |
+| `convert_summary` | the end, before `done` | `output`, `folder`, `txy_folder`, `converted`, `current`, `waiting`, `unconvertible`, `kept` (lists of `[name, size, mtime_ns]`, `waiting` with reason and message after), `seconds` |
+| `partial_removed` | beside: a leftover temporary TXY of a killed write removed | `file`, `size`, `age` (s) |
+| `clock_skew` (existing kind) | raw files dated over 2 s ahead of this clock | `seconds`, `location` |
 | `convert_prefs` | `cache_admin convert_prefs` | `prefs` {write_beside, set_at} |
 
 `tests/test_helper_events.py` counts `helab/convert_cli.py` as an app-side consumer (it logs
@@ -96,8 +105,16 @@ the converter's kinds); `convert_prefs` is matched by `FolderCache`.
 `temps`; `identity` = the folder's `root://<uuid>/<relative>` key, else `path:<absolute path>`. It
 holds `d_txy_helab_<N>.txy` (unless beside), `d_txy_helab_<N>.json` (always) and `folder.json`
 (`{"helab": "converted-txy-folder", "version": 1, "key", "source", "updated_at"}`). Beside: only
-`d_txy_helab_<N>.txy` in the source folder (temporary `.d_txy_helab_<N>.txy.<hex>.partial`, then a
-no-replace rename); never a raw file, an existing TXY, or the provenance.
+`d_txy_helab_<N>.txy` in the source folder (temporary `.d_txy_helab_<N>.txy.<16 hex>.partial`, then
+a no-replace rename); never a raw file, an existing TXY, or the provenance, which is written
+**before** the beside TXY (a conversion stopped between them leaves a stale record: the shot is
+converted again, never kept for good; Gannet L2; in the cache or temp the TXY goes first, so an old
+record no longer matches it). **Leftovers** (Gannet M1, Q~7): a beside conversion removes its own
+leftover temporary files in that folder: only names matching exactly the pattern `write_atomic`
+makes (`txy.partial_pattern`; `convert.partial()`: `^\.d_txy_helab_\d+\.txy\.[0-9a-f]{16}\.partial$`),
+regular files by `lstat` (a link is left alone, never followed), unmodified for `PARTIAL_MAX_AGE`
+(1 h), only in a folder it is writing beside (the flag on, or `--output beside`); each is sent as
+`partial_removed` (and traced).
 
 ### Provenance (`helab.convert.provenance`)
 
@@ -122,6 +139,10 @@ Live writes one small file per shot instead of the folder's whole list each time
   drop it from `test_settings_defaults`'s exceptions.
 - Profiles: send `DetectorProfile.to_dict()` of the chosen one. A10.3 (built-ins as JSON files) is
   not done here.
+- **Clear folder preferences** (Settings → Cache) now also turns off `write_beside` (`clear_prefs`
+  clears `convert_prefs` too), but `CacheTab`'s confirmation and row text (`CacheTab.py:433`, `:609`)
+  name only "not cached" and "not auto-loaded": say it there too, from `inventory()["prefs"]
+  ["write_beside"]` (Gannet L3; not edited here).
 
 ### For the packaging floor
 
@@ -149,7 +170,10 @@ Live writes one small file per shot instead of the folder's whole list each time
 - **`helab convert --output beside`** stands for the folder's flag for that run and saves nothing
   (Q~4).
 - **One large shot** (≥ 20 MB raw) with workers > 1 is cut into pieces (`split`) in the pool.
-- **`--once`** reports waiting files and exits 0; exit 1 when the conversion fails, 2 for usage.
+- **`--once`** is one check (`seen` None): files unmodified for 60 s convert, younger ones are
+  reported waiting; exit 0, 1 when the conversion fails, 2 for usage. **`--watch`**'s first pass
+  only records (`seen` = `[]`) and converts from the second, each pass sending the last summary's
+  lists back.
 
 ## Proposed doc changes (for the Coordinator)
 
@@ -204,6 +228,9 @@ asking (Q~3; whether they join the budget later, and so the housekeeping list, i
   process without the GUI) open the store".
 - The write rule (Q~4, Side at landing): "…and, where the user turns it on per folder, or asks for
   it on the command line, converted `d_txy_helab_<N>.txy`".
+- The housekeeping list, a line **(Q~7, to confirm)**: "a beside conversion deletes its own
+  leftover temporary TXY in that source folder (`.d_txy_helab_<N>.txy.<16 hex>.partial`, exactly
+  that pattern, regular files over an hour old, never through a link);".
 
 ## Provisional items
 
@@ -234,6 +261,12 @@ Q~1–Q~5 were **decided by Side overnight as proposed, for Tony to confirm** (2
   is, still never one modified within the settle age. A seam for it: a request field naming the
   shots to convert despite the content checks (e.g. `force_shots`), recorded in the provenance;
   for the Live or UI floor if Tony wants it.
+- **Q~7** (Tony; Side decided, for Tony to confirm): a helper killed mid-way through a beside write
+  (Cancel, a no-progress timeout, a cache move, Quit now; fsync can be slow on shares) leaves
+  `.d_txy_helab_<N>.txy.<16 hex>.partial` in the source folder. Decided: a later beside conversion
+  of that folder deletes such files of its own (exact pattern, regular file, over 1 h old, no
+  links), sent as `partial_removed`; this is a deletion in a source folder, so it goes on
+  AGENTS.md's housekeeping list (line above). Alternative: leave them and list them for the user.
 - **A~1** (packaging floor): in the built app, run a `convert` with `workers` 2 (spawned workers
   through `freeze_support`) on all three OSes; if it works, make `DEFAULT_WORKERS` the same as
   from source.
@@ -264,3 +297,26 @@ store table (newest wins, Clear, re-key, migration); the helper process (dispatc
 refusal, source guard, killed helper's workers exit, nothing written after); numba's cache folder;
 an unavailable backend; the file kind; the setting; 24 threads loading backends at once in a fresh
 process (×3); `helab convert --once` and `--watch` with Ctrl-C.
+
+After Gannet's review: a request without `seen` refused; a first conversion only records, then
+converts, and finds converted shots current; one check wants 60 s; a future-dated file waits as
+`future` with `clock_skew`; kept shots stay kept with the summary fed back; a beside write stopped
+after its record is converted again; the partial pattern matches `write_atomic`'s names and no
+look-alike; leftovers: only old regular own ones removed (young, look-alike, link and not-beside
+left), and a really killed beside write's leftover (a subprocess `os._exit` before the rename) is
+removed on a later pass once old; heartbeats stop after the compute budget (the ticker, the pool's
+rule and a slowed backend end to end); the fallback texts (beside without a root, an unreadable
+flag). The write audit also patches `io.open` (pathlib), `os.truncate`, `chmod`, `symlink`,
+`renames`.
+
+## Review fixes (Gannet, on `c40b4fb`: no blocker)
+
+| Finding | Fix |
+|---|---|
+| M1: a killed beside write leaves its `.partial` in the source folder | A beside conversion removes its own old leftovers (rules above; Q~7, AGENTS.md housekeeping line proposed) |
+| M2: two checks only with `seen` | `seen` required; `--watch` records first; `--once` 60 s; current shots first; `future` + `clock_skew` |
+| L1: kept shots flip waiting/kept | `kept` entries `[name, size, mtime]`, sent back and honoured like `done` |
+| L2: record after the beside TXY | the record first beside (removed if the TXY exists after all) |
+| L3: CacheTab doesn't name `write_beside` | for the UI floor (above) |
+| L4: endless compute heartbeats | `compute_budget` caps the ticker and the pool's heartbeats |
+| Nits | fallback texts (beside without a root; flag unreadable); `convert_prefs` comment; no "0 workers"; wider write audit |
