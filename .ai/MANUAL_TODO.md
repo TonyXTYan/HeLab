@@ -6,9 +6,119 @@ real-volume testing and release validation. Product features belong in the
 
 Keep items concise and tick them when completed. Record detailed results, tested
 commit, OS/build and reproductions in `.ai/sessions/`, linked from the item.
-New confirmed product issues go in `roadmaps/_readme.md` with a link to the evidence.
+New confirmed bugs go in `roadmaps/known-issues.md`, new features in `roadmaps/_readme.md`, with a link to the evidence.
 
 The v0.0.5a checks below were added on 2026-10-08 and remain pending.
+
+Decisions only Tony can make are in [DECISIONS_TODO](DECISIONS_TODO.md), and work agents
+may do without asking in [AI_TODO](AI_TODO.md). Items below the smoke pass that it doesn't
+cover are lab validation, and don't gate a release (proposed, 2026-10-28).
+
+## Release smoke pass
+
+These checks gate a release ([decision A](DECISIONS_TODO.md#a-release-gate)). Run the pass once
+on a Mac and once on a lab PC (Windows), on the release candidate. Steps marked **Lab PC**
+matter most there. Each machine takes about 45 min, and step 3 needs a run acquiring.
+
+The Assistant takes Tony through it in Chat, one step at a time. Tony answers "ok" or says
+what he saw. Results go to a session file per machine
+(`sessions/<date>-<tool>-smoke-<machine>/results.md`: the machine, OS, commit, trace folder
+and each step's result), and problems go to [known-issues](../roadmaps/known-issues.md).
+Afterwards, an agent ticks the items below that the pass covered
+([AI_TODO](AI_TODO.md#after-the-pass)).
+
+**Setup:**
+- A checkout of the release candidate, with its venv: `source venv/bin/activate` (Windows
+  `venv\Scripts\activate`), then `helab`.
+- The share mounted: `/Volumes/dld_output`, or the mapped drive.
+- Optional: turn on Help › Record I/O trace (this session) for the whole pass, so an agent
+  can summarise the share traffic afterwards.
+
+### 1. Start-up
+- **Do:** Help › About HeLab.
+- **Expect:** version 0.0.5a1 (until the bump), the commit you checked out, the branch.
+  Settings → Cache shows the inventory. A first start on this machine starts an empty `store-v3`.
+
+### 2. Browse and cache first
+- **Do:** browse the share two levels into a data root (a folder with a `.helab-root` at or
+  above it). Select a run folder and let it load. Select another folder, then go back to the
+  first one.
+- **Expect:** the data shows at once on return. For a cached folder: "loaded (cached)", then
+  "Checking for changes…", then checked. Folder details shows ⚓ and the marker, or "RAM only"
+  without one. The tree's badges and the ANCHOR badge are on root folders.
+- **Do:** quit and start again, then select the same folder.
+- **Expect:** data from the disk cache at once, then the check. Counts agree with before.
+- **Lab PC:** the same, and note how long selecting a cached folder takes.
+
+### 3. Live during a run (needs an acquisition)
+- **Do:** select the run folder being written. Open Counts per shot, a T histogram and the
+  3D scatter. Turn Live on.
+- **Expect:** new shots within a few seconds of their last write. A shot being written
+  shows "still being written". Plots show `rev N · following Live` (the scatter at most
+  every 5 s). The tree and path bar are locked; switching tabs turns Live off.
+- **Do:** after 10 new shots, check line 3 and the cache line. Then turn Live off.
+- **Expect:** "saving 10 shots", then the cache line updates. Live off saves once more.
+- **Do:** with Live on, quit (Cmd+Q / File › Quit).
+- **Expect:** the quit window names the folder and closes by itself. At the next start the
+  shots come from the cache.
+- **Lab PC:** the same; the GUI stays responsive with the plots open.
+
+### 4. Presets and reopened plots
+- **Do:** open two plots of one script. In one, change a setting and save a preset from its
+  Presets row. In the other plot, the preset is listed at once. Apply it, then change one
+  setting.
+- **Expect:** a dot by the changed setting, and "Save 1 change ▾".
+- **Do:** Presets menu › save an arrangement with plots in two tab groups and one floating.
+  Close some plots, then apply it with Replace, and again with Add.
+- **Expect:** Replace restores the places (the floating window's place and size, the front
+  tab). Add opens its plots beside the open ones.
+- **Do:** quit with plots open and start again.
+- **Expect:** the plots come back in place, waiting until their folder is selected (or
+  running at once if it's cached). The startup tab's own selection is unchanged.
+
+### 5. Saved analysis results
+- **Do:** on a folder below a `.helab-root`, open a DLD port Correlations plot (radial), or
+  Release time. Wait for it to draw, and look at the source line's tooltip.
+- **Expect:** the record ends "saved in the disk cache". The folder's row gets the grey
+  REPORT badge, and Folder details says "Cached analysis: 1 result, <size>".
+- **Do:** quit, start, load the folder and open the same plot.
+- **Expect:** it draws at once, "from disk cache, computed …".
+- **Do:** Settings → Data roots › Clear cached analysis… on that root.
+- **Expect:** it asks first; afterwards the badge goes, and the cached data stays.
+
+### 6. Work Offline
+- **Do:** File › Work Offline.
+- **Expect:** the check mark and "Offline · cached data only" in the status bar. Refresh,
+  Check folder status and Live are greyed, with the reason.
+- **Do:** browse the tree, select the folder loaded in step 2 and open a plot on it.
+- **Expect:** counts and icons from saved listings; "not checked (offline)"; the plot runs.
+  A folder never loaded says "Data not kept (offline)…". Nothing spins.
+- **Do (if practical):** unmount the share, quit, start again (HeLab starts offline), and
+  repeat the browse.
+- **Do:** the status-bar button › Yes (Work Online).
+- **Expect:** every tab relists, the selection is checked, the controls come back.
+
+### 7. DLD plots on real data (a quick look)
+- **Do:** on a BEC or thermal run, open each DLD Front Panel Port plot in a narrow (~560 px)
+  dock: T, X, Y histograms (turn on a fit), Density images, Mean X, Y, T spectrum, Shot
+  times, Shot trends, Release time, Velocity distributions, Correlations, Transfer
+  fractions.
+- **Expect:** every plot paints (the lab PC too: PyQtGraph, no QtWebEngine). T axes read like
+  `20,450` (not `2.045e+04`) and X/Y are in mm. Titles wrap with nothing clipped, warnings are
+  amber, and "ħk/m" shows ħ (not h). Zoom stays through Live reruns.
+- **Note anything that looks physically wrong.** The detailed physics checks are after the
+  release (MANUAL_TODO, "On real data").
+
+### 8. Plot settings panel and floating plots
+- **Do:** three plots tabbed. Click each tab, click inside each plot (including the 3D
+  scatter's web view), then float one plot and click between it and the main window.
+- **Expect:** the Settings panel follows the plot clicked. A floating plot's settings
+  open on its right; docking it again brings the page back with its edits.
+- **Do:** in a T box, type `20,450.5`, `20.45 s` and `abc`.
+- **Expect:** the first two are read; `abc` stays red.
+- **Lab PC:** the 3D scatter's first open: does the main window close and reopen
+  ([decision G](DECISIONS_TODO.md#g-windows-3d-scatter-window-flicker))? If the pane is black, Open in
+  browser works.
 
 ## Data roots (v0.0.5a1, added 2026-10-18)
 
