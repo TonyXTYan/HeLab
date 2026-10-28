@@ -36,7 +36,7 @@ def strict(data: bytes) -> bool:
 def same_as_general(data: bytes) -> None:
     fast = fastio.parse_strict(data)
     # Strict files are all read, unless a field is too long for int64 (the general reader then).
-    too_long = any(len(field) > 18 for field in data.replace(b"\r\n", b",").replace(b"\n", b",").split(b","))
+    too_long = any(len(field) > 16 for field in data.replace(b"\r\n", b",").replace(b"\n", b",").split(b","))
     assert (fast is not None) == (strict(data) and not too_long), data[:60]
     if fast is not None:
         general = raw._parse_textscan(data)
@@ -61,7 +61,7 @@ def test_random_near_strict_files_read_as_the_general_reader() -> None:
     alphabet = [b"0", b"1", b"9", b",", b"\r\n", b"\n", b"\r", b" ", b"-", b".", b"e"]
     for _ in range(3000):
         ending = rng.choice([b"\r\n", b"\n"])
-        lines = [b"%d,%d" % (rng.randrange(8), rng.randrange(10 ** rng.randrange(1, 19))) + ending
+        lines = [b"%d,%d" % (rng.choice([rng.randrange(8), rng.randrange(10 ** rng.randrange(1, 18))]), rng.randrange(10 ** rng.randrange(1, 18))) + ending
                  for _ in range(rng.randrange(0, 6))]
         data = bytearray(b"".join(lines))
         for _ in range(rng.choice([0, 0, 1, 2])):
@@ -74,12 +74,12 @@ def test_random_near_strict_files_read_as_the_general_reader() -> None:
 
 
 def test_long_fields_take_the_general_reader() -> None:
-    data = b"5,1\r\n0,0009007199254740993\r\n1,123456789012345678901\r\n"
+    data = b"5,1\r\n0,09007199254740993\r\n1,123456789012345678901\r\n"
     assert strict(data) and fastio.parse_strict(data) is None
     assert parse_raw(data).times.tolist() == [1.0, 9007199254740992.0, 1.2345678901234568e20]
-    eighteen = b"5,999999999999999999\n"
-    parsed = fastio.parse_strict(eighteen)
-    assert parsed is not None and parsed[1].tolist() == [1e18]
+    sixteen = b"5,9999999999999999\n12,0000000000000001\n"
+    parsed = fastio.parse_strict(sixteen)
+    assert parsed is not None and parsed[0].tolist() == [5.0, 12.0] and parsed[1].tolist() == [1e16, 1.0]
 
 
 def test_strict_files_go_through_the_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
