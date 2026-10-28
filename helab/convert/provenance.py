@@ -28,7 +28,8 @@ from typing import Any
 PROVENANCE = "helab-txy-provenance"
 VERSION = 1
 
-TXY_PATTERN = re.compile(r"^d_txy_helab_(\d+)\.txy$")
+# The shot as HeLab writes it: ASCII digits, no leading zeros (``txy_name``).
+TXY_PATTERN = re.compile(r"^d_txy_helab_(0|[1-9][0-9]*)\.txy$", re.ASCII)
 
 
 def txy_name(shot: int) -> str:

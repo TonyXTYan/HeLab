@@ -567,7 +567,10 @@ def test_the_file_kind_is_counted_but_not_loaded() -> None:
     kind = file_kinds.HELAB_TXY
     assert not kind.loaded and not kind.counted_empty
     assert file_kinds.match("d_txy_helab_12.txt") is None and file_kinds.match(".d_txy_helab_1.txy.ab.partial") is None
-    assert kind.pattern.pattern == provenance.TXY_PATTERN.pattern
+    assert (kind.pattern.pattern, kind.pattern.flags) == (provenance.TXY_PATTERN.pattern, provenance.TXY_PATTERN.flags)
+    for name in ("d_txy_helab_07.txy", "d_txy_helab_\u0661.txy", "d_txy_helab_.txy"):
+        assert file_kinds.match(name) is None and not provenance.TXY_PATTERN.match(name), name
+    assert file_kinds.match("d_txy_helab_0.txy") == (file_kinds.HELAB_TXY, 0)
     assert file_kinds.files_summary({"helab_txy": {1, 2}}, {})["helab_txy"] == {"count": 2}
     assert "helab_txy" not in file_kinds.files_summary({"raw": {1}}, {})  # (Summaries keep their shape.)
 
@@ -765,7 +768,8 @@ def test_the_partial_pattern_is_exactly_write_atomics_names(tmp_path: Path) -> N
     assert pattern.match(PARTIAL_NAME)
     for name in (".d_txy_helab_1.txy.0123456789abcdeg.partial", ".d_txy_helab_1.txy.0123456789abcde.partial",
                  PARTIAL_NAME + ".bak", "x" + PARTIAL_NAME, PARTIAL_NAME[1:], ".d_txy_forc1.txt.0123456789abcdef.partial",
-                 ".d_txy_helab_1.txy.0123456789ABCDEF.partial", ".d1.txt.0123456789abcdef.partial"):
+                 ".d_txy_helab_1.txy.0123456789ABCDEF.partial", ".d1.txt.0123456789abcdef.partial",
+                 ".d_txy_helab_07.txy.0123456789abcdef.partial", ".d_txy_helab_\u0661.txy.0123456789abcdef.partial"):
         assert not pattern.match(name), name
 
 
@@ -882,3 +886,58 @@ def test_a_flag_that_cant_be_read_is_said_so(source: Path, tmp_path: Path, priva
     events = run(source, request_for(source, tmp_path, private_store, output="cache", beside=True))
     [plan] = of(events, "convert_plan")
     assert plan["output"] == "cache" and plan["fallback"] == "the folder's flag couldn't be read (database is locked)"
+
+
+# Gannet round 2.
+
+
+def test_a_kept_or_done_shot_whose_beside_txy_is_deleted_is_converted_again(source: Path, tmp_path: Path) -> None:
+    write_raw(source, 1, raw_bytes(10_000))
+    write_raw(source, 2, raw_bytes(20_000))
+    (source / "d_txy_helab_1.txy").write_bytes(b"another computer's\n")
+    request = request_for(source, tmp_path, beside=True, beside_confirmed=True)
+    events = run(source, request)
+    assert [event["shot"] for event in of(events, "shot_kept")] == [1]
+    assert [event["shot"] for event in of(events, "shot_converted")] == [2]
+    # The user deletes both TXY; with the summary sent back, both are converted again.
+    (source / "d_txy_helab_1.txy").unlink()
+    (source / "d_txy_helab_2.txy").unlink()
+    done = summary(events)
+    request["seen"], request["done"], request["kept"] = done["waiting"], done["current"], done["kept"]
+    again = run(source, request)
+    assert sorted(event["shot"] for event in of(again, "shot_converted")) == [1, 2]
+    assert (source / "d_txy_helab_1.txy").read_bytes() == convert_raw(raw_bytes(10_000), MATLAB_2019, "reference")
+
+
+def test_a_lost_beside_race_leaves_the_other_conversions_record(source: Path, tmp_path: Path,
+                                                                monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two conversions of one folder at once: the one that finds the TXY written meanwhile removes
+    its own record only if it is still its own."""
+    write_raw(source, 1, raw_bytes(10_000))
+    request = request_for(source, tmp_path, beside=True, beside_confirmed=True)
+    folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
+    record = folder / "d_txy_helab_1.json"
+    theirs = provenance_record(shot=1, txy_sha256="theirs").to_json()
+    original = txy.write_atomic
+
+    def raced(path: Any, data: bytes, *, replace: bool = True) -> None:
+        if Path(path).parent == source:
+            # The other conversion: its TXY and then its record land between ours.
+            Path(path).write_bytes(b"the other conversion's\n")
+            record.write_text(theirs)
+        original(path, data, replace=replace)
+    monkeypatch.setattr(txy, "write_atomic", raced)
+    events = run(source, request)
+    assert [event["shot"] for event in of(events, "shot_kept")] == [1]
+    assert record.read_text() == theirs
+    # Without a rival record, ours (unmatched by any TXY) goes.
+    (source / "d_txy_helab_1.txy").unlink()
+    record.unlink()
+
+    def raced_txy_only(path: Any, data: bytes, *, replace: bool = True) -> None:
+        if Path(path).parent == source:
+            Path(path).write_bytes(b"the other conversion's\n")
+        original(path, data, replace=replace)
+    monkeypatch.setattr(txy, "write_atomic", raced_txy_only)
+    run(source, request)
+    assert not record.exists()

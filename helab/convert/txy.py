@@ -44,7 +44,7 @@ def partial_name(name: str, token: str) -> str:
 def partial_pattern(name_pattern: str) -> re.Pattern[str]:
     """The temporary names ``write_atomic`` makes for targets matching ``name_pattern`` (a regex
     without anchors), and nothing else: what a writer's leftovers can be matched by."""
-    return re.compile(rf"^\.(?:{name_pattern})\.[0-9a-f]{{{2 * _TOKEN_BYTES}}}\.partial$")
+    return re.compile(rf"^\.(?:{name_pattern})\.[0-9a-f]{{{2 * _TOKEN_BYTES}}}\.partial$", re.ASCII)
 
 
 def format_value(value: float) -> str:

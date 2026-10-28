@@ -392,6 +392,9 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
                   and entry[3] in (raw.NO_FINAL_NEWLINE, raw.NOT_TRIGGER_FIRST)}
     done, kept_before, skip = _stats(request.get("done")), _stats(request.get("kept")), _stats(request.get("skip"))
     redo = str(request.get("redo") or "stale")
+    if seen is not None:
+        # The previous check saw its done and kept shots too, with these sizes and dates.
+        seen = {**done, **kept_before, **seen}
 
     # The listing: raw files, and (beside) HeLab's TXY already there.
     raws: list[_Shot] = []
@@ -444,10 +447,13 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
         if skip.get(shot.name) == stat:
             unconvertible.append(shot.entry)
             continue
-        if done.get(shot.name) == stat and redo != "always":
+        # Beside, a done or kept shot counts as such only while its TXY is still there: one the user
+        # deleted is looked at again.
+        there = not beside or shot.shot in beside_txy
+        if done.get(shot.name) == stat and redo != "always" and there:
             current.append(shot.entry)
             continue
-        if kept_before.get(shot.name) == stat:
+        if kept_before.get(shot.name) == stat and there:
             kept.append(shot.entry)
             continue
         # A current TXY needs no read, so it is told apart first (a folder's first conversion
@@ -540,8 +546,9 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
                 try:
                     txy.write_atomic(target, result.txy, replace=False)
                 except FileExistsError:
-                    # (Another conversion wrote it since the listing; it stays, and the record goes.)
-                    os.unlink(record_path)
+                    # (Another conversion wrote it since the listing; it stays. Its record goes, unless
+                    # another conversion has written its own there since: then that one stands.)
+                    _remove_own_record(record_path, record.txy_sha256)
                     kept.append(shot.entry)
                     send({"kind": "shot_kept", "path": path, "shot": shot.shot, "txy": target,
                           "reason": "written by another conversion meanwhile; a TXY in a source folder is never "
@@ -614,6 +621,19 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     send({"kind": "convert_summary", "path": path, "output": places["output"], "folder": places["folder"],
           "txy_folder": places["txy_folder"], "converted": converted, "current": current, "waiting": waiting,
           "unconvertible": unconvertible, "kept": kept, "seconds": time.monotonic() - started})
+
+
+def _remove_own_record(record_path: str, txy_sha256: str) -> None:
+    """Remove a provenance record this conversion wrote, if the one on disk is still it (by its
+    TXY's SHA-256): another conversion of the folder may have replaced it with its own."""
+    from helab.convert import provenance
+    try:
+        with open(record_path, "rb") as stream:
+            if provenance.Provenance.from_json(stream.read()).txy_sha256 != txy_sha256:
+                return
+        os.unlink(record_path)
+    except (OSError, provenance.ProvenanceError):
+        pass
 
 
 def _remove_partial(path: str, entry: os.DirEntry[str], send: Emit) -> None:
