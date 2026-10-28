@@ -107,7 +107,13 @@ def test_random_values_and_block_edges_format_as_value_by_value(monkeypatch: pyt
                            rng.normal(0, 1, (500, 3)) * 10.0 ** rng.integers(-320, 300, (500, 3))])
     hits[rng.integers(0, hits.shape[0], 20), rng.integers(0, 3, 20)] = math.nan
     monkeypatch.setattr(fastio, "_BLOCK", 7)
+    monkeypatch.setattr(fastio, "_TABLE_ROWS", 3)
     assert format_txy(hits) == format_txy_by_value(hits)
+    # Columns with repeats take the table of distinct values: -0 and 0, NaN, Inf kept apart.
+    repeats = rng.choice(np.array(SPECIAL + [0.0125, -0.0125]), (2000, 3))
+    repeats[:, 0] = rng.uniform(0, 1, 2000)
+    assert format_txy(repeats) == format_txy_by_value(repeats)
+    assert format_txy(repeats[:, ::-1].copy()) == format_txy_by_value(repeats[:, ::-1].copy())
     assert format_txy(hits[:7]) == format_txy_by_value(hits[:7])
     assert format_txy(np.empty((0, 3))) == b""
 
