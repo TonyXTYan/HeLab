@@ -102,7 +102,52 @@ def uniquetol_first(vals: list[float], tol: float) -> list[int]:
     return kept
 
 
-def reconstruct(raw: list[list[float]], variant: str) -> list[list[float]]:
+def _y_search(srt, count, N, x1_val, x1, x2, tx, t_sum_y, T_sum, tol_keep, two_keep, variant, which_row, x2_index, put):  # type: ignore[no-untyped-def]
+    """L502-573: the y1/y2 search for one x1 with its stored x2; returns how_many_y."""
+    how_many_y = 0
+    dummy2 = 0
+    for count3 in range(1, SEARCH_NO + 1):
+        dummy2 = dummy2 + count3 * (-1) ** count3
+        r2 = count + dummy2
+        if r2 <= 0 or r2 > N:
+            continue
+        if abs(srt[r2 - 1][1] - x1_val) > T_sum:
+            continue
+        if srt[r2 - 1][0] == 2:
+            y1_val = srt[r2 - 1][1]
+            dummy3 = 0
+            for count4 in range(1, SEARCH_NO + 1):
+                dummy3 = dummy3 + count4 * (-1) ** count4
+                r3 = count + dummy3
+                if r3 <= 0 or r3 > N:
+                    continue
+                if abs(srt[r3 - 1][1] - x1_val) > T_sum:
+                    continue
+                if srt[r3 - 1][0] == 3:
+                    y2_val = srt[r3 - 1][1]
+                    if abs(y1_val - y2_val) < tol_keep and abs(x1 + x2 - y1_val - y2_val) < two_keep:
+                        how_many_y += 1
+                        if how_many_y > 1:
+                            break
+                        ty = 0.5 * (y1_val + y2_val - t_sum_y)
+                        t = (tx + ty) / 2
+                        if variant == "2023":
+                            put(which_row, {3: y1_val, 4: y2_val, 0: t})
+                        else:
+                            put(which_row, {3: y1_val - ty, 4: y2_val - ty, 0: t})
+                        srt[count - 1][0] = NAN
+                        srt[x2_index - 1][0] = NAN
+                        srt[r2 - 1][0] = NAN
+                        srt[r3 - 1][0] = NAN
+    return how_many_y
+
+
+def reconstruct(raw: list[list[float]], variant: str, x2_mode: str = "matlab", stats: dict[str, int] | None = None) -> list[list[float]]:
+    """x2_mode (measurement only; "matlab" is MATLAB): "retry2" tries the second x2 candidate
+    (the one that ended MATLAB's search) when the first finds no y pair; "retry_all" collects
+    every x2 candidate in the 36-row window and tries them in search order. stats counts
+    x1_rows, x2_none, x2_multi (a second candidate met), y_fail_multi (no y with the first
+    when a second existed), y_multi (a second valid y pair met), hits, retried_hits."""
     num = len(raw)
     if num == 0:
         raise MatlabError("Index in position 1 exceeds array bounds (t_zero on an empty file)")
@@ -146,6 +191,7 @@ def reconstruct(raw: list[list[float]], variant: str) -> list[list[float]]:
         how_many_x = 0
         x1 = x2 = tx = 0.0
         x2_index = 0
+        cands: list[int] = []
         for count2 in range(1, SEARCH_NO + 1):
             dummy = dummy + count2 * (-1) ** count2
             r = count + dummy
@@ -157,7 +203,10 @@ def reconstruct(raw: list[list[float]], variant: str) -> list[list[float]]:
                 x2_val = srt[r - 1][1]
                 if abs(x1_val - x2_val) < tol_throw:
                     how_many_x += 1
+                    cands.append(r)
                     if how_many_x > 1:
+                        if x2_mode == "retry_all":
+                            continue
                         break
                     x1 = x1_val
                     x2 = x2_val
@@ -168,47 +217,35 @@ def reconstruct(raw: list[list[float]], variant: str) -> list[list[float]]:
                     else:
                         put(which_row, {1: x1 - tx, 2: x2 - tx})
                     x2_index = r
+        if stats is not None:
+            stats["x1_rows"] = stats.get("x1_rows", 0) + 1
+            if how_many_x == 0:
+                stats["x2_none"] = stats.get("x2_none", 0) + 1
+            if how_many_x > 1:
+                stats["x2_multi"] = stats.get("x2_multi", 0) + 1
         if how_many_x == 0:  # `how_many_x == ~1`
             continue
-        how_many_y = 0
-        dummy2 = 0
-        for count3 in range(1, SEARCH_NO + 1):
-            dummy2 = dummy2 + count3 * (-1) ** count3
-            r2 = count + dummy2
-            if r2 <= 0 or r2 > N:
+        for attempt, cand in enumerate(cands if x2_mode != "matlab" else cands[:1]):
+            if attempt > 0:  # a retry: store this x2 instead, as the first candidate would be
+                x2 = srt[cand - 1][1]
+                tx = 0.5 * (x1 + x2 - t_sum_x)
+                which_row += 1
+                if variant == "2023":
+                    put(which_row, {1: x1, 2: x2})
+                else:
+                    put(which_row, {1: x1 - tx, 2: x2 - tx})
+                x2_index = cand
+            how_many_y = _y_search(srt, count, N, x1_val, x1, x2, tx, t_sum_y, T_sum, tol_keep, two_keep, variant, which_row, x2_index, put)
+            if how_many_y > 1 and stats is not None:
+                stats["y_multi"] = stats.get("y_multi", 0) + 1
+            if how_many_y == 0:
+                which_row -= 1
+                if attempt == 0 and how_many_x > 1 and stats is not None:
+                    stats["y_fail_multi"] = stats.get("y_fail_multi", 0) + 1
                 continue
-            if abs(srt[r2 - 1][1] - x1_val) > T_sum:
-                continue
-            if srt[r2 - 1][0] == 2:
-                y1_val = srt[r2 - 1][1]
-                dummy3 = 0
-                for count4 in range(1, SEARCH_NO + 1):
-                    dummy3 = dummy3 + count4 * (-1) ** count4
-                    r3 = count + dummy3
-                    if r3 <= 0 or r3 > N:
-                        continue
-                    if abs(srt[r3 - 1][1] - x1_val) > T_sum:
-                        continue
-                    if srt[r3 - 1][0] == 3:
-                        y2_val = srt[r3 - 1][1]
-                        if abs(y1_val - y2_val) < tol_keep and abs(x1 + x2 - y1_val - y2_val) < two_keep:
-                            how_many_y += 1
-                            if how_many_y > 1:
-                                break
-                            y1 = y1_val
-                            y2 = y2_val
-                            ty = 0.5 * (y1 + y2 - t_sum_y)
-                            t = (tx + ty) / 2
-                            if variant == "2023":
-                                put(which_row, {3: y1, 4: y2, 0: t})
-                            else:
-                                put(which_row, {3: y1 - ty, 4: y2 - ty, 0: t})
-                            srt[count - 1][0] = NAN
-                            srt[x2_index - 1][0] = NAN
-                            srt[r2 - 1][0] = NAN
-                            srt[r3 - 1][0] = NAN
-        if how_many_y == 0:
-            which_row -= 1
+            if attempt > 0 and stats is not None:
+                stats["retried_hits"] = stats.get("retried_hits", 0) + 1
+            break
 
     good = [r for r in out if not math.isnan(r[0])]
     tri = [[r[0] * BIN_TIME, (r[1] - r[2]) * V_PERP_X * BIN_TIME, (r[3] - r[4]) * V_PERP_Y * BIN_TIME] for r in good]
