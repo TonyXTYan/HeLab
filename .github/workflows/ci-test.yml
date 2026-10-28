@@ -25,7 +25,48 @@ permissions:
   contents: read
 
 jobs:
+  # The converter's compiled backends (Q9.2), built once in a job of their own so the test job
+  # (closest to its time limit on Windows) doesn't pay for the compilers: cython's kernel for this
+  # Python and rust's abi3 wheel, passed on as an artifact.
+  backends:
+    name: Converter backends
+    if: inputs.enabled
+    runs-on: ${{ inputs.os }}-latest
+    timeout-minutes: 15
+    continue-on-error: ${{ inputs.experimental }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: 3.${{ inputs.python-minor }}
+          cache: 'pip'
+
+      - name: Build the cython kernel and the rust wheel
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          # Only the build tools, at the lock's versions where the lock applies.
+          if [ "${{ inputs.python-minor }}" = "13" ] && [ -f requirements.lock ]; then
+            pip install -c requirements.lock Cython maturin setuptools
+          else
+            pip install Cython maturin setuptools
+          fi
+          python native/build.py --out native-built
+
+      - name: Keep them for the test job
+        uses: actions/upload-artifact@v7
+        with:
+          name: converter-backends-${{ inputs.os }}-py3${{ inputs.python-minor }}
+          path: native-built/
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 1
+
   test:
+    needs: backends
     # Skipped jobs may leave input expressions unevaluated in their names.
     # The caller's matrix name identifies the OS and Python version.
     name: Tests
@@ -95,11 +136,17 @@ jobs:
           fi
           pip install -e .
 
-      # The converter's compiled backends (Q9.2): cython's kernel and rust's module, built for this
-      # Python; then HELAB_REQUIRE_BACKENDS (cython, rust, numba; mlx where Metal exists) makes a
-      # backend that can't load fail the tests instead of skipping them, and each backend's bytes
-      # are checked against the reference on tests/data/convert/.
-      - name: Build and check the converter backends
+      - name: Get the converter backends built for this job
+        uses: actions/download-artifact@v8
+        with:
+          name: converter-backends-${{ inputs.os }}-py3${{ inputs.python-minor }}
+          path: native-built
+
+      # The backends job's kernel copied into place and its wheel installed; then
+      # HELAB_REQUIRE_BACKENDS (cython, rust, numba; mlx where Metal exists) makes a backend that
+      # can't load fail the tests instead of skipping them, and each backend's bytes are checked
+      # against the reference on tests/data/convert/.
+      - name: Install and check the converter backends
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -107,7 +154,7 @@ jobs:
           else
             source venv/bin/activate
           fi
-          python native/build.py --ci
+          python native/build.py --ci --prebuilt native-built
 
       - name: Run Tests
         shell: bash
