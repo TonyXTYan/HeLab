@@ -428,6 +428,21 @@ def test_incremental_updates_equal_a_full_recompute(partners: int | None) -> Non
     assert np.array_equal(g2_from_counts(live, n_boot=0).g2, g2_from_counts(fresh, n_boot=0).g2, equal_nan=True)
 
 
+def test_banded_selection_grown_backwards_pairs_in_its_order() -> None:
+    """Codex review on PR #9: shots 3–5, then 1–5 with K=1 kept the order (3, 4, 5, 1, 2), pairing
+    5 with 1 instead of 2 with 3. Shots added before the held ones recount in the selection's order."""
+    spec = CorrelationSpec("1d", linear_edges(-0.3, 0.3, 30), window=0.03, partners=1)
+    shots = poisson_shots(14, 6, 300)[1:]  # Shots 1–5.
+    live = PairCounts(spec)
+    live.update(shots[2:])
+    live.update(shots)
+    assert live.shots == (1, 2, 3, 4, 5)
+    fresh = PairCounts(spec)
+    fresh.update(shots)
+    assert same_counts(live, fresh)
+    assert np.array_equal(g2_from_counts(live, n_boot=0).g2, g2_from_counts(fresh, n_boot=0).g2, equal_nan=True)
+
+
 def test_radial_remove_equals_recompute() -> None:
     spec = CorrelationSpec("radial", linear_edges(0, 0.2, 10), mode="bb", origin=(0.01, 0.0, -0.02))
     shots = poisson_shots(12, 13, 200)

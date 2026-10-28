@@ -542,15 +542,18 @@ class PairCounts:
         changed, then add the rest in order until ``budget`` seconds are spent (checked
         before each add). Returns the shots of ``shots`` not added for lack of time. Banded
         (``partners``), shots are paired in the order added: new shots belong at the end
-        (Live's order); a dropped or changed shot recounts the between-shot pairs in
-        ``shots``' order."""
+        (Live's order); a dropped or changed shot, or a held order that doesn't start
+        ``shots``' order, recounts the between-shot pairs in ``shots``' order."""
         start = clock()
         wanted = {shot.shot: shot for shot in shots}
         if len(wanted) != len(shots):
             raise ValueError("shot numbers must be unique")
         stale = {entry.shot for entry in self._entries.values()
                  if entry.shot not in wanted or wanted[entry.shot].fingerprint != entry.fingerprint}
-        if stale and self.spec.partners is not None:
+        # Banded, the held order must start ``shots``' order (new shots go at the end): shots added
+        # before the held ones (a selection grown backwards) recount too (Codex review on PR #9).
+        reordered = tuple(shot.shot for shot in shots[:len(self._entries)]) != self.shots
+        if (stale or reordered) and self.spec.partners is not None:
             # Banded: partners follow the order, so count again in ``shots``' order, keeping
             # the in-shot counts of the shots that stay; the old state stays until it's done.
             kept = {entry.shot: entry for entry in self._entries.values() if entry.shot not in stale}
