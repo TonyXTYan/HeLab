@@ -22,7 +22,7 @@ from _common import guard, sample_arguments
 
 guard()
 
-from reference_exceptions import EXCEPTIONS, prove  # noqa: E402
+from reference_exceptions import EXCEPTIONS, KINDS, prove  # noqa: E402
 
 from helab.convert.check import CheckResult, check_txy  # noqa: E402
 from helab.convert.pipeline import convert_raw  # noqa: E402
@@ -43,7 +43,7 @@ def main() -> int:
         shots = [shot for shot in shots if (args.reference_dir / shot.set_name / f"d{shot.shot}.txt").exists()]
     per_set: dict[str, list[tuple[int, CheckResult]]] = defaultdict(list)
     counted: dict[str, int] = defaultdict(int)
-    explained: dict[str, int] = defaultdict(int)
+    explained: dict[tuple[str, str], int] = defaultdict(int)
     for shot in shots:
         if args.limit is not None and counted[shot.set_name] >= args.limit:
             continue
@@ -64,24 +64,29 @@ def main() -> int:
         if not result.identical:
             if exception is not None and reference is not None and prove(exception, raw, reference, profile,
                                                                          args.backend):
-                explained[shot.set_name] += 1
-                print(f"  {shot.label} (position {shot.position}): explained, proof holds: {exception.why}")
+                explained[(shot.set_name, exception.kind)] += 1
+                print(f"  {shot.label} (position {shot.position}): {exception.kind}, proof holds: {exception.why}")
             else:
                 print(f"  {shot.label} (position {shot.position}): {result.describe()}", flush=True)
         elif exception is not None:
             print(f"  {shot.label}: listed as an exception but identical; remove it from reference_exceptions.py")
     print(f"\nprofile {profile.name} ({profile.content_hash()[:12]}), backend {args.backend}, "
           f"positions {args.positions}")
-    print(f"{'set':32} {'shots':>5} {'identical':>9} {'explained':>9} {'differ':>6}")
+    print("(cut: MATLAB read a half-written raw file; variant: re-converted by another MATLAB variant; "
+          "empty: no hits, the reference a 0-byte file from another wrapper; each proved again above)")
+    print(f"{'set':32} {'shots':>5} {'identical':>9} " + " ".join(f"{kind:>7}" for kind in KINDS) + f" {'differ':>6}")
     bad = 0
+    columns = [0] * (len(KINDS) + 3)
     for name, results in per_set.items():
         same = sum(result.identical for _, result in results)
-        differ = len(results) - same - explained[name]
+        kinds = [explained[(name, kind)] for kind in KINDS]
+        differ = len(results) - same - sum(kinds)
         bad += differ
-        print(f"{name:32} {len(results):5} {same:9} {explained[name]:9} {differ:6}")
-    total = sum(len(results) for results in per_set.values())
-    same_all = sum(result.identical for results in per_set.values() for _, result in results)
-    print(f"{'all':32} {total:5} {same_all:9} {sum(explained.values()):9} {bad:6}")
+        row = [len(results), same, *kinds, differ]
+        columns = [a + b for a, b in zip(columns, row)]
+        print(f"{name:32} {row[0]:5} {row[1]:9} " + " ".join(f"{k:7}" for k in kinds) + f" {differ:6}")
+    print(f"{'all':32} {columns[0]:5} {columns[1]:9} " + " ".join(f"{k:7}" for k in columns[2:-1])
+          + f" {columns[-1]:6}")
     if args.json is not None:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps({
