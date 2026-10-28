@@ -128,7 +128,7 @@ Each rule names the area file with the detail.
   started by `IOService` (`helab/utils/io_service.py`). The GUI has no worker pools besides the
   one analysis worker thread (`AnalysisRunner`, no source I/O) and the short startup log tidy.
 - HeLab writes nothing into source folders except the user's `.helab-root` markers and, where
-  the user turns it on per folder, converted `d_txy_helab_<N>.txy` (temporary name, then rename;
+  the user turns it on per folder or asks for it on the command line (Q12.4), converted `d_txy_helab_<N>.txy` (temporary name, then rename;
   Q9.7). Never modify raw `d*.txt` or an existing TXY.
 - Rendering never reads disk or submits I/O: models, badges, tooltips and summaries read memory
   only (`SnapshotFileSystemModel`).
@@ -150,7 +150,7 @@ Each rule names the area file with the detail.
 
 **The disk cache** ([cache-store](.ai/architecture/cache-store.md),
 [data-roots](.ai/architecture/data-roots.md)):
-- Only helpers open the store (`DIR_CACHES/store-v3`, `CacheStore`); the GUI sends
+- Only helpers (and `helab convert`, a headless process without the GUI) open the store (`DIR_CACHES/store-v3`, `CacheStore`); the GUI sends
   `store_options()` with each request. A read answers found / missing / error, and an error is
   never "nothing saved".
 - Disk caching needs a data root (a hidden `.helab-root` at or above the folder; keys
@@ -165,7 +165,10 @@ Each rule names the area file with the detail.
   - pending saves and results expire after `PENDING_MAX_AGE` (1 h);
   - startup deletes the old diskcache folders and log files beyond the kept count;
   - session-only lists drop their oldest entries;
-  - the RAM budget evicts datasets and releases plots (never closes them).
+  - the RAM budget evicts datasets and releases plots (never closes them);
+  - a beside conversion deletes its own leftover temporary TXY in that source folder
+    (`.d_txy_helab_<N>.txy.<16 hex>.partial`, exactly that pattern, regular files over an hour old,
+    never through a link) (Q12.7, to confirm).
 
   Any other removal is the user's choice, asked first, and sends `removed` (Q3.3).
 - Read the cache folder with `cache_dir()`, never `DIR_CACHES`: it can move while HeLab runs.
@@ -210,7 +213,8 @@ one line, with detail in tooltips.
 | Package / module | What | Detail |
 |---|---|---|
 | `helab/main.py`, `helab/__main__.py` | entry; frozen helper dispatch first | [release-and-ci](.ai/architecture/release-and-ci.md) |
-| `helab/io_helper.py`, `helab/io_ops/` | helper process: browse, scanning, loading, save_held, live, icons, markers, admin, results, listings, trace_check; `infra`, `stores`, `fingerprints`, `metadata`, `summary`, `identity`, `events` | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
+| `helab/io_helper.py`, `helab/io_ops/` | helper process: browse, scanning, loading, save_held, live, convert, icons, markers, admin, results, listings, trace_check; `infra`, `stores`, `fingerprints`, `metadata`, `summary`, `identity`, `events` | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
+| `helab/convert_cli.py` | `helab convert --watch` (headless converter) | [converter](.ai/architecture/converter.md) |
 | `helab/utils/io_service.py` | `IOService`: lanes, slots, pausing, offline gate | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
 | `helab/utils/folder_cache.py` | `FolderCache`: session memory, jobs, RAM budget, presets and results state, store identity | [cache-store](.ai/architecture/cache-store.md) |
 | `helab/utils/cache_store.py`, `cache_paths.py`, `data_roots.py`, `cache_move.py` | the store, location keys, markers, cache-folder move | [cache-store](.ai/architecture/cache-store.md), [data-roots](.ai/architecture/data-roots.md) |

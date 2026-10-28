@@ -130,6 +130,32 @@ From the backend floors and the final timings (sessions/2026-10-29-claude-txy-be
 - **Q11.3 Keep `reference` in the build?** Proposed: yes, as the test oracle and the readable
   specification, never the default; it is small, plain Python.
 
+## Converter stage 4, HeLab core (block 12)
+
+From the `agent/txy-helab-core` handoff (`sessions/2026-10-29-claude-txy-helab-core/handoff.md`),
+2026-10-29. Q12.1-Q12.5 and Q12.7 were **decided by Side overnight, for Tony to confirm**.
+
+- **Q12.1** A folder with no data root, asked for `cache`, converts to the temp folder (follows "no
+  data root, no disk cache"; `convert_plan.fallback` says why). Built.
+- **Q12.2** Provenance is never written beside the raw files (only `d_txy_helab_<N>.txy` may go
+  there), so another computer reading a beside TXY doesn't know its profile. Kept so until a second
+  HeLab needs it (stage 5 or Q6.7); a JSON beside would amend AGENTS.md's write rule.
+- **Q12.3** HeLab's TXY in the cache folder are outside the 8 GB budget and no housekeeping removes
+  them; the UI floor shows their size in Settings → Cache with a Clear (asked first). Tony: should
+  they join the budget later (which adds them to AGENTS.md's housekeeping list)?
+- **Q12.4** `helab convert --output beside` writes beside for that run without the folder's flag and
+  saves no flag (AGENTS.md's write rule now says so).
+- **Q12.5** A settled raw file that never gets a final newline (or starts off the trigger channel)
+  waits for good, re-checked only when it changes; Live shows it waiting with the reason.
+- **Q12.6** (an idea, not built) A manual **Convert anyway** for a file stuck waiting: the user's
+  choice to convert it as it is (never one modified within the settle age), recorded in the
+  provenance; a request field (e.g. `force_shots`) is the seam.
+- **Q12.7** A helper killed mid-way through a beside write leaves
+  `.d_txy_helab_<N>.txy.<16 hex>.partial` in the source folder; a later beside conversion deletes its
+  own such files (exact pattern, regular file, over 1 h old, no links, logged as `partial_removed`).
+  This is a deletion in a source folder, so it is on AGENTS.md's housekeeping list, marked to
+  confirm. Alternative: leave them and list them for the user.
+
 ## From the audit (block 2)
 
 These come from the [audit](sessions/2026-10-28-claude-v0.0.6-checks/audit.md), whose finding

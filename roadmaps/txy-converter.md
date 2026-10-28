@@ -176,7 +176,9 @@ are met by numpy on one core; the next lever is the text I/O, not the backends. 
 - The 2025 plates need a calibration set (a dark run, a large thermal cloud, a halo, ideally
   with the MCP channel recorded); until then `plates-2025` stays uncalibrated.
 
-**Stage 4, in HeLab** (split into floors in the
+**Stage 4, in HeLab** (core **done 2026-10-29**, `775fb1d`: the helper operation, settle checks,
+events, the file kind, output locations, provenance, `helab convert --watch`; Live, UI and packaging
+floors next; split into floors in the
 [overnight mandate](../.ai/sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md)). Every backend
 in the build (Q9.2; NumPy alone always works). The helper operation (raw files read only once settled: unchanged for
 5 s, size stable between checks, ending in a newline, starting with the trigger channel), the

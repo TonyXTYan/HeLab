@@ -224,3 +224,50 @@ Each entry: time, question, decision, why, how to reverse.
 - 04:22, heartbeat: CI on `dev/v0.0.7` `ed35099` (run 40731339010) green, 22m26s. Tally waiting for idle load, then timing.
 - 04:33–04:43, **stage 2 timings** (Tally, `agent/txy-bench` `aad0487`, session folder only): serial, 3 repeats; load stayed 4–5 (a Safari tab at ~90 % of a core plus WindowServer, not agents), recorded per run, repeats within a few %. End to end per core (MB/s): numpy 119, numba 171, cython 170, rust 178, mlx 72, reference 13; reconstruction alone 279 / 869 / 915 / 1056 / 111 / 14; 12 warm processes: numpy 1049, rust 1466. Text I/O is 80–83 % of a compiled backend's time. **Recommendation:** NumPy the default everywhere (meets both targets on one core, ~31 kB); one optional fast backend, Rust (0.47 MB abi3 wheel) or Cython (within 15 %); drop Numba (+145 MB, ~175 ms start per process) and MLX (slower than NumPy, +240 MB, Apple only). Open for Tony: whether any compiled backend is worth shipping, Rust vs Cython, lab PCs untimed. Q9.2 (ship everything for now) stands; this feeds A9.1. Reviewer Ibis. **Stage 4 started:** 'TXY helab-core' (`agent/txy-helab-core` from `ed35099`), Worker Keel, NumPy default.
 - 04:59, **stage 2 closed:** the bench landed (`dev/v0.0.7` fast-forwarded to `3bd791c`); CoCo's stage 2 docs (converter.md backends, AGENTS.md code map, roadmap stage 2 done, block 11: Q11.1 numba cache, Q11.2 which backends ship (NumPy default + Rust proposed), Q11.3 keep the reference; A11.1–A11.4; M11.1–M11.3; 4 RERUN entries in known-issues). Ground suite 7985 passed, 669 skipped, no RERUN.
+- 04:59, stage 2 docs and the log committed as `b08627a`; pushed `dev/v0.0.7` (ed35099..b08627a) and `agent/txy-bench`; CI run 40740875291. Stage 4: helab-core (Keel) building from `ed35099`; the Live, UI and packaging briefs wait for its landed commit.
+- 05:20, stage 4 core done (Keel, `agent/txy-helab-core` `c40b4fb` pushed, base `ed35099`): helper op
+  `convert` (source I/O, pausable, refused offline, held by cache moves); settle checks (5 s age,
+  same size and mtime at two checks and while read, final newline, trigger first; no rows → an
+  "unconvertible" event); per-shot provenance JSON in HeLab's folders; outputs: cache (root-keyed
+  under `cache_dir()/converted-txy/`), temp (no data root), beside (only with the new per-folder
+  `write_beside` flag, or the CLI); 0-byte TXY for 0 hits; file kind `helab_txy` (counted, not
+  loaded); setting `converted_txy_output=cache`; `helab convert --watch FOLDER [--once …]` before
+  Qt; a lock in `reconstruct._load`; numba cache at `<cache>/numba`; a write-audit test (only
+  `d_txy_helab_<N>.txy` and its temp name reach a source folder). Suite 8022 passed, no RERUN;
+  types clean; samples 95/96 (the 1 is the known d3667 fault). Reviewer Gannet.
+- 05:20, **decided (5, as proposed, reversible):** (1) a folder with no data root asked for
+  "cache" converts to temp ("no root, no disk cache"); (2) provenance is never written beside the
+  raw files (AGENTS.md allows only the TXY there) until a second HeLab needs it; (3) converted TXY
+  in the cache folder are outside the 8 GB budget and no housekeeping removes them; Settings ›
+  Cache shows their size with a Clear that asks first (Tony to confirm whether they should join
+  the budget, which would add them to AGENTS.md's housekeeping list); (4) `helab convert --output
+  beside` writes beside for that run only, saving no flag (AGENTS.md's write rule to say "or asks
+  for it on the command line"); (5) a settled raw file that never gets a final newline or starts
+  off the trigger channel waits, re-checked when it changes, and Live shows it as waiting with the
+  reason (a manual "Convert anyway" is a later idea for Tony).
+- 05:26, CI on `dev/v0.0.7` `b08627a` (run 40740875291) green. One RERUN, macOS:
+  `test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such` (in known-issues;
+  its 4th CI occurrence tonight, macOS and Windows). Windows Tests 24:02 (20:14 on `ed35099` with
+  the same tests: runner variance; 6 min from the 30-min limit); CoCo raises a Q for Tony if a
+  run passes ~27 min rather than touching CI.
+- 05:26, **decided:** a Quick Fixer floor now, from `b08627a`, for the three CI-flaky tests in
+  known-issues (preset_folder_live waitUntil, folder_summary scandir fd, io_trace event order) and
+  the helabMainWindow I/O leak. Why: v0.0.7's PR needs clean CI, and these are small, mostly
+  test-side, and touch no converter paths. Conditions: cause first (no timeout bumps without a
+  stated cause), app code only where the cause is and kept small, normal review and landing.
+  Reverse: revert the landing.
+- 05:29, Gannet's review of helab-core `c40b4fb`: no blocker; byte-identical beside writes checked
+  by hand; 2 medium, 4 low, all to Keel (M2: the "two checks" settle rule needs the caller's
+  'seen' list, so Live always sends one, `--watch`'s first pass only records, plus a clock-skew
+  event; L1 kept shots flip waiting/kept; L2 provenance before the beside TXY; L3 "Clear folder
+  preferences" must say it clears write_beside; L4 heartbeats capped so a hung backend's
+  no-progress timeout can fire).
+- 05:29, **decided (M1, AGENTS.md housekeeping, Tony to confirm):** a helper killed mid-write when
+  writing beside the raw files leaves a hidden `.d_txy_helab_<N>.txy.<random>.partial` in the source
+  folder. A beside conversion removes its own leftovers of exactly that pattern, older than 1 h
+  by mtime, only in a folder it writes beside (flag on, or the CLI's `--output beside`), never
+  following links, logging each removal; AGENTS.md's housekeeping list gains the line marked
+  "(to confirm)". Why: they are HeLab's own temp files, the pattern is exact, and the age rule
+  never touches a running write. Reverse: drop the line and the sweep; leftovers stay.
+- 05:52, helab-core landing: `agent/txy-helab-core` `775fb1d` (contains `b08627a`); Gannet 3 rounds, final no open findings (tried to break M1 and M2, incl. a source clock 10 min behind: converted whole, byte-identical); suite 8036 passed, 669 skipped, no RERUN; Gannet's targeted 3748 passed, no RERUN; types clean. Docs next (converter.md stage 4, io-and-browsing, cache-store, AGENTS.md: code map, the store-opening rule naming `helab convert`, the write rule with the command line, the housekeeping line marked to confirm), block 12, then the Live, UI and packaging floors.
+- 05:55, **helab-core landed:** `dev/v0.0.7` fast-forwarded to `775fb1d` (floor kept). Ground suite 8036 passed, 669 skipped, no RERUN; types clean. Docs and block 12 (Q12.1–Q12.7, the overnight decisions marked to confirm; A12.1–A12.3; M12.1) committed with this log.

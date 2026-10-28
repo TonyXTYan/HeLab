@@ -177,6 +177,18 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
   the same checks they'd take rust to ~300 MB/s per core and let threads scale. A vectorised exact
   `%.8g` in NumPy was ~1.5x slower per value than `%` (not worth it while conversions run in processes).
 
+## Converter stage 4, HeLab core (block 12)
+
+- **A12.1 Workers in a frozen app** (`agent/txy-packaging`): run a `convert` with `workers` 2 (spawned
+  through `freeze_support`) in the built app on all three OSes; if it works, make `DEFAULT_WORKERS`
+  the same as from source (1 frozen today).
+- **A12.2 `HeLab.exe convert` on Windows** (`agent/txy-packaging`): the windowed exe has no console;
+  check where its output goes, and consider a console launcher (`HeLab-convert.exe`) if the
+  acquisition PC needs one.
+- **A12.3 Live sends the summary back** (`agent/txy-live`): every `convert_summary`'s lists as
+  `seen`/`done`/`kept`/`skip`, so done shots aren't checked again and unfinished ones aren't read again
+  (`seen` is required).
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

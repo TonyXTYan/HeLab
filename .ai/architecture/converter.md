@@ -14,20 +14,21 @@ lines in 25 ps TDC bins) to TXY hits (T s from the trigger, X and Y m). Stage 1 
 2026-10-29) is a plain-Python port of the running path of `dld_raw_to_txy_counts` →
 `dld_read_5channels_reconst_multi_imp(file, 1, 0, 1, 0)` → `dlmwrite(…, 'precision', 8)`, byte for
 byte, and the harness later backends are measured with (`agent/txy-reference`, landed as `d26e196`).
-Nothing in the app calls it yet (stage 4).
+HeLab converts in its helpers and with `helab convert` (stage 4, below).
 
 ## `helab/convert/` (Qt-free: standard library and NumPy; every module in `PURE`)
 
 | Module | What |
 |---|---|
-| `raw` | `parse_raw`/`read_raw` → `RawPulses` (float64 channels and times in file order), as MATLAB's `textscan` reads them; the fast path is `fastio.parse_strict` for uniform `\r\n` or uniform `\n` plain `int,int` files (acceptance tested equal to `_STRICT_CRLF`/`_STRICT_LF`; a field over 16 digits takes the general reader, so one over 309 digits reads as Inf, as textscan does), the general reader for everything else. A marked place for stage 4's done-writing checks. |
+| `raw` | `parse_raw`/`read_raw` → `RawPulses` (float64 channels and times in file order), as MATLAB's `textscan` reads them; the fast path is `fastio.parse_strict` for uniform `\r\n` or uniform `\n` plain `int,int` files (acceptance tested equal to `_STRICT_CRLF`/`_STRICT_LF`; a field over 16 digits takes the general reader, so one over 309 digits reads as Inf, as textscan does), the general reader for everything else. The done-writing checks: `settled_by_age`, `not_done` and their codes (the settle rules are below). |
 | `profile` | `DetectorProfile` (frozen, `kw_only`): every constant MATLAB hard-codes; JSON (`SCHEMA`, `_MIGRATIONS`); `content_hash`; built-ins `matlab-2019` (default, Q6.10) and `matlab-2023-lab-edit`. |
 | `reconstruct` | `reconstruct(pulses, profile, backend="reference")`; the registry (`register_backend`, `get_backend`, `available_backends`, `Backend.unavailable(profile)`, `releases_gil`, `_MODULES`); `NoRowsError`. |
 | `backends/reference` | The port, loop for loop, with the MATLAB line numbers (`L…` 2019, `L2023:…`); `MatchStats` for the x2 report. Readable, not fast. |
 | `txy` | `format_txy` (`%.8g`, `NaN`/`Inf`/`-Inf`, `\n` after every row on every platform) through `fastio`; it refuses anything but a 2-D float64 array (`ValueError`, any size, any memory layout), since hits are float64 by contract and the fast formatter reads bit patterns; `format_txy_by_value` is the general path; `write_txy`/`write_atomic`. |
 | `fastio` | The fast strict parse (SWAR digits, GIL-free in NumPy) and the TXY formatter; `raw` and `txy` use them. |
 | `split` | Within-shot pieces at safe gaps for any backend, merged byte for byte (`reconstruct_split`); see Backends. |
-| `pipeline` | `convert_raw(bytes, profile, backend) -> bytes | None` (None: no file, as the 2019 wrapper for no hits). |
+| `pipeline` | `convert_raw(bytes, profile, backend) -> bytes | None` (None: no file, as the 2019 wrapper for no hits); `convert_shot`: HeLab's own (timed; 0-byte TXY for no hits; pieces with an executor); `APP_BACKEND` = `numpy`. |
+| `provenance` | `Provenance`, HeLab's JSON record per shot (raw fingerprint, profile name/version/hash, backend, TXY size and SHA-256), `stale`, the file names. |
 | `samples` | The sample manifest (`~/HeLab-samples/txy-v1/manifest.json`, SHA-256 checked on read); held-in/held-out positions. |
 | `check` | `check_txy(ours, reference)`: identical, or the first differing line (`ENDED`, `NO_FINAL_NEWLINE`) and both hit counts; `ReferenceFault` and `prove_fault`. |
 | `timing` | `time_shot`/`time_shots` with `Parallelism` (serial, processes, threads, within-shot through `split`); `summarise` (SI MB/s per stage, latency). |
@@ -142,6 +143,121 @@ in `native/` (`cython/`, `rust/`); binaries are never committed.
 (so the kernel applies the umask), writes, fsyncs, renames into place and fsyncs the folder (not on
 Windows): a reader never sees half a file. HeLab's own output name is `d_txy_helab_<N>.txy`
 (stage 4).
+
+## In HeLab (stage 4)
+
+Built on `agent/txy-helab-core` (landed `775fb1d`; session `.ai/sessions/2026-10-29-claude-txy-helab-core/`).
+`reconstruct._load` takes `_LOAD_LOCK` for a backend's first import; `txy.write_atomic(replace=False)`
+never replaces an existing file (HeLab's writes beside raw files).
+
+#### The operation
+
+`IOService.submit(owner, generation, path, "convert", payload)` (through `FolderCache`; Live
+auto-convert is the first caller). Background lane unless `FolderCache` makes it
+foreground; pausable; refused by Work Offline; held during a cache move (its payload carries
+`cache`, so `IOService.uses_cache` is true) and killed by `hold_cache`, like loads. The no-progress
+timeout applies (heartbeats while reading, per 8 MB block, and while computing; none while a read
+stalls). Payload (`io_ops.convert.ConvertRequest`):
+
+| Field | Meaning |
+|---|---|
+| `path` | the source folder |
+| `profile` | `DetectorProfile.to_dict()` (built-in or user; the helper never looks profiles up) |
+| `temps` | HeLab's temp folder (`constants.DIR_TEMPS`), required |
+| `cache` | `store_options()` ({} or absent: no data-root key, output falls back to temp) |
+| `output` | `cache` (default) or `temp`: the setting (`read_convert_output`) |
+| `beside` | the app believes the folder's `write_beside` flag is on; the helper checks the store again |
+| `beside_confirmed` | command line only: beside for this run without the flag |
+| `backend` | default `pipeline.APP_BACKEND` (`numpy`); unavailable → the operation errors before any read |
+| `shots` | only these shot numbers (None: every raw file) |
+| `seen` | **required**: the previous `convert_summary`'s `waiting` list; `[]` for a folder's first conversion (which then only records: every file not already current waits for the next check). None only from `helab convert --once` (one check, files unmodified for `ONCE_SETTLE_SECONDS` = 60 s). Live and every other caller in the app always send a list; a request without the key is refused. |
+| `done`, `kept`, `skip` | the previous summary's `current`, `kept`, `unconvertible`, sent back: not checked again while unchanged |
+| `redo` | `stale` (default: convert when the provenance says so) or `always` |
+| `workers` | processes (default `DEFAULT_WORKERS`: min(4, cores/2); 1 in a frozen app, see A12.1) |
+
+**Settle rules** (A10.1): converted only when unmodified for `fingerprints.SETTLE_SECONDS` by this
+computer's clock, with the same (size, mtime) at the previous check (`seen`) and this one, and again
+before and after the read (fstat), so two checks are a check interval apart, not microseconds (the
+age alone is fooled by a source clock behind ours or a share's stale attribute cache: Gannet M2). A
+file seen for the first time waits one check (Live's interval); a shot with a current TXY is told
+apart first and needs no read. With `seen` None (`--once` only) the age must be 60 s. A file dated
+more than `fingerprints.FUTURE_SECONDS` ahead waits as `future`, and `clock_skew` (the existing
+kind, `fingerprints._clock_ahead`; the app tells the user once per location) is sent once per
+conversion. Content: ends with `\n`, first line on `profile.channel_trigger`. Unfinished files are
+not read again while unchanged (their `seen` entry carries the reason). No rows once settled:
+`shot_unconvertible` `no_rows` (Q10.2). Heartbeats while a shot computes stop after its budget
+(`compute_budget`: 60 s plus 1 s per MB), so a hung backend times out (Gannet L4).
+
+#### Events (`helab/io_ops/events.py`)
+
+| Kind | When | Fields (besides `kind`, `path`) |
+|---|---|---|
+| `convert_plan` | once, after the listing | `output` (`beside`/`cache`/`temp`), `fallback` (why not the one asked), `folder` (HeLab's folder: provenance, and the TXY unless beside), `txy_folder`, `key` (root key or ""), `profile` {name, version, hash, calibrated}, `backend`, `workers`, `raw`, `todo` |
+| `shot_converted` | a TXY written | `shot`, `raw_name`, `raw_size`, `raw_mtime_ns`, `raw_sha256`, `output`, `txy`, `txy_size`, `provenance` (its JSON path), `hits` (Live's low-count check reads this), `replaced` (why an older HeLab TXY was replaced, or ""), `profile`, `backend`, `seconds` {read, parse, reconstruct, format, write} |
+| `shot_waiting` | not converted yet | `shot`, `raw_name`, `raw_size`, `raw_mtime_ns`, `reason` (`settling`, `future`, `changed`, `no_final_newline`, `not_trigger_first`, `read_failed`), `message` |
+| `shot_unconvertible` | settled, can't be converted | same fields; `reason` `no_rows` or `failed` |
+| `shot_kept` | beside: a HeLab TXY already there that this conversion doesn't stand behind | `shot`, `txy`, `reason` |
+| `convert_progress` | after each shot (≤ 4/s) | `done`, `todo`, `converted`, `raw_bytes` |
+| `convert_summary` | the end, before `done` | `output`, `folder`, `txy_folder`, `converted`, `current`, `waiting`, `unconvertible`, `kept` (lists of `[name, size, mtime_ns]`, `waiting` with reason and message after), `seconds` |
+| `partial_removed` | beside: a leftover temporary TXY of a killed write removed | `file`, `size`, `age` (s) |
+| `clock_skew` (existing kind) | raw files dated over 2 s ahead of this clock | `seconds`, `location` |
+| `convert_prefs` | `cache_admin convert_prefs` | `prefs` {write_beside, set_at} |
+
+`tests/test_helper_events.py` counts `helab/convert_cli.py` as an app-side consumer (it logs
+the converter's kinds); `convert_prefs` is matched by `FolderCache`.
+
+#### Where files go
+
+`<base>/converted-txy/<sha256(identity)[:24]>/` (`io_ops.convert.folder_for(base, identity)`),
+`base` = the cache folder (`dirname(cache["directory"])`, i.e. `cache_dir()`) for `cache`, else
+`temps`; `identity` = the folder's `root://<uuid>/<relative>` key, else `path:<absolute path>`. It
+holds `d_txy_helab_<N>.txy` (unless beside), `d_txy_helab_<N>.json` (always) and `folder.json`
+(`{"helab": "converted-txy-folder", "version": 1, "key", "source", "updated_at"}`). Beside: only
+`d_txy_helab_<N>.txy` in the source folder (temporary `.d_txy_helab_<N>.txy.<16 hex>.partial`, then
+a no-replace rename); never a raw file, an existing TXY, or the provenance, which is written
+**before** the beside TXY (a conversion stopped between them leaves a stale record: the shot is
+converted again, never kept for good; Gannet L2; in the cache or temp the TXY goes first, so an old
+record no longer matches it). **Leftovers** (Gannet M1, Q12.7): a beside conversion removes its own
+leftover temporary files in that folder: only names matching exactly the pattern `write_atomic`
+makes (`txy.partial_pattern`; `convert.partial()`: `^\.d_txy_helab_\d+\.txy\.[0-9a-f]{16}\.partial$`),
+regular files by `lstat` (a link is left alone, never followed), unmodified for `PARTIAL_MAX_AGE`
+(1 h), only in a folder it is writing beside (the flag on, or `--output beside`); each is sent as
+`partial_removed` (and traced).
+
+#### Provenance (`helab.convert.provenance`)
+
+A JSON record per shot (`{"helab": "helab-txy-provenance", "version": 1, …}`): shot, source folder
+and key, raw name/size/mtime/SHA-256, profile name/version/hash/calibrated, backend, output, TXY
+name/size/SHA-256, hits, `converted_at`, HeLab version, seconds per step. `stale(record, raw_size,
+raw_mtime_ns, profile_hash, txy_size)` says why a TXY is out of date (no TXY or record, the raw
+file or TXY changed, another profile hash); backend and profile name/version don't make it stale
+(equal hashes convert alike). Why a record per shot and not a manifest: each is written once by
+the conversion that made its TXY, atomically, so two conversions never rewrite each other's, and
+Live writes one small file per shot instead of the folder's whole list each time.
+
+#### `helab convert --watch FOLDER` (`helab/convert_cli.py`, Q9.5)
+
+Headless, dispatched in `helab/main.py` before any Qt (frozen: `HeLab convert …`; on Windows the
+windowed exe has no console, so lines go only to the log). Options: `--once` (one check: files
+unmodified for 60 s), `--profile`, `--backend`, `--output temp|cache|beside` (beside for that run
+without the folder's flag, saving none; Q12.4), `--workers`, `--interval`, `--again` (convert even
+current shots). The same `convert_folder` as the helper operation; `--watch`'s first pass only
+records and converts from the second, each pass sending the last summary's lists back. It
+registers as a running HeLab (no cache move while it runs), finds the data root once, opens the
+store like a helper, logs, stops cleanly on Ctrl-C; exit 0, 1 when the conversion fails, 2 for
+usage.
+
+#### Choices made in stage 4 (technical)
+
+- Workers only compute: reads, writes and every source call stay in the helper; workers get bytes,
+  return TXY bytes, and exit on their parent's end (a pipe's EOF), so a cancelled helper writes
+  nothing afterwards and slot rules hold. One large shot (≥ 20 MB raw) with workers > 1 is cut into
+  pieces (`split`) in the pool.
+- The converter's per-folder flag is its own store table (`convert_prefs`), not a `folder_prefs`
+  column (older HeLabs `INSERT OR REPLACE` named `folder_prefs` columns, which would reset a new one).
+- Numba's cache needs no restart after a cache move: a `convert` helper is one request per process
+  whose payload carries `cache`, so `hold_cache` kills it first; `helab convert` registers as a
+  running HeLab, so no move runs while it does.
 
 ## The sample set and reference faults
 

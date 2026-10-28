@@ -162,6 +162,13 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   them beside the sample set (e.g. `~/HeLab-samples/txy-v1-matlab-2023/`, read-only) before that
   floor is deleted; the floor stays until then.
 
+- [ ] **M12.1 The converter on the lab share** (Tony, at the acquisition PC): run `helab convert
+  --watch <a copy of a run folder> --output temp` while files arrive (or copy them in one by one),
+  and check that no shot is read early (mtime granularity; Windows file sharing: a raw file open for
+  writing may fail to read, `read_failed`, retried next check). Also check the source's clock against
+  this PC's: the partial cleanup and `--once` trust the source's mtimes (a clock over an hour behind
+  could make another computer's beside write look old).
+
 ## Data roots (v0.0.5a1, added 2026-10-18)
 
 Native checks of the data-roots stages D1–D4 ([plan](sessions/2026-10-16-claude-data-roots/plan.md)).
