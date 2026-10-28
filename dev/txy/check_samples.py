@@ -6,7 +6,9 @@
 The reference is MATLAB's ``d_txy_forc<N>.txt`` in the sample set (SHA-256 checked), or, with
 ``--reference-dir``, ``DIR/<set>/d_txy_forc<N>.txt`` (MATLAB run on copies, e.g. by
 ``matlab_variant.py``; a missing file there means MATLAB wrote none). Prints a table per set and
-each mismatch's first differing line; exits 1 on any mismatch.
+each mismatch's first differing line. A mismatch listed in ``reference_exceptions.py`` (for the
+sample set's own references) counts as explained only when its proof holds again; exits 1 on any
+other mismatch.
 """
 from __future__ import annotations
 
@@ -19,6 +21,8 @@ import sys
 from _common import guard, sample_arguments
 
 guard()
+
+from reference_exceptions import EXCEPTIONS, prove  # noqa: E402
 
 from helab.convert.check import CheckResult, check_txy  # noqa: E402
 from helab.convert.pipeline import convert_raw  # noqa: E402
@@ -39,6 +43,7 @@ def main() -> int:
         shots = [shot for shot in shots if (args.reference_dir / shot.set_name / f"d{shot.shot}.txt").exists()]
     per_set: dict[str, list[tuple[int, CheckResult]]] = defaultdict(list)
     counted: dict[str, int] = defaultdict(int)
+    explained: dict[str, int] = defaultdict(int)
     for shot in shots:
         if args.limit is not None and counted[shot.set_name] >= args.limit:
             continue
@@ -55,18 +60,28 @@ def main() -> int:
             ours = None
         result = check_txy(ours, reference)
         per_set[shot.set_name].append((shot.shot, result))
+        exception = EXCEPTIONS.get((shot.set_name, shot.shot, shot.txy_sha256)) if args.reference_dir is None else None
         if not result.identical:
-            print(f"  {shot.label} (position {shot.position}): {result.describe()}", flush=True)
+            if exception is not None and reference is not None and prove(exception, raw, reference, profile,
+                                                                         args.backend):
+                explained[shot.set_name] += 1
+                print(f"  {shot.label} (position {shot.position}): explained, proof holds: {exception.why}")
+            else:
+                print(f"  {shot.label} (position {shot.position}): {result.describe()}", flush=True)
+        elif exception is not None:
+            print(f"  {shot.label}: listed as an exception but identical; remove it from reference_exceptions.py")
     print(f"\nprofile {profile.name} ({profile.content_hash()[:12]}), backend {args.backend}, "
           f"positions {args.positions}")
-    print(f"{'set':32} {'shots':>5} {'identical':>9}")
+    print(f"{'set':32} {'shots':>5} {'identical':>9} {'explained':>9} {'differ':>6}")
     bad = 0
     for name, results in per_set.items():
         same = sum(result.identical for _, result in results)
-        bad += len(results) - same
-        print(f"{name:32} {len(results):5} {same:9}")
+        differ = len(results) - same - explained[name]
+        bad += differ
+        print(f"{name:32} {len(results):5} {same:9} {explained[name]:9} {differ:6}")
     total = sum(len(results) for results in per_set.values())
-    print(f"{'all':32} {total:5} {total - bad:9}")
+    same_all = sum(result.identical for results in per_set.values() for _, result in results)
+    print(f"{'all':32} {total:5} {same_all:9} {sum(explained.values()):9} {bad:6}")
     if args.json is not None:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps({

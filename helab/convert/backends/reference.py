@@ -127,10 +127,12 @@ def reconstruct_reference(pulses: RawPulses, profile: DetectorProfile, stats: Ma
     x1 = x2 = tx = 0.0
     x2_index = 0
 
+    grown = 0.0 if profile.matlab_overflow_row else NAN
+
     def put(row: int, column: int, value: float) -> None:
         # MATLAB grows a matrix assigned past its end, filling the new rows with zeros.
         while len(out) < row:
-            out.append([0.0] * 5)
+            out.append([grown] * 5)
             if stats is not None:
                 stats.overflow_rows += 1
         out[row - 1][column - 1] = value
