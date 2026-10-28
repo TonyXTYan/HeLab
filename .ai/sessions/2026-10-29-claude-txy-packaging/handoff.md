@@ -49,7 +49,7 @@ identically to the reference with all six backends.
 - `mypy helab/ --strict`, `mypy tests --strict`, `pyright helab tests`: clean. With `--platform
   win32` / `--pythonplatform Windows`, the only errors are helab-core's known
   `io_ops/convert.py:344/346` (Keel's fix). Linux is clean.
-- CI on all three OSes: see "CI" below.
+- CI on all three OSes: green on the merged tree (run 40759532405); see "CI" below.
 
 ## Sizes (macOS arm64 app, measured from the built `_internal`; zip -9)
 
@@ -85,7 +85,7 @@ installed.
 
 ## CI
 
-**Run 40754482305** (on `77fb892`'s parent, before merging dev/v0.0.7): all three builds and the
+**Run 40754482305** (on `7d2bff9`, before merging dev/v0.0.7): all three builds and the
 macOS and Ubuntu tests passed. Windows tests failed, but only on helab-core's known failures
 (`test_convert_helab.py` ×2, `test_typing.py` ×5 on `io_ops/convert.py:344/346`), which
 dev/v0.0.7 `e064a53` fixes.
@@ -100,14 +100,15 @@ dev/v0.0.7 `e064a53` fixes.
 | Windows build | 96 s | 4:28 | 22 s | 8:19 |
 
 - In every job, the backends step built cython and rust and found cython, rust and numba identical
-  on all 78. On Windows mlx is "unavailable: MLX needs Apple Silicon (this is win32 AMD64)". On
-  macOS the runner prints `mx.metal.is_available()` (see its log).
+  on all 78. On Windows mlx is "unavailable: MLX needs Apple Silicon (this is win32 AMD64)".
+  **On GitHub's macOS arm64 runner `mx.metal.is_available()` is True** (the mlx handoff expected
+  False), so mlx is required there too: identical on all 78, in the venv and in the packaged app,
+  and its GPU tests run. In the packaged app, all six backends are identical on all three OSes.
 - **The Windows test job took 28:31 against its 30 min limit.** About 1 min of that is the
   backends step. The rest is mostly the failing tests' 5 reruns with 5 s delays: the five mypy
   and pyright tests each rerun 5 times. The base commit's failing run took 20:18, and the last
-  green dev/v0.0.7 run 24:05. Once helab-core's fix is merged those reruns go away; the next run's
-  figure is below. If Windows still comes near 30 min, see A~2 (rust cache) and consider
-  `--reruns` not applying to `test_typing.py`.
+  green dev/v0.0.7 run 24:05. On the merged tree it is 23:24 (below). A~2 (a rust cache) would save
+  about 1 min per job if Windows gets tight.
 - **RERUNs** on Windows besides the known failures (each passed on its retry; neither in my
   files): `tests/test_convert_helab.py::test_a_killed_helpers_workers_exit` (`assert not
   any(...)` at line 537: a worker still alive just after its helper was killed: helab-core's
@@ -115,8 +116,15 @@ dev/v0.0.7 `e064a53` fixes.
   (the nested pytest's "ERROR collecting test session" in pathlib's `lstat`; the cause is cut off
   in the summary). Both go to known-issues.
 
-After merging dev/v0.0.7 (`e064a53`): full suite with every backend required, **8708 passed, 8
-skipped, no RERUN**. `mypy --strict` for helab and tests with `--platform` darwin, win32 and
+**Run 40759532405** (on `a6a5de4`, dev/v0.0.7 `e064a53` merged): **every job green on all three
+OSes, no RERUN anywhere**. Tests: macOS 8708 passed / 8 skipped (4:33, mlx required), Ubuntu 8597 /
+119 (7:40), Windows 8570 / 142 (20:13). A skip naming a required backend would have failed, so
+no backend test skipped. **The Windows test job took 23:24** (backends step 1:14, tests 20:18),
+inside its 30 min limit. Build jobs: macOS 6:28, Windows 8:20, Ubuntu 4:21, each with the
+packaged-app check passing for all backends (about 20 s).
+
+Locally after the merge: full suite with every backend required, **8708 passed, 8 skipped, no
+RERUN**. `mypy --strict` for helab and tests with `--platform` darwin, win32 and
 linux, and `pyright --pythonplatform` Darwin, Windows and Linux: all clean.
 
 ## Proposed doc changes (for the Coordinator)
