@@ -337,6 +337,18 @@ def test_g2_zero_error_matches_its_scatter(monkeypatch: pytest.MonkeyPatch) -> N
     assert "covariance" in correlate(twin_shots(0), spec, n_boot=0).g2_zero_method
 
 
+def test_g2_near_zero_bootstraps_its_own_pooled_counts() -> None:
+    """Codex review on PR #9: each replicate pools its own resampled counts; averaging its binwise
+    g² with the full data's reference weights measured another statistic. Here every pair falls in
+    the three bins, so the pooled g² is exactly 1 on all shots and in every resample: no spread."""
+    axis = ([0.0, 0.0, 2.0], [0.0, 2.0, 2.0], [0.0, 1.0, 2.0])
+    shots = [ShotEvents(shot, (shot, 0, 0), np.column_stack([values, np.zeros(3), np.zeros(3)]))
+             for shot, values in enumerate(axis)]
+    result = correlate(shots, CorrelationSpec("1d", (-3.0, -1.0, 1.0, 3.0), window=1.0), n_boot=200)
+    assert result.near_zero.value == pytest.approx(1.0)
+    assert result.near_zero.se == pytest.approx(0.0, abs=1e-12)
+
+
 def test_no_peak_reports_g2_near_zero() -> None:
     spec = CorrelationSpec("radial", linear_edges(0, 0.4, 20))
     flat = correlate(poisson_shots(5, 30, 400), spec, n_boot=100)

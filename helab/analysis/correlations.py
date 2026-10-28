@@ -800,11 +800,15 @@ def _ratio(h_in: Array, p_in: float, h_between: Array, p_between: float) -> Arra
     return cast(Array, np.where(h_between > 0, g2, math.nan))
 
 
-def _resampler(state: PairCounts) -> tuple[Callable[[Array], Array], bool]:
-    """g² for shot multiplicities c (S,): [c·H_in / c·P_in] / [cᵀBc / Σ_{s≠t partners} c_s c_t n_s n_t]
-    from the shot-pair matrix, so a replicate resamples the reference too and a shot's
-    copies never pair with each other (B[s, s] = 0). Without the matrix (too many shots),
-    each drawn shot keeps its reference against all others: [c·R / c·Q] (False)."""
+Parts = tuple[Array, float, Array, float]  # a replicate's (H_in, P_in, H_between, P_between)
+
+
+def _resampler(state: PairCounts) -> tuple[Callable[[Array], Parts], bool]:
+    """The counts g² comes from (``_ratio``) for shot multiplicities c (S,):
+    [c·H_in, c·P_in] over [cᵀBc, Σ_{s≠t partners} c_s c_t n_s n_t] from the shot-pair matrix,
+    so a replicate resamples the reference too and a shot's copies never pair with each other
+    (B[s, s] = 0). Without the matrix (too many shots), each drawn shot keeps its reference
+    against all others: [c·R, c·Q] (False)."""
     h_in_s, p_in_s, cross_s, q_s = (array.astype(np.float64) for array in state.arrays())
     matrix = state.matrix()
     if matrix is not None:
@@ -813,13 +817,13 @@ def _resampler(state: PairCounts) -> tuple[Callable[[Array], Array], bool]:
         sizes = np.array(state.sizes(), dtype=np.float64)
         reference_pairs = np.outer(sizes, sizes) * partner
 
-        def full(c: Array) -> Array:
+        def full(c: Array) -> Parts:
             reference = c @ np.tensordot(c, pairs_of, axes=(0, 0))
-            return _ratio(c @ h_in_s, float(c @ p_in_s), reference, float(c @ reference_pairs @ c))
+            return c @ h_in_s, float(c @ p_in_s), reference, float(c @ reference_pairs @ c)
         return full, True
 
-    def approximate(c: Array) -> Array:
-        return _ratio(c @ h_in_s, float(c @ p_in_s), c @ cross_s, float(c @ q_s))
+    def approximate(c: Array) -> Parts:
+        return c @ h_in_s, float(c @ p_in_s), c @ cross_s, float(c @ q_s)
     return approximate, False
 
 
@@ -888,26 +892,36 @@ def _zero_error(fitted: FitResult, model: FitModel, baseline: Baseline, boot: Bo
     return se, "the fit's covariance (too small: neighbouring bins are correlated)"
 
 
-def _near_zero(spec: CorrelationSpec, h_in: Counts, p_in: int, h_between: Counts, p_between: int,
-               boot: BootstrapResult | None) -> Estimate:
-    """The pooled g² of the ``NEAR_BINS`` bins nearest Δ = 0 (ΣH_in/P_in over ΣH_between/P_between),
-    ± the bootstrap SE of the same between-pair-weighted mean (else a counting SE): what to
-    say when there's no peak to fit."""
+def _near_bins(spec: CorrelationSpec, h_between: Counts) -> npt.NDArray[np.intp]:
+    """The ``NEAR_BINS`` bins nearest Δ = 0 that have between-shot pairs."""
     order = np.argsort(np.abs(spec.centres), kind="stable")
-    bins = np.array([b for b in order if h_between[b] > 0][:NEAR_BINS], dtype=np.intp)
-    if not len(bins) or p_in <= 0 or p_between <= 0:
+    return np.array([b for b in order if h_between[b] > 0][:NEAR_BINS], dtype=np.intp)
+
+
+def _pooled(parts: Parts, bins: npt.NDArray[np.intp]) -> float:
+    """The pooled g² of ``bins``: ΣH_in/P_in over ΣH_between/P_between (nan if undefined)."""
+    h_in, p_in, h_between, p_between = parts
+    inside, reference = float(np.sum(h_in[bins])), float(np.sum(h_between[bins]))
+    if not len(bins) or p_in <= 0 or p_between <= 0 or reference <= 0:
+        return math.nan
+    return (inside / p_in) / (reference / p_between)
+
+
+def _near_zero(spec: CorrelationSpec, h_in: Counts, p_in: int, h_between: Counts, p_between: int,
+               replicates: Sequence[float] = ()) -> Estimate:
+    """The pooled g² of the ``NEAR_BINS`` bins nearest Δ = 0 (``_pooled``), ± the spread of the
+    same pooled statistic over the bootstrap's ``replicates`` (each from its own resampled
+    counts; Codex review on PR #9), else a counting SE: what to say when there's no peak to fit."""
+    bins = _near_bins(spec, h_between)
+    value = _pooled((h_in.astype(np.float64), float(p_in), h_between.astype(np.float64), float(p_between)), bins)
+    if not math.isfinite(value):
         return Estimate(math.nan)
-    inside, reference = float(h_in[bins].sum()), float(h_between[bins].sum())
-    value = (inside / p_in) / (reference / p_between)
-    if boot is not None and len(boot.replicates):
-        weights = h_between[bins].astype(np.float64)
-        rows = boot.replicates[:, bins]
-        finite = np.isfinite(rows)
-        with np.errstate(divide="ignore", invalid="ignore"):  # a replicate with none of these bins: nan, dropped
-            pooled = (np.where(finite, rows, 0.0) * weights).sum(axis=1) / (finite * weights).sum(axis=1)
+    if len(replicates):
+        pooled = np.asarray(replicates, dtype=np.float64)
         pooled = pooled[np.isfinite(pooled)]
         se = float(np.std(pooled, ddof=1)) if len(pooled) >= 2 else math.nan
     else:
+        inside, reference = float(h_in[bins].sum()), float(h_between[bins].sum())
         se = value * math.sqrt(1 / inside + 1 / reference) if inside > 0 else math.nan
     return Estimate(value, se)
 
@@ -957,14 +971,23 @@ def g2_from_counts(state: PairCounts, *, shots_total: int | None = None, n_boot:
     se, method = counting, "pair counting (underestimates: pairs share events)"
     jackknife = np.full(spec.bins, math.nan)
     curves: Array | None = None
+    near_replicates: list[float] = []  # "g² near 0" pooled from each resample's own counts
     if not failure:
-        resample, exact = _resampler(state)
+        parts_of, exact = _resampler(state)
+
+        def resample(c: Array) -> Array:
+            return _ratio(*parts_of(c))
         if exact:
             jackknife, curves = _jackknife(resample, held, spec.bins, cancelled)
         if n_boot:
+            nearest = _near_bins(spec, h_between)
+
             def statistic(draw: list[Any]) -> Array:
-                return resample(np.bincount(np.asarray(draw, dtype=np.intp), minlength=held).astype(np.float64))
+                parts = parts_of(np.bincount(np.asarray(draw, dtype=np.intp), minlength=held).astype(np.float64))
+                near_replicates.append(_pooled(parts, nearest))
+                return _ratio(*parts)
             boot = bootstrap_shots(list(range(held)), statistic, n_boot=n_boot, seed=seed, cancelled=cancelled)
+            del near_replicates[0]  # (The first call is on all shots, not a resample.)
             se, method = np.asarray(boot.se, dtype=np.float64), "shot bootstrap"
             noted.extend(boot.notes)
             if not exact:
@@ -976,7 +999,7 @@ def g2_from_counts(state: PairCounts, *, shots_total: int | None = None, n_boot:
     centres = spec.centres
     fitted: FitResult | None = None
     zero, level, zero_method = Estimate(math.nan), Estimate(1.0, 0.0), ""
-    near = Estimate(math.nan) if failure else _near_zero(spec, h_in, p_in, h_between, p_between, boot)
+    near = Estimate(math.nan) if failure else _near_zero(spec, h_in, p_in, h_between, p_between, near_replicates)
     if not failure and fit:
         # Bins with few pairs get at least a one-count error (a bootstrap of 0 counts is 0).
         with np.errstate(divide="ignore", invalid="ignore"):

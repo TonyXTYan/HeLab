@@ -466,5 +466,5 @@ def test_settings_lines_and_registration() -> None:
     assert SCRIPT.live_policy("Plot").min_delay == 5.0
     assert correlations_plot in dld.MODULES
     metadata = SCRIPT.get_metadata()
-    assert (metadata.analysis_id, metadata.version, metadata.name) == ("helab.correlations", "1", "Correlations")
+    assert (metadata.analysis_id, metadata.version, metadata.name) == ("helab.correlations", "2", "Correlations")
     assert SCRIPT.parameter_warnings("Plot", {**values, "release_search_min": 2.0, "release_search_max": 1.0})

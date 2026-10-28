@@ -816,7 +816,9 @@ class Correlations(DatasetAnalysis):
             group=group.NAME,
             file_path=__file__,
             analysis_id="helab.correlations",
-            version="1",
+            # 2: banded pairs recount in the selection's order, and g² near 0's SE pools each
+            # resample's own counts (Codex review on PR #9), so saved results of 1 aren't reused.
+            version="2",
         )
 
     def get_actions(self) -> List[str]:
