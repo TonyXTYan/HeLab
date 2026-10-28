@@ -40,6 +40,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import importlib
 from pathlib import Path
+import threading
 from types import ModuleType
 
 import numpy as np
@@ -55,24 +56,28 @@ _BUILD_HINT = "python native/cython/build.py (needs Cython, setuptools and a C c
 _module: ModuleType | None = None  # not "_kernel": that name is the submodule's
 _why_not: str | None = None
 _loaded = False
+_lock = threading.Lock()  # threads converting shots may make the first call together
 
 
 def kernel() -> ModuleType | None:
     """The compiled kernel, imported on first use; None when it isn't built, or is older than its
     source in this checkout (``unavailable`` then says why)."""
     global _module, _why_not, _loaded
-    if not _loaded:
-        _loaded = True
-        try:
-            module = _import_kernel()
-        except ImportError as error:
-            _why_not = f"the compiled kernel isn't built ({error}); build it with {_BUILD_HINT}"
-        else:
-            built = getattr(module, "SOURCE_SHA256", None)
-            if _SOURCE.is_file() and built != hashlib.sha256(_SOURCE.read_bytes()).hexdigest():
-                _why_not = f"the compiled kernel is older than {_SOURCE.name}; rebuild it with {_BUILD_HINT}"
+    if _loaded:
+        return _module
+    with _lock:
+        if not _loaded:
+            try:
+                module = _import_kernel()
+            except ImportError as error:
+                _why_not = f"the compiled kernel isn't built ({error}); build it with {_BUILD_HINT}"
             else:
-                _module = module
+                built = getattr(module, "SOURCE_SHA256", None)
+                if _SOURCE.is_file() and built != hashlib.sha256(_SOURCE.read_bytes()).hexdigest():
+                    _why_not = f"the compiled kernel is older than {_SOURCE.name}; rebuild it with {_BUILD_HINT}"
+                else:
+                    _module = module
+            _loaded = True  # last: a thread that sees it sees _module and _why_not set
     return _module
 
 
@@ -83,12 +88,13 @@ def _import_kernel() -> ModuleType:
 def _reset() -> None:
     """Forget the import, so the next ``kernel()`` tries again (tests)."""
     global _module, _why_not, _loaded
-    _module, _why_not, _loaded = None, None, False
+    with _lock:
+        _module, _why_not, _loaded = None, None, False
 
 
 def unavailable(profile: DetectorProfile | None) -> str | None:
     if kernel() is None:
-        return _why_not
+        return _why_not or "the compiled kernel isn't loaded"
     if profile is not None:
         for name in ("channel_x1", "channel_x2", "channel_y1", "channel_y2"):
             channel = getattr(profile, name)

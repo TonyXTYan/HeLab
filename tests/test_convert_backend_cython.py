@@ -7,11 +7,14 @@ native/cython/build.py``); the rest check that HeLab works without it. Synthetic
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import threading
+import time
 from types import ModuleType
 
 import numpy as np
@@ -105,6 +108,29 @@ def test_a_kernel_older_than_its_source_is_refused(monkeypatch: pytest.MonkeyPat
     monkeypatch.undo()
     cython_backend._reset()
     assert cython_backend.unavailable(None) is None
+
+
+@needs_kernel
+def test_threads_making_the_first_call_together_all_get_the_kernel(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The harness's thread pool starts every worker on its first shot at once.
+    started = threading.Barrier(8)
+    real = cython_backend._import_kernel
+
+    def slow() -> ModuleType:
+        time.sleep(0.05)
+        return real()
+
+    def first_use() -> tuple[bool, str | None]:
+        started.wait()
+        return cython_backend.kernel() is not None, cython_backend.unavailable(MATLAB_2019)
+
+    monkeypatch.setattr(cython_backend, "_import_kernel", slow)
+    cython_backend._reset()
+    try:
+        with ThreadPoolExecutor(8) as pool:
+            assert list(pool.map(lambda _: first_use(), range(8))) == [(True, None)] * 8
+    finally:
+        cython_backend._reset()
 
 
 @needs_kernel
