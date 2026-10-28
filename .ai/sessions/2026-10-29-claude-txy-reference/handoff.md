@@ -73,6 +73,9 @@ error). **Reader**: Lens's 1,367 textscan probes and my 50 cases read as MATLAB 
 10,000-file fuzz against its oracle found no difference. **tests_sample_data**: all 17 raw/TXY
 pairs reproduced (tested).
 
+**CI** on 09a0711 (run 40713926667): success on macOS, Ubuntu and Windows (py3.13): 6079 / 6077 /
+6051 passed; one RERUN on Windows, outside the converter (see known-issues below).
+
 **Checks** (after review round 1): `pytest -n 4 --reruns 5 --reruns-delay 1
 --basetemp=.ai/temp/pytest`: 5155 passed, 4 skipped (two are the perturbation test's
 single-value fields `x2_handling`, `y_handling`), **no RERUN**. `mypy helab/ --strict`, `mypy tests --strict`, `pyright helab tests`:
@@ -160,7 +163,11 @@ second y pair occurs for ≤ 0.27 % of hits. The default is unchanged.
 - **Findings** (`2026-10-28-claude-txy-converter-plan/findings.md`, if it is kept current): the
   2023 lab edit isn't the only later variant; uniquetol's grouping is now confirmed (first of
   group, ≤, not chained).
-- **known-issues**: none from this stage (no flaky tests, no RERUN; F1 and F2 are fixed).
+- **known-issues**: one RERUN on CI, outside the converter. Windows + py3.13, run 40713926667
+  (commit 09a0711): `tests/test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such`,
+  "pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds"
+  (`tests\test_preset_folder_live.py:82`); passed on rerun. Not yet listed; cause not looked for
+  (not this floor's code). Locally, the converter stage had no RERUN. F1 and F2 are fixed.
 - **testing.md** (or AGENTS.md's tests rules): fixtures compared byte for byte need a
   `.gitattributes` `* -text` beside them, or Windows CI's autocrlf rewrites them.
 
