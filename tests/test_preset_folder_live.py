@@ -64,8 +64,13 @@ def test_live_waits_for_the_folders_first_load_to_show(qtbot: QtBot, tmp_path: P
     quit_window(qtbot, window)
 
 
+@pytest.mark.parametrize("settled", [True, False], ids=["tab_settled", "at_once"])
 def test_offline_a_folder_never_listed_is_named_as_such(qtbot: QtBot, tmp_path: Path,
-                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+                                                        monkeypatch: pytest.MonkeyPatch, settled: bool) -> None:
+    """Settled: the tab opens the folder and its offline listing answers that it was never listed
+    (it passed only when the tab's startup default folder answered after the apply and moved the
+    selection, CI 2026-10-29). At once: that answer may move the selection either side of the
+    apply; the notice is the same."""
     from helab.views.FolderExplorer import FolderExplorer
     from helab.views.HelabMainWindow import HelabMainWindow
     run = tmp_path / "run"
@@ -75,6 +80,10 @@ def test_offline_a_folder_never_listed_is_named_as_such(qtbot: QtBot, tmp_path: 
     write_arrangement("p", Arrangement((SavedPlot(ref, folder),), folder, live=True))
     window, explorer, notices = window_and_tab(qtbot, monkeypatch)
     assert isinstance(window, HelabMainWindow) and isinstance(explorer, FolderExplorer)
+    if settled:
+        service = explorer.model.cache.service
+        qtbot.waitUntil(lambda: explorer.model.root is not None and explorer.model.root.loaded
+                        and not service.pending and not service.active, timeout=30_000)
     window.set_work_offline(True)
     try:
         assert get_folder_cache(get_io_service()).offline

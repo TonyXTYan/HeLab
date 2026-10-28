@@ -104,7 +104,7 @@ LOAD = {"memory": [["d_1.txt", 10, 5]], "base_signature": "base", "signature": "
 
 # The converter's request goes to its handler whole (``io_ops.convert.ConvertRequest``).
 CONVERT = {"operation": "convert", "path": PATH, "profile": {"name": "p"}, "temps": FOLDER, "cache": CACHE,
-           "output": "cache", "beside": True, "seen": [["d1.txt", 1, 2]], "workers": 3}
+           "destination": "cache", "beside": True, "seen": [["d1.txt", 1, 2]], "workers": 3}
 
 # (request, handler, positional arguments, keyword arguments)
 ROUTES: list[tuple[dict[str, Any], str, tuple[Any, ...], dict[str, Any]]] = [

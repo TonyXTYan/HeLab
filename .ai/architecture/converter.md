@@ -165,7 +165,7 @@ stalls). Payload (`io_ops.convert.ConvertRequest`):
 | `profile` | `DetectorProfile.to_dict()` (built-in or user; the helper never looks profiles up) |
 | `temps` | HeLab's temp folder (`constants.DIR_TEMPS`), required |
 | `cache` | `store_options()` ({} or absent: no data-root key, output falls back to temp) |
-| `output` | `cache` (default) or `temp`: the setting (`read_convert_output`) |
+| `destination` | `cache` (default) or `temp`: the setting (`read_convert_output`). Not `output`: `IOService._run` sets `payload['output']` to the helper's private folder for every request (found by the Live floor; an end-to-end IOService test covers it). Events and provenance keep their `output` field. |
 | `beside` | the app believes the folder's `write_beside` flag is on; the helper checks the store again |
 | `beside_confirmed` | command line only: beside for this run without the flag |
 | `backend` | default `pipeline.APP_BACKEND` (`numpy`); unavailable → the operation errors before any read |
@@ -221,7 +221,8 @@ record no longer matches it). **Leftovers** (Gannet M1, Q12.7): a beside convers
 leftover temporary files in that folder: only names matching exactly the pattern `write_atomic`
 makes (`txy.partial_pattern`; `convert.partial()`: `^\.d_txy_helab_\d+\.txy\.[0-9a-f]{16}\.partial$`),
 regular files by `lstat` (a link is left alone, never followed), unmodified for `PARTIAL_MAX_AGE`
-(1 h), only in a folder it is writing beside (the flag on, or `--output beside`); each is sent as
+(1 h), only in a folder it is writing beside (and the same leftovers in HeLab's own `converted-txy/`
+folder, where a kill on Windows often lands inside `write_atomic`) (the flag on, or `--output beside`); each is sent as
 `partial_removed` (and traced).
 
 #### Provenance (`helab.convert.provenance`)

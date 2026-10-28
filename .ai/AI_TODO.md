@@ -188,6 +188,16 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 - **A12.3 Live sends the summary back** (`agent/txy-live`): every `convert_summary`'s lists as
   `seen`/`done`/`kept`/`skip`, so done shots aren't checked again and unfinished ones aren't read again
   (`seen` is required).
+- **A12.4 JSON leftovers in `converted-txy/`**: conversions remove their own leftover temporary TXY
+  there (over 1 h), but a kill can also leave `.d_txy_helab_<N>.json.<16 hex>.partial` (the record)
+  and `.folder.json.<16 hex>.partial`, which stay for good. Harmless and small; widen the own-folder
+  pattern to HeLab's own JSON names (Gannet, fix round).
+
+## Quick Fixes 4 (block 13)
+
+- **A13.1 Helpers start with an explicit working folder** (or, under `SOURCE_GUARD`, the working
+  folder leaves the guard's denied list), so a test that `chdir`s can't make a helper's source access
+  fail (known-issues, Tests and CI). From Quick Fixes 4's A~2 and Plover's review.
 
 ## Not AI work (stays in MANUAL_TODO)
 

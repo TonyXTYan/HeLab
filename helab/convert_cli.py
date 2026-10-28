@@ -79,7 +79,7 @@ def _start_cache() -> tuple[dict[str, Any], object]:
 
     def wait() -> None:
         if not waited:
-            LOG.info("Another HeLab is moving the cache: waiting…")
+            LOG.info("Another HeLab is moving the cache: waiting...")
             waited.append(True)
         time.sleep(0.2)
 
@@ -122,7 +122,8 @@ def _discover_root(folder: str, cache: dict[str, Any], send: Any) -> None:
 
 class _Log:
     """Helper events as log lines: each shot's outcome once (a waiting shot again only when its
-    reason changes)."""
+    reason changes). Our own text is ASCII ("->", "..."): a console or pipe on Windows may encode
+    stderr in a code page without arrows, which Python writes as ``\\u2192``."""
 
     def __init__(self) -> None:
         self.waiting: dict[str, str] = {}
@@ -138,7 +139,7 @@ class _Log:
                 profile = event["profile"]
                 workers = (f"; {event['workers']} worker{'' if event['workers'] == 1 else 's'}" if event["todo"]
                            else "")
-                LOG.info("%s: %d of %d raw files to convert → %s (%s; profile %s v%d %s; backend %s%s)",
+                LOG.info("%s: %d of %d raw files to convert -> %s (%s; profile %s v%d %s; backend %s%s)",
                          event["path"], event["todo"], event["raw"], event["txy_folder"], event["output"],
                          profile["name"], profile["version"], profile["hash"][:12], event["backend"], workers)
             if event["fallback"] and self.plans == 1:
@@ -147,7 +148,7 @@ class _Log:
             self.waiting.pop(event["raw_name"], None)
             times = event["seconds"]
             seconds = times["read"] + times["parse"] + times["reconstruct"] + times["format"] + times["write"]
-            LOG.info("%s → %s: %d hit%s (%.2f s)%s", event["raw_name"], os.path.basename(event["txy"]),
+            LOG.info("%s -> %s: %d hit%s (%.2f s)%s", event["raw_name"], os.path.basename(event["txy"]),
                      event["hits"], "" if event["hits"] == 1 else "s", seconds,
                      f"; replaced: {event['replaced']}" if event["replaced"] else "")
         elif event["kind"] == "shot_waiting":
@@ -168,7 +169,7 @@ class _Log:
                          len(event["current"]), len(event["waiting"]), len(event["unconvertible"]), event["seconds"])
         elif event["kind"] == "partial_removed":
             LOG.info("Removed a leftover temporary file of an interrupted conversion: %s (%d bytes, %.0f h old)",
-                     os.path.join(event["path"], event["file"]), event["size"], event["age"] / 3600)
+                     os.path.join(event["folder"], event["file"]), event["size"], event["age"] / 3600)
         elif event["kind"] == "clock_skew":
             if event["location"] not in self.skewed:
                 self.skewed.add(event["location"])
@@ -211,7 +212,7 @@ def main(argv: list[str]) -> int:
     # since. --once: one check (seen None), so a file must be unmodified for ONCE_SETTLE_SECONDS.
     request: ConvertRequest = {"path": folder, "profile": profile, "temps": DIR_TEMPS, "backend": args.backend,
                                "seen": None if args.once else [],
-                               "output": read_convert_output(app_settings()) if output == "beside" else output,
+                               "destination": read_convert_output(app_settings()) if output == "beside" else output,
                                "cache": cache, "redo": "always" if args.again else "stale"}
     if output == "beside":
         request["beside"] = request["beside_confirmed"] = True
