@@ -31,8 +31,9 @@ jobs:
     name: Tests
     if: inputs.enabled
     runs-on: ${{ inputs.os }}-latest
-    # The suite takes about 3-10 min by OS and runner; the limit catches a hang, with headroom.
-    timeout-minutes: 20
+    # The suite takes about 3-10 min by OS and runner (Windows 13-15); the limit catches a hang,
+    # with headroom: 30 min on Windows (Q2.6), 20 elsewhere.
+    timeout-minutes: ${{ inputs.os == 'windows' && 30 || 20 }}
     continue-on-error: ${{ inputs.experimental }}
     env:
       QT_QPA_PLATFORM: offscreen

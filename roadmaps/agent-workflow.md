@@ -27,13 +27,15 @@ his settings and cache, the packaged release, or each other.
 - **Workers**: one task each. A worker starts a **new branch from the commit
   Tony or the coordinator chose** (`agent/<task>`), in its own worktree (a
   Maestri floor), clone or cloud environment, may **commit there freely**, and
-  **pushes once, when its work is done** (each push runs the full CI matrix),
+  **pushes only at checkpoints** (when its work is done, after review fixes, or when a CI run
+  is worth it; never with every commit, since each push runs the full CI matrix),
   to `TonyXTYan/HeLab` only, never `HeBECANU`. Agent branches are never
   deleted, locally or on GitHub.
 - **Quick Fixer** (added 2026-10-22): a worker for small, well-scoped jobs one
   at a time (flaky or crashing tests, CI failures, small bugs), several to a
-  brief. It finds the cause before changing code, and pushes once when the
-  brief's jobs are done, or earlier when the Coordinator asks (2026-10-28).
+  brief. It finds the cause before changing code, and pushes at checkpoints:
+  when the brief's jobs are done, or earlier when a CI run is worth it or the Coordinator asks
+  (2026-10-28; checkpoints 2026-10-29).
 - **Tony's checkout and branches**: committing there, merging into his branches
   or `main`, landing a floor and opening a PR need Tony's approval.
 - **Documentation**: a worker writes only its own session folder
@@ -95,12 +97,13 @@ hook, landing): [.ai/maestri-setup.md](../.ai/maestri-setup.md).
    - **Tests**: own `--basetemp`, and about `-n 4` per worker when several run.
    - CodeGraph: initialise `.codegraph/` in the floor if the worker uses it.
 4. The worker commits as it goes; when done it writes its handoff, pushes its
-   branch once and posts `--state review`.
+   branch and posts `--state review`.
 5. The coordinator reviews, applies the handoff's doc changes, and asks Tony
    before landing or opening a PR.
 
-Each push starts the full CI matrix (macOS, Windows, Ubuntu), hence the single
-final push. A further push after review fixes is fine.
+Each push starts the full CI matrix (macOS, Windows, Ubuntu), so agents push only at
+checkpoints, never with every commit: when the work is done, after review fixes, or when a CI
+run is worth it, e.g. to check a fix on Windows (Tony, 2026-10-29).
 
 **Piloted** (floors since 2026-10-19): what the clone includes (Ground's
 gitignored files, minus the excluded folders), the setup hooks, landing with

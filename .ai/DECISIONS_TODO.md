@@ -84,6 +84,11 @@ Tony's answers in Chat, 2026-10-29, on what building the converter needs (block 
 - **Q9.9 v0.0.7 ships** with stages 1, 2 and 4 done (Live auto-convert and the headless command
   working) and the smoke pass; calibration (stage 3) and replacing MATLAB (stage 5) may follow.
 
+- **Q2.6 Windows CI time: yes** (Tony, 2026-10-29): the Windows test job's limit is 30 min (20
+  elsewhere). With it: agents push only at checkpoints, never with every commit (when the work is
+  done, after review fixes, or when a CI run is worth it); AGENTS.md, the guide and the Worker and
+  Quick Fixer roles say so.
+
 Confirmed by Tony, 2026-10-29 ("confirm all"), and recorded where each lives (AGENTS.md, the
 setup guide, the roles): Q3.1, Q3.2, Q2.8, Q2.3, Q3.3, Q3.4, Q3.6.3, Q2.2.1, Q2.2.2, Q4.1.
 
@@ -95,8 +100,6 @@ numbers are given as #N. They are quick yes/no answers.
 - **Q2.4 `.ai/coding-workspace.md` (#4).** It's a symlink into your `ai-common` folder, broken
   everywhere else. Commit a real copy here, or keep the link and say it's Mac-only? Proposed: a
   copy.
-- **Q2.6 Windows CI time (#24).** The Windows test step uses 13–15 of its 20 min. Raise its limit to
-  30 min now, and look for the slow tests later? Proposed: yes.
 
 ## From the instructions audit (block 3)
 

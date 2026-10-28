@@ -185,8 +185,10 @@ register note which machine owns which task.
    > `AGENTS.md`, `roadmaps/agent-workflow.md`, your brief and the
    > `.ai/architecture/` file of each area you change first, and follow them.
    > Work on your floor's `agent/<task>` branch, from the base commit in the
-   > brief; commit freely there, and push the branch once, to
-   > `TonyXTYan/HeLab` only, when the work is done. Change only the brief's
+   > brief; commit freely there, and push it to `TonyXTYan/HeLab` only, at
+   > checkpoints only (when the work is done, after review fixes, or when a
+   > CI run on all three OSes is worth it), never with every commit. Change
+   > only the brief's
    > owned paths. Write documentation only in your own
    > `.ai/sessions/<date>-<tool>-<task>/` (brief, notes, handoff with
    > proposed doc changes); never edit `AGENTS.md`, `.ai/architecture/`,
@@ -263,9 +265,10 @@ register note which machine owns which task.
    >   --reruns-delay 1 --basetemp=.ai/temp/pytest`), `mypy helab/ --strict`,
    >   `mypy tests --strict`, `pyright helab tests`; report any RERUN with
    >   its reason.
-   > - Push your branch once, when the brief's jobs are done (each push runs
-   >   the full CI matrix); push earlier only when the Coordinator asks, e.g.
-   >   to check a fix on Windows and Ubuntu.
+   > - Push your branch only at checkpoints, never with every commit (each
+   >   push runs the full CI matrix): when the brief's jobs are done, or
+   >   earlier when a CI run is worth it, e.g. to check a fix on Windows and
+   >   Ubuntu, or when the Coordinator asks.
    > - Write documentation only in your session folder
    >   (`.ai/sessions/<date>-<tool>-<task>/`): a notes.md with a section per
    >   job (cause, evidence, fix, checks, a proposed
@@ -506,7 +509,7 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
    - commits freely on its branch; writes only its own
      `.ai/sessions/<date>-<tool>-<task>/` (brief, notes, handoff with proposed
      doc changes);
-   - when done, pushes the branch **once**, runs
+   - when done, pushes the branch (pushes only at checkpoints), runs
      `maestri floor status "<summary>" --state review`, and reports to the
      Coordinator.
 4. **The HeLab GUI may run from a floor** once `floor-env.sh` is sourced: hooks

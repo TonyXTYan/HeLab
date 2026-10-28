@@ -19,8 +19,9 @@ mechanics go in its architecture file.
 - **Commits.** Always ask Tony before `git commit` in his checkout or on his branches. Staging,
   diffing and reviewing are fine without asking. An agent in its own worktree, Maestri floor or
   cloud environment, on a new branch from the commit Tony or the Coordinator chose, commits there
-  freely. It pushes that branch once, when its work is done (each push runs the full CI), and
-  again only after review fixes or when the Coordinator asks. Merging into Tony's branches,
+  freely. It pushes that branch only at checkpoints, never with every commit (each push runs the
+  full CI): when its work is done, after review fixes, or when a CI run on all three OSes is
+  worth it (Tony, 2026-10-29). Merging into Tony's branches,
   landing a floor and opening a PR need his approval.
 - **Commit messages:** a concise subject and a body that says what changed, why, and how it was
   checked, separated by a blank line.
