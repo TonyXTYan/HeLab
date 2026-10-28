@@ -399,7 +399,10 @@ def test_disk_cache_summary_tracks_shared_save_completion(
     second = FolderExplorer(path, path, path, [0, 4, 5])
     qtbot.addWidget(second)
     second.selectionPathChanged.connect(lambda p: second.load_to_ram_cache(p, dwell=False))
-    qtbot.waitUntil(lambda: second.displayed_dataset is not None)
+    # The data in RAM shows first; the shared listing's replay brings the row's folder date (its
+    # freshness) a timer later, so a slow event-loop pass can return between the two.
+    qtbot.waitUntil(lambda: second.displayed_dataset is not None
+                    and path in second.model.nodes and second.model.nodes[path].modified is not None)
     assert second.folder_cache_label.text() == "Creating cache…"
     event: dict[str, Any] = {"kind": finish}
     if finish == "cache_saved":
