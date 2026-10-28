@@ -132,3 +132,71 @@ Each entry: time, question, decision, why, how to reverse.
   (pytestqt waitUntil timed out after 30 s at line 82), passed on rerun; outside the converter,
   filed in known-issues at landing (cause not hunted tonight). Lens round 3: no open findings;
   Heron round 3 pending.
+- 02:37, **stage 1 landed:** `agent/txy-reference` merged into `dev/v0.0.7` as `d26e196`
+  (floor kept for Lens); docs `372f2ac` (`.ai/architecture/converter.md`, AGENTS.md code-map row
+  and the rule "every converter backend gives the reference's output byte for byte", testing.md,
+  plan stage 1 done with the bar "identical or a proven reference fault", the known-issues RERUN
+  line, block 10: Q10.1 third-variant profile, Q10.2 raw files with no rows, Q10.3 empty TXY for
+  no hits, A10.1–A10.5, M10.1). Ground suite after the merge: 6079 passed, 4 skipped, no RERUN;
+  types clean. Pushed `dev/v0.0.7` (to `372f2ac`) and `agent/txy-reference`; CI 40717706061.
+- 02:37, stage 2 started: five floors from `372f2ac` (numpy, numba, cython, rust, mlx), one
+  Claude Code Worker each. CoCo's split (reversible): the NumPy floor also owns the shared fast
+  text I/O and the within-shot split; the other four own only their backend and `native/` folder
+  and measure serial, processes and threads; within-shot is measured for all in the final serial
+  timing run.
+- 02:39, stage 2 floors running (hooks checked on all five): numpy (Abacus; also the shared
+  text I/O and within-shot split), numba (Ember), cython (Anvil), rust (Ferrous), mlx (Prism;
+  Metal has no float64, so match in int64 and compute T/X/Y on the CPU, and stop with numbers if
+  the GPU loses). Packages only in each floor's venv; no pyproject or HeLab.spec edits (stage 4).
+  Tonight's timings are indicative (five floors share the machine); final ones in a serial run.
+- 03:00, CI on `dev/v0.0.7` `372f2ac` (run 40717706061): all six jobs green, no RERUN (macOS
+  6079 passed, Ubuntu 6077, Windows 6051). Windows Tests took 20:44 of its 30-min limit (the
+  branch run took ~15 min): watch it as stage 2 adds tests; slow converter tests may need a
+  marker or a smaller fuzz count on CI.
+- 03:02, stage 2, Cython (Anvil) done: `agent/txy-cython` `2ba2a54` pushed. Byte-identical (303
+  + 6 proven); 3,090 conversions against the reference (309 shots × 2 profiles × 1–64 threads),
+  0 differ. Reconstruction 801 MB/s per core (59× the reference); end to end 46 MB/s per core,
+  since the shared Python reader and writer are now 94 % of the time (the NumPy floor owns
+  them); 12 processes 359 MB/s. Suite 6232 passed, no RERUN; types clean; its tests skip
+  without the built extension (CI has no build step yet: stage 4 packaging). Lessons shared with
+  the other floors: a lazy-loader thread race; `-ffp-contract=off` (no FMA) for exact bits.
+  Reviewer Wren (Claude Code) reviewing, with an independent fuzz.
+- 03:08, stage 2, Numba (Ember) done: `agent/txy-numba` `7ef5935` pushed. Byte-identical (303 +
+  6 proven; 0 differences whole and in 2–64 pieces). Reconstruction 746 MB/s per core (63×),
+  without the GIL; end to end bound by the shared reader/writer (43.5 MB/s serial, 187 with 12
+  processes). Cost: +145 MB on disk, +52 MB zipped (llvmlite), 1.5 s first compile per machine.
+  In a PyInstaller build numba ignores NUMBA_CACHE_DIR; a read-only cache now falls back to an
+  uncached compile (tested). Suite 6284 passed, no RERUN. Reviewer Kite.
+- 03:08, **decided:** Numba ships as an optional backend (already Q9.2: every backend for
+  now; the default comes from stage 2's recommendation). Its compile cache goes in HeLab's cache
+  folder (`cache_dir()`, so it moves with the cache). Reverse: drop it under A9.1; move the cache.
+- 03:08, stage 2, MLX (Prism) done: `agent/txy-mlx` `848abf0` pushed. A hybrid: the GPU finds
+  each x1's first choices, the CPU resolves contested rows in order (~2 % of rows), T/X/Y in
+  float64 on the CPU. Byte-identical (303 + 6 proven; 309/309 against the reference, both
+  profiles). Reconstruction 106 MB/s serial (8× the reference, well below Cython 801 and Numba
+  746), ~2.5 ms fixed per shot; +240 MB, +80 MB gzipped (`mlx.metallib`). Prism's verdict: only
+  the search benefits from the GPU. Reviewer Osprey. Numba's cache: a cache-folder seam in
+  `helab/convert` (pure), wired to `cache_dir()` in stage 4. A lock in `reconstruct._load` goes to
+  stage 4's core floor.
+- 03:08, stage 2, Rust (Ferrous) done: `agent/txy-rust` `a44ec77` pushed. Byte-identical (303 + 6
+  proven; 309 × both built-ins × whole and split identical to the reference). Reconstruction
+  969 MB/s serial (1.6 GB/s on large shots, ~75× the reference), the fastest; GIL released;
+  within-shot split with a written proof; +0.44 MB (abi3); no JIT. End to end ~47 MB/s per core,
+  bound by the shared Python I/O; Ferrous's report-only Rust I/O parses 1,910 MB/s and formats
+  596 MB/s (Python: 69 / 184), so one core could reach ~320 MB/s with fast I/O. Provisional: Rust
+  as an optional fast backend; M~ smoke-test a CI-built wheel on a lab PC (no
+  `target-cpu=native`: the Sandy Bridge PC). Suite 6276 passed, no RERUN; cargo test and clippy
+  clean. Reviewer Shrike.
+- 03:24, stage 2, NumPy (Abacus) done: `agent/txy-numpy` `c1c2172` pushed. Byte-identical
+  (618/618 against the reference for both profiles, 303 + 6 proven, split 618/618, a 7,000-file
+  fuzz 0 differences). Reconstruction 258 MB/s serial; **end to end 109 MB/s on one core, 558 MB/s
+  on 8 processes**, no extra build size. Its shared fast I/O lifts every backend: parsing 72 → 608
+  MB/s (without the GIL), formatting 179 → 374 MB/s. Within-shot split cross-checked against
+  Rust's proof. Reviewer Merlin. Reviews: Cython (Wren) and Rust (Shrike) no blocker, minor
+  fixes; MLX (Osprey) one blocker: pyright fails where mlx isn't installed (CI and Tony's
+  checkout, since test_typing runs pyright in the suite), being fixed, and every floor must show
+  pyright passing in a venv without its package; Numba (Kite) pending. Every floor adds its own
+  PURE line and treats any load error as "backend unavailable". Landing one at a time, NumPy
+  first (it carries the shared I/O), each later worker merging `dev/v0.0.7` first.
+- Note for the recommendation: NumPy alone already meets the ~100 MB/s bulk target on one core
+  and needs no build; the compiled backends matter mainly for many processes or slow PCs.
