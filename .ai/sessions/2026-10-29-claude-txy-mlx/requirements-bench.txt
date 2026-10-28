@@ -1,0 +1,7 @@
+# The mlx backend floor's extra packages (floor venv only; never requirements.txt or the lock, Q9.2).
+# Installed with: uv pip install --python venv/bin/python mlx
+# Apple Silicon only; wheels for macOS 14, 15 and 26 (arm64).
+mlx==0.32.4
+mlx-metal==0.32.4
+# Used for the scratch packaging measurement only (already in the lock):
+# pyinstaller==6.22.3
