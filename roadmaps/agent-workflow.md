@@ -26,13 +26,20 @@ his settings and cache, the packaged release, or each other.
   Tony or the coordinator chose** (`agent/<task>`), in its own worktree (a
   Maestri floor), clone or cloud environment, may **commit there freely**, and
   **pushes once, when its work is done** (each push runs the full CI matrix),
-  to `TonyXTYan/HeLab` only, never `HeBECANU`.
+  to `TonyXTYan/HeLab` only, never `HeBECANU`. Agent branches are never
+  deleted, locally or on GitHub.
+- **Quick Fixer** (added 2026-10-22): a worker for small, well-scoped jobs one
+  at a time (flaky or crashing tests, CI failures, small bugs), several to a
+  brief. It finds the cause before changing code, and pushes once when the
+  brief's jobs are done, or earlier when the Coordinator asks (2026-10-28).
 - **Tony's checkout and branches**: committing there, merging into his branches
   or `main`, landing a floor and opening a PR need Tony's approval.
 - **Documentation**: a worker writes only its own session folder
   (`.ai/sessions/<date>-<tool>-<task>/`: brief, notes, handoff with proposed doc
-  changes). It doesn't edit AGENTS.md, `roadmaps/`, `.ai/MANUAL_TODO.md` or
-  `.ai/memory/`; the coordinator updates those when merging.
+  changes, questions for Tony and follow-ups). It doesn't edit AGENTS.md,
+  `.ai/architecture/`, `roadmaps/`, `.ai/MANUAL_TODO.md`,
+  `.ai/DECISIONS_TODO.md`, `.ai/AI_TODO.md` or `.ai/memory/`; the coordinator
+  updates those when merging.
 - **Review**: by a different model from the author where possible; the
   reviewer reads the actual diff and reruns critical checks. Branches are
   integrated one at a time, with the full suite after each.
