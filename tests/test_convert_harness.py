@@ -10,13 +10,15 @@ from pathlib import Path
 
 import pytest
 
-from helab.convert.check import check_txy
+from helab.convert.check import ENDED, NO_FINAL_NEWLINE, ReferenceFault, check_txy, prove_fault
+from helab.convert.pipeline import convert_raw
 from helab.convert.profile import MATLAB_2019, builtin_profile
 from helab.convert.samples import SampleError, load_manifest, read_verified, select_shots
 from helab.convert.timing import Parallelism, ShotJob, summarise, time_shot, time_shots
 
 ROOT = Path(__file__).resolve().parents[1]
-CASE = ROOT / "tests" / "data" / "convert" / "cases" / "basic"
+CASES = ROOT / "tests" / "data" / "convert" / "cases"
+CASE = CASES / "basic"
 
 
 def make_samples(folder: Path, shots: int = 5) -> Path:
@@ -66,9 +68,13 @@ def test_the_checker_names_the_first_differing_line_and_the_hit_counts() -> None
     assert (result.ours_hits, result.reference_hits) == (3, 2)
     assert "line 2" in result.describe()
     longer = check_txy(b"1,2,3\n4,5,6\n", b"1,2,3\n")
-    assert (longer.line, longer.ours_line, longer.reference_line) == (2, "4,5,6", "")
+    assert (longer.line, longer.ours_line, longer.reference_line) == (2, "4,5,6", ENDED)
     no_newline = check_txy(b"1,2,3\n", b"1,2,3")
     assert not no_newline.identical and no_newline.reference_hits == 1
+    assert (no_newline.line, no_newline.ours_line, no_newline.reference_line) == (
+        1, "1,2,3", "1,2,3" + NO_FINAL_NEWLINE)
+    blank = check_txy(b"", b"\n")
+    assert (blank.line, blank.ours_line, blank.reference_line) == (1, ENDED, "")
     assert check_txy(None, None).identical
     missing = check_txy(b"", None)
     assert not missing.identical and missing.describe() == "differs: ours 0 hits, reference no file"
@@ -105,3 +111,32 @@ def test_timing_follows_matlab_for_empty_files_and_results(tmp_path: Path) -> No
     assert (out / "c.txy").read_bytes() == b""
     with pytest.raises(NotImplementedError):
         time_shots([ShotJob("x", trigger, out / "d.txy")], MATLAB_2019, parallelism=Parallelism.WITHIN_SHOT)
+
+
+def test_a_cut_fault_is_proved_by_converting_the_cut_raw_file() -> None:
+    raw = (CASE / "d1.txt").read_bytes()
+    lines = raw.count(b"\n") - 2  # the last hit loses its last two pulses
+    reference = convert_raw(b"".join(raw.splitlines(keepends=True)[:lines]), MATLAB_2019)
+    assert reference is not None and reference != convert_raw(raw, MATLAB_2019)
+    assert prove_fault(ReferenceFault("cut", "test", lines=lines), raw, reference, MATLAB_2019)
+    assert not prove_fault(ReferenceFault("cut", "test", lines=lines - 4), raw, reference, MATLAB_2019)
+
+
+def test_a_variant_fault_is_proved_by_the_changed_profile() -> None:
+    # MATLAB's own 2023 output from matlab-2019 plus the 2023 edit's changes.
+    case = CASES / "dead_time_x1"
+    raw, reference = (case / "d1.txt").read_bytes(), (case / "expected-2023.txt").read_bytes()
+    changes = {"dead_time_x1": 0.5e-6, "time_sum_t_x": 3390, "time_sum_t_y": 3275, "position_formula": "raw"}
+    assert prove_fault(ReferenceFault("variant", "test", changes=changes), raw, reference, MATLAB_2019)
+    assert not prove_fault(ReferenceFault("variant", "test", changes={"dead_time_x1": 0.5e-6}), raw, reference,
+                           MATLAB_2019)
+
+
+def test_an_empty_fault_needs_no_hits_and_a_0_byte_reference() -> None:
+    fault = ReferenceFault("empty", "test")
+    no_hits = (CASES / "no_hits" / "d1.txt").read_bytes()
+    assert prove_fault(fault, no_hits, b"", MATLAB_2019)
+    assert not prove_fault(fault, no_hits, b"\n", MATLAB_2019)
+    assert not prove_fault(fault, (CASE / "d1.txt").read_bytes(), b"", MATLAB_2019)
+    with pytest.raises(ValueError):
+        ReferenceFault("guess", "test")

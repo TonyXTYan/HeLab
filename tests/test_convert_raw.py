@@ -14,6 +14,7 @@ import pytest
 from helab.convert.raw import RawPulses, parse_raw, read_raw
 
 N = math.nan
+ROOT = Path(__file__).resolve().parents[1]
 
 TEXTSCAN = [
     (b"", []),
@@ -52,6 +53,17 @@ TEXTSCAN = [
     (b"5,1.5e3\r\n0,200.25\r\n", [(5, 1500), (0, 200.25)]),
     (b"5,-100\r\n0,-2\r\n", [(5, -100), (0, -2)]),
     (b"5,123456789012345678\r\n0,9007199254740993\r\n", [(5, 1.2345678901234568e17), (0, 9007199254740992.0)]),
+    # The first line's ending decides which endings count (Lens's F1; MATLAB R2025b).
+    (b"1,10\n2,20\r\n3,30\n", [(1, 10), (2, 20)]),
+    (b"1,10\r2,20\r\n3,30\r", [(1, 10), (2, 20)]),
+    (b"1,10\r\n2,20\r3,30\n", [(1, 10), (2, 20), (3, 30)]),
+    (b"1,10\n2,20\n3,30\r", [(1, 10), (2, 20), (3, 30)]),
+    (b"\n1,10\r\n2,20\r\n", [(1, 10), (2, 20)]),
+    (b"1,10\n\r2,20\r3,30\n4,40\n", [(1, 10)]),
+    (b"1,10\r\r\n2,20\n3,30\r4,40\r", [(1, 10), (2, 20), (3, 30), (4, 40)]),
+    (b"1,10\r \r\n2,20\n3,30\r", [(1, 10)]),
+    (b"1,10\r\r2,20\n3,30\r", [(1, 10), (2, 20)]),
+    (b"1,10\r\n\n2,20\r3,30\n", [(1, 10), (2, 20), (3, 30)]),
 ]
 
 
@@ -68,6 +80,34 @@ def same(a: list[tuple[float, float]], b: list[tuple[float, float]]) -> bool:
 def test_raw_files_read_as_textscan_does(data: bytes, expected: list[tuple[float, float]]) -> None:
     got = rows(parse_raw(data))
     assert same(got, [(float(a), float(b)) for a, b in expected]), got
+
+
+PROBES = ROOT / "tests" / "data" / "convert" / "textscan"
+
+
+def probe_files() -> list[tuple[str, str]]:
+    return [(folder.name, line) for folder in sorted(PROBES.iterdir()) if folder.is_dir()
+            for line in (folder / "matlab.txt").read_text().splitlines()]
+
+
+def test_the_cross_checkers_probes_are_there() -> None:
+    assert len(probe_files()) >= 449
+
+
+@pytest.mark.parametrize(("folder", "line"), probe_files(), ids=lambda value: value.split(" ")[0])
+def test_the_cross_checkers_probes_read_as_matlab_does(folder: str, line: str) -> None:
+    # probes/README.md: each matlab.txt line is the input's name, MATLAB's row count, its values.
+    name, count, *values = line.split()
+    got = rows(parse_raw((PROBES / folder / f"{name}.txt").read_bytes()))
+    expected = [(float(values[k]), float(values[k + 1])) for k in range(0, len(values), 2)]
+    assert len(got) == int(count) and same(got, expected), got
+
+
+def test_mixed_line_endings_skip_the_fast_path() -> None:
+    from helab.convert import raw
+    mixed = b"1,10\n2,20\r\n3,30\n"
+    assert not raw._STRICT_CRLF.fullmatch(mixed) and not raw._STRICT_LF.fullmatch(mixed)
+    assert len(parse_raw(mixed)) == 2
 
 
 def test_the_fast_path_and_the_general_reader_agree() -> None:

@@ -8,9 +8,12 @@ MATLAB reads with ``textscan(fid, '%f64%f64', 'Delimiter', ',', 'MultipleDelimsA
 
 - fields are numbers (sign, digits, a point, an exponent written ``e`` or ``d``) or
   ``Inf``/``NaN`` in any case; spaces, tabs and backspaces around them are skipped;
-- a comma ends a field; ``\\r\\n``, ``\\r`` and ``\\n`` end a line. An empty field between commas or
-  at a line's start reads as NaN; a line ended early is filled with NaN; blank lines and a comma
-  ending a full line are ignored;
+- a comma ends a field. The first non-blank line's ending sets which endings end a line: after
+  ``\\r\\n``, all of ``\\r\\n``, ``\\r`` and ``\\n``; after ``\\n``, only ``\\n`` (a later ``\\r`` is
+  a character like any other, so it stops the read); after ``\\r``, only ``\\r`` (a later ``\\n``
+  stops it); ``\\r\\r\\n`` counts as ``\\r\\n``, ``\\n\\r`` as ``\\n``. Blank lines before it don't count. An empty field between commas or at a line's
+  start reads as NaN; a line ended early is filled with NaN; blank lines and a comma ending a
+  full line are ignored;
 - a field followed directly by something that isn't a comma, an end of line or a blank is ended
   there, and the rest starts the next field (``0,12abc`` reads 0, 12 and then fails);
 - the first field that isn't a number stops the read: a half-read line is kept, filled with NaN,
@@ -18,7 +21,8 @@ MATLAB reads with ``textscan(fid, '%f64%f64', 'Delimiter', ',', 'MultipleDelimsA
   give 1, NaN; ``1,3`` of ``1,300`` gives 1, 3);
 - an empty file gives no rows. The file is read as bytes: a UTF-8 BOM stops the read at once.
 
-Raw files as the TDC writes them (``\\d+,\\d+\\r\\n`` lines) take a fast path with the same result.
+Raw files as the TDC writes them (``\\d+,\\d+\\r\\n`` lines, or all ``\\n``) take a fast path with the
+same result; a file mixing line endings takes the general reader.
 
 The done-writing checks (unchanged for ``SETTLE_SECONDS``, ending in a newline, the first line on
 the trigger channel) are stage 4's and go at the end of this module; MATLAB reads whatever
@@ -38,12 +42,15 @@ import numpy.typing as npt
 
 Floats = npt.NDArray[np.float64]
 
-# A whole file of well-formed TDC lines.
-_STRICT = re.compile(rb"(?:[0-9]+,[0-9]+\r?\n)*")
+# A whole file of well-formed TDC lines, all with one line ending.
+_STRICT_CRLF = re.compile(rb"(?:[0-9]+,[0-9]+\r\n)*")
+_STRICT_LF = re.compile(rb"(?:[0-9]+,[0-9]+\n)*")
 # One numeric field as textscan's %f reads it (it backtracks: "1e" reads 1, "-" reads nothing).
 _NUMBER = re.compile(rb"[+-]?(?:(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eEdD][+-]?[0-9]+)?|[iI][nN][fF]|[nN][aA][nN])")
 _BLANK = b" \t\b"
 _EOL = b"\r\n"
+_LEADING = re.compile(rb"[ \t\b\r\n]*")
+_LINE_END = re.compile(rb"\r+\n?|\n")
 _COLUMNS = 2
 
 
@@ -68,7 +75,7 @@ def read_raw(path: str | os.PathLike[str]) -> RawPulses:
 
 
 def parse_raw(data: bytes) -> RawPulses:
-    if _STRICT.fullmatch(data):
+    if _STRICT_CRLF.fullmatch(data) or _STRICT_LF.fullmatch(data):
         return _parse_strict(data)
     return _parse_textscan(data)
 
@@ -83,7 +90,10 @@ def _parse_strict(data: bytes) -> RawPulses:
 def _parse_textscan(data: bytes) -> RawPulses:
     rows: list[float] = []
     row: list[float] = []
-    pos, end = 0, len(data)
+    # Blank lines first are skipped whatever their endings; the first line's ending sets the rest.
+    pos, end = _LEADING.match(data).end(), len(data)  # type: ignore[union-attr]
+    first = _LINE_END.search(data, pos)
+    eol = _EOL if first is None or first.group().endswith(b"\r\n") else first.group()[:1]
 
     def finish() -> None:
         rows.extend(row + [math.nan] * (_COLUMNS - len(row)))
@@ -97,8 +107,8 @@ def _parse_textscan(data: bytes) -> RawPulses:
                 finish()
             break
         char = data[pos]
-        if char in _EOL:
-            pos += 2 if data[pos:pos + 2] == b"\r\n" else 1
+        if char in eol:
+            pos += 2 if eol == _EOL and data[pos:pos + 2] == b"\r\n" else 1
             if row:
                 finish()
             continue

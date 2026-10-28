@@ -1,0 +1,8 @@
+crlf_first_lone_cr_mid 3 1 10 2 20 3 30
+crlf_first_lf_mid 3 1 10 2 20 3 30
+cr_first_crlf_mid 2 1 10 2 20
+cr_first_lf_mid 2 1 10 2 20
+lf_first_cr_end 3 1 10 2 20 3 30
+lf_first_crlf_mid 2 1 10 2 20
+blank_lf_then_crlf 2 1 10 2 20
+blank_crlf_then_lf 2 1 10 2 20

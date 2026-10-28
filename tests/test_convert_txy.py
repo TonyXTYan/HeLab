@@ -2,12 +2,14 @@
 from __future__ import annotations
 
 import math
+import os
 from pathlib import Path
+import stat
 
 import numpy as np
 import pytest
 
-from helab.convert.txy import format_txy, write_atomic, write_txy
+from helab.convert.txy import FILE_MODE, format_txy, write_atomic, write_txy
 
 
 def test_values_format_as_dlmwrite_precision_8() -> None:
@@ -56,3 +58,12 @@ def test_a_failed_write_keeps_the_old_file(tmp_path: Path, monkeypatch: pytest.M
         write_atomic(target, b"new")
     assert target.read_bytes() == b"old"
     assert [path.name for path in tmp_path.iterdir()] == [target.name]
+
+
+@pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
+def test_a_written_txy_gets_a_plain_files_mode(tmp_path: Path) -> None:
+    target = tmp_path / "d_txy_helab_1.txy"
+    write_txy(target, np.array([[0.001, 0.002, -0.003]]))
+    umask = os.umask(0)
+    os.umask(umask)
+    assert stat.S_IMODE(target.stat().st_mode) == 0o666 & ~umask == FILE_MODE

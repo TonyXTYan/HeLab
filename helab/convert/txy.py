@@ -6,8 +6,10 @@ with ``\\n``, the last included, on every platform. No rows give an empty file (
 MATLAB R2025b; ``dld_raw_to_txy_counts`` writes no file at all for an empty result, the 2023
 ``dld_raw_to_txy`` an empty one).
 
-``write_txy`` writes to a temporary name in the target's folder, then renames it into place, so
-a reader never sees half a file.
+``write_txy`` writes to a temporary name in the target's folder, flushes it to disk, gives it the
+mode a plain new file gets (``0o666`` less the umask, as MATLAB's ``fopen`` does; ``mkstemp``'s
+own is owner-only), then renames it into place and syncs the folder, so a reader never sees
+half a file and a crash leaves the old one or the new one.
 
 Qt-free; standard library and NumPy only.
 """
@@ -24,6 +26,10 @@ import numpy.typing as npt
 Hits = npt.NDArray[np.float64]
 COLUMNS = 3
 _NON_FINITE = {math.inf: "Inf", -math.inf: "-Inf"}
+# The process's umask, read once (setting it is the only way to read it).
+_UMASK = os.umask(0)
+os.umask(_UMASK)
+FILE_MODE = 0o666 & ~_UMASK
 
 
 def format_value(value: float) -> str:
@@ -51,7 +57,27 @@ def write_atomic(path: str | os.PathLike[str], data: bytes) -> None:
     try:
         with os.fdopen(descriptor, "wb") as file:
             file.write(data)
+            file.flush()
+            os.fsync(file.fileno())
+        os.chmod(temporary, FILE_MODE)
         os.replace(temporary, target)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
+    _fsync_folder(target.parent)
+
+
+def _fsync_folder(folder: Path) -> None:
+    """Make the rename durable where the platform allows (not on Windows)."""
+    if os.name == "nt":
+        return
+    try:
+        descriptor = os.open(folder, os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(descriptor)
+    except OSError:
+        pass
+    finally:
+        os.close(descriptor)

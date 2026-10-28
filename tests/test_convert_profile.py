@@ -2,12 +2,19 @@
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
+from pathlib import Path
+from typing import Any
 
 import pytest
 
-from helab.convert.profile import (BUILTIN_PROFILES, DEFAULT_PROFILE, MATLAB_2019, MATLAB_2023_LAB_EDIT,
-                                   DetectorProfile, ProfileError, builtin_profile)
+from helab.convert.pipeline import convert_raw
+from helab.convert.profile import (BUILTIN_PROFILES, DEFAULT_PROFILE, DESCRIPTIVE, MATLAB_2019, MATLAB_2023_LAB_EDIT,
+                                   NEUTRAL, UNUSED_BY_OUTPUT, DetectorProfile, ProfileError, builtin_profile)
+from helab.convert.reconstruct import NoRowsError
+
+CASES = Path(__file__).resolve().parents[1] / "tests" / "data" / "convert" / "cases"
 
 
 def test_the_default_is_matlab_2019_with_matlabs_constants() -> None:
@@ -37,8 +44,9 @@ def test_json_round_trips_and_refuses_unknown_or_missing_fields() -> None:
         DetectorProfile.from_dict({**data, "centre": 0})
     with pytest.raises(ProfileError, match="Missing"):
         DetectorProfile.from_dict({k: v for k, v in data.items() if k != "search_depth"})
-    with pytest.raises(ProfileError, match="schema"):
-        DetectorProfile.from_dict({**data, "schema": 99})
+    for schema in (99, 0, None, "1", True):
+        with pytest.raises(ProfileError, match="schema"):
+            DetectorProfile.from_dict({**data, "schema": schema})
     with pytest.raises(ProfileError):
         DetectorProfile.from_json("[1]")
     with pytest.raises(ProfileError):
@@ -47,8 +55,10 @@ def test_json_round_trips_and_refuses_unknown_or_missing_fields() -> None:
 
 def test_the_content_hash_is_stable_and_covers_only_what_changes_the_output() -> None:
     # Pinned: a change here changes every HeLab TXY's provenance, so it must be on purpose.
-    assert MATLAB_2019.content_hash() == "231cb2637fdac1e1af20b29263d710fd142646bc76a23d340e9ad18edc277c96"
-    assert MATLAB_2023_LAB_EDIT.content_hash() == "e5c91ba87a8257c88a1cde8067508d2139d805e8657d6a07485226e798d671fe"
+    assert MATLAB_2019.content_hash() == "fbaf472897b0745fd5eca1249862e37ab43dc553adcf0dc6122648dfdfd414d0"
+    assert MATLAB_2023_LAB_EDIT.content_hash() == "a228f236d31749608e9853d7f69954d47174cb08d7d2f1adaea40a364739183e"
+    # The MCP and trigger channels don't change the output (yet): not in the hash.
+    assert MATLAB_2019.replace(channel_mcp=7, channel_trigger=4).content_hash() == MATLAB_2019.content_hash()
     assert MATLAB_2019.replace(name="copy", version=2, notes="x", calibrated=True).content_hash() == \
         MATLAB_2019.content_hash()
     assert MATLAB_2019.replace(search_depth=40).content_hash() != MATLAB_2019.content_hash()
@@ -56,10 +66,65 @@ def test_the_content_hash_is_stable_and_covers_only_what_changes_the_output() ->
     assert MATLAB_2019.replace(search_window=3200).content_hash() == MATLAB_2019.content_hash()
 
 
+def test_a_field_at_its_neutral_default_is_optional_and_out_of_the_hash() -> None:
+    assert set(NEUTRAL) == {"dead_time_x1", "dead_time_x2", "dead_time_y1", "dead_time_y2", "x2_handling", "y_handling"}
+    data = json.loads(MATLAB_2019.to_json())
+    assert DetectorProfile.from_dict({k: v for k, v in data.items() if k not in NEUTRAL}) == MATLAB_2019
+    # A field added later at its neutral value leaves the hash as it was: here, the hash with
+    # dead_time_y2 present equals the canonical hash of the other fields alone.
+    others = {k: v for k, v in data.items()
+              if k not in (*DESCRIPTIVE, *UNUSED_BY_OUTPUT, *NEUTRAL, "schema")}
+    text = json.dumps(others, sort_keys=True, separators=(",", ":"))
+    assert MATLAB_2019.content_hash() == hashlib.sha256(text.encode()).hexdigest()
+    assert MATLAB_2019.replace(dead_time_y2=1e-6).content_hash() != MATLAB_2019.content_hash()
+
+
+def _perturbed(name: str, value: Any) -> Any:
+    if isinstance(value, bool):
+        return not value
+    if name.startswith("channel_"):
+        return 7  # a channel none of the cases uses
+    if isinstance(value, int):
+        return value - 7
+    if isinstance(value, float):
+        return value * 1.5 + 1e-6 if name.startswith(("dead_time", "bin_time", "v_perp")) else value * 0.6 + 1
+    options = {"position_formula": ("centred", "raw")}.get(name, ())
+    return next((option for option in options if option != value), None)
+
+
+def _outputs(profile: DetectorProfile) -> list[bytes | str | None]:
+    out: list[bytes | str | None] = []
+    for case in sorted(path for path in CASES.iterdir() if path.is_dir()):
+        data = (case / "d1.txt").read_bytes()
+        # Times with a fraction too, so position_formula's rounding shows.
+        for raw in (data, data.replace(b"\r\n", b".3\r\n")):
+            try:
+                out.append(convert_raw(raw, profile))
+            except NoRowsError:
+                out.append("error")
+    return out
+
+
+@pytest.mark.parametrize("name", [field.name for field in dataclasses.fields(DetectorProfile)
+                                  if field.name not in DESCRIPTIVE])
+def test_every_field_that_changes_the_output_is_in_the_hash(name: str) -> None:
+    # Side's check: perturb each field; either the hash changes or no case's output does.
+    changed = _perturbed(name, getattr(MATLAB_2019, name))
+    if changed is None:
+        pytest.skip(f"{name} has one allowed value")
+    profile = MATLAB_2019.replace(**{name: changed})
+    if profile.content_hash() == MATLAB_2019.content_hash():
+        assert _outputs(profile) == _outputs(MATLAB_2019), f"{name} changes the output but not the hash"
+    else:
+        assert name not in UNUSED_BY_OUTPUT
+
+
 @pytest.mark.parametrize("changes", [
     {"bin_time": 0}, {"search_depth": 0}, {"dead_time_x1": -1e-6}, {"x2_handling": "retry"},
     {"position_formula": "rotated"}, {"search_window": "3200"}, {"search_depth": 36.0}, {"calibrated": 1},
-    {"name": ""}, {"notes": 3},
+    {"name": ""}, {"notes": 3}, {"v_perp_x": float("nan")}, {"bin_time": float("inf")},
+    {"search_window": -1}, {"match_tolerance_y": -200}, {"xy_sum_tolerance": -1}, {"time_sum_t_x": -3200},
+    {"channel_x2": 0}, {"channel_y2": 2},
 ])
 def test_invalid_values_are_refused(changes: dict[str, object]) -> None:
     with pytest.raises(ProfileError):

@@ -22,9 +22,9 @@ from _common import guard, sample_arguments
 
 guard()
 
-from reference_exceptions import EXCEPTIONS, KINDS, prove  # noqa: E402
+from reference_exceptions import EXCEPTIONS  # noqa: E402
 
-from helab.convert.check import CheckResult, check_txy  # noqa: E402
+from helab.convert.check import FAULT_KINDS as KINDS, CheckResult, check_txy, prove_fault  # noqa: E402
 from helab.convert.pipeline import convert_raw  # noqa: E402
 from helab.convert.profile import builtin_profile  # noqa: E402
 from helab.convert.reconstruct import NoRowsError  # noqa: E402
@@ -39,7 +39,9 @@ def main() -> int:
     args = parser.parse_args()
     profile = builtin_profile(args.profile)
     shots = select_shots(load_manifest(args.root), args.positions, args.sets)
+    selected = len(shots)
     if args.reference_dir is not None:
+        # Only the shots MATLAB was run on (their raw copy is there).
         shots = [shot for shot in shots if (args.reference_dir / shot.set_name / f"d{shot.shot}.txt").exists()]
     per_set: dict[str, list[tuple[int, CheckResult]]] = defaultdict(list)
     counted: dict[str, int] = defaultdict(int)
@@ -62,7 +64,7 @@ def main() -> int:
         per_set[shot.set_name].append((shot.shot, result))
         exception = EXCEPTIONS.get((shot.set_name, shot.shot, shot.txy_sha256)) if args.reference_dir is None else None
         if not result.identical:
-            if exception is not None and reference is not None and prove(exception, raw, reference, profile,
+            if exception is not None and reference is not None and prove_fault(exception, raw, reference, profile,
                                                                          args.backend):
                 explained[(shot.set_name, exception.kind)] += 1
                 print(f"  {shot.label} (position {shot.position}): {exception.kind}, proof holds: {exception.why}")
@@ -87,6 +89,12 @@ def main() -> int:
         print(f"{name:32} {row[0]:5} {row[1]:9} " + " ".join(f"{k:7}" for k in kinds) + f" {differ:6}")
     print(f"{'all':32} {columns[0]:5} {columns[1]:9} " + " ".join(f"{k:7}" for k in columns[2:-1])
           + f" {columns[-1]:6}")
+    print(f"checked {columns[0]} of {selected} selected shots"
+          + ("" if args.reference_dir is None else f" (those with a copy in {args.reference_dir})")
+          + ("" if args.limit is None else f", at most {args.limit} per set"))
+    if columns[0] == 0:
+        print("no shots were checked")
+        return 1
     if args.json is not None:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps({

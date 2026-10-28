@@ -34,8 +34,16 @@ Measured on 36 probe files (all now in `tests/test_convert_raw.py`):
 | UTF-8 BOM | no rows |
 | 9007199254740993 | 9007199254740992 (rounded to nearest) |
 
+**Line endings** (Lens's F1, then 10 more probes of mine): the first non-blank line's ending
+sets the mode. `\n` → only `\n` ends lines (a later `\r` is a stray character: the read stops);
+a run of `\r` then `\n` (`\r\n`, `\r\r\n`) → `\r\n`, `\r` and `\n` all end lines; `\r` not followed
+by `\n` → only `\r` (a later `\n` stops the read). `\n\r` counts as `\n`. Leading blank lines
+don't set it (`\n1,10\r\n2,20\r\n` reads 2 rows). All 449 of Lens's probes (`tests/data/convert/textscan/`)
+and my 10 are tests.
+
 `raw._parse_textscan` implements exactly this; files of plain `\d+,\d+\r?\n` lines (every sample)
-take `_parse_strict`, which gives the same arrays (tested).
+take `_parse_strict` (all `\r\n` or all `\n`; a mixed file takes the general reader), which gives
+the same arrays (tested).
 
 ## MATLAB's write (`dlmwrite(…, 'precision', 8)`)
 
@@ -69,8 +77,9 @@ Found while building (and by Lens independently):
    are skipped before it, so |x1 − x2| ≤ 3200 in effect. The y pulses are windowed relative to
    **x1**, not y1, and the y2 loop is centred on x1 too.
 3. **A second y pair** breaks only the inner y2 loop; the outer y1 loop runs on, and only counts.
-4. **X/Y rounding differs between variants**: 2019 computes ((x1 − tx) − (x2 − tx))·v·bin, the
-   2023 edit (x1 − x2)·v·bin; not the same doubles (`position_formula`).
+4. **X/Y formulas differ between variants**: 2019 computes ((x1 − tx) − (x2 − tx))·v·bin, the
+   2023 edit (x1 − x2)·v·bin (`position_formula`). For integer times below 2^52 (every TDC file)
+   they give the same doubles (Lens's F4); they can differ only for times with a fraction.
 5. **Empty file → MATLAB error** (`NoRowsError`); **no hits** → 2019's `dld_raw_to_txy_counts`
    writes no file, the 2023 `dld_raw_to_txy` a 0-byte one (`write_empty_txy`).
 6. A NaN time (truncated line) sorts last (MATLAB's sort is stable, NaN last) and never matches;

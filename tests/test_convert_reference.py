@@ -74,6 +74,13 @@ def test_there_are_lab_pairs_to_reproduce() -> None:
     assert len(sample_pairs()) >= 15
 
 
+def test_the_lab_pairs_are_checked_out_byte_for_byte() -> None:
+    # tests_sample_data/.gitattributes '* -text': Windows autocrlf mustn't add CRs to the TXY.
+    assert (ROOT / "tests_sample_data" / ".gitattributes").read_text().split() == ["*", "-text"]
+    txy = sorted((ROOT / "tests_sample_data").rglob("d_txy_forc*.txt"))
+    assert txy and all(b"\r" not in path.read_bytes() for path in txy)
+
+
 def test_the_search_order_is_minus_one_plus_one_and_so_on() -> None:
     assert offsets(6) == [-1, 1, -2, 2, -3, 3]
     assert offsets(36)[-2:] == [-18, 18]

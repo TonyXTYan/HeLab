@@ -3,7 +3,9 @@
 A backend is registered by name with the callable that runs it and a check of whether it can run
 here (its package installed, a GPU present) and with a given profile. Stage 1 has ``reference``
 (``backends/reference.py``, the plain-Python port); stage 2 adds ``numpy``, ``numba``, ``cython``,
-``rust``, ``mlx`` with ``register_backend`` from their own modules, without touching callers.
+``rust``, ``mlx``, each a module in ``backends/`` that calls ``register_backend`` on import **and**
+a line in ``_MODULES`` below, so the backend is found by name in any process (a spawned worker of
+the timing harness's process pool imports only what ``_MODULES`` names); callers don't change.
 Every backend must give the reference's output byte for byte (``check``).
 
 Hits are an ``(n, 3)`` float64 array of T (s, from the trigger), X and Y (m), sorted by T.
@@ -52,7 +54,9 @@ class Backend:
 
 
 _BACKENDS: dict[str, Backend] = {}
-# Backends whose module registers them on import, imported on first use.
+# Every backend's name and the module that registers it on import, imported on first use. A new
+# backend adds its line here; one registered only from its own module is missing in spawned
+# processes.
 _MODULES = {"reference": "helab.convert.backends.reference"}
 
 
