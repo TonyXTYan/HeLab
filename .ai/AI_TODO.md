@@ -189,6 +189,12 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
   `seen`/`done`/`kept`/`skip`, so done shots aren't checked again and unfinished ones aren't read again
   (`seen` is required).
 
+## Quick Fixes 4 (block 13)
+
+- **A13.1 Helpers start with an explicit working folder** (or, under `SOURCE_GUARD`, the working
+  folder leaves the guard's denied list), so a test that `chdir`s can't make a helper's source access
+  fail (known-issues, Tests and CI). From Quick Fixes 4's A~2 and Plover's review.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

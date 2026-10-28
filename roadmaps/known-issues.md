@@ -14,6 +14,12 @@ How to use it:
 
 ## App
 
+- [ ] The tab's startup default-folder resolve (`QTimer.singleShot(0)` in `FolderExplorer.__init__`)
+  can run after an early `open_to_path` (a preset applied, or a path typed, before the event loop
+  turns) and move the tab to the default folder; online, a preset then says "Live not started: another
+  folder was selected". C-30's "treat the startup resolve as the tab settling" wasn't done. A small
+  guard in `_resolve_default` (skip it once the tab has navigated) would do (Quick Fixes 4, A~1;
+  behaviour users see, so not changed there).
 - [ ] Folders with over 100,000 entries record a scan failure.
 - [ ] The temp folder (`DIR_TEMPS`, Settings → General) is created and can be
   changed, but nothing uses it: helpers' private folders go to the system temp
@@ -67,27 +73,11 @@ How to use it:
 
 ## Tests and CI
 
-- [ ] `test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such` reran once
-  on Windows CI (2026-10-29, run 40713926667, `09a0711` on `agent/txy-reference`): `pytestqt.exceptions.TimeoutError:
-  waitUntil timed out in 30000 milliseconds` (line 82); passed on its retry. Again on macOS and
-  Windows CI (run 40722925594, `agent/txy-rust` `a44ec77`, jobs 122938617220 and 122938617543),
-  same reason. None of the branches touch the test or the code it exercises; cause not found yet.
-- [ ] `test_helabMainWindow.py::test_the_view_menu_has_no_thread_status_item_and_its_setting_is_retired`
-  (line 533) reran on the numba floor (2026-10-29, Kite's runs at `7ef5935`, `430df26` and `f89c276`,
-  workers gw2 and gw3): "Tests never touch real data, but this test's I/O asked for:
-  [.../popen-gw2/test_window_icon_is_found_from0]". I/O from the window the previous test built
-  (`test_window_icon_is_found_from_any_launch_folder`, line 500: chdir to `tmp_path`, `window.close()`)
-  reaches the next test. It shows only when `--basetemp` is outside the checkout (inside it the guard
-  allows the path). Not from the converter branches. A Quick Fixer job.
-- [ ] `test_folder_summary.py::test_scan_metadata_survives_restart_without_reading_txy_contents`
-  reran on macOS CI (2026-10-29, run 40722845197, `agent/txy-mlx` `848abf0`, job 122938251377) and
-  once locally on the mlx floor: `assert [..., 41] == [.../source]` (line 725). Its process-wide
-  `os.scandir` patch recorded an `os.scandir(<fd>)` that wasn't the test's own call, likely another
-  thread's `shutil.rmtree`. Fix: record only `str` paths under the test's root, or patch the module
-  the scan uses rather than `os`.
-- [ ] `test_io_trace.py::test_tracing_changes_no_event_and_no_source_call` reran on Windows CI
-  (2026-10-29, run 40725480099, `agent/txy-numpy` `c1c2172`, job 122947593152): the event lists differ
-  at index 2 (a `scan_summary` event). Not from the branch; cause not found yet.
+- [ ] Tests that `chdir` while helpers can start: a helper inherits the working folder, which its
+  `helab.utils.constants` lists as a developer's data folder (`DEV_POTENTIAL_DATA_PATHS`), so the source
+  guard refuses it outside the temp folder and the checkout. `test_window_icon_is_found_from_any_launch_folder`
+  now leaves `tmp_path` right after building the window (Quick Fixes 4), which narrows the window but
+  doesn't close it. Fix: A13.1.
 - [ ] A test that closes a real main window leaves the app-wide IOService closed in
   `io_service._service`, its retired requests never forgotten (timer stopped), until the next
   `get_io_service()` replaces it; and a live app-wide service (and its FolderCache) lasts the
@@ -138,6 +128,26 @@ crashed" on CI with no traceback is usually CI's 120 s timeout, whose stacks
 ## Fixed
 
 Landed in `dev/v0.0.7`:
+
+- [x] Four CI-flaky tests, fixed by Quick Fixes 4 (2026-10-29, merged `e9c5bfa`;
+  `.ai/sessions/2026-10-29-claude-quick-fixes-4/notes.md`; Reviewer Plover reproduced three causes on
+  the base code):
+  - `test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such` (4 CI reruns):
+    offline, `PresetFolder.check` waited for a listing that had already answered `offline_unlisted`;
+    the test passed only when the tab's startup resolve moved the selection after the apply. Fixed in
+    the app (`helab/views/plots/presets.py`: the C-29 notice, then finish), so the notice now shows in
+    a settled tab too.
+  - `test_helabMainWindow.py` (the view-menu test after the window-icon test): a helper inherited the
+    test's working folder, which the source guard denies outside temp and the checkout; the icon test
+    now leaves `tmp_path` right after building the window (the trap itself: Tests and CI, above).
+  - `test_folder_summary.py::test_scan_metadata_survives_restart_without_reading_txy_contents`: its
+    process-wide `os.scandir` patch caught `IOService.release`'s `shutil.rmtree` on a daemon thread;
+    the patches now act only on the test's own thread.
+  - `test_io_trace.py::test_tracing_changes_no_event_and_no_source_call`: loads and Live checks send a
+    file's progress event only 0.1 s after the last, so a slow traced run sent one more; the test now
+    gives both runs a clock moving 1 s per reading.
+  - Also `test_io_trace.py::test_off_unless_the_test_seam_names_a_folder` failed with a temps path
+    containing spaces (split on whitespace; now `rsplit(maxsplit=1)`).
 
 - [x] The release job left v0.0.6a1's draft with no assets (run 40675311830 on `main`, "Tag
   tested main commit and create draft release": "Draft was replaced, removed or published;
