@@ -381,9 +381,6 @@ def test_a_converted_shot_reaches_the_live_data(qtbot: QtBot, service: IOService
         explorer.close_cleanup()
 
 
-@pytest.mark.xfail(strict=True, reason="helab-core's request field 'output' is overwritten by IOService (each "
-                                       "helper's private folder); Keel renames it 'destination' on "
-                                       "agent/txy-helab-core: remove this mark once that is merged")
 def test_a_conversion_the_app_asks_for_runs_in_a_helper_process(qtbot: QtBot, tmp_path: Path) -> None:
     """Through the app's own IOService and a real helper process, as Live asks for it: the payload
     survives what the service adds to it (each helper's private folder is its ``output``)."""
