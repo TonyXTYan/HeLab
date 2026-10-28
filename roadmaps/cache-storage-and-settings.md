@@ -627,7 +627,7 @@ The result cache's own rules are in [result caching](result-caching.md); what it
   (least recently shown other results, never datasets) or Discard.
 - **Store identity:** presets and saved results follow one rule, `FolderCache.store_answer`: the
   cache folder decides which store is in use, answers from another store wait for an identity
-  probe, and writes name their store ([AGENTS.md › Caching](../AGENTS.md)).
+  probe, and writes name their store ([cache-store](../.ai/architecture/cache-store.md)).
 
 ## Sessions
 
@@ -678,7 +678,8 @@ Notes from finished sessions:
   `close_all_caches` went with the old caches. `load_cache_param` stays for the helpers'
   options until S5. `helab/scripts/dev/` is now `dev/plotting-prototypes/` with a README;
   the prototypes no longer run (they import `LoadFolderToRamWorker`). `SynchronisedDict`
-  stays: the Dash server uses it (no longer, by Codebase Review 2's check, 2026-10-26). Checked offscreen: the main window and Settings open, and
+  stayed for the Dash server; unused after Codebase Review 2 (2026-10-26), it was removed on
+  2026-10-28 (docs audit). Checked offscreen: the main window and Settings open, and
   the Cache tab shows one row. The old `status_cache/` and `os_file_system_cache/` folders
   stay on disk until S5 deletes them.
 - **S4:** `helab/utils/cache_store.py` (`CacheStore`), not yet used by any helper. Reads

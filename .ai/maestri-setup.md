@@ -10,8 +10,9 @@ have run since 2026-10-19.
 
 ## What you get
 
-- **Ground**: your own checkout (`HeLab/`, currently `dev/v0.0.6`). You and
-  the coordinator live here. Agents never commit here without asking.
+- **Ground**: your own checkout (`HeLab/`), on the current dev branch (the
+  roadmap's *Now*, e.g. `dev/v0.0.7`). You and the coordinator live here.
+  Agents never commit here without asking.
 - **Floors**: one per task. Each is a git worktree of HeLab on its own branch,
   in `.maestri/floors` next to the project, with its own canvas and terminals.
   On APFS, Ground's files (including `venv.nosync/` and other gitignored
@@ -39,7 +40,7 @@ haven't been done on a second machine yet. Then continue with sections 1–4.
 
    ```bash
    git clone --recurse-submodules https://github.com/TonyXTYan/HeLab.git
-   cd HeLab && git switch dev/v0.0.6
+   cd HeLab && git switch dev/v0.0.7   # the current dev branch: the roadmap's "Now"
    ```
 
 6. **Python and packages** (the README's "Setup (any machine)"):
@@ -75,7 +76,7 @@ haven't been done on a second machine yet. Then continue with sections 1–4.
 11. **Maestri**: install the app from [themaestri.app](https://www.themaestri.app),
     open it and sign in. It provides the `maestri` CLI inside its terminals
     (`$MAESTRI_CLI`) and installs its agent skills (`maestri`,
-    `maestri-chat`, `maestri-manager`, … in `~/.claude/skills/`) **(check)**.
+    `maestri-chat`, `maestri-manager`, … in `~/.claude/skills/`).
 12. **Maestri settings don't sync**: `.maestri/` (roles, floors) is gitignored
     and hooks live in the app. Redo sections 1–4 here: workspace,
     notifications, presets, the coordinator terminal and role (the role text
@@ -86,15 +87,19 @@ haven't been done on a second machine yet. Then continue with sections 1–4.
     location asks "same folder or a copy?" once.
 
 **Two computers at once.** Run one coordinator on each. Both branch
-`agent/<task>` from `dev/v0.0.6` and land back into it. Before landing, pull
-`dev/v0.0.6` first: `git pull` on Ground, or **Sync** in the land dialog. Keep
-the two machines on different roadmap items, and say in the register note
-which machine owns which task.
+`agent/<task>` from the current dev branch and land back into it. Before
+landing, pull that branch first: `git pull` on Ground, or **Sync** in the land
+dialog. Keep the two machines on different roadmap items, and say in the
+register note which machine owns which task.
 
 ## 1. One-time setup
 
 1. **Install the agents** Maestri will run: Claude Code and Codex, signed in
-   (`claude`, `codex`). Maestri expects them installed already.
+   (`claude`, `codex`). Maestri expects them installed already. Codex trusts
+   only the projects listed in `~/.codex/config.toml` (on Tony's Mac, Ground
+   alone); floors live in `.maestri/floors` beside the project, so a Codex
+   recruit there starts in an untrusted project. What that changes (approval
+   prompts, sandbox) **(check)**; trusting the floors folder may be needed.
 2. **GitHub CLI**: `gh auth status` should show the account that can push to
    `TonyXTYan/HeLab`. Floors use `gh` for pull requests; without it Maestri
    opens the PR page in the browser.
@@ -188,7 +193,8 @@ which machine owns which task.
    > and manual checks in your handoff instead, numbered provisionally
    > (`Q~1`, `A~1`, `M~1`). Run tests with `pytest -n 4 --reruns 5
    > --reruns-delay 1 --basetemp=.ai/temp/pytest` plus strict mypy and
-   > pyright, and report any RERUN. Don't launch the HeLab GUI. Ask the
+   > pyright, and report any RERUN. Launch the HeLab GUI only when
+   > `$HELAB_TEST_SETTINGS_FILE` is set (floor-env.sh). Ask the
    > Coordinator (`maestri ask`) when blocked or when the brief is unclear;
    > keep `maestri floor status` current, and when done post `--state review`
    > and send the Coordinator your handoff's summary.
@@ -263,7 +269,8 @@ which machine owns which task.
    >   `.ai/architecture/`, `roadmaps/`, `.ai/MANUAL_TODO.md`,
    >   `.ai/DECISIONS_TODO.md`, `.ai/AI_TODO.md` or `.ai/memory/`; put
    >   questions for Tony and follow-ups in notes.md, numbered provisionally
-   >   (`Q~1`, `A~1`). Don't launch the HeLab GUI.
+   >   (`Q~1`, `A~1`). Launch the HeLab GUI only when
+   >   `$HELAB_TEST_SETTINGS_FILE` is set (floor-env.sh).
    > - Keep `maestri floor status` current (a line per job; `--state review`
    >   when the batch is done). Report each job to whoever gave it with
    >   `maestri ask "<name>" "<job, cause, commits, files, checks with
@@ -341,8 +348,14 @@ a fresh venv (about 16 s with uv's cache). Keep 1 and 2 both on or both off.
 1. Fresh venv:
 
    ```bash
-   cd "$MAESTRI_FLOOR_PATH" && [ "$MAESTRI_FLOOR_PATH" != "$MAESTRI_ROOT_PATH" ] && uv venv --clear --seed --python 3.13 venv
+   cd "$MAESTRI_FLOOR_PATH" && [ "$MAESTRI_FLOOR_PATH" != "$MAESTRI_ROOT_PATH" ] && case "$(cd -P venv 2>/dev/null && pwd || pwd -P)/" in "$(pwd -P)"/*) uv venv --clear --seed --python 3.13 venv;; *) echo "venv resolves outside the floor; not clearing it" >&2; false;; esac
    ```
+
+   `uv venv --clear` follows a `venv` symlink and empties its target, so the
+   `case` refuses when `venv` resolves outside the floor (an absolute link to
+   Ground's `venv.nosync`). The README's relative `ln -s venv.nosync venv`
+   resolves inside the floor and passes. Added 2026-10-28 (checked under sh,
+   zsh and bash on scratch folders); update the hook entry in the app to match.
 
 2. Packages and the floor's own editable `helab`:
 
@@ -350,10 +363,10 @@ a fresh venv (about 16 s with uv's cache). Keep 1 and 2 both on or both off.
    cd "$MAESTRI_FLOOR_PATH" && [ "$MAESTRI_FLOOR_PATH" != "$MAESTRI_ROOT_PATH" ] && uv pip install -q --python venv/bin/python -r requirements.lock -e .
    ```
 
-**Private app folders**, for tests and any manual run (QSettings is **not** yet
-isolated, see below). Command 3 starts `.ai/local/floor-env.sh` afresh; 4 and
-5 add a line each. Command 3 also makes `.ai/temp`, which a floor doesn't get
-(it is gitignored) and where `pytest --basetemp=.ai/temp/pytest` needs it.
+**Private app folders and settings**, for tests and any manual run. Command 3
+starts `.ai/local/floor-env.sh` afresh; 4, 5 and 5b add a line each. Command 3 also makes `.ai/temp`, which is excluded from the
+clone (see Excluded folders below) and where `pytest --basetemp=.ai/temp/pytest`
+needs it.
 
 3. App folder (locks, `cache-move.json`) and the floor's `.ai/temp`:
 
@@ -373,6 +386,14 @@ isolated, see below). Command 3 starts `.ai/local/floor-env.sh` afresh; 4 and
    echo "export HELAB_DIR_TEMPS_OVERRIDE=\"$HOME/Library/Caches/HeLab/floors/$MAESTRI_FLOOR_NAME/temps\"" >> "$MAESTRI_FLOOR_PATH/.ai/local/floor-env.sh"
    ```
 
+5b. Settings file (Q2.5, 2026-10-28): `app_settings()` opens this ini instead of
+   the real settings store, so the GUI or a script run from the floor never
+   touches Tony's settings. pytest still gives each test its own.
+
+   ```bash
+   echo "export HELAB_TEST_SETTINGS_FILE=\"$HOME/Library/Caches/HeLab/floors/$MAESTRI_FLOOR_NAME/settings.ini\"" >> "$MAESTRI_FLOOR_PATH/.ai/local/floor-env.sh"
+   ```
+
 **Stale bytecode.** The clone copies Ground's `__pycache__` folders, which
 carry Ground's paths into tracebacks (seen on the CI Robustness floor: a
 traceback naming `../../../HeLab/tests/…`). Delete them outside `venv/` and
@@ -386,13 +407,16 @@ traceback naming `../../../HeLab/tests/…`). Delete them outside `venv/` and
 
    Added 2026-10-22, checked on a scratch tree only, not yet on a floor **(check)**.
 
-**Optional**, added but switched off; switch it on when a task needs the
-legacy MATLAB converter (submodule folders start empty on a floor):
+**Optional**, added but switched off; switch it on (or run the command in the
+brief) when a task needs the 2019 MATLAB converter. Since Q6.4 it is the only
+submodule, and its folder starts empty on a floor. The hand-cloned
+`legacy/DLD_front_panel` and `legacy/Momentum_Bells_test` are gitignored, so
+they come with the clone of Ground's ignored files.
 
-7. Submodules:
+7. Converter submodule:
 
    ```bash
-   cd "$MAESTRI_FLOOR_PATH" && git submodule update --init --recursive
+   cd "$MAESTRI_FLOOR_PATH" && git submodule update --init legacy/tdc_autoconverter
    ```
 
 **Teardown** (runs on Delete Floor): remove that floor's private folders. The
@@ -430,6 +454,12 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
 
    Otherwise `maestri floor create "<Task>" --branch agent/<task>`, or type
    `@New Floor` in the Coordinator's composer with the task.
+
+   After a release, base floors only on the new dev branch. v0.0.6 went to
+   `main` as a squash (`9c477c2`), so `dev/v0.0.7` shares no history with
+   `dev/v0.0.6`, and earlier `agent/*` branches are records, not bases.
+   `floor create` also has a `--copy-ground` flag that neither `maestri help`
+   nor these docs explain; don't use it until it is known **(check)**.
 2. **Recruit the worker** on that floor (the Coordinator asks you first):
 
    ```bash
@@ -460,22 +490,32 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
    - runs `source .ai/local/floor-env.sh` before tests or a manual run;
    - runs tests with its own `--basetemp=.ai/temp/pytest` and about `-n 4`
      when several workers are busy;
+   - installs packages only into the floor's venv: when a task needs one that
+     `requirements.lock` lacks (a spike's numba or Cython), it first checks that
+     `venv/bin/python -c "import sys; print(sys.prefix)"` prints a path under
+     the floor, then runs `uv pip install --python venv/bin/python <pkg>`.
+     Never a bare `pip install` or an activated `uv pip install`: with hooks
+     1–2 off or failed, those install into Ground's venv. Such packages are
+     listed in the session folder (or a `requirements-bench.txt`), never in
+     `requirements.txt` or the lock unless Tony decides. Briefs that add
+     packages repeat this rule;
    - commits freely on its branch; writes only its own
      `.ai/sessions/<date>-<tool>-<task>/` (brief, notes, handoff with proposed
      doc changes);
    - when done, pushes the branch **once**, runs
      `maestri floor status "<summary>" --state review`, and reports to the
      Coordinator.
-4. **Don't launch the HeLab GUI from a floor yet**: QSettings is still shared
-   with your real app (settings profiles are planned in the workflow plan).
-   Tests are safe; they use temporary settings and folders.
+4. **The HeLab GUI may run from a floor** once `floor-env.sh` is sourced: hooks
+   3–5b give it its own app, cache and temp folders and settings file (Q2.5).
+   Check `echo $HELAB_TEST_SETTINGS_FILE` first; if it is empty, the hook
+   wasn't run, so don't launch it. Tests are safe either way.
 
 ## Work on Ground
 
 Tony (or his Assistant terminal, section 2) may make small urgent changes on
-Ground, on `dev/v0.0.6`, while floors run. The Coordinator doesn't make them:
-it doesn't edit feature code. The Assistant tells the Coordinator about each
-Ground commit.
+Ground, on the current dev branch, while floors run. The Coordinator doesn't
+make them: it doesn't edit feature code. The Assistant tells the Coordinator
+about each Ground commit.
 
 - Add a **Ground** row to Active work (task, terminal, files, status) and
   clear it when the change is committed; the Coordinator warns a floor whose
@@ -505,32 +545,40 @@ slow drives, Windows, tests):
 You land floors (or approve the Coordinator doing it from Ground).
 
 - Click the airplane button beside the floor, or **Land Floor** in its menu.
-- **Merge Locally**: pick the target branch (e.g. `dev/v0.0.6`). **Sync**
-  first pulls the target's latest changes into the floor. A merge is refused
-  when the target's checkout has uncommitted work, or lists the conflicting
-  files and stops.
+- **Merge Locally**: pick the target branch (the current dev branch, e.g.
+  `dev/v0.0.7`). **Sync** first pulls the target's latest changes into the
+  floor. A merge is refused when the target's checkout has uncommitted work,
+  or lists the conflicting files and stops.
 - **Pull Request**: pick **Into**; title and description come from the commit
   and PR template. Maestri then tracks reviews and CI, offers *Ask an Agent to
   Fix the Checks* and the like, and lands the floor after **Merge…**.
 - The floor is removed after landing unless **Keep this floor after landing**
   is ticked. The branch stays in the repo.
 - CLI equivalent, from a Ground terminal only:
-  `maestri floor land "<Task>" --into dev/v0.0.6`.
+  `maestri floor land "<Task>" --into dev/v0.0.7` (the current dev branch).
+  Never pass `--delete-branch`.
 
 After landing, the Coordinator applies the worker's proposed doc changes
-(AGENTS.md, `roadmaps/`, MANUAL_TODO, memory) on Ground and asks you before
-committing them.
+(`AGENTS.md`, `.ai/architecture/`, `roadmaps/` with known-issues,
+`.ai/MANUAL_TODO.md`, `.ai/memory/`) on Ground, merges its provisional items
+(`Q~1`, `A~1`, `M~1`) into the `.ai/*_TODO.md` lists under the next block in
+`.ai/ID_BLOCKS.md`, and asks you before committing them.
 
 ## 7. Clean-up
 
 **Delete Floor** removes the floor folder including uncommitted changes;
-commits stay unless **Also remove the branch** is ticked: never tick it. Agent
-branches are kept, locally and on GitHub, for the record (AGENTS.md). Unload idle
-floors to free memory.
+commits stay unless **Also remove the branch** is ticked: never tick it. From
+the CLI, `maestri floor delete "<Task>" --keep-branch`: without the flag it
+deletes the branch. Agent branches are kept, locally and on GitHub, for the
+record (AGENTS.md). Unload idle floors to free memory.
+
+After deleting a floor, check that `~/Library/Caches/HeLab/floors/` no longer
+holds its folder: the teardown hook hasn't always run (two empty folders were
+left on 2026-10-28). Remove a leftover only after confirming its floor is gone.
 
 ## Not yet in place
 
 - Settings profiles (`HELAB_SETTINGS_OVERRIDE`, share/isolated per checkout;
-  the hard-coded defaults table landed 2026-10-22): until then, no GUI runs
-  from floors.
+  the hard-coded defaults table landed 2026-10-22). Floors are isolated by
+  hook 5b meanwhile.
 - The floor review items marked **(check)**.

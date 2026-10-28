@@ -29,7 +29,7 @@ The usual rules still apply:
 - **tests never touch real data**: real-share items only prepare tools and fixtures, and running
   them on the share stays with Tony.
 
-## Before the v0.0.6 release (block 1)
+## Carried over from v0.0.6 (block 1)
 
 - **A1.1 Tidy MANUAL_TODO** (Ground, docs only). Tick or merge the items later work replaced:
   the store-v2 / account-independent SMB-key instructions (now Q1.5), and duplicates between the
@@ -45,6 +45,10 @@ The usual rules still apply:
 
   This is the macOS half of MANUAL_TODO's "native UI and packaged application" and "release
   evidence". The Windows build is checked on the lab PC with the smoke pass.
+
+  Partly done: the smoke pass built the app at `41a6a7d` and its helpers ran
+  ([results](sessions/2026-10-28-claude-smoke-mac/results.md)); About showed `0.0.5a1` there,
+  before the bump, so the About check on a release commit is left.
 - **A1.3 A picture sheet of every plot** (Ground or a floor). Render each Basic plots v1 and DLD
   port plot natively on macOS (not offscreen) in a 560 px dock, from a synthetic dataset in
   Tony's units, into one sheet that Tony can check in one look. It covers how "ms/mm
@@ -57,14 +61,6 @@ The usual rules still apply:
   - a source folder removed mid-load.
 
   Most of these already have offscreen tests, so first list which ones.
-- [x] **A1.5 Release record** (Ground, after Q1.1 and Q1.2; done 2026-10-28 with the version
-  bump, results in the PR to `main`). It covers MANUAL_TODO's "Record the
-  required Python 3.13 suite/type-check and build results":
-  - the version bump;
-  - the full suite at `-n 12` and the three type checks on the release commit, with any RERUN
-    and its reasons;
-  - CI's run, its OS durations and RERUNs;
-  - the PR text for `main`, from the "v0.0.6 changes" note.
 - **A1.6 Hover-menu timing tests** (CI watch). Read each release CI run's logs for hover-menu
   reruns (≈200 ms slack). One that reproduces goes to known-issues with its logs.
 
@@ -83,6 +79,9 @@ The usual rules still apply:
   - Tick the MANUAL_TODO items the [smoke pass](MANUAL_TODO.md#release-smoke-pass) covered.
   - Move the problems it found to known-issues.
   - Move Tony's decisions into the roadmap and `.ai/memory/results/`.
+
+  Partly done: the problems are in known-issues. Left: ticking or marking Mac-passed the
+  MANUAL_TODO items the pass overlaps (Presets, Work Offline, Saved results).
 
 ## From the audit (block 2)
 
@@ -106,33 +105,24 @@ Finding numbers (#N) refer to the [audit](sessions/2026-10-28-claude-v0.0.6-chec
 - **A2.4 Unclosed SQLite connections in tests** (with A2.2): run with `-W error::ResourceWarning`
   and tracemalloc to find what opens them (#23). They may explain the Windows file-lock
   failures.
-- **A2.5 Known-issues entry** for the macOS rerun of
-  `test_a_floating_plot_runs_and_follows_with_its_settings_in_its_window` (#23), with A2.1.
 
-## From the instructions audit (block 3)
+## From the planning-docs audit (block 7)
 
-Finding numbers refer to the
-[instructions audit](sessions/2026-10-28-claude-v0.0.6-checks/instructions-audit.md).
+Finding numbers refer to the [planning-docs audit](sessions/2026-10-28-claude-docs-audit/planning.md).
 
-- [x] **A3.1 AGENTS.md fixes that need no decision** (`55c9ca1`). Fixed:
-  - the listing contradiction, the three "settle"s, the lane count (#7);
-  - the floor rule, the routing table, the definition of done (#8);
-  - "if present" (#10);
-  - "development repo" and `CacheTab._confirm` (#11).
-- [x] **A3.2 Role prompts** (live roles, guide §2 synced, `55c9ca1`). Fixed:
-  - the Assistant's "current dev branch" and its guide (#19, #20);
-  - the Quick Fixer in the guide (#16);
-  - the new lists in each role (#17).
-- [x] **A3.3 Stopgap for Codex reviewers**: not needed, since AGENTS.md is now 15.5 KB, within
-  what Codex reads (#23).
+- **A7.1 Check Dependabot's graph run** (CI watch, from Q6.4). Once v0.0.7 is on `main`, check
+  that Dependabot's dependency-graph run passes (no "not our ref" on the submodules) and that
+  `dependency-graph.yml`'s snapshot of `requirements.lock` shows in the graph (#7).
+- **A7.2 Refresh the lock with `--upgrade`** (a floor or Ground, its own CI run; Q1.9 item 6,
+  #8). It brings python-dateutil 3.0 (the lock pins 2.9.0.post0); follow the README's
+  "Updating dependencies", then the full suite and the three type checks.
 
-## Automating the smoke pass (block 5)
+## From the docs and Maestri audit (block 8)
 
-- [x] **A5.1 Dry run of the computer-use runbook** (done 2026-10-28, Tony's Mac, Sonnet 5.5; results in
-  `sessions/2026-10-28-claude-smoke-mac/`, fixes applied to the runbook). Run the
-  [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) once and fix its wording where
-  the screen differs. Then hand it to a small model (Q5.1) on the other machines. Each run
-  writes `sessions/<date>-<tool>-smoke-<machine>/results.md`, which A1.8 carries into the docs.
+- **A8.1 Call `folder_cache.store_options()` in `HelabMainWindow`** (architecture audit #6).
+  `helab/views/HelabMainWindow.py` imports `store_options` by value and
+  `tests/test_helabMainWindow.py` patches only `helab.utils.folder_cache.store_options`; once it
+  is called as `folder_cache.store_options()`, drop the exception from `io-and-browsing.md`.
 
 ## Not AI work (stays in MANUAL_TODO)
 

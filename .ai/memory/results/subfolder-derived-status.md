@@ -2,7 +2,7 @@
 date: 2026-10-09
 status: settled
 name: subfolder-derived-status
-description: "A folder's status from its subfolders: 'something' if any listed subfolder has data, 'nothing' only when all were checked and empty, else its own; saved (folder-subtree-v1) so it survives restarts, tooltip says saved vs derived just now; never recursive"
+description: "A folder's status from its subfolders: 'something' if any listed subfolder has data, 'nothing' only when all were checked and empty, else its own; saved (the store's `subtrees` table) so it survives restarts, tooltip says saved vs derived just now; never recursive"
 metadata:
   node_type: memory
   type: result

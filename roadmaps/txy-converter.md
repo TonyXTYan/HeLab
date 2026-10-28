@@ -1,0 +1,149 @@
+# TXY converter port
+
+Horizon: v0.0.7's focus (Q6.12). Added: 2026-10-28, planned with Tony in Chat; decisions are
+Q6.2–Q6.11 and Q8.x in [DECISIONS_TODO](../.ai/DECISIONS_TODO.md); evidence is in the
+[findings](../.ai/sessions/2026-10-28-claude-txy-converter-plan/findings.md).
+Priority and completion: [overview](_readme.md).
+
+## Purpose
+
+Replace MATLAB's `tdc_autoconverter` (raw DLD `d<N>.txt` → TXY) with HeLab: a headless HeLab
+converter on the acquisition PC, and an auto-convert toggle in Live on any HeLab
+([Live L4](live-monitoring.md#stages)). Later, detector profiles calibrated per MCP plate
+replace the constants MATLAB hard-codes, and a parameter scan tunes them on real signals.
+
+## Decided
+
+- **Goal** (Q6.3.2): HeLab replaces `tdc_autoconvert`; a headless converter, plus Live's
+  auto-convert toggle, shown once Live is on (Q6.8). Later: configurations that turn Live and
+  auto-convert on at launch.
+- **Output:** `d_txy_helab_<N>.txy`, written to a temporary name and renamed. In this build every
+  HeLab-made TXY stays in HeLab's temp folder; HeLab still never writes to source folders (Q8.2).
+- **First bar: byte-identical output.** Stages 1–2 reproduce the existing `_txy_forc` files byte
+  for byte. The 2019 MATLAB variant does (two shots checked, 2022 and 2024); the 2023 lab edit
+  doesn't (12–14 % fewer hits).
+- **Adaptable:** every constant the MATLAB code hard-codes is a field of a detector profile, so
+  later profiles can change them (Q6.10). The ambiguous-x2 handling is measured while building
+  (below); changing it is a profile option, never the default.
+- **Profiles** (Q6.11): JSON files. The 2017, 2022 and 2025 plates' profiles are built into the
+  app, which can import, export and tweak them; the 2025 profile is marked uncalibrated.
+- **Implementation is chosen by benchmark** (Q6.5, Q8.5): a plain-Python reference, then one
+  backend per floor; the backend stays switchable (lab PCs differ: Apple Silicon, CUDA of unknown
+  version, Intel iGPU only).
+- **Samples** (Q8.6): a fixed set copied once from X to a local folder; floors read only that.
+- **Postponed:** distributed compute until the converter works well (Q6.2).
+
+## What the MATLAB converter does
+
+`dld_raw_to_txy_counts` calls `dld_read_5channels_reconst_multi_imp(file, 1, 0, 1, 0)`: subtract
+the trigger time, then match four corners without the MCP. About 200 of its 1,660 lines run:
+read, sort by time, match each x1 to an x2, y1 and y2 within a 36-row search, then T, X, Y.
+Constants: 25 ps bins, one time sum of 3200 bins ± 200 for both axes, v⊥ 5.2632e5 m/s on both
+axes, channels 0–3 the corners (4 MCP, 5 trigger). It writes with `dlmwrite`, precision 8. The
+[findings](../.ai/sessions/2026-10-28-claude-txy-converter-plan/findings.md) have the match
+step by step, the 2023 lab edit, the quirks to reproduce, and the git history.
+
+Measured so far (findings): x and y time sums differ by ~100 bins on both plates (harmless, T
+only); with MCP pulses (2022-11) they are x 3367 and y 3294 bins, not 3200; the 3200-bin x
+window clips 0.1–0.4 % of hits on the old plates and almost none on the 2023 plates; X/Y may be
+off by a few percent per axis if v⊥ was never recalibrated.
+
+## Design (proposed)
+
+- **A Qt-free package, `helab/convert/`**, listed as pure in `tests/test_headless_imports.py`:
+  - `raw`: parse a raw file to channel and time arrays (and the done-writing checks: settled
+    5 s, ends with a newline, first line is the trigger channel, Q: which channel per era);
+  - `profile`: `DetectorProfile` (time sums per axis, tolerances, v⊥ per axis, search depth,
+    dead time per channel, channel map, centre, rotation, x2 handling, `calibrated`, version),
+    to and from JSON, with the built-in profiles;
+  - `reconstruct`: `reconstruct(pulses, profile) -> txy` behind one backend interface;
+    `backends/` holds the reference and the chosen fast backend(s);
+  - `txy`: write TXY exactly as `dlmwrite` precision 8 does, to a temporary name, then rename.
+- **Built-in profiles:** `matlab-2019` (the exact MATLAB constants: the default while the
+  comparison runs), `matlab-2023-lab-edit`, and the plate profiles `plates-2017`,
+  `plates-2022`, `plates-2025` (uncalibrated), which start from `matlab-2019` and change only
+  through calibration (stage 3). Which one a folder uses by default is Q6.10.
+- **Provenance:** every HeLab TXY records the raw file's fingerprint and the profile's name,
+  version and hash, so shots can be converted again when a profile improves.
+- **In HeLab:** a helper operation (`helab/io_ops/`) converts settled raw files; it is source I/O,
+  so Work Offline refuses it, and it gets its own event kinds (`events.py`). HeLab's TXY are a
+  new file kind (`file_kinds.py`). Docs: a new `.ai/architecture/converter.md`.
+
+## Stages
+
+**Stage 0, on Ground (the Assistant), before any floor.**
+- **Done 2026-10-29:** the sample set, copied from X to `~/HeLab-samples/txy-v1/` (outside the
+  repo, read-only, 257 MB): 8 sets of ~40 evenly spaced shots plus the 3 largest, each with its
+  `_txy_forc`: 2019 halos, 2020 halos, 2022-07 He3/He4 and large He3 clouds (old plates),
+  2022-11 ghost counts (the only set with MCP pulses, 10 shots), 2023-02 He3/He4 (new plates),
+  2023-03 Momentum Bells, 2024-11 low occupancy. `manifest.json` gives each set's source folder
+  and each file's SHA-256.
+- MATLAB-made references for the same shots stay as they are; MATLAB runs only on local copies.
+- Briefs for stage 1, with this plan.
+
+**Stage 1, the reference and harness** (one floor; a builder and a cross-checker, both Workers;
+the Reviewer reviews at the end).
+- The builder ports the running path to plain Python, quirks included (`how_many_x == ~1`, the
+  first sorted row skipped, `t_zero` from the unsorted first row), as `matlab-2019` and
+  `matlab-2023-lab-edit`; then the harness: the sample manifest, a checker (byte-identical, and
+  on mismatch the first differing line), a timing harness, and the backend interface.
+- The cross-checker never edits the port. It checks it line by line against both MATLAB
+  variants, against MATLAB run headless on synthetic edge cases (ambiguous matches, pulses
+  exactly at a tolerance or the dead time, empty, truncated, hits at the file's start and end),
+  and against the real samples the builder didn't use.
+- Both measure the x2 handling: how often a second x2 or y pair exists, and what retrying the
+  other candidate would recover. A report only; the default doesn't change.
+- Tests use synthetic raw files and `tests_sample_data/`, never the sample set (tests never
+  touch real data).
+- **Done when:** byte-identical on every synthetic case and every sample shot for
+  `matlab-2019`, and for `matlab-2023-lab-edit` on MATLAB's own output; the full suite and type
+  checks pass; the cross-checker and the Reviewer have no open findings.
+
+**Stage 2, backends** (one floor per backend, each from stage 1's commit; the cross-checker
+connected to all).
+- Candidates: NumPy vectorised (plus fast text reading and writing), Numba, Cython or C, Rust
+  (PyO3, maturin), Apple GPU (MLX). CUDA (CuPy) is noted for the lab PCs, untested here. Not
+  Julia, PyTorch or JAX (packaging).
+- Each must pass stage 1's checker byte for byte. Packages go only into the floor's own venv.
+- Parallelism, measured for each: across shots (processes), threads where the backend releases
+  the GIL, and within one shot (cut the pulse stream at gaps longer than the match window;
+  must stay byte-identical).
+- Measures: raw MB/s per core and in total, latency per shot (small and large), reading and
+  writing separately, and the size each backend adds to the PyInstaller build.
+- Final timings are taken serially by one agent on an idle machine, Tony's HeLab quit.
+- **Done when:** a results table and a recommendation (a default backend that works everywhere,
+  plus optional fast ones), checked by the Reviewer. Targets: Live, one shot every ~30 s
+  (easy); bulk, faster than raw files cross the network, ~100 MB/s on gigabit (Q6.9).
+
+**Stage 3, calibration** (can start once stage 1 is done; includes D11's raw-pulse diagnostics,
+[DLD port](dld-front-panel-port.md)).
+- From raw pulses: time sums per axis (absolute ones need MCP pulses) and across the plate;
+  the x−y difference; pulse spacing (ringing and dead time per channel); hotspot and efficiency
+  maps from a dark run and a large thermal cloud.
+- Geometry: X/Y scale and roundness from Momentum Bells halos (spheres of known radius), and the
+  plate's edge in a flat field (the diameter hasn't changed; no mask or grid).
+- A calibration panel proposes a profile; Tony checks it on known physics before saving it.
+- The 2025 plates need a calibration set (a dark run, a large thermal cloud, a halo, ideally
+  with the MCP channel recorded); until then `plates-2025` stays uncalibrated.
+
+**Stage 4, in HeLab.** The helper operation, the file kind, Live's auto-convert toggle (Q6.8),
+the headless converter ([headless analysis](headless-analysis.md)), the profile manager (import,
+export, tweak), provenance, and docs.
+
+**Stage 5, replacing MATLAB on the acquisition PC.** Run beside MATLAB, compare their output on
+every shot, then switch (Q6.3.2).
+
+**Later:** distributed compute (Q6.2, Q6.7), TXY kept only in caches (Q6.9), the parameter scan
+over profiles scored on real signals, launch configurations that start Live and auto-convert.
+
+## Open decisions
+
+- Q6.6: which TXY a folder uses when both MATLAB's and HeLab's exist.
+- Q6.7: how other HeLabs get the acquisition PC's TXY (postponed with Q6.2).
+- Q6.9: store HeLab's TXY, or only cache them (after the benchmark).
+- Q6.10: which profile is the default, and which shots came from which plates.
+- Q6.11: the calibration set for the 2025 plates; whether the MCP channel was recorded in 2025.
+- Whether MATLAB's converter still gets the temp-name `movefile` until HeLab replaces it
+  (Tony, 2026-10-19).
+- Which channel starts a raw file in each era (`start_channel` was switched between `5` and `4`
+  in 2023).

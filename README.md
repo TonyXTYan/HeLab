@@ -66,12 +66,12 @@ here are some more random badges because they look cool
 
 For 'downstairs' and 'upstairs' lab deployment (most stable version) use: https://github.com/HeBECANU/HeLab
 
-Development branch: (all sorts of bugs and features) see: https://github.com/TonyXTYan/HeLab 
+Development repo: (all sorts of bugs and features) see: https://github.com/TonyXTYan/HeLab 
 
 
 ---
 
-HeLab targets **Python 3.13**: CI requires 3.13 to pass, and other versions (3.10–3.12) run as non-blocking compatibility checks. See the CI runs [here](https://github.com/TonyXTYan/HeLab/actions).
+HeLab targets **Python 3.13**: CI requires 3.13 to pass, and other versions (3.11, 3.12 and 3.14) run as non-blocking compatibility checks. See the CI runs [here](https://github.com/TonyXTYan/HeLab/actions).
 
 ## Setup (any machine)
 

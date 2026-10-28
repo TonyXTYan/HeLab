@@ -2,20 +2,20 @@
 date: 2026-10-11
 status: settled
 name: disk-cache-and-budgets
-description: "The rebuilt disk cache (S1–S11, commits fe5a5b7…eafcf4b): store-v2 (SQLite records + Blosc dataset files, helpers only), nothing removed without asking, disk budget with the 80% pause and its dialogs, RAM budget in 1/128 steps, large-folder warning (unscaled TXY size; 10%/budget warn, 30% refuse), cache-folder move with crash recovery, per-folder Don't cache / Don't auto-load flags; Tony's wording"
+description: "The rebuilt disk cache (S1–S11, commits fe5a5b7…eafcf4b): the store, store-v2 then store-v3 with data roots (SQLite records + Blosc dataset files, helpers only), nothing removed without asking, disk budget with the 80% pause and its dialogs, RAM budget in 1/128 steps, large-folder warning (unscaled TXY size; 10%/budget warn, 30% refuse), cache-folder move with crash recovery, per-folder Don't cache / Don't auto-load flags; Tony's wording"
 metadata:
   node_type: memory
   type: result
 ---
 The disk cache, its budgets and the Settings → Cache tab, as rebuilt in sessions S1–S11 of
 `roadmaps/cache-storage-and-settings.md` (that plan holds the full design and per-session notes;
-AGENTS.md has the code map). Decided with Tony on 2026-10-10, built 2026-10-10…11, each
+AGENTS.md has the code map, `.ai/architecture/cache-store.md` the detail). Decided with Tony on 2026-10-10, built 2026-10-10…11, each
 session reviewed by Codex until clean.
 
 ## What was decided, and why
 
 - **Old cache dropped, not migrated** (early development). Records are plain JSON text in SQLite
-  (`store-v2/records.sqlite`, WAL); datasets stay Blosc-compressed pickles in files (a
+  (`store-v2/records.sqlite` then, `store-v3/records.sqlite` since data roots; WAL); datasets stay Blosc-compressed pickles in files (a
   pickle-free format is an unchosen roadmap idea). **Only helper processes open the store.**
 - **Nothing is removed without the user asking.** Records are kept forever and never removed
   to make room. Removals go through one store function that bumps generations/epochs, so a

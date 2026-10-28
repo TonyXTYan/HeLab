@@ -7,7 +7,7 @@ metadata:
   node_type: memory
   type: result
 ---
-Live L1 and L2 (2026-10-19, `.ai/sessions/2026-10-19-claude-live-l1/`). Architecture is in AGENTS.md › Live.
+Live L1 and L2 (2026-10-19, `.ai/sessions/2026-10-19-claude-live-l1/`). Architecture is in `.ai/architecture/live.md`.
 
 ## Tony's decisions (2026-10-19)
 

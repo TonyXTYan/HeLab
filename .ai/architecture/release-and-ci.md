@@ -13,7 +13,9 @@ no `v` prefix). Branch names need not match it. `helab/build_info.py` writes
 `_build_info.json` into PyInstaller/wheel build output; never generate it in the
 source package. Runtime uses that stamp, or Git explicitly rooted in the package's
 own checkout, never the launch directory. Help → About HeLab shows provenance.
-CI stamps record the explicit source branch/build ref without replacing Git HEAD.
+CI stamps record the explicit source branch/build ref (`HELAB_BUILD_BRANCH`,
+`HELAB_BUILD_REF`, set by `ci-build.yml`; else GitHub's own ref variables) without
+replacing Git HEAD.
 Put a release-version bump on the PR branch before final approval. A squash merge
 to `main` with a new version triggers CI tagging and a draft release after required
 checks pass; publication remains manual. An existing tag with an incomplete draft
@@ -37,8 +39,18 @@ must succeed (compatibility skips/failures are non-blocking). A new package
 version on `main` creates an explicit tag and a draft
 release; tag pushes do not
 trigger releases. `python -m helab.release` validates/selects the version in CI.
-`python -m helab.release_draft` validates archives and resumes draft uploads. API
+`python -m helab.release_draft` validates archives and resumes draft uploads; GitHub lists
+a draft under tag `untagged-<hash>`, so `get_release` also matches a draft by its name
+(`release_name`: "Automated Release <tag>"), and two such matches raise. API
 errors fail selection; they never mean "no release". Only authenticated main runs
 query release state. Build jobs may target an older tagged SHA during recovery;
 the normal test jobs still check the current workflow commit, and recovery builds
 add Python 3.13 tests of the tagged commit on each OS.
+
+`.github/workflows/dependency-graph.yml` (weekly, by hand, and on pushes to `main` that
+change `requirements.lock`, `helab/dependency_snapshot.py` or the workflow) runs
+`python -m helab.dependency_snapshot --submit`, which sends `requirements.lock`'s exact
+versions to GitHub's dependency graph through the dependency submission API (standard
+library and `gh`; packages the lock marks `via -r requirements.txt` are direct, the rest
+indirect), so Dependabot alerts cover what HeLab installs: Dependabot itself reads only the
+unpinned `requirements.txt` (Q6.4). Without `--submit` it prints the snapshot.

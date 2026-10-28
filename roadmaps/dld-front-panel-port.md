@@ -4,7 +4,7 @@ Horizon: near and medium term, after the plots v1. Added: 2026-10-20 from a revi
 of `legacy/DLD_front_panel` (the lab's MATLAB GUI, 2017–2023, branch
 `LaserMac-BECMachine-cloudstor`, with its `Core_BEC_Analysis` library). F0,
 D1–D10, D12, D14 and D15 were built on 2026-10-20 (see [Built](#built-2026-10-20));
-D13's per-shot halo centring is not built, and D11 waits for the TXY converter.
+D13's per-shot halo centring is not built, and D11 waits for the TXY converter port's reference (it becomes the port's calibration stage, [plan](txy-converter.md), Q6.11).
 Priority and completion: [overview](_readme.md).
 Review, legacy bugs and the detailed specs:
 [session notes](../.ai/sessions/2026-10-20-claude-dld-front-panel-review/notes.md).
@@ -238,7 +238,7 @@ checked before they are ported. Several are wrong in the MATLAB code
 | D8 | Velocity/momentum axes, z up (release time, fall distance; m/s or recoil units). Release time detected automatically from one cloud's arrival, or set by hand. **Built:** Release time and Velocity distributions plots. | `txy_to_vel`, `halo_vel_conv` |
 | D9 | Hot-spot masks per plot: circles that keep or cut, from presets (the earlier detector's, moved to HeLab's unrotated frame; the current detector's from D15). **Built** (the current detector's preset is empty). | `masktxy_2d_circle`, `hotspot_mask` |
 | D10 | Error bars by resampling shots (bootstrap), standard error of a weighted mean. **Built**; error bars on fits and trends to do. | `bootstrap_se`, `sewm` |
-| D11 | Raw-pulse diagnostics: time sums, corner differences, pulse spacing, ghost counts. Needs HeLab to load raw `d*.txt` files (scripts still do no I/O), so it comes after the TXY converter port. The conversion itself is not in this plan. Not started. | `ghost_counts_analysis`, `pulse_corrs` |
+| D11 | Raw-pulse diagnostics: time sums, corner differences, pulse spacing, ghost counts. Needs HeLab to load raw `d*.txt` files (scripts still do no I/O), so it comes with the TXY converter port, as its calibration stage (stage 3 of the [plan](txy-converter.md)). The conversion itself is not in this plan. Not started. | `ghost_counts_analysis`, `pulse_corrs` |
 | D12 | g² correlations, collinear: 1D-windowed and radial, in velocity space; in-shot over between-shot pairs, Gaussian fit, shot bootstrap errors. To do when built: a time budget, cancellation inside the pair loop, and per-shot reuse in Live. **Built.** | `correlations/calc_any_g2_type`, `corr_1d_cart`, `corr_radial` |
 | D13 | Back-to-back correlations for halos (needs per-shot halo centring). Back-to-back pairs built in D12; per-shot halo centring not built. | `correlations` BB modes, `Momentum_Bells_test` |
 | D14 | BEC properties beside D4: Tc (ideal, finite-size, interacting), μ, TF radii, peak density, from N and the trap frequencies. **Built.** | `bec_cals/bec_properties` |
@@ -250,7 +250,7 @@ checked before they are ported. Several are wrong in the MATLAB code
    and D6; D4 with D14, D8 and D10; D12 with D13's back-to-back pairs.
 2. D13's per-shot halo centring (Correlations' Re-centre each shot stands in).
 3. The left-to-do items under Built, after Tony's on-screen and real-data checks.
-4. D11, after the TXY converter port ([Live L4](live-monitoring.md#stages)).
+4. D11, with the TXY converter port's calibration stage ([plan](txy-converter.md)).
 
 ## Acceptance
 

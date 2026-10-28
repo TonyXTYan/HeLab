@@ -33,9 +33,11 @@ number.
 
 | Block | Date | Agent (tool) | Task, session | Branch | Provisional → final |
 |---|---|---|---|---|---|
-| 1 | 2026-10-28 | Side (claude), Ground | v0.0.6 release: decisions, smoke pass, AI tasks (`sessions/2026-10-28-claude-v0.0.6-checks/`) | dev/v0.0.6 | first use, old letters A–I → Q1.1–Q1.9 (first D1.x, renamed to Q the same day), numbers 1–8 → A1.1–A1.8 |
+| 1 | 2026-10-28 | Side (claude), Ground | v0.0.6 release: decisions, smoke pass, AI tasks (`sessions/2026-10-28-claude-v0.0.6-checks/`) | dev/v0.0.6 | first use, old letters A–I → Q1.1–Q1.9 (first D1.x, renamed to Q the same day), numbers 1–8 → A1.1–A1.8; the smoke pass's steps → M1.1–M1.8 |
 | 2 | 2026-10-28 | Side (claude) + 3 subagents, Ground | audit of agents, roles, docs and logs (`…/audit.md`) | dev/v0.0.6 | old letters J–Q → Q2.1–Q2.8, 9–13 → A2.1–A2.5 |
 | 3 | 2026-10-28 | Side (claude) + subagent, Ground | instructions audit (`…/instructions-audit.md`) | dev/v0.0.6 | old letters R–W → Q3.1–Q3.6, 14–16 → A3.1–A3.3 |
 | 4 | 2026-10-28 | Side (claude), Ground | the ID scheme itself (Tony in Chat) | dev/v0.0.6 | Q4.1 |
 | 5 | 2026-10-28 | Side (claude), Ground | automating the smoke pass with computer use (`sessions/2026-10-28-claude-smoke-automation/plan.md`) | dev/v0.0.6 | A5.1, Q5.1, Q5.2 |
-| 6 | 2026-10-28 | Side (claude), Ground | wrapping up v0.0.6, v0.0.7's scope (Tony in Chat) | dev/v0.0.6 | Q6.1–Q6.3 |
+| 6 | 2026-10-28 | Side (claude), Ground | wrapping up v0.0.6, v0.0.7's scope (Tony in Chat) | dev/v0.0.6 → dev/v0.0.7 | Q6.1–Q6.12 (Q6.12 numbered later, by block 7) |
+| 7 | 2026-10-28 | Side (claude) subagent, Ground | planning-docs audit fixes (`sessions/2026-10-28-claude-docs-audit/planning.md`) | dev/v0.0.7 | A7.1, A7.2 |
+| 8 | 2026-10-28 | Side (claude) + 3 subagents, Ground | docs and Maestri audit (`sessions/2026-10-28-claude-docs-audit/`), Tony's answers in Chat | dev/v0.0.7 | Q8.1–Q8.6, A8.1, M8.1 |

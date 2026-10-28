@@ -19,8 +19,9 @@ mechanics go in its architecture file.
 - **Commits.** Always ask Tony before `git commit` in his checkout or on his branches. Staging,
   diffing and reviewing are fine without asking. An agent in its own worktree, Maestri floor or
   cloud environment, on a new branch from the commit Tony or the Coordinator chose, commits there
-  freely. It pushes that branch once, when its work is done (each push runs the full CI). Merging
-  into Tony's branches, landing a floor and opening a PR need his approval.
+  freely. It pushes that branch once, when its work is done (each push runs the full CI), and
+  again only after review fixes or when the Coordinator asks. Merging into Tony's branches,
+  landing a floor and opening a PR need his approval.
 - **Commit messages:** a concise subject and a body that says what changed, why, and how it was
   checked, separated by a blank line.
 - **Branches are kept.** Never delete an agent branch, locally or on GitHub; push finished
@@ -167,13 +168,14 @@ Each rule names the area file with the detail.
 - Every byte size shown is SI (kB/MB/GB, powers of 1000) (Tony, 2026-10-26).
 
 **Settings** ([settings](.ai/architecture/settings.md)): open QSettings only through
-`app_settings()`. Every key HeLab reads is a row in `helab/utils/settings_defaults.py`, read
-through `read_setting`. Read numbers untyped (PyQt's `type=int` is 32-bit).
+`app_settings()` (helpers: `cache_setting.open_settings`). Every key HeLab reads is a row in
+`helab/utils/settings_defaults.py`, read through `read_setting`. Read numbers untyped (PyQt's `type=int` is 32-bit).
 
 **Analysis and plots** ([plots-and-scripts](.ai/architecture/plots-and-scripts.md),
 [dld-analyses](.ai/architecture/dld-analyses.md)):
-- The script contract and the analysis core (`helab/analysis/`) import no Qt or plotting library
-  (`tests/test_headless_imports.py` lists each module).
+- The script contract (`helab/scripts/base.py`) and the Qt-free analysis modules import no Qt,
+  plotting library or `helab.utils.constants` (`PURE` in `tests/test_headless_imports.py`; a new
+  `helab/analysis` module is listed there as pure or Qt).
 - Datasets share read-only NumPy arrays; analysis code that changes an array calls `.copy()`.
 - `compute` runs on the worker thread, `render` and `update` on the GUI thread. A hook that
   raises is logged and HeLab goes on.
@@ -199,14 +201,15 @@ one line, with detail in tooltips.
 | Package / module | What | Detail |
 |---|---|---|
 | `helab/main.py`, `helab/__main__.py` | entry; frozen helper dispatch first | [release-and-ci](.ai/architecture/release-and-ci.md) |
-| `helab/io_helper.py`, `helab/io_ops/` | helper process: browse, scanning, loading, save_held, live, icons, markers, admin, results, listings, trace_check; `infra`, `stores`, `fingerprints`, `metadata`, `events` | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
+| `helab/io_helper.py`, `helab/io_ops/` | helper process: browse, scanning, loading, save_held, live, icons, markers, admin, results, listings, trace_check; `infra`, `stores`, `fingerprints`, `metadata`, `summary`, `identity`, `events` | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
 | `helab/utils/io_service.py` | `IOService`: lanes, slots, pausing, offline gate | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
 | `helab/utils/folder_cache.py` | `FolderCache`: session memory, jobs, RAM budget, presets and results state, store identity | [cache-store](.ai/architecture/cache-store.md) |
 | `helab/utils/cache_store.py`, `cache_paths.py`, `data_roots.py`, `cache_move.py` | the store, location keys, markers, cache-folder move | [cache-store](.ai/architecture/cache-store.md), [data-roots](.ai/architecture/data-roots.md) |
+| `helab/utils/file_kinds.py` | `FILE_KINDS`: raw `d<N>.txt`, TXY `d_txy_forc<N>.txt` (a new format is a new entry) | [cache-store](.ai/architecture/cache-store.md) |
 | `helab/models/SnapshotFileSystemModel.py` | the tree model (memory only) | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md) |
 | `helab/views/` | main window, `FolderExplorer` and `explorer_live.py` (Live), Folder details, Settings tabs, dialogs | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [live](.ai/architecture/live.md) |
 | `helab/views/plots/` | `PlotWorkspace`, docks, settings panel, presets, arrangements, cached results | [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |
-| `helab/analysis/` | Qt-free core: `DatasetView`, runner, parameters, selection, fits and other numerics, presets, result cache | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
+| `helab/analysis/` | analysis core, mostly Qt-free (`QT` in `tests/test_headless_imports.py` lists the rest): `DatasetView`, runner, parameters, selection, fits and other numerics, presets, result cache | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
 | `helab/scripts/standard/`, `helab/scripts/dld/` | Basic plots v1; the DLD Front Panel Port | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
 | `helab/utils/settings_store.py`, `settings_defaults.py`, `lab_parameters.py` | settings | [settings](.ai/architecture/settings.md) |
 | `helab/utils/app_log.py`, `gui_watchdog.py`, `events.py`, `dash_server.py` | logging, stall dumps, notifications, the Plotly server | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |

@@ -22,7 +22,7 @@ cover are lab validation, and don't gate a release (Tony, 2026-10-28: Q1.1).
 no run acquiring) and M1.7's plots, which need Tony's look. Tony released on it and on his own
 use (Q6.1). The lab PC pass and M1.3 Live are the first checks of v0.0.7.
 
-These checks gate a release (Tony, 2026-10-28: Q1.1, [DECISIONS_TODO](DECISIONS_TODO.md#recently-decided)). Run the pass once
+These checks gate a release (Tony, 2026-10-28: Q1.1; amended for v0.0.6a1 by Q6.1, above). Run the pass once
 on a Mac and once on a lab PC (Windows), on the release candidate. Steps marked **Lab PC**
 matter most there. Each machine takes about 45 min, and step 3 needs a run acquiring.
 
@@ -44,8 +44,8 @@ see the [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) (A5.1, Q5
   can summarise the share traffic afterwards.
 
 ### M1.1 Start-up
-- **Do:** Help › About HeLab.
-- **Expect:** version 0.0.5a1 (until the bump), the commit you checked out, the branch.
+- **Do:** About HeLab (the HeLab menu on macOS, Help on Windows).
+- **Expect:** the release's version (`helab/_version.py`), the commit you checked out, the branch.
   Settings → Cache shows the inventory. A first start on this machine starts an empty `store-v3`.
 
 ### M1.2 Browse and cache first
@@ -128,6 +128,14 @@ see the [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) (A5.1, Q5
 - **Lab PC:** the 3D scatter's first open: does the main window close and reopen
   (Q1.7, [DECISIONS_TODO](DECISIONS_TODO.md#q17-windows-3d-scatter-window-flicker))? If the pane is black, Open in
   browser works.
+
+## Maestri floor hooks (added 2026-10-28)
+
+- [ ] **M8.1 Update the floor setup hooks in the Maestri app** to match
+  [maestri-setup.md §4](maestri-setup.md#4-floor-setup-hook) (the hooks live only in the app, so the guide is
+  their record): hook 1 now refuses a `venv` that resolves outside the floor; hook 5b is new
+  (`HELAB_TEST_SETTINGS_FILE`, Q2.5); hook 7 initialises only `legacy/tdc_autoconverter`, without
+  `--recursive`. Then create a test floor and check `.ai/local/floor-env.sh` has four lines.
 
 ## Data roots (v0.0.5a1, added 2026-10-18)
 
@@ -239,7 +247,8 @@ real experiment data without deciding where its top should be.
 - [ ] Opening the first 3D scatter no longer closes and reopens the main window on
   the Mac (hidden QQuickWidget, `HelabMainWindow._start_with_rhi_surface`). On the
   lab PCs (Windows), check whether it happens there and whether the same fix is
-  safe on GPUs that can't paint QtWebEngine before enabling it.
+  safe on GPUs that can't paint QtWebEngine before enabling it (M1.8; the question is
+  [Q1.7](DECISIONS_TODO.md#q17-windows-3d-scatter-window-flicker)).
 - [ ] Transfer fractions on real data: order 0 and the spacing match the T
   histogram's peaks (the windows shaded below); manual mode starts from them and
   edits apply on Rerun; the XY box keeps the hot spot out; compare with
@@ -308,12 +317,8 @@ real experiment data without deciding where its top should be.
   comparison of saved identities with the mounted folders found hundreds of
   device-only differences; the cache no longer uses those IDs for status
   validity ([investigation](sessions/2026-10-15-codex-status-remount/notes.md)).
-- [ ] Before first launching the account-independent SMB-key build, quit HeLab
-  and move `store-v2` from the active cache directory to the Trash for a fresh
-  store. Alternatively, launch the new build, answer Don't cache to any old
-  pending-save prompts, then use Settings → Cache → Clear all and the separate
-  Folder preferences Clear action. Repeat on each lab PC being upgraded;
-  HeLab does not remove the old cache itself.
+- [x] Moving `store-v2` to the Trash before the account-independent SMB-key build: replaced by
+  the `store-v3` item under [Data roots](#data-roots-v005a1-added-2026-10-18) (Q1.5, A1.1).
 - [ ] Restart the native GUI with `/Volumes/dld_output` mounted: after one
   completed check has saved share-keyed records, saved status icons and
   blocked-scan badges should remain across a remount, changed folder mtimes
@@ -452,8 +457,8 @@ on-screen list; the items below gather them. Record results in `.ai/sessions/`.
   ([d9-d15](sessions/2026-10-20-claude-dld-d9-d15/handoff.md#on-screen-checklist-native-ui)).
 - [ ] Shot trends: panels zoom together, shot-time axis, amber low shots; Notify
   during Live gives one system notification for a low shot (block the beam), none
-  more within a minute, none outside Live; is the tray/menu-bar icon acceptable
-  ([d2](sessions/2026-10-20-claude-dld-d2/handoff.md#on-screen-checklist-tony)).
+  more within a minute, none outside Live; the tray/menu-bar icon is
+  [Q1.8](DECISIONS_TODO.md#q18-the-tray--menu-bar-icon-for-notifications) ([d2](sessions/2026-10-20-claude-dld-d2/handoff.md#on-screen-checklist-tony)).
 - [ ] The ħ glyph ("ħk/m", "2ħk/m") in the native fonts on macOS and Windows: the
   offscreen renders drew "h" ([d8-velocity](sessions/2026-10-20-claude-dld-d8-velocity/notes.md#review-round-coordinator-on-04d69bf)).
 
@@ -558,9 +563,9 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
   correct asset stamps/digests and refusal to change a moved tag/published release.
   Check PR stamps show the source branch and merge ref plus the actual merge SHA.
 
-- [ ] Release repos (added 2026-10-13): confirm the
-  [proposal](../roadmaps/app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm).
-  If confirmed, stop pushing dev branches to `HeBECANU`. For the first lab-ready
+- [ ] Release repos (added 2026-10-13; the
+  [proposal](../roadmaps/app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm) was
+  confirmed 2026-10-28, Q1.4): stop pushing dev branches to `HeBECANU`. For the first lab-ready
   version, fast-forward `HeBECANU` `main` to the released `TonyXTYan` commit
   (`git push HeBECANU <sha>:main`; no squash or rebase there), check the draft
   appears there with the same tag commit and assets, then publish it.
@@ -583,8 +588,9 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
   `HeLab-macos.zip` is ~300 MB and holds only `HeLab.app`, unzip it in Finder and
   open the app (right-click › Open for the ad-hoc signature)
   ([build size step 1](../roadmaps/build-size.md#steps-cheapest-first)).
-- [ ] Record the required Python 3.13 suite/type-check and build results for the
-  release commit. This is validation evidence, not a new testing feature.
+- [x] Record the required Python 3.13 suite/type-check and build results for the
+  release commit. This is validation evidence, not a new testing feature. Done for v0.0.6a1
+  by A1.5 ([AI_TODO](AI_TODO.md)).
 - [ ] Observe hover-menu tests in CI: real timers have approximately 200 ms of
   slack and may flake on slow machines. If a failure is reproducible, add a
-  concrete test-reliability item to `roadmaps/_readme.md` with logs.
+  concrete test-reliability item to `roadmaps/known-issues.md` with logs (A1.6).

@@ -33,32 +33,33 @@ How to use this list:
 
 Tony in Chat, 2026-10-28, wrapping up v0.0.6 (block 6):
 
-- **Q6.1 Release v0.0.6a1 now:** "I've tried helab on my mac and lab machines across the
-  development of v0.0.6". The Mac smoke pass (computer use) plus his own use stand in for the
-  lab PC pass. The lab PC pass and Live (M1.3) become the first checks of v0.0.7. This amends
-  Q1.1's gate; CI green with no RERUN still holds.
-- **v0.0.7's focus:** the TXY converter port (`tdc_autoconverter`) and distributed results
-  compute. This replaces Q1.9's order; its other items stay on the roadmap. The scope
-  questions are Q6.2 and Q6.3 below.
+- **Q6.12 v0.0.7's focus:** the TXY converter port (`tdc_autoconverter`) and distributed results
+  compute; distributed compute was then postponed until the converter works well (Q6.2). This
+  replaces Q1.9's order; its other items stay on the roadmap (item 6 is A7.2).
+- **Q6.4 Dependabot can't scan the repo: "a,b,c go".** (a) the 42 alerts were dismissed as not
+  used and #8 closed; (b) `DLD_front_panel` and `Momentum_Bells_test` are cloned by hand
+  (README); (c) `dependency-graph.yml` submits `requirements.lock` (`7b82c9d`). The check once
+  v0.0.7 is on `main` is A7.1.
+- **Q2.7 Dependabot alerts on `main`:** resolved by Q6.4 (alerts dismissed, the lock submitted).
 
-Tony's answers in Chat, 2026-10-28, after the first dry run of the smoke runbook (block 5):
+Tony's answers in Chat, 2026-10-28, on the [docs audit](sessions/2026-10-28-claude-docs-audit/)
+(block 8):
 
-- **Q5.2 yes, all of it:** the build changes for unsupervised smoke runs become a roadmap item
-  ([plan](../roadmaps/smoke-automation.md)): menu-bar actions (Q5.2.1), the test control channel
-  (Q5.2.2, design first), an in-app save-screenshot command (Q5.2.3), the rest as they come
-  (Q5.2.4), plus his additions: Apple accessibility labels and a dedicated debug menu (shape is
-  Q5.2.5). The runbook fixes from the notes were applied.
-
-Tony's answers in Chat, 2026-10-28:
-
-- **Q1.1 yes:** the release gate is the smoke pass (M1.1–M1.8) on a Mac and a lab PC, plus CI
-  green with no RERUN. The other native checks are lab validation after the release. Recorded
-  in the roadmap's Now and in MANUAL_TODO.
-- **Q1.2 yes:** the version is `0.0.6a1` (A1.5).
-- **Q1.3 yes:** the `v0.0.5a1` draft stays unpublished (roadmap).
-- **Q1.4 yes:** release repos as proposed (`roadmaps/app-updates.md`, roadmap).
-  **Q1.4.1 no:** v0.0.6a1 isn't lab-ready, so HeBECANU isn't fast-forwarded yet.
-- **Q1.5 yes:** move `store-v2` to the Trash when upgrading a lab PC (MANUAL_TODO, A1.1).
+- **Q8.1 The empty v0.0.6a1 draft:** leave it; v0.0.7's release is the first with zips.
+- **Q8.2 HeLab still never writes to source folders:** HeLab's TXY stay in its temp folder;
+  writing them beside the raw files (Q6.7 a) is revisited with Q6.9.
+- **Q8.3 Release tidy-up:** yes, as proposed; the ten "applied as proposed" items are listed for
+  him to confirm before they are cleared.
+- **Q8.4 `helab/utils/synchronised_dict.py`:** removed (unused since Codebase Review 2).
+- **Q8.5 TXY spike setup:** Rust installed machine-wide (Homebrew, 2026-10-28); Numba, Cython,
+  maturin and MLX go only into each floor's own venv. One floor per backend, each branched from
+  the reference commit; the cross-checker is recruited as a Worker (the Reviewer role is
+  read-only) and the Reviewer does the final review; final timings are taken serially by one
+  agent on an idle machine, with Tony's HeLab quit.
+- **Q8.6 Samples:** a fixed sample set is copied from X once to a local gitignored folder; floors
+  read only that, never X (mounted read-write, and its `/Volumes/…-4` path depends on mount order).
+- **Q2.1.1** the orphaned pytest was killed; **Q2.1.2** `.ai/temp` stays; **Q2.2.3** the six agent
+  branches were pushed (2026-10-28); **Q2.5 yes:** floors run HeLab with their own settings file.
 
 Applied as proposed on 2026-10-28, after "proper fix AGENTS.md and Maestri roles setup"; each
 needs Tony's confirmation:
@@ -77,35 +78,16 @@ needs Tony's confirmation:
   floors and in cloud sessions; `Q` for questions so they don't clash with the DLD port's
   D-numbers (Tony, 2026-10-28).
 
-## Before the v0.0.6 release
-
-Q1.1–Q1.5 were answered on 2026-10-28; see Recently decided.
-
 ## From the audit (block 2)
 
 These come from the [audit](sessions/2026-10-28-claude-v0.0.6-checks/audit.md), whose finding
 numbers are given as #N. They are quick yes/no answers.
 
-- **Q2.1 Clean-ups that delete or stop things (#17, #26).**
-  - Q2.1.1: kill the pytest process orphaned since Oct 23 (pid 15027)?
-  - Q2.1.2: delete `.ai/temp/pytest-land` (386 MB)?
-
-  Proposed: yes to both.
-- **Q2.2 Branches and pushing (#1, #2, #6).** Q2.2.1 and Q2.2.2 are applied (Recently decided).
-  - Q2.2.3: push the six local agent branches whose handoff commits aren't on GitHub yet?
-
-  Proposed: yes.
 - **Q2.4 `.ai/coding-workspace.md` (#4).** It's a symlink into your `ai-common` folder, broken
   everywhere else. Commit a real copy here, or keep the link and say it's Mac-only? Proposed: a
   copy.
-- **Q2.5 GUI on floors (#5).** Have each floor run HeLab with its own settings file
-  (`HELAB_TEST_SETTINGS_FILE` in `floor-env.sh`), so workers can check on screen? Proposed: yes.
-  They'd use their own empty cache folders too.
 - **Q2.6 Windows CI time (#24).** The Windows test step uses 13–15 of its 20 min. Raise its limit to
   30 min now, and look for the slow tests later? Proposed: yes.
-- **Q2.7 Dependabot alerts on `main` (#25).** They clear when v0.0.6 lands, since its lock has
-  Pillow 13. Wait for that, or bump `main`'s `requirements-pip.txt` now? Proposed: wait, if the
-  release is days away.
 
 ## From the instructions audit (block 3)
 
@@ -127,14 +109,14 @@ Finding numbers refer to the
   Proposed: Haiku 5.5. Use Sonnet 5.5 if Haiku misreads the screen in the dry run (A5.1).
   Also: which computer-use tool runs it on each machine (the Claude desktop app's computer use
   on the Mac; check a lab PC can run it)?
-- **Q5.2.5 Shape of the debug/smoke menu** (from Q5.2, answered in Recently decided): extend the
+- **Q5.2.5 Shape of the debug/smoke menu** (from Q5.2, approved: [plan](../roadmaps/smoke-automation.md)): extend the
   existing Debug menu, or a separate "Smoke" menu shown only with a flag? Proposed: a "Smoke"
   menu behind `HELAB_SMOKE=1`, so release users never see it.
 
 ## v0.0.7 scope (block 6)
 
-- **Q6.2 Distributed results compute: what comes first?** The roadmap already has the parts:
-  the [headless runner](../roadmaps/headless-analysis.md) and
+- **Q6.2 Distributed results compute: what comes first?** (Postponed, below.) The roadmap
+  already has the parts: the [headless runner](../roadmaps/headless-analysis.md) and
   [cross-machine result sharing](../roadmaps/network-runners-and-web.md#cross-machine-result-sharing).
   Options:
   - (a) One machine (e.g. the acquisition PC) runs a headless HeLab that computes chosen
@@ -147,35 +129,102 @@ Finding numbers refer to the
   `.helab-root`), and which machines take part. Proposed: (a) first, over SSH, with results
   keyed by data root and input snapshot. It pairs with the converter on the same machine.
   (b) follows on the same runner; (c) is not planned.
-- **Q6.3 The converter port's inputs.**
-  - Q6.3.1: sample raw files with their `_txy_forc` outputs, for both variants (2019, and the
-    2023 lab edit with an x1 dead time of 0.5 µs). Where can agents find them, read-only?
-  - Q6.3.2: where it runs. Proposed: on the acquisition PC beside MATLAB's converter first,
-    writing to a separate folder so the outputs can be compared, and then replacing it.
-- **Q6.4 Dependabot can't scan the repo** (found 2026-10-28 after the v0.0.6a1 merge).
-  - The 42 open alerts (41 Pillow, 5 of them critical; 1 setuptools) are all for
-    `requirements-pip.txt`, which the merge deleted. `requirements.lock` pins pillow 13.0.0 and
-    setuptools 84.2.0, both fixed versions.
-  - They stay open because Dependabot's rescan fails. It clones submodules recursively, and
-    `legacy/DLD_front_panel` → `lib/Core_BEC_Analysis` → `bin/MBeautifier` pins `dea7508…`,
-    which upstream no longer has. Its last good graph run was 2026-10-18. Until this is fixed,
-    nothing watches `requirements.lock`.
-  - Dependabot PR #8 (setuptools in the deleted file) is obsolete.
 
-  Options:
-  - (a) dismiss the alerts as "not used" and close #8 (tidies the page only);
-  - (b) make the repo scannable: drop the `DLD_front_panel` and `Momentum_Bells_test`
-    submodules and say in the README where to clone them for porting, or move the legacy
-    references into their own repo;
-  - (c) submit `requirements.lock` to the dependency graph from a workflow (alerts only, no
-    fix PRs).
+  **Postponed** (Tony, 2026-10-28): "postpone distributed compute build until we have a very
+  good working tdc_autoconvert within helab".
+- **Q6.3 The converter port's inputs.** Answered, 2026-10-28 (Tony in Chat):
+  - Q6.3.1: "there are many raw d files in Volume/X that you can read for testing": the X share
+    (`//…/X`, mounted at `/Volumes/192.168.137.1-4` on Tony's Mac). For example
+    `20241107_RT_low_mod_occ_350_mus` (10,911 raw, 10,904 `_txy_forc`, small shots) and
+    `2022_ghost_counts_debacle/20221123_ghost_counts_with_cut_1` (10 pairs, ~1.5 MB raw).
+    Read-only, and outside pytest (tests never touch real data).
+  - Q6.3.2: the goal is to replace MATLAB's `tdc_autoconvert` with HeLab, as a headless HeLab
+    converter, and Live can also toggle auto-convert. Converted files are named
+    `d_txy_helab_<N>.txy`. In the current build every HeLab-made TXY stays in HeLab's temp folder.
+  - Still planning: no building until the goals are clear.
+- **Q6.5 Implementation benchmark (spike).** (Decided, below.) Tony: "try build using few
+  different packages and benchmark, how about GPU accelerated?". Goal: choose how the reconstruction runs. A pure-Python
+  port of the MATLAB loop is the reference; each candidate must give the same output (event
+  counts, 8 significant figures) on the X samples. Candidates: NumPy vectorised, Numba, Cython or
+  Rust (PyO3), and GPU (CuPy on NVIDIA, PyTorch MPS or JAX on the Mac). Parsing, reconstruction
+  and writing are timed separately, on small and large shots, on the Mac and the acquisition PC.
+  Note on GPU: the matching is a greedy sequential pass over time-sorted pulses, and shots are
+  small (~3k–100k pulses), so copying to the GPU may cost more than it saves. Text parsing and
+  writing likely dominate. Proposed: go, as a spike on a floor whose only output is a results
+  note and the benchmark script; and which GPUs do the lab PCs have?
 
-  Proposed: (a) now and (b) in v0.0.7. **Decided** (Tony, 2026-10-28): "a,b,c go". (a) was done the
-  same day (42 alerts dismissed as not used, #8 closed). (b) and (c) are on dev/v0.0.7: the two
-  legacy references are cloned by hand (README), and `.github/workflows/dependency-graph.yml`
-  submits the lock. Once v0.0.7 is on main, check that Dependabot's graph run passes.
+  **Yes, benchmark first in a spike floor** (Tony, 2026-10-28), possibly one terminal agent per
+  numerical package; confirm the parallelisation plan first. Test on the local Apple Silicon Mac
+  for now. Lab machines vary: some have CUDA (version unknown), some only an Intel iGPU, so the
+  conversion backend must stay easy to switch. Also measure whether conversion keeps up with raw
+  files arriving at network speed (see Q6.9). More raw folders are a few levels down on X, an
+  HDD over the network, so read it sparingly. MATLAB check (Side, 2026-10-28): R2025b runs headless on Tony's
+  Mac (`matlab -nodisplay -batch`, ~5 s to start, core functions only). Both sample shots
+  (2022 ghost counts `d1`, 2024 `20241107` `d1111`) are reproduced **byte for byte** by the 2019
+  variant (`legacy/tdc_autoconverter`, `dlmwrite` precision 8); the 2023 variant writes 12–14 %
+  fewer hits (the x1 dead time). So the port's bar can be byte-identical output.
 
-## After the release (not blocking)
+  **Decided** (Tony, 2026-10-28): stages 1 and 2 build variants that reproduce the existing
+  MATLAB converter's results, and the code stays adaptable so the detector parameters can be
+  tweaked; later perhaps a parameter-space scan optimised on signals from real data. The
+  builder and a reviewer write the reference first (the reviewer cross-checks, also against
+  MATLAB run headless), then one builder per backend, all connected to the reviewer. Backends:
+  NumPy, Numba, Cython/C, Rust (PyO3), Apple GPU (MLX); not Julia, PyTorch or JAX (packaging).
+  Findings: [session notes](sessions/2026-10-28-claude-txy-converter-plan/findings.md).
+- **Q6.6 Which TXY a folder uses when both `d_txy_forc*.txt` and HeLab's `d_txy_helab_*.txy`
+  exist.** Proposed: the MATLAB files by default until the comparison passes, with a per-folder
+  choice; HeLab's are shown as their own file kind.
+- **Q6.7 How other HeLabs get the acquisition PC's TXY** (Q6.2, as Tony framed it: the
+  acquisition PC watches the raw files, converts them, maybe runs analysis; other HeLabs on the
+  network fetch the TXY from its HeLab store). Options:
+  - (a) it writes `d_txy_helab_<N>.txy` beside the raw files on the share, as MATLAB does, and
+    other HeLabs read them as ordinary files;
+  - (b) its HeLab serves its store read-only (HTTP or SSH), and other HeLabs fetch by data root
+    and shot;
+  - (c) other HeLabs open its store folder over SMB: no, SQLite over SMB isn't safe.
+
+  Proposed: (a) once HeLab replaces MATLAB (it needs nothing new and works with HeLab closed);
+  (b) later, for analysis results, which have no file of their own.
+- **Q6.8 The Live auto-convert toggle.** (Answered, below.) Proposed: a per-folder switch in
+  the Live controls, remembered like Don't auto-load, off by default. **Answered** (Tony, 2026-10-28): "show auto convert
+  toggle after live is toggled". Later: configurations that turn on Live and auto-convert as soon
+  as HeLab starts (a roadmap item, not v0.0.7's first step).
+- **Q6.9 Store HeLab's TXY, or only cache it?** Tony: if conversion keeps up with raw files
+  arriving at the network transfer limit, HeLab might never store TXY in the archives and keep
+  them only in its local cache. Waits for the Q6.5 benchmark. Tony, 2026-10-28: "real
+  experiments have one d every ~30s"; the target is converting faster than raw files cross the
+  network, so other HeLabs read the raw files and convert them as they read, with no TXY stored.
+  On X, TXY is 27–41 % of the raw size (2022 and 2024 folders), so the TXY archive is ~22–29 % of
+  a folder; reading raw files moves 2.4–3.6× the bytes on a first, uncached load.
+- **Q6.10 Detector profiles and the default variant.** Both MATLAB variants hard-code the old
+  detector: channel map, one time sum (3200 bins) ± 200, v⊥ on both axes, a 36-row search; the
+  2023 lab edit adds an x1 dead time of 0.5 µs (−12–14 % hits) and time sums 3390/3275 in T only.
+  If those are the post-2023 detector's time sums, the 2019 converter may drop hits at the
+  outer x edge and stretch X by ~6 % (untested; [notes](sessions/2026-10-28-claude-txy-converter-plan/findings.md)).
+  Also: the ambiguous-x2 quirk (nearest kept, not rejected as the comment intends). Proposed:
+  the constants become a named detector profile; the default reproduces the 2019 converter byte
+  for byte; the 2023 edit and any corrected profile are separate, checked on their own; which
+  shots came from which detector is Tony's to say. Tony, 2026-10-28: the MCP plates changed in ~2022 and in 2025
+  (on X, the He3/He4 folders' `old_plates` end 2022-07 and `new_plates` start 2023-02); look into
+  the x2 handling while building. Probe results (old vs new plates, MCP-measured time sums
+  x 3367 / y 3294 bins in 2022-11) are in the notes.
+- **Q6.11 Detector calibration in the converter plan.** Tony, 2026-10-28: the 2025 plates have
+  not been calibrated yet; plan for calibrating. Proposed: a calibration stage after the
+  byte-identical reference, built on D11's raw-pulse diagnostics (time sums from MCP pulses and
+  by position, x−y sum difference, pulse spacing for ringing and dead time, hotspot and
+  efficiency maps from dark counts and flat fields) plus a geometry check on known shapes
+  (Momentum Bells halos: radius and roundness; BEC position). Its output is a versioned detector
+  profile with a valid-from date and plate, recorded with every TXY HeLab makes. Questions:
+  where is 2025 data; was the MCP channel recorded; can the lab take a calibration set (dark run,
+  large thermal cloud, a halo, with the MCP channel on); where profiles live (proposed: built-in
+  ones in the repo, the lab's in one shared file beside the data). **Answered** (Tony, 2026-10-28): profiles are JSON files; the
+  2017, 2022 and 2025 plates' profiles are built into the app, which can import, export and
+  tweak them; the 2025 profile is marked uncalibrated. The MCP diameter hasn't changed; there is
+  no mask or grid. The file server with post-2025 data is offline for now; Tony will say when it
+  is back. Still open: whether the lab can take a calibration set, and whether the MCP channel
+  was recorded in 2025.
+
+## After the v0.0.6 release (not blocking)
 
 ### Q1.6 Lab numbers only Tony can give
 - Q1.6.1: the detector QE (0.1 proposed), the trap frequencies and the trap's axial axis. They are
@@ -195,10 +244,10 @@ first 3D scatter opens. Before turning the same fix on for the lab PCs, check (M
 Shot trends' Notify during Live shows a system notification through a tray icon. Is the icon
 acceptable, or should notifications use the status bar only?
 
-### Q1.9 After the release (replaced by v0.0.7's focus, Q6.1; kept for the record)
+### Q1.9 After the release (replaced by v0.0.7's focus, Q6.12; kept for the record)
 1. Export with provenance, together with the analysis worker in the activity panel.
 2. The `folder_cache.py` split (it should run alone).
 3. The headless runner and CLI.
 4. The TXY converter port (needs sample raw and `_txy_forc` files from Tony).
 5. The DLD port's D13 (halo centring per shot).
-6. The `--upgrade` lock refresh (python-dateutil 3.0), in its own CI run.
+6. The `--upgrade` lock refresh (python-dateutil 3.0), in its own CI run (A7.2).

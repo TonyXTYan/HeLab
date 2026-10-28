@@ -5,7 +5,7 @@ Priority and completion: [overview](_readme.md).
 
 ## Implemented workflow (authoritative)
 
-- `helab/_version.py` is the single editable source: `__version__ = "0.0.5a1"`.
+- `helab/_version.py` is the single editable source: `__version__ = "X.Y.Z"`.
   Use canonical PEP 440 versions without `v`; the tag adds `v`.
 - Branch names are labels, not inputs. A release cycle can use `dev/v0.0.5`
   while the package moves through `0.0.5a1`, `0.0.5b1` and `0.0.5`. The existing

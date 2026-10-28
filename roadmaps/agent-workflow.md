@@ -1,7 +1,9 @@
 # Parallel agent workflow and run isolation
 
-Added: 2026-10-15. Workflow rules decided by Tony 2026-10-15; the isolation
-code (settings profiles) is a draft plan, nothing implemented.
+Added: 2026-10-15. Workflow rules decided by Tony 2026-10-15. Floors have run
+since 2026-10-19. Isolation: the settings factory and the defaults table have
+landed; floors get their own settings file (hook 5b, Q2.5, 2026-10-28); settings
+profiles are still a plan.
 Priority and completion: [overview](_readme.md). The code decoupling that makes
 parallel features possible is in [refactoring](refactoring.md).
 
@@ -60,26 +62,32 @@ his settings and cache, the packaged release, or each other.
 Step-by-step setup for a person (coordinator terminal, register note, setup
 hook, landing): [.ai/maestri-setup.md](../.ai/maestri-setup.md).
 
-1. Tony (or the coordinator, with his approval) picks the base commit.
+1. Tony (or the coordinator, with his approval) picks the base commit, on the
+   current dev branch (the roadmap's *Now*). After a release, only the new dev
+   branch: v0.0.6 went to `main` as a squash, so `dev/v0.0.7` shares no history
+   with `dev/v0.0.6`, and older `agent/*` branches are records, not bases.
 2. The coordinator creates the floor on a new branch:
    `maestri floor create "<Task>" --branch agent/<task>`, from a ground
    checkout of the chosen commit, then recruits a worker on it with the brief.
-3. Floor setup (a script to write, run once per floor):
+3. Floor setup: the Maestri setup hooks, run once per floor
+   ([setup §4](../.ai/maestri-setup.md#4-floor-setup-hook)):
    - **Python**: the floor's copy-on-write venv has the right packages but is
      wired to the ground checkout by absolute paths: its `bin/` scripts start
-     with ground's `venv.nosync/bin/python3.13`, `activate` sets ground's
-     `VIRTUAL_ENV`, and its editable install points at ground's `helab/`. It is
-     usable with two guards: pytest must import the floor's code (**done**
-     2026-10-22, `agent/ci-robustness-2` `50fa36b`: `pytest.ini` sets
-     `pythonpath = .`, so `pytest` and `python -m pytest` both test the
-     checkout they run in; helpers already follow the GUI's checkout via
-     `PYTHONPATH`), and the app runs as `python -m helab`, not the `helab`
-     entry point. A branch that changes dependencies
-     (`requirements.txt` and its refreshed `requirements.lock`) gets a fresh
-     venv instead (`uv venv --seed --python 3.13 venv && uv pip install
-     -r requirements.lock -e .`, 16 s measured 2026-10-15 with uv's cache), so
-     it never installs into ground's venv.
-   - **Profile**: a private settings/app/cache folder for the floor (below).
+     with ground's `venv/bin/python`, `activate` sets ground's `VIRTUAL_ENV`,
+     and its editable install points at ground's `helab/`. Hooks 1–2 give
+     each floor a fresh venv instead (16 s measured 2026-10-15 with uv's
+     cache). pytest imports the floor's code even without them (**done**
+     2026-10-22, `50fa36b`: `pytest.ini` sets `pythonpath = .`; helpers
+     follow the GUI's checkout via `PYTHONPATH`).
+   - **Floor-only packages**: a package the task needs beyond
+     `requirements.lock` goes only into the floor's venv, with
+     `uv pip install --python venv/bin/python <pkg>` after checking that
+     `venv/bin/python -c "import sys; print(sys.prefix)"` is under the floor
+     (a bare or activated install can reach Ground's venv). It is listed in the
+     session folder or a `requirements-bench.txt`, never in `requirements.txt`
+     or the lock unless Tony decides.
+   - **Profile**: private app, cache and temp folders and settings file
+     (hooks 3–5b, Q2.5).
    - **Stale bytecode**: delete the copied `__pycache__` folders, which carry Ground's
      paths into tracebacks (Live L3 notes, 2026-10-19; seen again on the CI Robustness
      floor, a traceback naming `../../../HeLab/tests/…`, 2026-10-22). A setup hook step
@@ -94,10 +102,10 @@ hook, landing): [.ai/maestri-setup.md](../.ai/maestri-setup.md).
 Each push starts the full CI matrix (macOS, Windows, Ubuntu), hence the single
 final push. A further push after review fixes is fine.
 
-**Later step:** review how Maestri floors fit this repo before the pilot:
-what the copy-on-write clone includes (venv, `.ai/local/`, `.codegraph/`,
-gitignored build output), setup hooks for the floor setup script, landing
-into a branch other than ground's, and cleaning up floors and branches.
+**Piloted** (floors since 2026-10-19): what the clone includes (Ground's
+gitignored files, minus the excluded folders), the setup hooks, landing with
+`--into` and clean-up that keeps branches are in the
+[setup guide](../.ai/maestri-setup.md).
 
 ## Cloud agents (kept open)
 

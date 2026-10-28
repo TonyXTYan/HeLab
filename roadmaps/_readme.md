@@ -23,15 +23,27 @@ Mac and the lab PCs through v0.0.6, plus the Mac smoke pass; Q6.1). Work for v0.
 from `dev/v0.0.7` (agents: `agent/<task>`, [workflow](agent-workflow.md)) and lands back
 there; `dev/v0.0.7` goes to `main` by PR, with the version bump on that branch.
 
-**Focus for v0.0.7 (Tony, 2026-10-28):**
+**Focus for v0.0.7 (Tony, 2026-10-28; Q6.12):** the TXY converter port. Distributed results
+compute is postponed until the converter works well (Q6.2).
 
-- [ ] The TXY converter port (`tdc_autoconverter`, Live L4): raw → TXY inside HeLab, written
-  to a temporary name and renamed, checked against existing `_txy_forc` files (the item under
-  Near term; [Live L4](live-monitoring.md#stages)). Inputs and where it runs: Q6.3 (2026-10-28).
+- [ ] The TXY converter port (`HeBECANU/tdc_autoconverter`, `lib/dld_raw_to_txy_counts.m`;
+  [Live L4](live-monitoring.md#stages)): replace MATLAB's converter with a headless HeLab
+  converter, and a Live auto-convert toggle shown once Live is on (Q6.3, Q6.8). Output
+  `d_txy_helab_<N>.txy`, written to a temporary name and renamed; for now every HeLab-made TXY
+  stays in HeLab's temp folder. **The bar is byte-identical output:** the 2019 MATLAB variant
+  reproduces existing `_txy_forc` files byte for byte, while the 2023 lab edit (x1 dead time
+  0.5 µs, separate tsums) writes 12–14 % fewer hits
+  ([findings](../.ai/sessions/2026-10-28-claude-txy-converter-plan/findings.md),
+  [legacy notes](../.ai/sessions/2026-10-20-claude-dld-front-panel-review/core-update.md#import-and-reconstruction)).
+  Stages: a reference port cross-checked against MATLAB run headless, a benchmark spike, then one
+  builder per backend (NumPy, Numba, Cython/C, Rust, MLX) (Q6.5). Open: detector profiles and
+  calibration (Q6.10, Q6.11), which TXY a folder uses (Q6.6), how other HeLabs get it (Q6.7),
+  store or cache only (Q6.9). Until HeLab replaces it, whether MATLAB's converter still gets the
+  temp-name `movefile` (Tony, 2026-10-19) is open. [Plan](txy-converter.md) (2026-10-29; focus 2026-10-28).
 - [ ] Distributed results compute: one machine computes analysis results and other HeLabs use
   them without repeating the work. It builds on the [headless runner](headless-analysis.md)
-  and the [network extension](network-runners-and-web.md#cross-machine-result-sharing). The
-  first slice is Q6.2 (2026-10-28).
+  and the [network extension](network-runners-and-web.md#cross-machine-result-sharing).
+  **Postponed** until the converter works well (Q6.2, Tony 2026-10-28).
 
 **Carried over from v0.0.6:**
 
@@ -45,11 +57,14 @@ there; `dev/v0.0.7` goes to `main` by PR, with the version bump on that branch.
   table with `read_setting` (`0f4df65`) landed from `agent/ci-robustness-2` (merge
   `51c0ee2`, 2026-10-22). Left: Restore default and default tooltips, the profiles.
 
-- [ ] Release v0.0.6a1 (Tony, 2026-10-28: Q1.1–Q1.3, Q6.1). The smoke pass ran on a Mac by
+- [x] Release v0.0.6a1 (Tony, 2026-10-28: Q1.1–Q1.3, Q6.1). The smoke pass ran on a Mac by
   computer use ([results](../.ai/sessions/2026-10-28-claude-smoke-mac/results.md)). Tony
   released on that and on his own use through v0.0.6, so the lab PC pass and Live (M1.3) are
-  the first checks of v0.0.7. Version bumped and PR to `main` opened 2026-10-28. Left: CI green
-  with no RERUN, the merge, and publishing the draft. The `v0.0.5a1` draft stays unpublished.
+  the first checks of v0.0.7. Merged to `main` (`9c477c2`) and tagged `v0.0.6a1`, with no
+  RERUN in the test jobs (2026-10-28). Its draft has no assets, since the release job
+  couldn't find it under GitHub's `untagged-…` name (run 40675311830; fixed in `d36a20e` on
+  `dev/v0.0.7`, [known issues](known-issues.md#fixed)); Tony leaves it as it is, and v0.0.7's
+  release is the first with zips (Q8.1). The `v0.0.5a1` draft stays unpublished.
 
 - [ ] Unsupervised smoke runs: menu-bar actions, an in-app save-screenshot command,
   accessibility labels, a debug/smoke menu, then a `--smoke` control channel (design first),
@@ -67,10 +82,6 @@ there; `dev/v0.0.7` goes to `main` by PR, with the version bump on that branch.
   (2026-10-13). Step 1 done: the macOS zip holds only `HeLab.app` with its
   symlinks (275 MiB instead of 2152 MiB, checked on the PR #5 build).
 
-- [x] Finish the status-message audit: verify load-phase labels for `merged`/
-  `updated` sources ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#status-messages)) (2026-10-08).
-  Done 2026-10-26 (Quick Fixes 2: `8de9ea6`, `93fb3dd`; Tony agreed the new labels).
-
 - [ ] Data roots follow-ups: smaller items (Remove .helab-root… in the tree,
   every location in the duplicates window, NFS/AFP caching, label rename)
   ([list](../.ai/sessions/2026-10-16-claude-data-roots/follow-ups.md)) (2026-10-18).
@@ -81,14 +92,6 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
 
 ## Near term: useful analysis from loaded data
 
-- [ ] TXY converter (`HeBECANU/tdc_autoconverter`, `lib/dld_raw_to_txy_counts.m`):
-  write each TXY to a temporary name and `movefile` it to the final name, so
-  HeLab never sees a partly written file (Tony, 2026-10-19). Porting it into HeLab
-  (Live L4) is the one raw → TXY converter. The legacy reconstruction has two
-  variants: 2019, and the 2023 lab edit with an x1 dead time of 0.5 µs and
-  separate tsums. Check that existing `_txy_forc` files are reproduced: the same
-  event counts and values to 8 significant figures, for the variant that wrote
-  them ([notes](../.ai/sessions/2026-10-20-claude-dld-front-panel-review/core-update.md#import-and-reconstruction)) (2026-10-20).
 - [ ] Decouple browser/cache, dataset, analysis and UI responsibilities so
   agents can develop separate features in supervised, isolated worktrees
   without changing current behaviour. Feature-driven: the dataset view first,
@@ -98,9 +101,6 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   `views/plots`, the Qt-free analysis core, `PlotWorkspace`, `LiveController`; left: the
   explorer's load logic, `FolderCache`'s stores, `_on_event`.
 
-- [x] Apply other tabs' finished status checks during Refresh without source
-  I/O ([notes](../.ai/sessions/2026-10-08-codex-roadmap-review/notes.md#cross-tab-status-results)) (2026-10-08).
-  Done 2026-10-26 (cache-only C1, `9c75340`).
 - [ ] Explain when disk-cache failure skips automatic status checks and offer
   a manual check (2026-10-08).
 - [ ] Add small anonymized TXY fixtures with known counts/arrays, including
@@ -111,19 +111,12 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   results, validated reuse and optional versioned script bundles; plain files
   remain usable. Local runner first, open to remote later
   ([plan](analysis-job-runner.md)) (2026-10-13; revised 2026-10-15).
-- [x] First analysis: interactive 3D scatter (Plotly via the Dash server),
-  default auto-crop to regions of interest. v1 done 2026-10-19; the crop rule
-  awaits Tony's check on real data
-  ([plan](analysis-workflow.md#first-analysis-3d-scatter-decided-2026-10-15)) (2026-10-15).
 - [ ] Complete the dataset → parameters → background script → results workflow,
   with folder-following views, pinning, progress, cancellation and errors
   ([plan](analysis-workflow.md)) (2026-10-08; revised 2026-10-14).
 - [ ] Analysis result caching: RAM results (R1), then disk-cached one-off
   results with exact-match reuse (R2); Live stages follow
   ([plan](result-caching.md)) (2026-10-15). R1 done (2026-10-19), R2 done (2026-10-23).
-- [x] Open plots count toward the RAM budget: 50 % status bar, 75 % window, 80 % release
-  least recently shown plots (never closed; a picture with Reload from RAM or the
-  local disk cache only) (Tony, 2026-10-19/20; landed 2026-10-20).
 - [ ] One Settings panel follows the active plot (click, focus, tabbed or
   floating dock; chooser raises a plot; settings pages as tabs via
   `ParameterSpec.page`). Quick version on Ground (Tony, 2026-10-19); hardened
@@ -145,7 +138,6 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
 - [ ] How auto detection should find orders 0, ±1, ±2 (it also covers a first run
   at high transfer, where +1 can be taken for order 0): Tony to describe; not built
   (2026-10-20).
-- [x] Floating plot settings: a floating plot's settings travel with its window (collapsible, on the right, draggable splitter) (Tony, 2026-10-19; landed 2026-10-20).
 - [ ] Show the analysis worker beside I/O: status-bar counts and Folder
   details' activity, each job with script, input, revision, time and Cancel;
   later remote/CLI workers in the same list (Tony, 2026-10-19).
@@ -153,8 +145,8 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   `_build_info.json`), since PyInstaller leaves no `.py` files to hash
   (2026-10-19).
 - [ ] Standard analyses: per-shot counts, T/X/Y distributions (v1 done
-  2026-10-19; T in ms and X/Y in mm since 2026-10-20) and shot selection
-  ([plan](analysis-workflow.md#standard-analyses)) (2026-10-08).
+  2026-10-19; in s and m with SI prefixes, while the DLD port's plots use ms/mm) and shot
+  selection ([plan](analysis-workflow.md#standard-analyses)) (2026-10-08).
 - [ ] Features from the old MATLAB DLD front panel. Built 2026-10-20 (F0, D1–D10,
   D12, D14, D15 placeholder), on `agent/dld-front-panel-port`: constants at
   three levels (Settings → Lab parameters, folder constants, plot overrides) with
@@ -193,10 +185,6 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   `agent/presets-reopen`): script and one-folder arrangement presets, plots
   reopening at start, Settings → Cache › Presets…; the full workspace file is
   still open.
-- [x] Cache-only browsing: browse and analyse cached data while the source is
-  unavailable; offline mode makes no network request
-  ([plan](cache-only-browsing.md)) (2026-10-08; revised 2026-10-14). Done 2026-10-26: File ›
-  Work Offline (C0–C3, merge `9bb1ff7`); on-screen and real-volume checks in MANUAL_TODO.
 - [ ] Compare folders or experimental runs using consistent settings
   ([plan](run-comparison-and-batch.md#run-comparison)) (2026-10-08).
 - [ ] Self-update button for source checkouts (git + uv) and frozen builds
@@ -246,6 +234,20 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   list; may no longer be needed).
 
 ## Done
+
+v0.0.6a1 (`main` `9c477c2`, 2026-10-28; native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)):
+
+- [x] Status-message audit: load-phase labels for `merged`/`updated` sources
+  (2026-10-08; Quick Fixes 2, `8de9ea6`, `93fb3dd`, 2026-10-26).
+- [x] Refresh applies other tabs' finished status checks without source I/O
+  (2026-10-08; cache-only C1, `9c75340`, 2026-10-26).
+- [x] First analysis: interactive 3D scatter with auto-crop; the crop rule awaits Tony's check
+  on real data ([plan](analysis-workflow.md#first-analysis-3d-scatter-decided-2026-10-15)) (2026-10-15; v1 2026-10-19).
+- [x] Open plots count toward the RAM budget: 50 % status bar, 75 % window, 80 % release least
+  recently shown plots, never closed (Tony, 2026-10-19/20; landed 2026-10-20).
+- [x] Floating plot settings travel with the plot's window (Tony, 2026-10-19; landed 2026-10-20).
+- [x] Cache-only browsing: File › Work Offline (C0–C3, merge `9bb1ff7`)
+  ([plan](cache-only-browsing.md)) (2026-10-08; done 2026-10-26).
 
 v0.0.5a1 (`main` `5a8ae6f`, 2026-10-19; native checks in [MANUAL_TODO](../.ai/MANUAL_TODO.md)):
 

@@ -20,7 +20,7 @@ Plotting-library prototypes that read the old cache directly moved out to
 `dev/plotting-prototypes/` with the old browser's removal
 ([plan](cache-storage-and-settings.md#old-browser-removal)). Dataset analyses (`DatasetAnalysis`) get an immutable dataset view and
 validated parameters, run in one analysis worker thread and keep their results
-in RAM (see AGENTS.md › Script system); older `HelabAnalysisScript`s still get
+in RAM (see [plots-and-scripts](../.ai/architecture/plots-and-scripts.md)); older `HelabAnalysisScript`s still get
 `execute_action`. Folder-following views, export and saved results are still to
 come.
 

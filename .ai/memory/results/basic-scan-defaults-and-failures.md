@@ -24,8 +24,8 @@ reading the TXY files) in the active folder browser. Code:
   recursion depth, with progress and per-tab cancellation. Metadata-only scans
   never start automatic dataset loads.
 - Scan summaries (raw/TXY counts, status, signature, scan date) persist in
-  the disk cache's `folder_summaries` table (store-v2 since S5 of
-  `roadmaps/cache-storage-and-settings.md`) and are restored before scanning,
+  the disk cache's `folder_summaries` table (since S5 of
+  `roadmaps/cache-storage-and-settings.md`; store-v3 since data roots) and are restored before scanning,
   so counts show as soon as a folder is visible.
 
 ## Failure history (Tony, 2026-10-07/08)
