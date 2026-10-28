@@ -23,8 +23,8 @@ HEAVY = ("PyQt6", "pyqtgraph", "matplotlib", "dash", "plotly", "helab.utils.cons
 PURE = (
     "helab.scripts.base",
     *(f"helab.convert.{name}" for name in (
-        "backends.cython", "backends.mlx_gpu", "backends.numba_backend", "backends.reference", "check", "pipeline",
-        "profile", "raw", "reconstruct", "samples", "timing", "txy")),
+        "backends.cython", "backends.mlx_gpu", "backends.numba_backend", "backends.reference", "backends.rust",
+        "check", "pipeline", "profile", "raw", "reconstruct", "samples", "timing", "txy")),
     "helab.utils.ram_buffers",
     *(f"helab.analysis.{name}" for name in (
         "bec", "bec_readout", "bootstrap", "budget_core", "constant_layers", "correlations",

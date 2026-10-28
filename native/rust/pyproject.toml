@@ -1,0 +1,14 @@
+# Built into a venv with `maturin develop --release` (from this folder), or as a wheel with
+# `maturin build --release`. Not part of HeLab's own packaging yet (stage 4, Q9.2).
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[project]
+name = "helab-convert-rs"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["numpy"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
