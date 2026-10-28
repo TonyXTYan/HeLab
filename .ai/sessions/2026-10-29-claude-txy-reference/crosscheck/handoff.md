@@ -134,3 +134,46 @@ a time gap > 3,200 bins because of the `T_sum` skip, so that part is safe.
 - **A~3:** stage 2's within-shot split: the constraints above, with a test that a split
   conversion equals the whole one on `phantom_*` and `dead_time_x1` cases.
 - No `M~` items: nothing here needs Tony at a screen or the lab.
+
+## Round 2 (785f6dc, plus `dd6b314` and Forge's uncommitted `txy.py` seen in the tree)
+
+Re-run on 785f6dc: fuzz 10,000 raw files × 2 variants, port vs oracle: 0 differences; cases
+78/78; all 449 round-1 probes: 449/449; samples (`--positions all`): 303 identical + 6 proved, 0
+unexplained, d400 listed and proved; converter tests 675 passed, 2 skipped, no reruns; strict
+mypy and pyright clean. F2: TXY now `0o644`. F3: `x2-handling.md` and `dev/txy/x2_retry.py` give
+my net figures (+4,255, +4,289); their gross/lost split (4,825 / 570) counts differently from mine
+(4,648 hits whose final x2 was a retry / 393 lost) but nets the same. F4, F5: done as suggested.
+`check.py`'s `ReferenceFault` / `prove_fault` and the `(ended)` / `(no final newline)` marks read
+right. The uncommitted `write_atomic` (`os.open(…, O_WRONLY|O_CREAT|O_EXCL|O_BINARY, 0o666)`, so
+the kernel applies the umask, instead of `os.umask(0)` at import) is right, `O_BINARY` included;
+I'll re-run it when committed.
+
+**R2-1 (low, open) `helab/convert/raw.py:94–96`: the line-ending rule is still wrong for files
+that begin with blank lines.** F1's fix was fitted to probes without leading line endings. A
+fresh MATLAB-judged fuzz shows the port missing **34 of 500** mixed-ending inputs
+([probes/fuzzeol](probes/fuzzeol)), **146 of 400** with leading runs
+([probes/fuzzlead](probes/fuzzlead)) and 7 of 18 targeted probes ([probes/ts4](probes/ts4)).
+Two things differ from MATLAB:
+
+1. **Detection skips only the `\n` characters at the very start of the file**, not spaces,
+   tabs or `\r`; the first `\r`/`\n` run after them then sets the mode with the port's
+   mapping (`\r+\n` → all three, `\n…` → `\n`, lone `\r+` → `\r`). So `\r0,10\r\n2,20\r\n` is
+   CR mode (MATLAB: 1 row; port: 2), `\n\r0,10\r\n` is CR mode (MATLAB: none), and
+   `␠\n0,10\r\n2,20\r\n` is LF mode (MATLAB: 1 row).
+2. **Parsing starts at byte 0**, under that mode. The skipped leading `\n`s are then line ends
+   only if the mode accepts `\n`; in CR mode they stop the read at once
+   (`\n0,10\r\r3,30\n` → MATLAB no rows, port 2).
+
+The fix, which I checked in a scratch copy of `_parse_textscan` (the port isn't edited):
+
+```python
+pos, end = 0, len(data)
+first = _LINE_END.search(data, len(data) - len(data.lstrip(b"\n")))
+```
+
+`_LEADING` is then unused. With it, all **1,367** MATLAB-judged inputs agree (ts 24, ts2 17, ts3 8,
+fuzzts 400, ts4 18, fuzzeol 500, fuzzlead 400, the last a fresh set made after the rule was
+fixed). Suggest adding ts4, fuzzeol and fuzzlead to `tests/data/convert/textscan/`. Still no
+effect on TDC files (uniform CRLF, no leading blank lines; the fast path takes them).
+
+Open findings after round 2: **R2-1** only.
