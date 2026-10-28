@@ -28,6 +28,9 @@ from helab.views.plots.instance import AnalysisInstance
 from test_constant_layers import FallTime
 from test_folder_flags import admin, frozen
 
+# A folder as FolderCache keys it (``FolderCache.key``: on Windows with a drive letter).
+RUN = os.path.abspath("/data/run")
+
 
 def settings(tmp_path: Path) -> QSettings:
     return QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
@@ -216,7 +219,7 @@ def view_dated(day: str, origins: dict[str, str] | None = None) -> Any:
     when = int(time.mktime(time.strptime(day + " 12:00", "%Y-%m-%d %H:%M")) * 1e9)
     metadata = {"fingerprint": [[1, 10, when]], "raw_times": [[1, when]],
                 "txy": {"source": "matlab", "origins": origins or {}}}
-    return build_view(Dataset("/data/run", "sig", {1: np.zeros((1, 3))}, metadata, 0))
+    return build_view(Dataset(RUN, "sig", {1: np.zeros((1, 3))}, metadata, 0))
 
 
 def test_the_row_suggests_a_plate_profile_without_applying_it(qtbot: QtBot) -> None:
@@ -246,7 +249,7 @@ def test_a_plot_loads_its_own_source_and_goes_back_to_the_tabs(qtbot: QtBot, mon
     monkeypatch.setattr(service, "_dispatch", lambda: None)
     cache = FolderCache(service)
     try:
-        path = "/data/run"
+        path = RUN
         tab_data = Dataset(path, "sig", {1: np.zeros((1, 3))},
                            {"fingerprint": [[1, 10, 100]], "txy": {"source": "matlab", "origins": {}}}, 0)
         cache.datasets[cache.dataset_key(tab_data)] = tab_data

@@ -31,6 +31,9 @@ from test_folder_cache import service_for_test
 
 PROFILE = MATLAB_2019.content_hash()
 
+# A folder as FolderCache keys it (``FolderCache.key``: on Windows with a drive letter).
+RUN = os.path.abspath("/data/run")
+
 
 def matlab_txy(folder: Path, shot: int) -> Path:
     path = folder / f"d_txy_forc{shot}.txt"
@@ -338,7 +341,7 @@ def dataset(origins: dict[str, str], source: str = "matlab", signature: str = "s
     data = {1: np.zeros((2, 3)), 2: np.ones((2, 3))}
     metadata = {"fingerprint": fingerprint, "txy": {"source": source, "origins": origins,
                                                     "profiles": {"h": {"name": "plates-2022", "version": 1}}}}
-    return Dataset("/data/run", signature, data, metadata, 0)
+    return Dataset(RUN, signature, data, metadata, 0)
 
 
 def context(view: Any) -> AnalysisContext:
@@ -382,7 +385,7 @@ def test_folder_cache_keeps_each_sources_datasets_apart(qtbot: Any, monkeypatch:
     from helab.utils.folder_cache import FolderCache
     service = service_for_test(monkeypatch)
     cache = FolderCache(service)
-    path = "/data/run"
+    path = RUN
     tab, plot = dataset({"2": "helab:h"}), dataset({"1": "helab:h", "2": "helab:h"}, source="helab")
     for entry in (tab, plot):
         cache.datasets[cache.dataset_key(entry)] = entry
