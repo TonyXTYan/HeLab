@@ -5,7 +5,8 @@ whether it can run or is run, so HeLab and the tests work without it (``unavaila
 why). Byte for byte the reference's output; ``numba_kernels``'s docstring says why its two changes
 of form (no MATLAB output matrix, pieces) can't change it.
 
-A conversion is one call that holds no GIL (``releases_gil``): threads converting different shots
+A conversion is NumPy's stable argsort and one compiled call, neither holding the GIL
+(``releases_gil``): threads converting different shots
 run in parallel. ``reconstruct_numba_pieces`` cuts one shot into pieces at gaps longer than the
 match window and matches them serially, in a thread pool or with numba's ``prange``, for the
 within-shot measurements; the registered backend runs the whole shot as one piece.
@@ -86,18 +87,22 @@ class _Arguments:
         self.overflow_row = bool(profile.matlab_overflow_row)
 
 
-def _arrays(pulses: RawPulses, profile: DetectorProfile) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+def _arrays(pulses: RawPulses, profile: DetectorProfile) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64],
+                                                                  npt.NDArray[np.int64]]:
+    """Channels, times and the times' stable argsort, NaN last (L58–60), as the kernels take them.
+    NumPy sorts without the GIL."""
     if pulses.times.shape[0] == 0 and profile.subtract_time_zero:
         raise NoRowsError("The raw file has no rows (MATLAB fails at t_zero, L62)")
-    return (np.ascontiguousarray(pulses.channels, dtype=np.float64),
-            np.ascontiguousarray(pulses.times, dtype=np.float64))
+    times = np.ascontiguousarray(pulses.times, dtype=np.float64)
+    return (np.ascontiguousarray(pulses.channels, dtype=np.float64), times,
+            np.argsort(times, kind="stable").astype(np.int64, copy=False))
 
 
 def reconstruct_numba(pulses: RawPulses, profile: DetectorProfile) -> Hits:
-    channels, times = _arrays(pulses, profile)
+    channels, times, order = _arrays(pulses, profile)
     a = _Arguments(profile)
     hits: Hits = _kernels().convert(
-        channels, times, a.subtract_time_zero, a.corners, a.dead_active, a.dead_tolerance, a.first, a.offsets,
+        channels, times, order, a.subtract_time_zero, a.corners, a.dead_active, a.dead_tolerance, a.first, a.offsets,
         a.window, a.x_limit, a.y_limit, a.xy_limit, a.time_sum_t_x, a.time_sum_t_y, a.centred, a.bin_time,
         a.v_perp_x, a.v_perp_y, a.overflow_row)
     return hits
@@ -107,10 +112,10 @@ def reconstruct_numba_pieces(pulses: RawPulses, profile: DetectorProfile, pieces
                              executor: Executor | None = None) -> Hits:
     """One shot cut into up to ``pieces`` pieces at gaps longer than the match window, matched
     ``serial``ly, on ``executor``'s threads (``threads``), or with numba's ``prange``."""
-    channels, times = _arrays(pulses, profile)
+    channels, times, order = _arrays(pulses, profile)
     a = _Arguments(profile)
     k = _kernels()
-    channels, times = k.prepare(channels, times, a.subtract_time_zero, a.corners, a.dead_active, a.dead_tolerance)
+    channels, times = k.prepare(channels, times, order, a.subtract_time_zero, a.corners, a.dead_active, a.dead_tolerance)
     bounds: npt.NDArray[np.int64] = k.choose_bounds(times, a.window, max(1, pieces))
     n = times.shape[0]
     count = bounds.shape[0] - 1
@@ -140,10 +145,10 @@ def reconstruct_numba_pieces(pulses: RawPulses, profile: DetectorProfile, pieces
 
 def piece_bounds(pulses: RawPulses, profile: DetectorProfile, pieces: int) -> npt.NDArray[np.int64]:
     """Where ``reconstruct_numba_pieces`` cuts (row indices of the sorted pulses, 0 and N included)."""
-    channels, times = _arrays(pulses, profile)
+    channels, times, order = _arrays(pulses, profile)
     a = _Arguments(profile)
     k = _kernels()
-    _, times = k.prepare(channels, times, a.subtract_time_zero, a.corners, a.dead_active, a.dead_tolerance)
+    _, times = k.prepare(channels, times, order, a.subtract_time_zero, a.corners, a.dead_active, a.dead_tolerance)
     bounds: npt.NDArray[np.int64] = k.choose_bounds(times, a.window, max(1, pieces))
     return bounds
 

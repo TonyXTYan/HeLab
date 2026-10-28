@@ -54,12 +54,13 @@ def _jit_parallel(function: F) -> F:
 
 
 @_jit
-def prepare(raw_channels: Floats, raw_times: Floats, subtract_time_zero: bool, corners: Floats,
+def prepare(raw_channels: Floats, raw_times: Floats, order: Ints, subtract_time_zero: bool, corners: Floats,
             dead_active: npt.NDArray[np.bool_], dead_tolerance: Floats) -> tuple[Floats, Floats]:
-    """Sort by time (stable, NaN last), subtract the first raw row's time, cut dead time (L58–66,
-    L2023:429–458). ``corners``: x1, x2, y1, y2 channels; the tolerance is in bins."""
+    """Put the rows in ``order`` (the times' stable argsort, NaN last: NumPy's ``kind="stable"``,
+    a timsort, 4× faster than numba's mergesort on the nearly sorted TDC stream), subtract the
+    first raw row's time, cut dead time (L58–66, L2023:429–458). ``corners``: x1, x2, y1, y2
+    channels; the tolerance is in bins."""
     n = raw_times.shape[0]
-    order = np.argsort(raw_times, kind="mergesort")
     channels = raw_channels[order]
     times = raw_times[order]
     if subtract_time_zero:
@@ -238,12 +239,12 @@ def finish(out: Floats, bounds: Ints, counts: Ints, failed: npt.NDArray[np.bool_
 
 
 @_jit
-def convert(raw_channels: Floats, raw_times: Floats, subtract_time_zero: bool, corners: Floats,
+def convert(raw_channels: Floats, raw_times: Floats, order: Ints, subtract_time_zero: bool, corners: Floats,
             dead_active: npt.NDArray[np.bool_], dead_tolerance: Floats, first: int, offsets: Ints, window: float,
             x_limit: float, y_limit: float, xy_limit: float, time_sum_t_x: float, time_sum_t_y: float, centred: bool,
             bin_time: float, v_perp_x: float, v_perp_y: float, overflow_row: bool) -> Floats:
-    """One shot, one piece, in one call without the GIL."""
-    channels, times = prepare(raw_channels, raw_times, subtract_time_zero, corners, dead_active, dead_tolerance)
+    """One shot, one piece, in one call without the GIL (``order`` as ``prepare``'s)."""
+    channels, times = prepare(raw_channels, raw_times, order, subtract_time_zero, corners, dead_active, dead_tolerance)
     n = times.shape[0]
     out = np.empty((n, 3), dtype=np.float64)
     bounds = np.zeros(2, dtype=np.int64)
