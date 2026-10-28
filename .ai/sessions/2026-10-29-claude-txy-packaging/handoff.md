@@ -19,14 +19,14 @@ identically to the reference with all six backends.
 | Path | What |
 |---|---|
 | `requirements.txt`, `requirements.lock` | `numba`, `mlx; sys_platform == "darwin" and platform_machine == "arm64"`, build tools `Cython`, `maturin`. The lock is refreshed **without** `--upgrade`, so only new pins were added: cython 3.3.0, llvmlite 0.50.0, maturin 1.15.0, mlx and mlx-metal 0.32.4 (marked), numba 0.68.1. NumPy stays 2.5.4 (numba 0.68.1 wants `<2.6`). |
-| `native/build.py` (new) | Builds the cython kernel in place (through `native/cython/build.py`) and the rust module as an abi3 wheel (maturin), installed with pip or uv into the running Python. It refuses a `RUSTFLAGS` with `target-cpu`. `--ci` also prints rustc/cargo versions, picks the required backends (cython, rust, numba, plus mlx when `mx.metal.is_available()`, which it prints; otherwise it posts a `::notice`), writes `HELAB_REQUIRE_BACKENDS` to `$GITHUB_ENV`, and runs the check. |
-| `native/check_build.py` (new) | Each backend against `reference` on every `tests/data/convert/cases` case × both built-ins (`pipeline.convert_shot` bytes, or the same error). It runs in this Python, or with `--frozen APP` through a packaged app's `convert --watch … --once --output temp --workers 1`: one run per backend and profile, each with its own app, cache and temp folders and its own settings file. Files HeLab leaves waiting (`raw.not_done`) or can't convert are expected to give no TXY. It exits 1 on a difference or when a required backend is unavailable, and prints each unavailable backend's reason. |
+| `native/build.py` (new) | Builds the cython kernel in place (through `native/cython/build.py`) and the rust module as an abi3 wheel (maturin), installed with pip or uv into the running Python. It refuses a `RUSTFLAGS` with `target-cpu`. `--ci` also prints rustc/cargo versions, picks the required backends (cython, rust, numba, plus mlx when `mx.metal.is_available()`, which it prints; otherwise it posts a `::notice`), writes `HELAB_REQUIRE_BACKENDS` to `$GITHUB_ENV`, and runs the check. `--out DIR` builds both and saves the kernel (for this Python) and the wheel without installing them; `--ci --prebuilt DIR` installs those instead of building. maturin builds with `--locked` (`native/rust/Cargo.lock`). |
+| `native/check_build.py` (new) | Each backend against `reference` on every `tests/data/convert/cases` case × both built-ins (`pipeline.convert_shot` bytes, or the same error). It runs in this Python, or with `--frozen APP` through a packaged app's `convert --watch … --once --output temp --workers 1`: one run per backend and profile, each with its own app, cache and temp folders and its own settings file. Files HeLab leaves waiting (`raw.not_done`) or can't convert are expected to give no TXY. `reference` and `numpy` are always required. A backend that says why it can't run (`unavailable()`, or "Backend 'x' can't run:" from the app) is "unavailable", which passes unless required. A difference or a crash (`unavailable()` raising, any other non-zero exit, a timeout) is "failed", which always fails. In-process, the reference must convert at least half the cases, or every backend's errors would "match" a broken one. It prints each reason and exits 1 on any failure. |
 | `native/pyinstaller-hooks/hook-mlx.py` (new) | mlx's submodules, its dylibs and `mlx.metallib` in `mlx/lib`; no headers or CMake files. |
-| `HeLab.spec` | `hiddenimports`: every `_MODULES` backend (the reference too), plus each optional package present in the build Python (cython `_kernel`; `helab_convert_rs` and `helab_convert_rs.helab_convert_rs`; `numba_kernels`, `numba`, `numba.core.caching`; `mlx`, `mlx.core`). A missing one is printed and left out, so the app still builds without it. `hookspath` points at the mlx hook. `excludes`: `Cython`, `cython`, `pyximport` (only optional imports in pyarrow's conftest, scipy's test utils and pydantic.v1 would collect them: 5.6 MB). The `datas` list stays a literal, as `test_spec_datas` reads it. |
-| `.github/workflows/ci-test.yml` | A "Build and check the converter backends" step (`python native/build.py --ci`) before "Run Tests", so the tests run with `HELAB_REQUIRE_BACKENDS` set. |
-| `.github/workflows/ci-build.yml` | The same step before PyInstaller (skipped for a recovery build of a tag from before `native/build.py`). After PyInstaller, "Check every converter backend in the packaged app" (`check_build.py --frozen`, then `du -sh dist/HeLab`). Timeout raised from 15 to 25 min. |
-| `tests/conftest.py` | `HELAB_REQUIRE_BACKENDS` (comma-separated). In `pytest_configure`, each named backend must load, or the run stops with a `UsageError` listing the reasons. A `pytest_runtest_makereport` wrapper turns a skip whose reason names a required backend (as a word) into a failure. |
-| `tests/test_convert_required_backends.py` (new) | Tests both halves of the flag (nested pytest runs with this conftest, as `test_left_widgets` does), the name matching, and `check_build` in this Python, including a planted difference. |
+| `HeLab.spec` | `hiddenimports`: every `_MODULES` backend (the reference too), plus each optional package present in the build Python (cython `_kernel`; `helab_convert_rs` and `helab_convert_rs.helab_convert_rs`; `numba`, `numba.core.caching`, `numba_kernels`; `mlx`, `mlx.core`). The first module of each is the one probed, and a missing one is printed and left out, so the app still builds without it. `hookspath` points at the mlx hook. `excludes`: `Cython`, `cython`, `pyximport` (only optional imports in pyarrow's conftest, scipy's test utils and pydantic.v1 would collect them: 5.6 MB). The `datas` list stays a literal, as `test_spec_datas` reads it. |
+| `.github/workflows/ci-test.yml` | A **"Converter backends" job** per OS and Python (Side's request): only the build tools (Cython, maturin, setuptools at the lock's versions), `build.py --out native-built`, uploaded as `converter-backends-<os>-py3<minor>` (1 day, `overwrite: true` for job re-runs; its own 15 min limit). The test job `needs` it, downloads the artifact and runs "Install and check the converter backends" (`build.py --ci --prebuilt native-built`) before "Run Tests", so the tests run with `HELAB_REQUIRE_BACKENDS` set and pay for no compiler. The suite-time comment is updated (Windows 20-24 min). No time limit changed. |
+| `.github/workflows/ci-build.yml` | "Build and check the converter backends" (`build.py --ci`, building in that job: PyInstaller needs them in its venv) before PyInstaller (skipped for a recovery build of a tag from before `native/build.py`). After PyInstaller, "Check every converter backend in the packaged app" (`check_build.py --frozen`, then `du -sh dist/HeLab`). Timeout raised from 15 to 25 min. |
+| `tests/conftest.py` | `HELAB_REQUIRE_BACKENDS` (comma-separated). In `pytest_configure`, each named backend must load, or the run stops with a `UsageError` listing the reasons. A `pytest_runtest_makereport` wrapper (`trylast`, so it's inside pytest-rerunfailures') turns a skip whose reason names a required backend (as a word) into a failure. `pytest_configure` adds a `--rerun-except` pattern for those skips, so the failure is final, not rerun 5 times. All of this runs only when the variable is set. |
+| `tests/test_convert_required_backends.py` (new) | Tests both halves of the flag (nested pytest runs with this conftest, as `test_left_widgets` does), the name matching, and `check_build` in this Python, including a planted difference and a reference that converts nothing; that a skip-turned failure isn't rerun (a nested `--reruns 2` run, checked to fail without the `--rerun-except` line). |
 | `tests/test_dependency_snapshot.py` | One line (CoCo approved): a requirement's name is the text before any `;` marker. |
 
 ## Checks
@@ -143,10 +143,16 @@ linux, and `pyright --pythonplatform` Darwin, Windows and Linux: all clean.
     where `mx.metal.is_available()`), so there a backend that can't load stops the run and a skip
     naming one fails (`tests/conftest.py`)."
   - Module table, `backends/cython` and `backends/rust`: "built by `native/build.py`".
-- **`.ai/architecture/release-and-ci.md`**: the test job's new step (`native/build.py --ci`, before
-  the tests); the build job's two steps (the build before PyInstaller, `check_build.py --frozen`
-  after) and its 25 min timeout. Runners need Rust (preinstalled on GitHub's images) and a C
-  compiler (MSVC on `windows-latest`).
+- **`.ai/architecture/release-and-ci.md`**: `ci-test.yml` has two jobs: "Converter backends"
+  (`build.py --out`, artifact `converter-backends-<os>-py3<minor>`, 15 min) and "Tests", which
+  needs it and installs that artifact (`build.py --ci --prebuilt`) before the suite. The build
+  job builds its own (`build.py --ci`) before PyInstaller and checks the app after
+  (`check_build.py --frozen`); **its timeout is 25 min** (was 15). `HELAB_REQUIRE_BACKENDS` reaches
+  later steps **through `$GITHUB_ENV`**, so in the build job it also applies to "Test the older
+  tagged commit before rebuilding recovery assets" (the step is skipped, and the variable unset,
+  for a tag from before `native/build.py`). Runners need Rust (preinstalled on GitHub's images)
+  and a C compiler (MSVC on `windows-latest`). GitHub's macOS arm64 runners have Metal, so mlx is
+  required there.
 - **`.ai/architecture/testing.md`**: `HELAB_REQUIRE_BACKENDS` under the harness seams.
 - **README "Setup (any machine)"**: an optional step after `uv pip install …`:
   "`python native/build.py` builds the converter's compiled backends (needs a C compiler and
@@ -176,6 +182,18 @@ linux, and `pyright --pythonplatform` Darwin, Windows and Linux: all clean.
 - **Q~1** (Tony; proposed: no): should `setup.py` gain an extra (`pip install -e .[fast]`) for
   numba, or build the extensions during `pip install`? Proposed: no. It would need a compiler
   and Rust on every lab PC, and `native/build.py` already does it for developers and CI.
+
+## Review round 1 (Puffin: no blocker), all fixed
+
+| Point | Fix |
+|---|---|
+| 1: a non-required backend that fails passes as "unavailable"; a crash counts as unavailable; a frozen app without reference/numpy would pass | `reference` and `numpy` are always required. "unavailable" only when the backend says why (`unavailable()`, or the app's "Backend 'x' can't run:"); `unavailable()` raising, any other exit, or a timeout is "failed" and always fails. In-process, the reference must convert at least half the cases. Checked: an app copy without the cython kernel gives "unavailable" and rc 0 when not required; `--frozen /usr/bin/false` gives "failed" for all six and rc 1. |
+| 3: the spec's numba probe was `numba_kernels` (always there) | `numba` is first. |
+| 4: maturin `--locked` | Done. |
+| 5: conftest's check runs without the variable | Guarded by `if REQUIRED_BACKENDS:`. |
+| Reruns of a skip-turned failure | Not rerun: `--rerun-except` (public option) plus a `trylast` wrapper; tested. |
+| Stale ci-test.yml comment | Updated (Windows 20-24 min). |
+| Docs | release-and-ci.md proposal above: the 25 min build timeout, and `$GITHUB_ENV` reaching the older-tag test step. |
 
 ## RERUNs
 

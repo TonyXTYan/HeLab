@@ -72,10 +72,16 @@ def pytest_configure(config: pytest.Config) -> None:
     if (constants.cache_dir(), constants.DIR_TEMPS, constants.app_folder()) != expected:
         raise pytest.UsageError(f"Tests would use HeLab's real folders ({constants.cache_dir()}, "
                                 f"{constants.DIR_TEMPS}, {constants.app_folder()}), not {expected}")
-    problems = required_backend_problems(REQUIRED_BACKENDS)
-    if problems:
-        raise pytest.UsageError("HELAB_REQUIRE_BACKENDS names converter backends that can't run here:\n  "
-                                + "\n  ".join(problems))
+    if REQUIRED_BACKENDS:
+        problems = required_backend_problems(REQUIRED_BACKENDS)
+        if problems:
+            raise pytest.UsageError("HELAB_REQUIRE_BACKENDS names converter backends that can't run here:\n  "
+                                    + "\n  ".join(problems))
+        # A skip turned into a failure (below) isn't flaky: pytest-rerunfailures' --rerun-except
+        # makes it final instead of running it again (its wrapper sees the failure: ours is inner).
+        if hasattr(config.option, "rerun_except"):
+            names = "|".join(re.escape(name) for name in REQUIRED_BACKENDS)
+            config.option.rerun_except = [*(config.option.rerun_except or []), rf"(?i)^Skipped: .*\b({names})\b"]
 
 
 # The converter backends this run must have (CI, after native/build.py: e.g.
@@ -106,7 +112,7 @@ def required_backend_named(reason: str, names: tuple[str, ...]) -> str | None:
     return None
 
 
-@pytest.hookimpl(wrapper=True)
+@pytest.hookimpl(wrapper=True, trylast=True)  # inside pytest-rerunfailures' wrapper
 def pytest_runtest_makereport(item: pytest.Item,
                                call: pytest.CallInfo[None]) -> Generator[None, pytest.TestReport, pytest.TestReport]:
     report = yield

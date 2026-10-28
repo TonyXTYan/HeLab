@@ -27,10 +27,10 @@ def converter_backends():
         "cython": ["helab.convert.backends.cython._kernel"],
         "rust": ["helab_convert_rs", "helab_convert_rs.helab_convert_rs"],
         # numba's own hook adds llvmlite and its LLVM library.
-        "numba": ["helab.convert.backends.numba_kernels", "numba", "numba.core.caching"],
+        "numba": ["numba", "numba.core.caching", "helab.convert.backends.numba_kernels"],
         "mlx": ["mlx", "mlx.core"],
     }
-    for backend, modules in optional.items():
+    for backend, modules in optional.items():  # modules[0]: the one that may be missing
         try:
             found = importlib.util.find_spec(modules[0]) is not None
         except ImportError:

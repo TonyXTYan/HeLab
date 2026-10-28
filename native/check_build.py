@@ -4,10 +4,12 @@
     python native/check_build.py --frozen dist/HeLab/HeLab [--require …]
 
 Every case of ``tests/data/convert/cases/`` under both built-in profiles, each backend against
-``reference``: the TXY bytes (``pipeline.convert_shot``), or the same error. A backend that can't
-run here is listed with its reason; one named in ``--require`` (default: the
-``HELAB_REQUIRE_BACKENDS`` variable, as the tests read it) fails the check, as does any
-difference. Exit 0 when every backend that runs matches, 1 otherwise.
+``reference``: the TXY bytes (``pipeline.convert_shot``), or the same error. A backend that says it
+can't run here (``unavailable``, or "can't run" from a packaged app) is listed with its reason;
+one named in ``--require`` (default: the ``HELAB_REQUIRE_BACKENDS`` variable, as the tests read
+it) fails the check, and so do ``reference`` and ``numpy``, which are always required. A
+difference fails, and so does a crash (a check that raises, or a packaged run that fails for any
+other reason). Exit 0 when every backend that runs matches, 1 otherwise.
 
 ``--frozen APP`` runs a packaged HeLab instead (``APP convert --watch … --once --output temp``,
 one run per backend and profile, in a scratch folder with its own app, cache, temp folders and
@@ -91,10 +93,18 @@ def check_here(all_cases: list[Case]) -> dict[str, str | None]:
     expected = {(case.shot, profile): outcome(case.data, profile, "reference")
                 for case in all_cases for profile in PROFILES}
     results: dict[str, str | None] = {}
+    # The reference is what the others are held to: it must run and convert the shots that have rows.
+    converted = sum(isinstance(value, bytes) for value in expected.values())
+    results["reference"] = (None if converted >= len(expected) // 2 else
+                            f"failed: the reference converted only {converted} of {len(expected)}")
     for backend in _MODULES:
         if backend == "reference":
             continue
-        why = get_backend(backend).unavailable(None)
+        try:
+            why = get_backend(backend).unavailable(None)
+        except Exception as error:  # unavailable() never raises: one that does is broken
+            results[backend] = f"failed: unavailable() raised {type(error).__name__}: {error}"
+            continue
         if why is not None:
             results[backend] = f"unavailable: {why}"
             continue
@@ -112,8 +122,11 @@ def frozen_run(app: str, folder: Path, backend: str, profile: str, work: Path) -
     env["HELAB_TEST_SETTINGS_FILE"] = str(work / "settings.ini")
     command = [app, "convert", "--watch", str(folder), "--once", "--backend", backend, "--profile", profile,
                "--output", "temp", "--workers", "1"]
-    finished = subprocess.run(command, env=env, capture_output=True, text=True, errors="replace",
-                              timeout=FROZEN_TIMEOUT)
+    try:
+        finished = subprocess.run(command, env=env, capture_output=True, text=True, errors="replace",
+                                  timeout=FROZEN_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        return -1, f"timed out after {FROZEN_TIMEOUT:.0f} s"
     # The windowed Windows exe has no console: its lines are only in the log.
     logs = "".join(Path(log).read_text(errors="replace") for log in sorted(glob.glob(str(work / "app" / "logs" / "*.log"))))
     return finished.returncode, finished.stdout + finished.stderr + logs
@@ -139,8 +152,12 @@ def check_frozen(app: str, all_cases: list[Case], scratch: Path) -> dict[str, st
             code, text = frozen_run(app, folder, backend, profile, work)
             print(f"  {backend} {profile}: exit {code} ({time.perf_counter() - started:.1f} s)", flush=True)
             if code != 0:
-                lines = [line for line in text.splitlines() if "ERROR" in line or "unavailable" in line.lower()]
-                problems.append(f"unavailable: exit {code}: {lines[-1] if lines else text[-800:]}")
+                # "Backend 'x' can't run: …" (BackendError) is the backend saying why; anything else
+                # (a crash, a missing module, a timeout) is a failure even for an optional backend.
+                said = [line for line in text.splitlines() if f"Backend '{backend}' can't run:" in line]
+                lines = said or [line for line in text.splitlines() if "ERROR" in line or "Traceback" in line]
+                kind = "unavailable" if said else "failed"
+                problems.append(f"{kind}: exit {code}: {lines[-1] if lines else text[-800:]}")
                 break
             differ = []
             for case in all_cases:
@@ -166,7 +183,7 @@ def main() -> int:
     parser.add_argument("--keep", action="store_true", help="keep the scratch folder (its path is printed)")
     args = parser.parse_args()
     scratch = isolate()
-    must = required(args.require)
+    must = sorted({"reference", "numpy", *required(args.require)})  # these two always run
     all_cases = cases()
     where = f"packaged {args.frozen}" if args.frozen else sys.executable
     print(f"{len(all_cases)} cases x {len(PROFILES)} profiles, each backend against reference ({where}; "

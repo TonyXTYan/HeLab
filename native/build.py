@@ -54,7 +54,7 @@ def rust_wheel(out: Path) -> Path:
         raise SystemExit("RUSTFLAGS sets target-cpu; build for the default target instead")
     # maturin's own entry point is a binary beside this Python's scripts; the module form finds it
     # from any shell, activated or not.
-    run([sys.executable, "-m", "maturin", "build", "--release", "-m", str(RUST), "--out", str(out),
+    run([sys.executable, "-m", "maturin", "build", "--release", "--locked", "-m", str(RUST), "--out", str(out),
          "--interpreter", sys.executable])
     return one_wheel(out)
 

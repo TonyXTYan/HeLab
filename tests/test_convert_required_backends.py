@@ -103,7 +103,7 @@ def test_every_backend_that_runs_here_gives_the_references_bytes() -> None:
     """``check_build`` in this Python, as CI runs it after building (every case, both profiles)."""
     module = check_build()
     results = module.check_here(module.cases())
-    assert set(results) == set(_MODULES) - {"reference"}
+    assert set(results) == set(_MODULES) and results["reference"] is None
     for backend, problem in results.items():
         assert problem is None or problem.startswith("unavailable: "), (backend, problem)
         assert (problem is None) == (get_backend(backend).unavailable(None) is None), (backend, problem)
@@ -120,3 +120,26 @@ def test_the_check_reports_a_difference(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(module, "outcome", numpy_off_by_one_byte)
     results = module.check_here(module.cases()[:3])
     assert str(results["numpy"]).startswith("differs on ")
+
+
+def test_a_reference_that_converts_nothing_fails_the_check(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Every backend raising the same error as a broken reference would otherwise "match" it."""
+    module = check_build()
+    monkeypatch.setattr(module, "outcome", lambda data, profile, backend: "ImportError")
+    results = module.check_here(module.cases()[:4])
+    assert str(results["reference"]).startswith("failed: the reference converted only 0 of 8")
+
+
+def test_a_skip_turned_failure_is_not_rerun(tmp_path: Path) -> None:
+    """It isn't flaky: pytest-rerunfailures' --rerun-except (set by conftest) makes it final."""
+    (tmp_path / "test_probe.py").write_text(SKIPS, encoding="utf-8")
+    (tmp_path / "pytest.ini").write_text("[pytest]\n", encoding="utf-8")
+    env = {name: value for name, value in os.environ.items() if not name.startswith(("COV_CORE_", "PYTEST_XDIST_"))}
+    env["PYTHONPATH"] = os.pathsep.join([str(ROOT), str(ROOT / "tests")])
+    env["HELAB_REQUIRE_BACKENDS"] = "reference"
+    done = subprocess.run([sys.executable, "-m", "pytest", "-p", "conftest", "-p", "no:cacheprovider", "-p", "no:xdist",
+                           "--reruns", "2", "-q", "-rA", "test_probe.py"],
+                          cwd=tmp_path, env=env, capture_output=True, text=True, timeout=120)
+    out = done.stdout + done.stderr
+    assert "FAILED test_probe.py::test_names_a_required_backend" in out, out
+    assert "rerun" not in out.lower().replace("rerunfailures", ""), out
