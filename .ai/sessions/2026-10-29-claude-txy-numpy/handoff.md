@@ -67,6 +67,15 @@ changed) and `timing.py`. Beyond those:
 - `reconstruct._MODULES`: my line is `"numpy": "helab.convert.backends.numpy_backend"` (Ferrous
   reformatted the dict one entry per line; keep every line).
 
+## Review (Merlin, c1c2172): no blocker; fixed
+
+1. `txy.format_txy` now refuses non-float64 or non-2-D hits at every size (float32 used to raise a
+   broadcast error and int64 gave wrong bytes from 256 rows up); tested with float32, int64, 1-D,
+   and Fortran-order and strided float64 (which still work), at 0, 1, 255, 256 and 3,000 rows.
+2. The over-309-digit behaviour change is noted below for converter.md.
+3. `numpy_backend.py` and notes.md point 8: after a non-finite t_zero, `t − t_zero` can put a NaN
+   before the end, so `t[:end]` isn't sorted; harmless, since nothing can match then.
+
 ## Proposed doc changes (for the Coordinator)
 
 - **`.ai/architecture/converter.md`**:
@@ -86,6 +95,12 @@ changed) and `timing.py`. Beyond those:
   - **Backends section, add the backend's principle:** "marks only remove candidates: an
     optimistic failure is final, an optimistic choice is final when its pulses are free; only x1s
     whose chosen rows an earlier x1 has as candidates need the sequential pass".
+  - **Long fields (Merlin's note):** a strict file with a field over 16 digits takes the
+    general reader, so one over 309 digits now reads as Inf (as textscan does) instead of
+    stage 1's `OverflowError` from `float(int(field))`.
+  - **`txy.format_txy`** refuses anything but a 2-D float64 array (`ValueError`, at every size;
+    any memory layout is fine), since hits are float64 by contract and the formatter reads bit
+    patterns (Merlin's decision).
   - **Line-ending note:** the strict fast path's acceptance is tested equal to `_STRICT_CRLF` and
     `_STRICT_LF` (the regexes stay in `raw` as its definition).
 - **`roadmaps/txy-converter.md`**, Stage 2: the NumPy row of the results table (from

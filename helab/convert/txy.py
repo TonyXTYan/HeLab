@@ -40,6 +40,10 @@ def format_value(value: float) -> str:
 
 
 def format_txy(hits: Hits) -> bytes:
+    """Hits are a 2-D float64 array (any memory layout); anything else is refused, at every
+    size (the fast formatter reads the values' bit patterns)."""
+    if not isinstance(hits, np.ndarray) or hits.dtype != np.float64:
+        raise ValueError(f"TXY hits are a float64 array, not {getattr(hits, 'dtype', type(hits).__name__)}")
     if hits.ndim != 2 or (hits.size and hits.shape[1] != COLUMNS):
         raise ValueError(f"TXY hits are an (n, {COLUMNS}) array, not {hits.shape}")
     if not hits.size:

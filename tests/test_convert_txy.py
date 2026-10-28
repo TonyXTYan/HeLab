@@ -9,7 +9,7 @@ import stat
 import numpy as np
 import pytest
 
-from helab.convert.txy import format_txy, write_atomic, write_txy
+from helab.convert.txy import format_txy, format_txy_by_value, write_atomic, write_txy
 
 
 def test_values_format_as_dlmwrite_precision_8() -> None:
@@ -32,6 +32,23 @@ def test_hits_must_be_three_columns() -> None:
         format_txy(np.zeros((2, 2)))
     with pytest.raises(ValueError):
         format_txy(np.zeros(3))
+
+
+@pytest.mark.parametrize("rows", [0, 1, 255, 256, 3000])
+def test_hits_must_be_float64_at_every_size(rows: int) -> None:
+    hits = np.random.default_rng(rows).uniform(-1, 1, (rows, 3))
+    for wrong in (hits.astype(np.float32), (hits * 1000).astype(np.int64), hits.ravel()):
+        with pytest.raises(ValueError):
+            format_txy(wrong)
+    # Any layout of float64 is fine: Fortran order and strided views give the same bytes.
+    expected = format_txy_by_value(hits)
+    assert format_txy(hits) == expected
+    assert format_txy(np.asfortranarray(hits)) == expected
+    doubled = np.repeat(hits, 2, axis=1)  # columns 0, 0, 1, 1, 2, 2
+    assert format_txy(doubled[:, ::2]) == expected
+    padded = np.zeros((2 * rows, 3))
+    padded[::2] = hits
+    assert format_txy(padded[::2]) == expected
 
 
 def test_the_write_is_atomic_and_leaves_no_temporary(tmp_path: Path) -> None:

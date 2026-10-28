@@ -65,7 +65,10 @@ The argument:
    order, which goes −1, +1, −2, +2, …).
 8. **NaN times** sort last and fail every test (x2 limit, pair tests), so they can't be or change
    a match: left out, and an x1 with a NaN time is a no-x2. Inf − Inf is NaN as in MATLAB
-   (warnings silenced with `np.errstate`).
+   (warnings silenced with `np.errstate`). After a non-finite t_zero, `t − t_zero` can put a NaN
+   before the end (Inf − Inf), so `t[:end]` isn't sorted and the window searches are off; that
+   is harmless, since every time is then ±Inf or NaN, every test fails and nothing can match
+   (and no gap is wide enough to cut: their differences are NaN). (Merlin's review.)
 9. **Output.** Rows 1..R of MATLAB's matrix end as the R hits in x1 order; a failed y overwrites
    row `which_row` and steps back. Only row R + 1 can hold anything else: the x pair of the last
    no-y attempt after the last hit, which survives (T = 0, Y = 0) exactly when

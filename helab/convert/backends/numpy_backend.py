@@ -128,7 +128,9 @@ def _reconstruct(pulses: RawPulses, profile: DetectorProfile) -> Hits:
 
     first = 1 if profile.skip_first_sorted_row else 0
     # Rows with a NaN time sort last. Every test on them is false (L477, L544), so they can't be
-    # a match or change one: they are left out, and an x1 with a NaN time finds nothing.
+    # a match or change one: they are left out, and an x1 with a NaN time finds nothing. (After
+    # a non-finite t_zero, t − t_zero can put a NaN before the end, so t[:end] isn't sorted;
+    # harmless, since every time is then ±Inf or NaN and nothing can match.)
     end = n - int(np.count_nonzero(np.isnan(t)))
     x1 = np.flatnonzero(ch[:end] == profile.channel_x1)
     x1 = x1[x1 >= first]
