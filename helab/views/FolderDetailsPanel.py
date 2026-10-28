@@ -297,7 +297,8 @@ class FolderDetailsPanel(QScrollArea):
         if session is not None and session.path == path and session.convert is not None:
             # Live's auto-convert (TXY converter stage 4): what it converts and what waits, and why.
             text, lines, _ = explorer.live_control.convert_line(session)
-            text = text if session.convert.error else text.removeprefix("auto-convert ")
+            # (The row is "Auto-convert": its text doesn't say it again.)
+            text = text.removeprefix("auto-convert ")
             rows["convert"] = (text[:1].upper() + text[1:], "\n".join(lines))
         if dataset is None or not shown:
             return rows

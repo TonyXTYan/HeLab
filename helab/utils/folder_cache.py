@@ -281,6 +281,9 @@ class FolderCache(QObject):
         # (``convert``).
         self.auto_convert: set[str] = set()
         self.convert_lists: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        # Why each of a folder's unconvertible raw files can't be converted (``shot_unconvertible``,
+        # sent once: later conversions skip the file), kept while it stays unconvertible.
+        self.convert_reasons: OrderedDict[str, dict[str, str]] = OrderedDict()
         # Flag saves in flight: job owner → (path, the choice's set_at, who set it).
         self._pref_writes: dict[str, tuple[str, float, str]] = {}
         # Constants (F0b): the lab's (Settings → Lab parameters, set by the main window), and each
@@ -1063,6 +1066,12 @@ class FolderCache(QObject):
         self.convert_lists.move_to_end(job.path)
         while len(self.convert_lists) > self.MAX_SNAPSHOTS:
             self.convert_lists.popitem(last=False)
+        names = {str(entry[0]) for entry in lists["unconvertible"]}
+        reasons = {name: why for name, why in self.convert_reasons.pop(job.path, {}).items() if name in names}
+        if reasons:
+            self.convert_reasons[job.path] = reasons
+            while len(self.convert_reasons) > self.MAX_SNAPSHOTS:
+                self.convert_reasons.popitem(last=False)
 
     def set_folder_prefs(self, path: str, *, no_cache: bool, no_auto_load: bool, remove_cached: bool = False,
                          owner: str = "") -> bool:
@@ -3835,6 +3844,10 @@ class FolderCache(QObject):
                         self.remember_folder_icon(path)
         elif job.operation == "convert" and kind == "convert_summary":
             self._remember_convert(job, event)
+        elif job.operation == "convert" and kind == "shot_unconvertible":
+            self.convert_reasons.setdefault(job.path, {})[str(event["raw_name"])] = str(
+                event.get("message") or event["reason"])
+            self.convert_reasons.move_to_end(job.path)
         elif job.operation == "invalidate" and kind in ("removed", "admin_result"):
             # Its state was reset when it was submitted; only the cleanup deadline and usage are new.
             self._schedule_sweep(event.get("next_deadline"))

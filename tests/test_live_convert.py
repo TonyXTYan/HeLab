@@ -247,6 +247,48 @@ def test_auto_convert_is_remembered_for_the_session_and_shown_only_while_live(
     explorer.close_cleanup()
 
 
+def test_an_unconvertible_files_reason_survives_auto_convert_off_and_on(
+        qtbot: QtBot, service: IOService, tmp_path: Path) -> None:
+    """A settled raw file with no rows is unconvertible, said once by the helper (later conversions skip
+    it): its reason is still given after auto-convert goes off and on (Heron2's review)."""
+    explorer, path = watching_raw_folder(qtbot, tmp_path)
+    session = explorer.live
+    assert session is not None
+    cycle(qtbot, explorer, path, tmp_path)
+    write_raw(Path(path), 4, b"\r\n\r\n")
+    cycle(qtbot, explorer, path, tmp_path)
+    _, sent = cycle(qtbot, explorer, path, tmp_path)
+    [refused] = of(sent, "shot_unconvertible")
+    reason = str(refused["message"] or refused["reason"])
+    assert session.convert is not None and session.convert.unconvertible == {"d4.txt": reason}
+    explorer.live_control.set_auto_convert(False)
+    explorer.live_control.set_auto_convert(True)
+    _, sent = cycle(qtbot, explorer, path, tmp_path)
+    assert not of(sent, "shot_unconvertible")  # Skipped, not said again ...
+    assert session.convert.unconvertible == {"d4.txt": reason}  # ... and its reason kept.
+    text, tooltip = line(explorer)
+    assert "1 unconvertible" in text and f"d4.txt: {reason}" in tooltip
+    explorer.stop_live(save=False)
+    explorer.close_cleanup()
+
+
+def test_a_launch_tabs_note_goes_once_live_starts_there(qtbot: QtBot, service: IOService, tmp_path: Path) -> None:
+    explorer, path = watching_raw_folder(qtbot, tmp_path, auto_convert=False)
+    explorer.stop_live(save=False)
+    live_launch._elsewhere[FolderCache.key(path)] = str(tmp_path / "first")
+    try:
+        text, tooltip = line(explorer)
+        assert text.endswith("set to start at launch; Live started in first's tab")
+        assert "Live runs in one tab at a time" in tooltip
+        assert explorer.start_live()
+        explorer.stop_live(save=False)
+        text, _ = line(explorer)
+        assert "set to start at launch" not in text and FolderCache.key(path) not in live_launch._elsewhere
+    finally:
+        live_launch._elsewhere.clear()
+    explorer.close_cleanup()
+
+
 def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService, monkeypatch: pytest.MonkeyPatch) -> None:
     cache = folder_cache.get_folder_cache(service)
     path = FolderCache.key("/data/run")

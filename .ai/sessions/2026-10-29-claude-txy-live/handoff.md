@@ -123,7 +123,11 @@ main window 40 ms in): the folders in `live_launch_folders` open in a tab each, 
 auto-convert, and Live starts in the first (current) once its data shows or it has no shots yet
 (`LaunchFolder`, as `PresetFolder`); a folder that can't be listed or started notifies once, no
 retry; working offline nothing starts and a notification says so; never under pytest unless a test
-asks."
+asks. Live runs in one tab at a time (a tab switch turns it off), so the other launch folders' tabs
+say on their Live line “set to start at launch; Live started in <first>'s tab” (and in their tab
+tooltip) until Live starts there (`live_launch.not_started_here`, cleared by `live_started`). A
+skipped unconvertible file keeps its reason across auto-convert off and on
+(`FolderCache.convert_reasons`, from `shot_unconvertible`)."
 
 ### `.ai/architecture/converter.md` ("In HeLab (stage 4)")
 
@@ -171,6 +175,10 @@ Stage 4 / L4: Live's auto-convert toggle, start at launch and low-count alerts d
   duration (max T); adding `t_max` to the event would allow it (helab-core's event, not changed
   here). 100 catches empty and near-empty shots (no atoms, MCP off) without firing on low-density
   runs (the test samples have 800–1,400 hits over ~4 s, which MATLAB's 700 Hz rule would flag).
+  Both alerts can notify for one shot: a plot of Shot trends with Notify during Live (counts in its
+  View range, its own rule) and `convert_low_hits` (all hits) are separate rules with separate keys,
+  so a low shot may raise two notifications (Heron2's review; one could be dropped, or the keys
+  shared, if Tony prefers).
   Options: (a) 100 hits (built); (b) a rate like MATLAB's (needs `t_max` in `shot_converted`);
   (c) per-folder thresholds.
 - **Q~4** (Tony): the Live line says "waiting for the first shot" next to "auto-convert 3
@@ -251,3 +259,13 @@ known-issues).
 **Branch CI** run 40759521398 (`6052733`, merged): **green on all three OSes, no RERUN**: macOS 8053
 passed, 669 skipped, 1 xfailed; Ubuntu 8051 passed, 671 skipped, 1 xfailed; Windows 8024 passed, 694
 skipped, 1 xfailed (17:23).
+
+## Review fixes (Heron2, on `96af286` + `8f01f07`: no blocker)
+
+| Finding | Fix |
+|---|---|
+| A skipped unconvertible file showed "can't be converted" without its reason after auto-convert (or Live) went off and on | `FolderCache.convert_reasons` keeps each folder's reasons from `shot_unconvertible` while the file stays unconvertible; the Live line uses them. Test: off and on, the reason stays. |
+| `live_launch._elsewhere` lasted the session | `live_launch.live_started(path)` (from `start_live`) clears the folder's note. Test: the note goes once Live starts there. |
+| Folder details: "Auto-convert" beside "Auto-convert stopped: …" | The row says "Stopped: …". |
+| Q~3: two low-count rules can notify for one shot | Said in Q~3. |
+| The launch tabs' Live-line note missing from the proposed `live.md` paragraph | Added (with the kept reasons). |

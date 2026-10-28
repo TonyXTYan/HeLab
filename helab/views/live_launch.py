@@ -84,6 +84,11 @@ def not_started_here(path: str) -> tuple[str, str] | None:
             "other tab's Live then stops.")
 
 
+def live_started(path: str) -> None:
+    """Live started in ``path``'s tab: its launch note ("Live started in … 's tab") no longer applies."""
+    _elsewhere.pop(FolderCache.key(path), None)
+
+
 def _name(path: str) -> str:
     return os.path.basename(path.rstrip(os.sep)) or path
 

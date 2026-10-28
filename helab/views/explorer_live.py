@@ -273,6 +273,7 @@ class LiveController:
         self._set_browsing_enabled(False)
         if not session.request:
             self._live_next(0.0)
+        live_launch.live_started(path)
         logging.info("Live on: %s", path)
         self._live_changed()
         return True
@@ -780,9 +781,10 @@ class LiveController:
         elif kind == "convert_summary":
             convert.waiting = {str(entry[0]): (str(entry[3]), str(entry[4])) if len(entry) >= 5 else ("", "")
                                for entry in event["waiting"]}
-            names = {str(entry[0]) for entry in event["unconvertible"]}
-            convert.unconvertible = {name: why for name, why in convert.unconvertible.items() if name in names}
-            convert.unconvertible.update(dict.fromkeys(names - set(convert.unconvertible), "can't be converted"))
+            # (A file skipped as unconvertible isn't sent again: its reason is the folder's, kept by FolderCache.)
+            reasons = self.explorer.model.cache.convert_reasons.get(session.path, {})
+            convert.unconvertible = {str(entry[0]): convert.unconvertible.get(str(entry[0])) or reasons.get(
+                str(entry[0]), "can't be converted") for entry in event["unconvertible"]}
         elif kind in ("done", "error", "cancelled", "offline"):
             if kind == "offline":
                 convert.error = "not while working offline"
