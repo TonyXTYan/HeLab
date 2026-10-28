@@ -8,12 +8,12 @@ MATLAB reads with ``textscan(fid, '%f64%f64', 'Delimiter', ',', 'MultipleDelimsA
 
 - fields are numbers (sign, digits, a point, an exponent written ``e`` or ``d``) or
   ``Inf``/``NaN`` in any case; spaces, tabs and backspaces around them are skipped;
-- a comma ends a field. The first non-blank line's ending sets which endings end a line: after
-  ``\\r\\n``, all of ``\\r\\n``, ``\\r`` and ``\\n``; after ``\\n``, only ``\\n`` (a later ``\\r`` is
-  a character like any other, so it stops the read); after ``\\r``, only ``\\r`` (a later ``\\n``
-  stops it); ``\\r\\r\\n`` counts as ``\\r\\n``, ``\\n\\r`` as ``\\n``. Only ``\\n`` at the very start of
-  the file are passed over to find it; the read then starts at the first byte in that mode (so in
-  ``\\r`` mode a leading ``\\n`` stops it at once). An empty field between commas or at a line's
+- a comma ends a field. The first line ending (after any ``\\n`` at the very start) sets which
+  endings end a line: after ``\\r\\n``, all of ``\\r\\n``, ``\\r`` and ``\\n``; after ``\\n``, only
+  ``\\n`` (a later ``\\r`` is a character like any other, so it stops the read); after ``\\r``, only
+  ``\\r`` (a later ``\\n`` stops it); ``\\r\\r\\n`` counts as ``\\r\\n``, ``\\n\\r`` as ``\\n``. The read
+  then starts at the first byte in that mode (so in ``\\r`` mode a leading ``\\n`` stops it at
+  once). An empty field between commas or at a line's
   start reads as NaN; a line ended early is filled with NaN; blank lines and a comma ending a
   full line are ignored;
 - a field followed directly by something that isn't a comma, an end of line or a blank is ended
