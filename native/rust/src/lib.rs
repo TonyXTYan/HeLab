@@ -12,6 +12,8 @@ pub mod reconstruct;
 
 use reconstruct::Params;
 
+type Array<'py> = Bound<'py, PyArray1<f64>>;
+
 /// The hits (an `(n, 3)` float64 array, sorted by T) and the number of pieces matched. The
 /// profile arrives unpacked (`rust.py`'s `_params`); `threads` and `piece_rows` split the shot
 /// (`reconstruct::cut_points`).
@@ -80,7 +82,7 @@ fn py_cut_points(times: PyReadonlyArray1<'_, f64>, window: f64, piece_rows: usiz
 
 /// `(channels, times)` of a strict raw file (`raw.py`'s fast path), or None for any other file.
 #[pyfunction(name = "parse_strict")]
-fn py_parse_strict<'py>(py: Python<'py>, data: &[u8]) -> Option<(Bound<'py, PyArray1<f64>>, Bound<'py, PyArray1<f64>>)> {
+fn py_parse_strict<'py>(py: Python<'py>, data: &[u8]) -> Option<(Array<'py>, Array<'py>)> {
     let data = data.to_vec();
     let (channels, times) = py.detach(|| rawio::parse_strict(&data))?;
     Some((channels.into_pyarray(py), times.into_pyarray(py)))

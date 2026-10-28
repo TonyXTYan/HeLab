@@ -138,7 +138,11 @@ pub fn prepare(mut rows: Vec<(f64, f64)>, p: &Params) -> Sorted {
                     continue;
                 }
                 let value = t[k];
-                if value.is_nan() || first.is_nan() || !((value - first).abs() <= tol) {
+                // `!(… <= tol)`, not `> tol`: as the reference writes it (equal for these
+                // non-NaN values, and kept so it reads alike).
+                #[allow(clippy::neg_cmp_op_on_partial_ord)]
+                let outside = !((value - first).abs() <= tol);
+                if value.is_nan() || first.is_nan() || outside {
                     first = value;
                 } else {
                     ch[k] = f64::NAN;
@@ -247,6 +251,9 @@ pub fn cut_points(t: &[f64], window: f64, piece_rows: usize) -> Vec<usize> {
     bounds
 }
 
+/// A piece's bounds and its own channels.
+type Slice<'a> = (usize, usize, &'a mut [f64]);
+
 /// The hits, `n × 3` row-major (T s, X m, Y m), sorted by T; and the number of pieces matched.
 /// `threads` > 1 matches pieces on that many threads; `piece_rows` 0 with `threads` > 1 picks
 /// about four pieces per thread.
@@ -267,7 +274,7 @@ pub fn reconstruct_rows(rows: Vec<(f64, f64)>, p: &Params, threads: usize, piece
     let bounds = cut_points(&t, p.search_window, piece_rows);
 
     // Each piece gets its own slice of ch: pieces never touch each other's rows.
-    let mut slices: Vec<(usize, usize, &mut [f64])> = Vec::with_capacity(bounds.len() - 1);
+    let mut slices: Vec<Slice> = Vec::with_capacity(bounds.len() - 1);
     let mut rest: &mut [f64] = &mut ch;
     for w in bounds.windows(2) {
         let (head, tail) = rest.split_at_mut(w[1] - w[0]);
@@ -278,7 +285,7 @@ pub fn reconstruct_rows(rows: Vec<(f64, f64)>, p: &Params, threads: usize, piece
     let pieces: Vec<Piece> = if threads == 1 || count == 1 {
         slices.into_iter().map(|(lo, hi, c)| match_piece(c, &t, lo, hi, &search, p)).collect()
     } else {
-        let jobs: Vec<Mutex<Option<(usize, usize, &mut [f64])>>> = slices.into_iter().map(|s| Mutex::new(Some(s))).collect();
+        let jobs: Vec<Mutex<Option<Slice>>> = slices.into_iter().map(|s| Mutex::new(Some(s))).collect();
         let done: Vec<Mutex<Option<Piece>>> = (0..count).map(|_| Mutex::new(None)).collect();
         let next = AtomicUsize::new(0);
         std::thread::scope(|scope| {

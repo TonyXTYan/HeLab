@@ -17,6 +17,7 @@ Qt-free; standard library and NumPy only (the compiled module needs NumPy too).
 from __future__ import annotations
 
 import importlib
+import threading
 from typing import Protocol, cast
 
 import numpy as np
@@ -50,6 +51,9 @@ class Native(Protocol):
 
 _native: Native | None = None
 _missing: str | None = None
+# Threads converting shots at once may be the first to ask: one imports, the others wait for it,
+# so none sees the module half-loaded or neither the module nor the reason.
+_loading = threading.Lock()
 
 
 def _import_native() -> Native:
@@ -60,10 +64,15 @@ def native() -> Native | None:
     """The compiled module, or None when it isn't installed (``missing_reason`` says why)."""
     global _native, _missing
     if _native is None and _missing is None:
-        try:
-            _native = _import_native()
-        except ImportError as error:
-            _missing = f"{MODULE} isn't installed ({error}); build it with `maturin develop --release` in native/rust"
+        with _loading:
+            if _native is None and _missing is None:
+                try:
+                    module = _import_native()
+                except ImportError as error:
+                    _missing = (f"{MODULE} isn't installed ({error}); "
+                                "build it with `maturin develop --release` in native/rust")
+                else:
+                    _native = module
     return _native
 
 

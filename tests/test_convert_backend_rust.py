@@ -12,6 +12,8 @@ import json
 import math
 from pathlib import Path
 import random
+import threading
+import time
 
 import numpy as np
 import pytest
@@ -33,7 +35,9 @@ PROFILES = (MATLAB_2019, MATLAB_2023_LAB_EDIT)
 # automatic pieces on several threads.
 SPLITS = ((1, 0), (1, 1), (3, 1), (4, 0))
 
-needs_rust = pytest.mark.skipif(rust.native() is None, reason=f"{rust.MODULE} isn't installed (native/rust)")
+needs_rust = pytest.mark.skipif(
+    rust.native() is None,
+    reason=f"rust extension not built (stage 4 packaging): {rust.MODULE}; `maturin develop --release` in native/rust")
 
 
 def case_names() -> list[str]:
@@ -64,6 +68,36 @@ def test_without_the_compiled_module_the_backend_says_why_and_wont_run(monkeypat
     assert "reference" in available_backends(MATLAB_2019)
     with pytest.raises(BackendError, match="can't run"):
         reconstruct(parse_raw(b"5,1000\r\n"), MATLAB_2019, "rust")
+
+
+@needs_rust
+def test_many_threads_loading_the_module_at_once_all_get_it(monkeypatch: pytest.MonkeyPatch) -> None:
+    # As if no thread had loaded it yet: 32 threads ask at the same moment, through the registry
+    # and straight; the import is slowed so they all arrive while it runs.
+    real = rust._import_native
+    calls: list[int] = []
+
+    def slow() -> rust.Native:
+        calls.append(1)
+        time.sleep(0.05)
+        return real()
+
+    monkeypatch.setattr(rust, "_native", None)
+    monkeypatch.setattr(rust, "_missing", None)
+    monkeypatch.setattr(rust, "_import_native", slow)
+    pulses = parse_raw((CASES / "basic" / "d1.txt").read_bytes())
+    expected = reconstruct_reference(pulses, MATLAB_2019)
+    start = threading.Barrier(32)
+
+    def convert(k: int) -> bool:
+        start.wait()
+        if k % 2:
+            return get_backend("rust").unavailable(MATLAB_2019) is None and rust.native() is not None
+        return same_hits(reconstruct(pulses, MATLAB_2019, "rust"), expected)
+
+    with ThreadPoolExecutor(32) as pool:
+        assert all(pool.map(convert, range(32)))
+    assert calls == [1]
 
 
 @needs_rust
