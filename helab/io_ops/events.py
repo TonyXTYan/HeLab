@@ -68,6 +68,7 @@ class UnverifiedField(TypedDict, total=False):
 
 class LiveState(TypedDict):
     """What the next Live check compares with (``live.live_check``'s ``state``)."""
+    live_helab: NotRequired[list[list[Any]]]  # HeLab's folders' state (``helab_txy.folder_state``)
     live_since: int | None
     live_listed: bool
     live_seconds: float
@@ -382,6 +383,18 @@ class TooLargeEvent(TypedDict):
     refused: bool
 
 
+class TxyRecord(TypedDict):
+    """Which TXY a dataset is made of (Q6.6, ``helab_txy.record``): the source asked for
+    (``txy_sources.SOURCES``), HeLab's shots' origins (``{shot: "helab:<profile hash>"}``), those
+    profiles' name/version/calibrated by hash, the profile hash asked for ("" any) and HeLab's
+    folders' ``[[folder, mtime_ns]]`` as the listing found them."""
+    source: str
+    origins: dict[str, str]
+    profiles: dict[str, dict[str, Any]]
+    profile_hash: str
+    folders: list[list[Any]]
+
+
 class _LoadedBase(TypedDict):
     kind: Literal["loaded"]
     rows: int
@@ -399,7 +412,8 @@ class _LoadedBase(TypedDict):
     cache_reason: str
     fingerprint: list[Any]
     memory_shots: list[int]
-    signature: str
+    signature: str  # The folder's, as a scan computes it: its settled MATLAB TXY (``helab_txy.matlab_signature``).
+    txy: NotRequired[TxyRecord | dict[str, Any]]
 
 
 class CachedLoadedEvent(_LoadedBase):

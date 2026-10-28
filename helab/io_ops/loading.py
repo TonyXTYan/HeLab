@@ -1,13 +1,11 @@
 """Loading TXY data (``load``) and cached reads (``cached``), with the dataset save."""
 from __future__ import annotations
 
-import hashlib
-import json
 import os
 import time
 from typing import Any, TYPE_CHECKING
 
-from helab.io_ops import fingerprints, infra
+from helab.io_ops import fingerprints, helab_txy, infra
 from helab.io_ops.events import DiskCachedField, PendingSaveEvent, RawMtimeField
 from helab.io_ops.fingerprints import (DEFAULT_CHECK_LEVEL, _as_of, _cached_signature, _clock_ahead,
                                        _fingerprint_signature, _mtime_unchanged, _quick_mtime, _raw_list,
@@ -18,7 +16,7 @@ from helab.io_ops.infra import (Emit, Heartbeat, Pause, _entry_stat, _is_dir, _r
                                 _scandir, _stat, emit)
 from helab.io_ops.stores import _cache_info, _data_root, _deadline, _open_store
 from helab.io_ops.summary import _save_summary, _summary
-from helab.utils import file_kinds, large_folder
+from helab.utils import file_kinds, large_folder, txy_sources
 
 if TYPE_CHECKING:
     from helab.utils.cache_store import CacheStore, SaveGuard
@@ -105,19 +103,41 @@ def read_cached(path: str, output: str, send: Emit = emit,
           "load_counts": {"reused_memory": 0, "reused_disk": len(shots), "new": 0, "modified": 0,
                           "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
           "cache_reason": "", "fingerprint": fingerprint, "memory_shots": [], "verified": False, **root,
-          "raw_times": _raw_list(_saved_raw_times(row), shots),
+          "raw_times": _raw_list(_saved_raw_times(row), shots), "txy": _txy_record(info),
           "signature": info.get("signature") or _fingerprint_signature(fingerprint)})
 
 
+def _txy_record(info: dict[str, Any]) -> dict[str, Any]:
+    """A cached dataset's ``txy`` (data cached before HeLab's TXY were looked for: MATLAB's alone)."""
+    record = info.get(txy_sources.TXY_FIELD)
+    return dict(record) if isinstance(record, dict) else helab_txy.default_record()
+
+
+def _helab_unchanged(path: str, store: CacheStore | None, txy: dict[str, Any], saved: dict[str, Any]) -> bool:
+    """Nothing converted, and no other profile asked for, since ``saved`` (a dataset's ``txy``) was
+    made: HeLab's folders have the mtimes it recorded (none, for data made before any existed)."""
+    source = str(txy.get("source") or txy_sources.DEFAULT_SOURCE)
+    if saved.get("source", txy_sources.DEFAULT_SOURCE) != source:
+        return False
+    if not txy_sources.wants_helab(source):
+        return True
+    state = helab_txy.folder_state(helab_txy.folders(path, txy, helab_txy.store_key(store, path)), time.time())
+    if (state or saved.get("origins")) and saved.get("profile_hash", "") != str(txy.get("profile_hash") or ""):
+        return False
+    return helab_txy.state_unchanged(saved.get("folders") or [], state)
+
+
 def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
-                           base_signature: str, memory: list[list[int]], check_level: str) -> bool | None:
+                           base_signature: str, memory: list[list[int]], check_level: str,
+                           txy: dict[str, Any] | None = None) -> bool | None:
     """One folder stat instead of listing and checking every file.
 
     When the caller holds the cached dataset (``base_signature``), the cache has
     no files that were still being written, and the folder's mtime is the one its
     listing saw (``_mtime_unchanged``), nothing can have been added or
     removed: ``loaded`` names the caller's shots and True is returned. None: the
-    check doesn't apply (no such cached dataset), and the folder wasn't looked at.
+    check doesn't apply (no such cached dataset), and the folder wasn't looked at. HeLab's TXY
+    (``txy``) count as unchanged only while HeLab's folders are (``_helab_unchanged``).
     """
     found = store.read_dataset_row(path)
     if found.value is None:
@@ -130,8 +150,10 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
     folder = _stat(path, "cached check: folder")
     modified = folder.st_mtime
     fingerprint = [list(entry) for entry in _saved_fingerprint(row)]
+    record = _txy_record(info)
     if (not _mtime_unchanged(info, folder, as_of)
-            or not _samples_unchanged(path, fingerprint, info.get("names"), check_level)):
+            or not _samples_unchanged(path, fingerprint, info.get("names"), check_level)
+            or not _helab_unchanged(path, store, txy or {}, record)):
         return False
     held = sorted({int(entry[0]) for entry in memory} & {int(entry[0]) for entry in fingerprint})
     problematic = [value for value in row["problematic"] if isinstance(value, int) and value in held]
@@ -146,13 +168,14 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
           "load_counts": {"reused_memory": len(held), "reused_disk": 0, "new": 0, "modified": 0,
                           "removed": 0, "read": 0, "new_loaded": 0, "modified_loaded": 0},
           "cache_reason": "Folder not modified since cached", "fingerprint": fingerprint,
-          "raw_times": _raw_list(_saved_raw_times(row), held),
+          "raw_times": _raw_list(_saved_raw_times(row), held), "txy": record,
           "memory_shots": held, "base_signature": base_signature, "signature": base_signature})
     return True
 
 
 def _unchanged_since_memory(path: str, send: Emit, store: CacheStore | None, base_signature: str,
-                            memory: list[list[int]], check: dict[str, Any], check_level: str) -> bool:
+                            memory: list[list[int]], check: dict[str, Any], check_level: str,
+                            txy: dict[str, Any] | None = None) -> bool:
     """The quick check of data held in RAM without a disk cache (no .helab-root, Don't cache, or one
     not saved yet), as ``_unchanged_since_cache`` from the dataset's own load: its listing time,
     file names, identity and folder mtime (``memory_check``). The folder must be at the same location
@@ -175,8 +198,11 @@ def _unchanged_since_memory(path: str, send: Emit, store: CacheStore | None, bas
             return False
     folder = _stat(path, "memory check: folder")
     modified = folder.st_mtime
+    record = check.get(txy_sources.TXY_FIELD)
+    record = dict(record) if isinstance(record, dict) else helab_txy.default_record()
     if (not _mtime_unchanged(check, folder, listed_at)
-            or not _samples_unchanged(path, fingerprint, names, check_level, "memory check: sample")):
+            or not _samples_unchanged(path, fingerprint, names, check_level, "memory check: sample")
+            or not _helab_unchanged(path, store, txy or {}, record)):
         return False
     held = sorted({int(entry[0]) for entry in memory} & {int(entry[0]) for entry in fingerprint})
     problematic = [value for value in check.get("problematic") or () if isinstance(value, int) and value in held]
@@ -191,7 +217,7 @@ def _unchanged_since_memory(path: str, send: Emit, store: CacheStore | None, bas
           "cache_reason": "Folder not modified since loaded", "fingerprint": fingerprint,
           "memory_shots": held, "base_signature": base_signature, "signature": base_signature,
           # Still the folder as of that listing, for the next quick check.
-          "listed_at": listed_at, "names": names, "identity": identity,
+          "listed_at": listed_at, "names": names, "identity": identity, "txy": record,
           "folder_mtime_ns": check.get("folder_mtime_ns")})
     return True
 
@@ -202,7 +228,8 @@ def load(path: str, output: str, send: Emit = emit,
          expected: str = "", *, limits: dict[str, Any] | None = None, allow_large: bool = False,
          no_cache: bool = False, full_check: bool = False, cache_base: bool = False,
          check_level: str = DEFAULT_CHECK_LEVEL, allow_missing: bool = False,
-         memory_check: dict[str, Any] | None = None, memory_raw_times: list[list[int]] | None = None) -> None:
+         memory_check: dict[str, Any] | None = None, memory_raw_times: list[list[int]] | None = None,
+         txy: dict[str, Any] | None = None, memory_origins: dict[str, str] | None = None) -> None:
     """Load converted TXY files, reusing unchanged shots from RAM and disk cache.
 
     ``memory`` lists ``[shot, size, mtime_ns]`` for shots the caller already holds
@@ -223,6 +250,10 @@ def load(path: str, output: str, send: Emit = emit,
     (``limits``) stops with ``too_large`` before reading anything, unless ``allow_large``.
     A folder the user chose not to cache (``no_cache``, or its saved flag) is read into RAM
     only: its cached data is neither used nor written.
+    ``txy``: which TXY to load (``txy_sources``: the source, the profile HeLab's must be made with,
+    and where HeLab's folders are, ``helab_txy``); without it, MATLAB's with HeLab's current ones
+    filling the shots MATLAB lacks. ``memory_origins``: the held shots' origins (``{shot: origin}``,
+    HeLab's only): a held shot is reused only from the same kind of TXY.
     """
     from helab.utils.cache_store import StoreError
     store = _open_store(cache_options, send, path)
@@ -249,7 +280,8 @@ def load(path: str, output: str, send: Emit = emit,
               (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
               limits=limits, allow_large=allow_large, no_cache=no_cache, no_cache_reason=no_cache_reason,
               full_check=full_check, cache_base=cache_base, check_level=check_level,
-              allow_missing=allow_missing, memory_check=memory_check, memory_raw_times=memory_raw_times)
+              allow_missing=allow_missing, memory_check=memory_check, memory_raw_times=memory_raw_times,
+              txy=txy, memory_origins=memory_origins)
     finally:
         if store is not None:
             store.close()
@@ -261,8 +293,16 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           allow_large: bool = False, no_cache: bool = False, no_cache_reason: str = "",
           full_check: bool = False, cache_base: bool = False, check_level: str = DEFAULT_CHECK_LEVEL,
           allow_missing: bool = False, memory_check: dict[str, Any] | None = None,
-          memory_raw_times: list[list[int]] | None = None) -> None:
+          memory_raw_times: list[list[int]] | None = None, txy: dict[str, Any] | None = None,
+          memory_origins: dict[str, str] | None = None) -> None:
     from helab.utils.cache_store import StoreError
+    txy = dict(txy or {})
+    txy_source = str(txy.get("source") or txy_sources.DEFAULT_SOURCE)
+    if txy_source not in txy_sources.SOURCES:
+        raise ValueError(f"Unknown TXY source {txy_source!r} (have {', '.join(txy_sources.SOURCES)})")
+    txy["source"] = txy_source
+    # The held shots' origins (HeLab's; the rest are MATLAB's).
+    held_origins = helab_txy.origins_from(memory_origins)
     held_from = "memory"  # Where the shots counted as held are: the caller's RAM, or its cached read.
     if cache_base and not memory and not no_cache and store is not None:
         # The caller reads the cached dataset itself, beside this check: count its shots as held.
@@ -270,16 +310,18 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         if cached_row is not None:
             memory = [list(entry) for entry in _saved_fingerprint(cached_row)]
             base_signature = _cached_signature(cached_row)
+            held_origins = helab_txy.origins_from(_txy_record(_cache_info(cached_row["info"])).get("origins"))
             held_from = "the disk cache"
     quick: bool | None = None
     if (not no_cache and not full_check and base_signature and store is not None and memory
             and expected in ("", base_signature)):
-        quick = _unchanged_since_cache(path, send, store, base_signature, memory, check_level)
+        quick = _unchanged_since_cache(path, send, store, base_signature, memory, check_level, txy)
         if quick:
             return
     if (quick is None and memory_check and not full_check and base_signature and memory
             and expected in ("", base_signature)
-            and _unchanged_since_memory(path, send, store, base_signature, memory, memory_check, check_level)):
+            and _unchanged_since_memory(path, send, store, base_signature, memory, memory_check, check_level,
+                                        txy)):
         return
     # These imports are deliberately local: scanning does not initialize numpy,
     # pandas, any HeLab caches, or a QApplication.
@@ -300,6 +342,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     listed_stats: dict[int, tuple[int, int]] = {}
     # Raw files, for shot times: stat'ed later, only for shots whose time isn't known (``raw_time``).
     raw_entries: dict[int, os.DirEntry[str]] = {}
+    # HeLab's TXY beside the raw files (their provenance is in HeLab's folder, ``helab_txy``).
+    beside_entries: dict[int, os.DirEntry[str]] = {}
+    # MATLAB's TXY: file and (size, mtime), by shot.
+    matlab: dict[int, str] = {}
+    matlab_stats: dict[int, tuple[int, int]] = {}
     with _scandir(path, "load: listing") as directory:
         for entry in directory:
             beat()
@@ -307,15 +354,38 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 kind, shot = matched
                 found.setdefault(kind.name, set()).add(shot)
                 if kind.loaded:
-                    files.append((shot, entry.path))
+                    matlab[shot] = entry.path
                     entry_info = _entry_stat(entry, "load: checking")
-                    listed_stats[shot] = (entry_info.st_size, entry_info.st_mtime_ns)
+                    matlab_stats[shot] = (entry_info.st_size, entry_info.st_mtime_ns)
                 elif kind is file_kinds.RAW:
                     raw_entries[shot] = entry
+                elif kind is file_kinds.HELAB_TXY:
+                    beside_entries[shot] = entry
             elif not has_dirs and _is_dir(entry):
                 has_dirs = True
+    # HeLab's current TXY (Q6.6), as the source asks; their folders' state first, for the next quick check.
+    helab_key = helab_txy.store_key(store, path) or str(txy.get("key") or "")
+    helab_state: list[list[Any]] = []
+    helab_found: dict[int, helab_txy.HelabShot] = {}
+    if txy_sources.wants_helab(txy_source):
+        helab_state = helab_txy.folder_state(helab_txy.folders(path, txy, helab_key), listed_at)
+        trusted = {int(shot): (int(size), int(modified), held_origins[int(shot)])
+                   for shot, size, modified in memory or () if int(shot) in held_origins}
+        helab_found = helab_txy.find(path, txy, helab_key, beside_entries, raw_entries, trusted)
+    chosen = helab_txy.compose(txy_source, matlab, helab_found)
+    origins = {shot: origin for shot, (_, origin) in chosen.items() if origin}
+    for shot, (filename, origin) in chosen.items():
+        files.append((shot, filename))
+        listed_stats[shot] = (matlab_stats[shot] if not origin
+                              else (helab_found[shot].size, helab_found[shot].mtime_ns))
+    def matlab_dir(shot: int) -> str:
+        """A file of the source folder's listing, as its entries name it (beside TXY are among them)."""
+        entry = beside_entries.get(shot)
+        return entry.path if entry is not None else os.path.join(path, "_")
+
     if not files:
-        raise ValueError("No converted TXY files in this folder")
+        raise ValueError("No current HeLab TXY in this folder" if txy_source == txy_sources.HELAB_ONLY
+                         else "No converted TXY files in this folder")
     files.sort()
 
     def stat_files(phase: str, reason: str) -> list[tuple[int, int, int]]:
@@ -328,7 +398,9 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         return result
 
     fingerprint = [(shot, *listed_stats[shot]) for shot, _ in files]
-    txy_bytes = sum(size for _, size, _ in fingerprint)
+    # The folder's own status (a scan's): its MATLAB TXY, whichever TXY this load takes.
+    matlab_print = [(shot, *matlab_stats[shot]) for shot in sorted(matlab_stats)]
+    txy_bytes = sum(size for _, size, _ in matlab_print)
     # Files another computer may still be writing are left out entirely (not in
     # the fingerprint), so the next load sees them as new and reads them whole.
     young = {item[0] for item in fingerprint} - {item[0] for item in _settled(fingerprint)}
@@ -342,13 +414,15 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # browsing skips its details scan (step 2) while this load runs, unless the
     # folder has subfolders (their dates come from step 2). Sent and saved before any
     # file is read; a basic scan's success is still needed to clear a failure.
-    summary = _summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, False, fingerprint, listed_at,
+    matlab_settled = _settled(matlab_print)
+    summary = _summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, False, matlab_settled, listed_at,
                        folder)
-    summary["unsettled"] = len(young)
+    summary["unsettled"] = len(matlab_print) - len(matlab_settled)
     send({"kind": "scan_summary", "status": summary})
     current = {shot: (size, modified) for shot, size, modified in fingerprint}
     in_memory = {int(shot) for shot, size, modified in memory or ()
-                 if current.get(int(shot)) == (size, modified)}
+                 if current.get(int(shot)) == (size, modified)
+                 and held_origins.get(int(shot), "") == origins.get(int(shot), "")}
     if guard is not None and store is not None:
         _save_summary(store, path, summary, guard, send)
     # What this load would add to RAM: shots the caller doesn't hold already.
@@ -366,7 +440,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # TXY files are written once: shots cached (or held in RAM) that the folder no longer has mean
     # another folder now sits at this path, or files were deleted. Stop before reading anything,
     # or unpacking the cache; the user decides (``allow_missing``: load the folder as it is now).
-    listed = found.get(file_kinds.TXY.name, set())
+    listed = set(chosen)
     held = {int(entry[0]) for entry in memory or ()}
     missing_checked = False
     # Shot times (raw files' mtimes): the caller's or the cache's, else stat'ed from the listing
@@ -407,7 +481,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             if stop_if_missing(held | ({int(entry[0]) for entry in row["fingerprint"]} if row is not None else set())):
                 return
             packed: bytes | None = None
-            if row is not None and not (_saved_fingerprint(row) == fingerprint and in_memory >= set(current)):
+            saved_origins = helab_txy.origins_from(_txy_record(_cache_info(row["info"])).get("origins")) \
+                if row is not None else {}
+            same_kind = {shot for shot in current if saved_origins.get(shot, "") == origins.get(shot, "")}
+            if row is not None and not (_saved_fingerprint(row) == fingerprint and saved_origins == origins
+                                        and in_memory >= set(current)):
                 # The dataset itself is needed: read it with its row, which may have changed meanwhile.
                 full = store.read_dataset(path)
                 if full.failed:
@@ -417,14 +495,20 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             saved_fingerprint = _saved_fingerprint(row) if row is not None else None
             previous = [value for value in row["problematic"] if isinstance(value, int)] if row is not None else []
             cache_info = _with_sizes(_cache_info(row["info"]), row) if row is not None else {}
+            if row is not None:
+                # Read with its row, which may have changed meanwhile.
+                saved_origins = helab_txy.origins_from(_txy_record(_cache_info(row["info"])).get("origins"))
+                same_kind = {shot for shot in current if saved_origins.get(shot, "") == origins.get(shot, "")}
             if saved_fingerprint is not None:
-                baseline = {shot: (size, modified) for shot, size, modified in saved_fingerprint}
+                # A shot cached from the other kind of TXY counts as modified (its fingerprint is left out).
+                baseline = {shot: (size, modified) for shot, size, modified in saved_fingerprint
+                            if shot not in current or shot in same_kind}
             if row is not None:
                 # Only for shots whose TXY file is unchanged (raw files are never rewritten): a
                 # changed one may be another run's shot of that number (a folder copied over this
                 # one), so its raw file is stat'ed.
                 saved_raw = {shot: value for shot, value in _saved_raw_times(row).items()
-                             if shot in current and baseline.get(shot) == current[shot]}
+                             if shot in current and baseline.get(shot) == current[shot] and shot in same_kind}
                 raw_times.update(saved_raw)
 
             # Unpacking brings the whole cached dataset into RAM, more than the folder now holds if
@@ -435,10 +519,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             def unpack() -> dict[int, Any] | None:
                 return unpack_dataset(packed) if packed is not None and not too_big else None
 
-            if saved_fingerprint == fingerprint and packed is None:
+            whole = saved_fingerprint == fingerprint and saved_origins == origins
+            if whole and packed is None:
                 # The caller already holds every shot: no need to decompress the cache.
                 cached, problematic = True, previous
-            elif saved_fingerprint == fingerprint:
+            elif whole:
                 cache_reason = "Cached dataset invalid"
                 unpacked = unpack()
                 if unpacked is not None:
@@ -449,7 +534,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                 # Keep shots whose converted file is unchanged; only new or
                 # modified TXY files are read and merged into the dataset.
                 data = {shot: array for shot, array in (unpack() or {}).items()
-                        if shot in current and baseline.get(shot) == current[shot]}
+                        if shot in current and baseline.get(shot) == current[shot] and shot in same_kind}
                 reused = set(data)
                 problematic = [shot for shot in previous if shot in reused]
             if too_big:
@@ -464,7 +549,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     if not missing_checked and stop_if_missing(held):
         return
     from_disk = reused - in_memory
-    baseline.update({int(shot): (size, modified) for shot, size, modified in memory or ()})
+    baseline.update({int(shot): (size, modified) for shot, size, modified in memory or ()
+                     if int(shot) not in current or held_origins.get(int(shot), "") == origins.get(int(shot), "")})
     new_shots = set(current) - set(baseline)
     modified_shots = {shot for shot in current.keys() & baseline.keys()
                       if current[shot] != baseline[shot]}
@@ -502,6 +588,10 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         return (info.st_size, info.st_mtime_ns) == fingerprint[index][1:]
 
     def read_txy(shot: int, filename: str, reason: str = "load: read") -> Any:
+        if shot in origins and listed_stats[shot][0] == 0:
+            # HeLab's TXY of a shot with no hits (Q10.3): converted, empty.
+            data[shot] = np.empty((0, 3), dtype=np.float64)
+            return data[shot]
         _read_gate(filename)
         frame = infra._read_txy_file(filename, reason)
         if frame.isna().any().any():
@@ -579,7 +669,10 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     verify_reason = "load: verifying"  # (The trace's only: the second check is the cache save's.)
     if changed():
         raise ValueError("Folder changed while loading — Retry")
-    names = [os.path.basename(filename) for _, filename in files]
+    # HeLab's not beside the raw files are named in full (a quick check's samples join them to the folder).
+    names = [filename if shot in origins and os.path.dirname(filename) != os.path.dirname(matlab_dir(shot))
+             else os.path.basename(filename) for shot, filename in files]
+    txy_record = helab_txy.record(txy_source, origins, helab_found, None, txy, helab_state)
     # Left out when the cache couldn't be read: unknown, not "not cached".
     known_cached: DiskCachedField = {} if had_dataset is None and not cached else {
         "disk_cached": cached or bool(had_dataset)}
@@ -593,7 +686,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           "cache_info": cache_info, "load_counts": load_counts,
           "cache_reason": cache_reason, "raw_times": _raw_list(raw_times, current),
           "fingerprint": fingerprint, "memory_shots": sorted(in_memory), "base_signature": base_signature,
-          "signature": hashlib.sha256(json.dumps(fingerprint).encode()).hexdigest(),
+          "signature": helab_txy.matlab_signature(fingerprint, origins), "txy": txy_record,
           # For a quick check of this data held in RAM (``_unchanged_since_memory``).
           "listed_at": listed_at, "names": names, "identity": _location_identity(path, "load: identity"),
           "folder_mtime_ns": folder_mtime_ns})
@@ -631,7 +724,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         if reread and changed():
             raise ValueError("Folder changed before cache could be saved")
         _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, load_counts,
-                       unsettled, bool(had_dataset), budget, budget_set_at, send, raw_times, folder_mtime_ns)
+                       unsettled, bool(had_dataset), budget, budget_set_at, send, raw_times, folder_mtime_ns,
+                       txy_record)
     except Exception as exc:
         _save_failed(store, exc, send)
 
@@ -640,16 +734,20 @@ def _write_dataset(store: CacheStore, path: str, guard: SaveGuard, data: dict[in
                    fingerprint: list[tuple[int, int, int]], problematic: list[int], names: list[str],
                    listed_at: float, counts: dict[str, int], unsettled: int, had_dataset: bool,
                    budget: int | None, budget_set_at: float | None, send: Emit,
-                   raw_times: dict[int, int] | None = None, folder_mtime_ns: int | None = None) -> None:
+                   raw_times: dict[int, int] | None = None, folder_mtime_ns: int | None = None,
+                   txy_record: dict[str, Any] | None = None) -> None:
     """Save a folder's dataset to the disk cache within the budget (a pending save that doesn't fit),
     under the guard its job took when it started; ``cache_saved`` and ``disk_cached``, or the pending
     event. ``raw_times``: its shots' times, where known. ``folder_mtime_ns``: the folder's mtime before
-    the listing (``_quick_mtime``; None: no quick check until a listing records one). Raises on
-    failure (``_save_failed``)."""
+    the listing (``_quick_mtime``; None: no quick check until a listing records one). ``txy_record``:
+    which TXY it is made of (``helab_txy.record``; None: MATLAB's alone). Raises on failure
+    (``_save_failed``)."""
     from helab.utils.cache_store import DATASET_FORMAT, pack_dataset
     file = store.write_dataset_file(pack_dataset(data))
-    info = {"saved_at": time.time(), "snapshot_at": listed_at, "signature": hashlib.sha256(
-        json.dumps(fingerprint).encode()).hexdigest(), "action": "updated" if had_dataset else "created",
+    record = txy_record or helab_txy.default_record()
+    info = {"saved_at": time.time(), "snapshot_at": listed_at,
+            "signature": helab_txy.matlab_signature(fingerprint, helab_txy.origins_from(record.get("origins"))),
+            "action": "updated" if had_dataset else "created", txy_sources.TXY_FIELD: record,
         "counts": counts, "unsettled": unsettled, "kind": file_kinds.TXY.name, "format": DATASET_FORMAT,
         # Its TXY files' names, in fingerprint order, for the quick check's samples.
         "names": names, "folder_mtime_ns": folder_mtime_ns,
