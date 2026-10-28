@@ -24,8 +24,9 @@ this module only changes how the answer is found). Metal has no float64 and the 
    whatever is marked). Only an x1 whose first choice claims a pulse an earlier x1's first-choice
    hit also marks is **contested**; those are recomputed exactly, in x1 order, against the
    final hits of the x1 rows before them that can reach the same pulses (within twice the
-   search reach), and a recomputed x1 whose answer changed makes the x1 rows after it within
-   that reach contested too. Uncontested x1 rows keep their first choice.
+   search reach). A recomputed x1 whose new hit marks a pulse that a later x1's first choice
+   claims makes that x1 contested too (a removed mark can't change a first choice, which
+   ignores marks). Uncontested x1 rows keep their first choice.
 4. **CPU, NumPy, float64:** T, X and Y from the matched rows' float64 times with the reference's
    operations in its order; MATLAB's phantom row (the last x pair with no y, in a grown row);
    one stable sort by T.
@@ -286,20 +287,23 @@ def _gpu_batch(times: mlx.core.array, codes: mlx.core.array, rows: mlx.core.arra
     return x2k, pk
 
 
-def _exact_choice(prep: Prepared, i: int, used: set[int]) -> tuple[int, int, int]:
+def _exact_choice(prep: Prepared, i: int, used: set[int], search: list[int], half: int) -> tuple[int, int, int]:
     """MATLAB's search for the x1 at row ``i`` with ``used`` rows marked (L456–560): the x2 row
-    and the y pair's rows, NONE where there is none."""
+    and the y pair's rows, NONE where there is none. ``half``: the largest offset."""
     lim, n = prep.limits, prep.rows
-    times, codes = prep.times, prep.codes
-    x1 = int(times[i])
+    low = max(i - half, 0)
+    times = prep.times[low:i + half + 1].tolist()
+    codes = prep.codes[low:i + half + 1].tolist()
+    x1 = times[i - low]
     candidates: list[tuple[int, int, int]] = []    # (row, code, difference) in search order
-    for offset in prep.search.tolist():
+    for offset in search:
         j = i + offset
-        if j < 0 or j >= n or j in used or codes[j] == 0:
+        if j < 0 or j >= n or j in used:
             continue
-        d = int(times[j]) - x1
-        if abs(d) <= lim.window:
-            candidates.append((j, int(codes[j]), d))
+        code = codes[j - low]
+        d = times[j - low] - x1
+        if code and abs(d) <= lim.window:
+            candidates.append((j, code, d))
     x2_row = x2_diff = NONE
     for j, code, d in candidates:
         if code == X2 and abs(d) <= lim.x2:
@@ -316,25 +320,33 @@ def _exact_choice(prep: Prepared, i: int, used: set[int]) -> tuple[int, int, int
     return x2_row, NONE, NONE
 
 
-def resolve(prep: Prepared, first: Choices) -> Choices:
-    """Step 3: MATLAB's greedy order, from the first choices (see the module's notes)."""
+def contested_at_start(prep: Prepared, first: Choices) -> npt.NDArray[np.bool_]:
+    """Per x1: whether its first choice claims a pulse an earlier x1's first-choice hit marks."""
     count = prep.x1_rows.shape[0]
-    final = first.copy()
-    if count == 0:
-        return final
-    hit = final.y1 != NONE
+    hit = first.y1 != NONE
     a = np.arange(count, dtype=np.int64)
     # owner[row]: the earliest x1 (index into x1_rows) whose first-choice hit marks the row.
     owner = np.full(prep.rows, count, dtype=np.int64)
-    for column in (final.x2, final.y1, final.y2):
+    for column in (first.x2, first.y1, first.y2):
         np.minimum.at(owner, column[hit], a[hit])
     contested = np.zeros(count, dtype=bool)
-    for column in (final.x2, final.y1, final.y2):
+    for column in (first.x2, first.y1, first.y2):
         claimed = column != NONE
         contested[claimed] |= owner[column[claimed]] < a[claimed]
+    return contested
+
+
+def resolve(prep: Prepared, first: Choices) -> Choices:
+    """Step 3: MATLAB's greedy order, from the first choices (see the module's notes)."""
+    final = first.copy()
+    if prep.x1_rows.shape[0] == 0:
+        return final
+    contested = contested_at_start(prep, first)
     if not contested.any():
         return final
-    reach = 2 * int(np.max(np.abs(prep.search))) if prep.search.size else 0
+    search = prep.search.tolist()
+    half = max(abs(offset) for offset in search)
+    reach = 2 * half                     # x1 rows further apart than this share no candidate
     rows = prep.x1_rows
     queue = np.flatnonzero(contested).tolist()
     heapq.heapify(queue)
@@ -344,15 +356,21 @@ def resolve(prep: Prepared, first: Choices) -> Choices:
         i = int(rows[k])
         low = int(np.searchsorted(rows, i - reach, side="left"))
         used: set[int] = set()
-        for b in range(low, k):
-            if final.y1[b] != NONE:
-                used.update((int(final.x2[b]), int(final.y1[b]), int(final.y2[b])))
-        choice = _exact_choice(prep, i, used)
+        for x2, y1, y2 in zip(final.x2[low:k].tolist(), final.y1[low:k].tolist(), final.y2[low:k].tolist()):
+            if y1 != NONE:
+                used.update((x2, y1, y2))
+        choice = _exact_choice(prep, i, used, search, half)
         if choice != (int(final.x2[k]), int(final.y1[k]), int(final.y2[k])):
             final.x2[k], final.y1[k], final.y2[k] = choice
+            if choice[1] == NONE:
+                continue        # no hit, no marks: removing marks can't change a first choice
+            # A later x1 not yet popped still holds its first choice; only one that claims a
+            # pulse this hit now marks can change.
             high = int(np.searchsorted(rows, i + reach, side="right"))
-            for b in range(k + 1, high):
-                if not queued[b]:
+            marks = set(choice)
+            for b, (x2, y1, y2) in enumerate(zip(final.x2[k + 1:high].tolist(), final.y1[k + 1:high].tolist(),
+                                                 final.y2[k + 1:high].tolist()), start=k + 1):
+                if not queued[b] and (x2 in marks or y1 in marks or y2 in marks):
                     queued[b] = True
                     heapq.heappush(queue, b)
     return final

@@ -68,7 +68,7 @@ def main() -> int:
         final = mlx_gpu.resolve(prep, first)
         changed = int(np.count_nonzero((first.x2 != final.x2) | (first.y1 != final.y1) | (first.y2 != final.y2)))
         row[2] += int(prep.x1_rows.size)
-        row[3] += _contested(prep, first)
+        row[3] += int(mlx_gpu.contested_at_start(prep, first).sum())
         row[4] += changed
         row[5] += int(np.count_nonzero(final.y1 != mlx_gpu.NONE))
     print(f"profile {profile.name}, positions {args.positions}")
@@ -79,23 +79,6 @@ def main() -> int:
         print(f"{name:32} {row[0]:5} {row[1]:5} {row[2]:10} {row[3]:9} {row[4]:8} {row[5]:10}")
     print(f"{'all':32} {totals[0]:5} {totals[1]:5} {totals[2]:10} {totals[3]:9} {totals[4]:8} {totals[5]:10}")
     return 1 if bad else 0
-
-
-def _contested(prep: mlx_gpu.Prepared, first: mlx_gpu.Choices) -> int:
-    """The x1 rows the greedy pass starts with as contested (as ``resolve`` computes them)."""
-    count = prep.x1_rows.shape[0]
-    if count == 0:
-        return 0
-    hit = first.y1 != mlx_gpu.NONE
-    a = np.arange(count)
-    owner = np.full(prep.rows, count)
-    for column in (first.x2, first.y1, first.y2):
-        np.minimum.at(owner, column[hit], a[hit])
-    contested = np.zeros(count, dtype=bool)
-    for column in (first.x2, first.y1, first.y2):
-        claimed = column != mlx_gpu.NONE
-        contested[claimed] |= owner[column[claimed]] < a[claimed]
-    return int(contested.sum())
 
 
 if __name__ == "__main__":

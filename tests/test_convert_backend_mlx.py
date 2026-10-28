@@ -163,7 +163,7 @@ FUZZ_PROFILES = {
 @pytest.mark.parametrize("name", sorted(FUZZ_PROFILES))
 def test_dense_contested_streams_match_the_reference(name: str) -> None:
     profile = FUZZ_PROFILES[name]
-    contested = changed = 0
+    changed = cascaded = 0
     gpu = mlx_gpu._unavailable(profile) is None
     for seed in range(40):
         pulses = fuzz_pulses(seed)
@@ -176,10 +176,12 @@ def test_dense_contested_streams_match_the_reference(name: str) -> None:
             assert txy_or_error(pulses, profile, True) == reference, f"gpu, seed {seed}"
             assert_same_choices(mlx_gpu.first_choices_mlx(prep), first)
         final = mlx_gpu.resolve(prep, first)
-        contested += int(np.count_nonzero(final.x2 != first.x2) + np.count_nonzero(final.y1 != first.y1))
-        changed += int(np.count_nonzero((final.x2 != first.x2) | (final.y1 != first.y1) | (final.y2 != first.y2)))
+        moved = (final.x2 != first.x2) | (final.y1 != first.y1) | (final.y2 != first.y2)
+        changed += int(np.count_nonzero(moved))
+        cascaded += int(np.count_nonzero(moved & ~mlx_gpu.contested_at_start(prep, first)))
     if name in ("2019", "fractional-limits", "no-quirks"):
-        assert changed > 0, "the fuzz should make the greedy pass change some first choices"
+        # The greedy pass changes first choices, some only because an earlier change cascaded.
+        assert changed > 0 and cascaded > 0, (changed, cascaded)
 
 
 def assert_same_choices(a: mlx_gpu.Choices, b: mlx_gpu.Choices) -> None:
