@@ -15,8 +15,8 @@ replace the constants MATLAB hard-codes, and a parameter scan tunes them on real
 ## Decided
 
 - **Goal** (Q6.3.2): HeLab replaces `tdc_autoconvert`; a headless converter, plus Live's
-  auto-convert toggle, shown once Live is on (Q6.8). Later: configurations that turn Live and
-  auto-convert on at launch.
+  auto-convert toggle, shown once Live is on (Q6.8), and folders set to start Live and
+  auto-convert at launch (Q9.6).
 - **Output:** `d_txy_helab_<N>.txy`, written to a temporary name and renamed. In this build every
   HeLab-made TXY stays in HeLab's temp folder; HeLab still never writes to source folders (Q8.2).
 - **First bar: byte-identical output.** Stages 1–2 reproduce the existing `_txy_forc` files byte
@@ -159,7 +159,9 @@ connected to all).
 - The 2025 plates need a calibration set (a dark run, a large thermal cloud, a halo, ideally
   with the MCP channel recorded); until then `plates-2025` stays uncalibrated.
 
-**Stage 4, in HeLab.** The helper operation (raw files read only once settled: unchanged for
+**Stage 4, in HeLab** (split into floors in the
+[overnight mandate](../.ai/sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md)). Every backend
+in the build (Q9.2; NumPy alone always works). The helper operation (raw files read only once settled: unchanged for
 5 s, size stable between checks, ending in a newline, starting with the trigger channel), the
 file kind, Live's auto-convert toggle (Q6.8), folders set to start Live and auto-convert at
 launch (Q9.6), the output location (temp, then a setting defaulting to the cache; beside the raw
@@ -172,7 +174,7 @@ export, tweak), provenance, and docs.
 every shot, then switch (Q6.3.2).
 
 **Later:** distributed compute (Q6.2, Q6.7), TXY kept only in caches (Q6.9), the parameter scan
-over profiles scored on real signals, launch configurations that start Live and auto-convert.
+over profiles scored on real signals.
 
 ## Open decisions
 
