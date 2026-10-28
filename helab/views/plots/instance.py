@@ -846,10 +846,10 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def _after_live(self) -> Optional[DatasetView]:
         """Once Live has stopped and no run is in flight, the shots of the plot's last Live run when
         that run left work out (``rerun_after_live``: a skipped bootstrap), to run once more; else
-        None. Once per shown result, so a failed rerun isn't repeated; never for a released plot
-        (its data may be gone: it runs again when shown)."""
+        None. Once per shown result, so a failed rerun isn't repeated; never for a pinned plot (Follow
+        Live off: it stays as it is) or a released one (its data may be gone: it runs again when shown)."""
         shown, view = self.shown, self._shown_view
-        if (not self.follow.final or self.follow.running or self.live() is not None or shown is None
+        if (not self.follow.final or not self.follow.on or self.follow.running or self.live() is not None or shown is None
                 or view is None or self.released is not None or shown.job_id == self._reran_after_live):
             return None
         return view if self._hook("rerun_after_live", False, shown) else None

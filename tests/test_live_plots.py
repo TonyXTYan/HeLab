@@ -494,6 +494,24 @@ def test_live_stopping_runs_the_skipped_bootstrap_once_on_the_same_shots(
     assert instance.shown is final and not instance.job_id  # Then it stays.
 
 
+def test_a_pinned_plot_keeps_its_live_result_when_live_stops(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot) -> None:
+    """Follow Live off pins the plot as it is, a skipped bootstrap included: stopping Live then
+    runs nothing (review on PR #9)."""
+    window.view = window.plots.live_feed.publish(revision([1, 2]))
+    instance = plot(window, qtbot, release_time.ReleaseTimePlot())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
+    window.plots.live_feed.publish(revision([1, 2, 3]))
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
+    pinned = instance.shown
+    assert pinned is not None and pinned.data.live_skipped
+    set_live(instance, FOLLOW, False)
+    window.plots.live_feed.stop(PATH)
+    qtbot.wait(200)
+    assert instance.shown is pinned and not instance.job_id
+
+
 def cloud_revision(shots: list[int]) -> Dataset:
     """A cloud released at rest (about 400 events a shot, the same for a shot in every revision)."""
     data = {}
