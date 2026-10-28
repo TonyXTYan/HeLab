@@ -22,6 +22,7 @@ from helab.utils.settings_defaults import (
 from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import GB, CacheTab, read_result_reuse
+from helab.views.ConverterTab import ConverterTab
 from helab.views.LabParametersTab import LabParametersTab
 
 
@@ -179,6 +180,10 @@ class SettingsDialog(QDialog):
         self.lab_tab = LabParametersTab(self.settings)
         self.tabs.addTab(self.lab_tab, "Lab parameters")
 
+        # The TXY converter: the profile, backend and output conversions use, and the profile manager (Q6.11).
+        self.converter_tab = ConverterTab(self.cache, self.settings)
+        self.tabs.addTab(self.converter_tab, "TXY converter")
+
         # TODO: default load folder
 
         # Scripts Tab
@@ -333,6 +338,7 @@ class SettingsDialog(QDialog):
         settings.setValue(REOPEN_PLOTS_SETTING, self.reopen_plots_checkbox.isChecked())
         self.cache_tab.save(settings)
         self.lab_tab.save(settings)
+        self.converter_tab.save(settings)
         self.accept()
         logging.debug("Settings saved")
 

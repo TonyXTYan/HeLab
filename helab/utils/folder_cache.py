@@ -8,7 +8,7 @@ import logging
 import math
 import os
 import time
-from typing import Any, Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 from uuid import uuid4
 import weakref
 
@@ -29,6 +29,9 @@ from helab.utils.io_service import IORequest, IOService
 from helab.utils.load_clock import LoadClock
 from helab.utils.time_format import clock as clock_text
 from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome
+
+if TYPE_CHECKING:
+    from helab.convert.profile import DetectorProfile
 
 
 # Folder checks that list a folder: browse step 1 (names only), browse step 2
@@ -333,10 +336,10 @@ class FolderCache(QObject):
         # Q6.6) is never taken for it (``dataset_key``).
         self.datasets: OrderedDict[tuple[str, str, int], Dataset] = OrderedDict()
         self.pins: dict[str, Dataset] = {}
-        # TXY sources (Q6.6): the profile hash HeLab's TXY must be made with ("" until read from the
-        # settings, ``convert_profile_hash``), and each folder's HeLab folders as its last Live check
+        # TXY sources (Q6.6): the profile HeLab's TXY must be made with (None until read from the
+        # settings, ``convert_profile``), and each folder's HeLab folders as its last Live check
         # found them (sent back as ``helab_since``).
-        self._convert_profile_hash: str | None = None
+        self._convert_profile: DetectorProfile | None = None
         self._live_helab: dict[str, list[list[Any]]] = {}
         # The RAM budget for datasets no tab shows (Settings → Cache; ``set_ram_budget``).
         self.max_data_bytes = DEFAULT_RAM_STEPS * ram_step_bytes()
@@ -827,17 +830,20 @@ class FolderCache(QObject):
     def dataset_key(self, dataset: Dataset) -> tuple[str, str, int]:
         return dataset.path, dataset.signature + self.source_suffix(self.dataset_source(dataset)), dataset.epoch
 
-    def convert_profile_hash(self) -> str:
-        """The content hash of the profile HeLab converts with: HeLab's TXY of another aren't loaded."""
-        if self._convert_profile_hash is None:
+    def convert_profile(self) -> DetectorProfile:
+        """The profile HeLab converts with (Settings → TXY converter): HeLab's TXY of another aren't loaded."""
+        if self._convert_profile is None:
             from helab.utils.constants import read_convert_profile
             from helab.utils.settings_store import app_settings
-            self._convert_profile_hash = read_convert_profile(app_settings()).content_hash()
-        return self._convert_profile_hash
+            self._convert_profile = read_convert_profile(app_settings())
+        return self._convert_profile
 
-    def set_convert_profile_hash(self, profile_hash: str) -> None:
+    def convert_profile_hash(self) -> str:
+        return self.convert_profile().content_hash()
+
+    def set_convert_profile(self, profile: DetectorProfile) -> None:
         """The profile HeLab converts with changed (Settings → TXY converter)."""
-        self._convert_profile_hash = profile_hash
+        self._convert_profile = profile
 
     def with_txy(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         """A load's payload with its ``txy`` options complete: the source (default unless given), the

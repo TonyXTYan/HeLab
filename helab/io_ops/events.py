@@ -108,6 +108,7 @@ class AdminResultFields(TypedDict, total=False):
     result_id: str  # an adopted result's saved row (R2)
     folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
     store: str  # the store an adoption answered from (its ``store_id``)
+    converted_txy: dict[str, int]  # HeLab's TXY under the cache folder after a Clear (files, bytes, folders)
 
 
 # Process and progress

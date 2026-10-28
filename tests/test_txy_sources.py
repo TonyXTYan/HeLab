@@ -397,6 +397,6 @@ def test_folder_cache_keeps_each_sources_datasets_apart(qtbot: Any, monkeypatch:
     assert sent["source"] == "matlab" and sent["profile_hash"] == MATLAB_2019.content_hash()
     assert sent["temps"] == constants.DIR_TEMPS and sent["cache_base"] == os.path.dirname(store_root(constants.cache_dir()))
     assert cache.with_txy(str(tmp_path), {"txy": {"source": "helab-only"}})["txy"]["source"] == "helab-only"
-    cache.set_convert_profile_hash("other")
-    assert cache.with_txy(str(tmp_path), {})["txy"]["profile_hash"] == "other"
+    cache.set_convert_profile(MATLAB_2023_LAB_EDIT)
+    assert cache.with_txy(str(tmp_path), {})["txy"]["profile_hash"] == MATLAB_2023_LAB_EDIT.content_hash()
     service.shutdown()

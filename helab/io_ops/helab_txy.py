@@ -226,3 +226,77 @@ def store_key(store: Any, path: str) -> str:
 def default_record(source: str = "matlab") -> dict[str, Any]:
     """The ``txy`` of data made before HeLab's TXY were looked for (MATLAB's alone)."""
     return {"source": source, "origins": {}, "profiles": {}, "profile_hash": "", "folders": []}
+
+
+# HeLab's TXY under the cache folder (Settings → Cache): outside the disk budget, and removed only when
+# the user asks (Q12.3): ``converted_usage`` measures them, ``clear_converted`` removes them.
+
+_OWN_FILE = re.compile(r"^(?:d_txy_helab_(0|[1-9][0-9]*)\.(?:txy|json)|\.d_txy_helab_(0|[1-9][0-9]*)\.txy\.[0-9a-f]{16}"
+                       r"\.partial|folder\.json)$", re.ASCII)
+
+
+def converted_root(cache_directory: str) -> str:
+    """``<cache folder>/converted-txy`` for the store at ``cache_directory`` (convert's base)."""
+    from helab.io_ops.convert import FOLDER_NAME
+    return os.path.join(os.path.dirname(os.path.abspath(cache_directory)), FOLDER_NAME)
+
+
+def converted_usage(root: str) -> dict[str, int]:
+    """HeLab's TXY files under ``root``: their count and bytes (records included), and the folders."""
+    usage = {"files": 0, "bytes": 0, "folders": 0}
+    try:
+        folders = [entry for entry in os.scandir(root) if entry.is_dir(follow_symlinks=False)]
+    except (FileNotFoundError, NotADirectoryError):
+        return usage
+    for folder in folders:
+        usage["folders"] += 1
+        try:
+            with os.scandir(folder.path) as entries:
+                for entry in entries:
+                    if entry.is_file(follow_symlinks=False) and _OWN_FILE.fullmatch(entry.name):
+                        usage["bytes"] += entry.stat(follow_symlinks=False).st_size
+                        usage["files"] += int(entry.name.endswith(".txy"))
+        except OSError:
+            continue
+    return usage
+
+
+def clear_converted(root: str) -> dict[str, int]:
+    """Remove HeLab's TXY under ``root`` (the user asked, Settings → Cache): each folder's TXY and their
+    records, never a file of another name or a link. The record of a TXY written beside the raw files
+    (no TXY of its shot here) stays, so that TXY can still be loaded; a folder left with its
+    ``folder.json`` alone goes."""
+    removed = {"files": 0, "bytes": 0}
+    try:
+        folders = [entry.path for entry in os.scandir(root) if entry.is_dir(follow_symlinks=False)]
+    except (FileNotFoundError, NotADirectoryError):
+        return removed
+    for folder in folders:
+        try:
+            entries = [entry for entry in os.scandir(folder) if entry.is_file(follow_symlinks=False)
+                       and _OWN_FILE.fullmatch(entry.name)]
+        except OSError:
+            continue
+        here = {entry.name for entry in entries}
+        for entry in entries:
+            name = entry.name
+            if name == "folder.json":
+                continue
+            if name.endswith(".json") and name[:-len(".json")] + ".txy" not in here:
+                continue  # The record of a TXY beside the raw files: kept.
+            try:
+                size = entry.stat(follow_symlinks=False).st_size
+                os.unlink(entry.path)
+            except OSError:
+                continue
+            removed["files"] += int(name.endswith(".txy"))
+            removed["bytes"] += size
+        try:
+            left = os.listdir(folder)
+            if left == ["folder.json"]:
+                os.unlink(os.path.join(folder, "folder.json"))
+            if not os.listdir(folder):
+                os.rmdir(folder)
+        except OSError:
+            pass
+    return removed
