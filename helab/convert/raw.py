@@ -27,9 +27,11 @@ Raw files as the TDC writes them (``\\d+,\\d+\\r\\n`` lines, or all ``\\n``: ``_
 ``_STRICT_LF``) take a fast path with the same result (``fastio.parse_strict``, NumPy); any other
 file, a mix of line endings for one, takes the general reader.
 
-The done-writing checks (unchanged for ``SETTLE_SECONDS``, ending in a newline, the first line on
-the trigger channel) are stage 4's and go at the end of this module; MATLAB reads whatever
-is there, and so does ``parse_raw``.
+The done-writing checks are stage 4's, at the end of this module (MATLAB reads whatever is there,
+and so does ``parse_raw``): ``settled_by_age`` (unmodified for the settle age, not dated in the
+future) and ``not_done`` (no rows, no final newline, a first line off the trigger channel). The
+helper's ``io_ops.convert`` adds the checks that need the file system: the size and mtime the same
+at two checks and while the file is read.
 
 Qt-free; standard library and NumPy only.
 """
@@ -140,6 +142,41 @@ def _pulses(values: Floats) -> RawPulses:
     return RawPulses(channels=np.ascontiguousarray(values[:, 0]), times=np.ascontiguousarray(values[:, 1]))
 
 
-# Stage 4: the done-writing checks go here, run before read_raw: refuse a raw file modified
-# within SETTLE_SECONDS, whose size changes between checks, that doesn't end in a newline, or
-# whose first line isn't on the profile's channel_trigger. Not part of MATLAB's read.
+# The done-writing checks (stage 4; not part of MATLAB's read). Evidence: 2019-halos d3667, which
+# MATLAB converted 0.25 s after its last write and so lost the end of the shot.
+
+# Why a raw file isn't converted yet, or can't be: the codes events carry (``io_ops.convert``).
+SETTLING = "settling"  # modified within the settle age, or dated ahead of this computer's clock
+CHANGED = "changed"  # its size or mtime differ between two checks, or changed while it was read
+NO_FINAL_NEWLINE = "no_final_newline"  # the writer may be mid-line
+NOT_TRIGGER_FIRST = "not_trigger_first"  # the first line isn't on the profile's trigger channel
+NO_ROWS = "no_rows"  # 0 bytes or blank lines only: MATLAB fails on it (Q10.2)
+# Not yet done: skipped now and looked at again when the file changes. NO_ROWS is final once the
+# file has settled (an unconvertible shot), as are a failed read or conversion.
+WAITING = (SETTLING, CHANGED, NO_FINAL_NEWLINE, NOT_TRIGGER_FIRST)
+
+_FIRST_FIELD = re.compile(rb"[ \t]*([0-9]+)[ \t]*,")
+
+
+def settled_by_age(mtime_ns: int, now: float, settle_seconds: float) -> bool:
+    """Unmodified for ``settle_seconds`` as of ``now`` (seconds since the epoch), and not dated in
+    the future; with no settle age (tests) every file is."""
+    if settle_seconds <= 0:
+        return True
+    return mtime_ns / 1e9 <= now - settle_seconds
+
+
+def not_done(data: bytes, channel_trigger: int) -> tuple[str, str] | None:
+    """Why a settled raw file's bytes don't look finished: (code, message), or None. The TDC writes
+    one ``channel,time`` line per pulse, the trigger's first, and ends every line, so a file that
+    ends mid-line or starts on another channel is still being written (or isn't a whole shot)."""
+    if not data.strip():
+        return NO_ROWS, "The raw file has no rows (0 bytes or blank lines only)"
+    if not data.endswith(b"\n"):  # (A lone \r at the end may be half of the TDC's \r\n.)
+        return NO_FINAL_NEWLINE, "The raw file doesn't end with a newline: it may still be being written"
+    first = _FIRST_FIELD.match(data, len(data) - len(data.lstrip(b"\r\n")))
+    if first is None or int(first.group(1)) != channel_trigger:
+        found = "no channel" if first is None else f"channel {int(first.group(1))}"
+        return NOT_TRIGGER_FIRST, (f"The raw file's first line is on {found}, not the trigger channel "
+                                   f"{channel_trigger}: it may not be a whole shot")
+    return None

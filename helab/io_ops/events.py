@@ -835,6 +835,146 @@ class RootsVerifiedEvent(TypedDict):
     mounts: list[list[str]]
 
 
+class ConvertPrefsEvent(TypedDict):
+    """A folder's converter flags as the store now has them (``cache_admin convert_prefs``):
+    ``prefs`` is ``{"write_beside": bool, "set_at": float}``."""
+    kind: Literal["convert_prefs"]
+    path: str
+    prefs: dict[str, Any]
+
+
+# The converter (``io_ops.convert``, TXY converter stage 4). Every event names the source folder
+# (``path``); a shot's events name its raw file and that file's (size, mtime) as this conversion saw
+# them, so the app can tell a later change apart.
+
+
+class ConvertProfile(TypedDict):
+    """The detector profile a conversion used: provenance (``helab.convert.profile``)."""
+    name: str
+    version: int
+    hash: str  # ``DetectorProfile.content_hash()``: equal hashes convert every file alike
+    calibrated: bool
+
+
+class ConvertSeconds(TypedDict):
+    read: float  # the raw file's bytes, from the source folder
+    parse: float
+    reconstruct: float
+    format: float
+    write: float  # the TXY and its provenance record
+
+
+class ConvertPlanEvent(TypedDict):
+    """Sent once, after the folder is listed: where this conversion writes and what it found.
+    ``output`` is where the TXY go (``beside``, ``cache`` or ``temp``): the one asked for, or
+    ``temp`` with ``fallback`` saying why (no data root, the disk cache off or unreadable; Q9.3), or
+    the setting's output when ``beside`` was asked for a folder whose flag is off.
+    ``folder`` is HeLab's own folder for this source folder (the TXY unless beside, and every
+    provenance record); ``txy_folder`` where the TXY go; ``key`` the data-root key ("" without)."""
+    kind: Literal["convert_plan"]
+    path: str
+    output: str
+    fallback: str
+    folder: str
+    txy_folder: str
+    key: str
+    profile: ConvertProfile
+    backend: str
+    workers: int
+    raw: int  # raw files the folder lists (of the shots asked for)
+    todo: int  # of those, to convert now
+
+
+class ShotConvertedEvent(TypedDict):
+    """A shot converted: its TXY (``txy``, 0 bytes when ``hits`` is 0: "converted, empty", Q10.3) and
+    provenance record (``provenance``) written atomically. A low-count shot is the app's to judge
+    from ``hits``."""
+    kind: Literal["shot_converted"]
+    path: str
+    shot: int
+    raw_name: str
+    raw_size: int
+    raw_mtime_ns: int
+    raw_sha256: str
+    output: str
+    txy: str
+    txy_size: int
+    provenance: str
+    hits: int
+    replaced: str  # why an older HeLab TXY of the shot was replaced ("" if there was none)
+    profile: ConvertProfile
+    backend: str
+    seconds: ConvertSeconds
+
+
+class ShotWaitingEvent(TypedDict):
+    """A raw file not converted yet: it may still be being written (``reason``: ``settling``,
+    ``changed``, ``no_final_newline``, ``not_trigger_first``) or couldn't be read now
+    (``read_failed``). Nothing was written; it is looked at again by a later conversion."""
+    kind: Literal["shot_waiting"]
+    path: str
+    shot: int
+    raw_name: str
+    raw_size: int
+    raw_mtime_ns: int
+    reason: str
+    message: str
+
+
+class ShotUnconvertibleEvent(TypedDict):
+    """A settled raw file that can't be converted (``reason``: ``no_rows``, Q10.2, or ``failed``):
+    no TXY. A later conversion skips it while its (size, mtime) stay the same and the app sends them
+    back in ``skip``."""
+    kind: Literal["shot_unconvertible"]
+    path: str
+    shot: int
+    raw_name: str
+    raw_size: int
+    raw_mtime_ns: int
+    reason: str
+    message: str
+
+
+class ShotKeptEvent(TypedDict):
+    """A HeLab TXY already beside the raw file that this conversion doesn't stand behind (no local
+    provenance record, or a stale one): kept as it is, since a TXY in a source folder is never
+    replaced (``reason`` says which)."""
+    kind: Literal["shot_kept"]
+    path: str
+    shot: int
+    txy: str
+    reason: str
+
+
+class ConvertProgressEvent(TypedDict):
+    """After each shot handled (at most a few per second): counts so far of the ``todo`` shots."""
+    kind: Literal["convert_progress"]
+    path: str
+    done: int
+    todo: int
+    converted: int
+    raw_bytes: int  # read so far
+
+
+class ConvertSummaryEvent(TypedDict):
+    """The conversion's end (before ``done``). Shot lists are the raw files' ``[name, size,
+    mtime_ns]``: ``current`` (a current HeLab TXY: converted now or before), ``waiting`` and
+    ``unconvertible``; the next conversion of the folder (Live, ``helab convert --watch``) sends
+    them back as ``done``, ``seen`` and ``skip``, so it neither checks done shots again nor takes a
+    file whose size or mtime changed between two checks as finished."""
+    kind: Literal["convert_summary"]
+    path: str
+    output: str
+    folder: str
+    txy_folder: str
+    converted: int
+    current: list[list[Any]]
+    waiting: list[list[Any]]
+    unconvertible: list[list[Any]]
+    kept: list[int]
+    seconds: float
+
+
 HelperEvent = Union[
     DoneEvent, ErrorEvent, PausedEvent, ResumedEvent, HeartbeatEvent, DrivesEvent, ResolvedEvent,
     CacheWarningEvent, CacheSkippedEvent,
@@ -853,6 +993,8 @@ HelperEvent = Union[
     RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, ClockSkewEvent, MarkerSaveEvent,
     MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
     ResultFoundEvent, ResultMissingEvent, ResultSavedEvent, ResultNotSavedEvent, ResultPendingEvent,
+    ConvertPrefsEvent, ConvertPlanEvent, ShotConvertedEvent, ShotWaitingEvent, ShotUnconvertibleEvent, ShotKeptEvent,
+    ConvertProgressEvent, ConvertSummaryEvent,
 ]
 
 # Every kind a helper sends.
@@ -872,4 +1014,6 @@ KINDS = frozenset({
     "clock_skew", "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified",
     "roots_verified", "result_found", "result_missing", "result_saved", "result_not_saved",
     "result_pending",
+    "convert_prefs", "convert_plan", "shot_converted", "shot_waiting", "shot_unconvertible", "shot_kept",
+    "convert_progress", "convert_summary",
 })

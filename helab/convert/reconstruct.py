@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import importlib
+import threading
 from typing import Callable, Mapping, Protocol
 
 import numpy as np
@@ -99,6 +100,15 @@ def reconstruct(pulses: RawPulses, profile: DetectorProfile, backend: str = DEFA
     return chosen.run(pulses, profile)
 
 
+# The first load of a backend, one thread at a time: Python's import lock already serialises two
+# imports of one module, but a backend's own start-up (a lazy kernel, a GPU) shouldn't rely on it.
+# Reentrant: a backend module may look another up while it loads.
+_LOAD_LOCK = threading.RLock()
+
+
 def _load(name: str) -> None:
-    if name not in _BACKENDS and name in _MODULES:
-        importlib.import_module(_MODULES[name])
+    if name in _BACKENDS or name not in _MODULES:
+        return
+    with _LOAD_LOCK:
+        if name not in _BACKENDS:
+            importlib.import_module(_MODULES[name])

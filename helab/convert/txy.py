@@ -9,12 +9,15 @@ MATLAB R2025b; ``dld_raw_to_txy_counts`` writes no file at all for an empty resu
 ``write_txy`` writes to a new temporary name in the target's folder, created with mode ``0o666``
 so the kernel applies the umask, as for any plain new file (MATLAB's ``fopen`` too; ``mkstemp``'s
 own is owner-only), flushes it to disk, then renames it into place and syncs the folder, so a
-reader never sees half a file and a crash leaves the old one or the new one.
+reader never sees half a file and a crash leaves the old one or the new one. ``replace=False``
+never replaces a file already at the target (``FileExistsError``; the temporary one is removed):
+HeLab's writes beside raw files never touch an existing TXY.
 
 Qt-free; standard library and NumPy only.
 """
 from __future__ import annotations
 
+import errno
 import math
 import os
 from pathlib import Path
@@ -62,7 +65,7 @@ def write_txy(path: str | os.PathLike[str], hits: Hits) -> None:
     write_atomic(path, format_txy(hits))
 
 
-def write_atomic(path: str | os.PathLike[str], data: bytes) -> None:
+def write_atomic(path: str | os.PathLike[str], data: bytes, *, replace: bool = True) -> None:
     target = Path(path)
     for _ in range(100):
         temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.partial")
@@ -78,11 +81,30 @@ def write_atomic(path: str | os.PathLike[str], data: bytes) -> None:
             file.write(data)
             file.flush()
             os.fsync(file.fileno())
-        os.replace(temporary, target)
+        if replace:
+            os.replace(temporary, target)
+        else:
+            _rename_new(temporary, target)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
     _fsync_folder(target.parent)
+
+
+def _rename_new(temporary: Path, target: Path) -> None:
+    """Rename ``temporary`` to ``target`` only if nothing is there: a hard link fails on an existing
+    name atomically, then the temporary name goes. Where links aren't supported (some shares,
+    FAT), a check then a rename, which Windows refuses over an existing file anyway."""
+    try:
+        os.link(temporary, target)
+    except FileExistsError:
+        raise
+    except OSError:
+        if os.path.lexists(target):
+            raise FileExistsError(errno.EEXIST, "A file is already there", str(target)) from None
+        os.rename(temporary, target)
+        return
+    os.unlink(temporary)
 
 
 def _fsync_folder(folder: Path) -> None:

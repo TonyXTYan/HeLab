@@ -14,6 +14,7 @@ from helab.utils.settings_store import app_settings
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING as AUTO_SCAN_VISIBLE_SETTING,
     CHECK_LEVEL_SETTING as CHECK_LEVEL_SETTING,
+    CONVERT_OUTPUT_SETTING as CONVERT_OUTPUT_SETTING,
     DIR_CACHES_SETTING as DIR_CACHES_SETTING,
     DIR_TEMPS_SETTING as DIR_TEMPS_SETTING,
     DISK_BUDGET_SETTING as DISK_BUDGET_SETTING,
@@ -23,7 +24,7 @@ from helab.utils.settings_defaults import (
     PLOT_AUTO_RELOAD_SETTING as PLOT_AUTO_RELOAD_SETTING,
     RAM_BUDGET_SETTING as RAM_BUDGET_SETTING,
     SIMULTANEOUS_IO_SETTING as SIMULTANEOUS_IO_SETTING,
-    LOG_KEEP_SETTING, read_setting, setting_default)
+    CONVERT_OUTPUTS, LOG_KEEP_SETTING, read_setting, setting_default)
 # from PyQt6.QtGui import QFontDatabase, QFont
 
 # try:
@@ -210,6 +211,13 @@ def read_log_keep(settings: QSettings) -> int:
     except (TypeError, ValueError, OverflowError):
         return DEFAULT_LOG_KEEP
     return max(1, min(MAX_LOG_KEEP, value))
+
+
+def read_convert_output(settings: QSettings) -> str:
+    """Where HeLab's own TXY go (Q9.3): ``cache`` (the default) or ``temp``; anything else saved
+    reads as the default."""
+    value = read_setting(settings, CONVERT_OUTPUT_SETTING, typed=True)
+    return value if value in CONVERT_OUTPUTS else str(setting_default(CONVERT_OUTPUT_SETTING))
 
 
 def read_live_autosave(settings: QSettings) -> int:

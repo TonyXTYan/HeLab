@@ -5,7 +5,8 @@ matches on is one the helper sends or one the app makes itself (``GUI_KINDS``), 
 matches every kind it is sent but the receipts (``RECEIPTS``): a typo on either side, or a new
 kind nothing handles, fails here. Strict type checking then checks each event's fields at its
 ``send``. The app's side is every module of ``helab/views`` (its ``plots`` package too),
-``helab/utils``, ``helab/models`` and ``main.py``.
+``helab/utils``, ``helab/models``, ``main.py`` and the headless converter's ``convert_cli.py``
+(which runs the ``convert`` operation in its own process and logs its events).
 """
 from __future__ import annotations
 
@@ -19,7 +20,8 @@ ROOT = Path(__file__).resolve().parent.parent
 HELPER = [*sorted((ROOT / "helab" / "io_ops").glob("*.py")), ROOT / "helab" / "io_helper.py"]
 # Not about helper events: a scan outcome's ``kind`` (its saved history).
 NOT_GUI = {"scan_history.py"}
-GUI = [path for path in [ROOT / "helab" / "main.py", *sorted((ROOT / "helab" / "utils").glob("*.py")),
+GUI = [path for path in [ROOT / "helab" / "main.py", ROOT / "helab" / "convert_cli.py",
+                         *sorted((ROOT / "helab" / "utils").glob("*.py")),
                          *sorted((ROOT / "helab" / "views").rglob("*.py")),
                          *sorted((ROOT / "helab" / "models").glob("*.py"))]
        if path.name not in NOT_GUI]

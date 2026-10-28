@@ -53,7 +53,7 @@ def dataset_row(options: dict[str, Any], path: str) -> DatasetRow:
 
 
 def test_file_kinds_match_count_and_size_from_one_table() -> None:
-    assert [kind.name for kind in file_kinds.FILE_KINDS] == ["raw", "txy"]
+    assert [kind.name for kind in file_kinds.FILE_KINDS] == ["raw", "txy", "helab_txy"]
     raw, txy = file_kinds.RAW, file_kinds.TXY
     assert file_kinds.match("d12.txt") == (raw, 12)
     assert file_kinds.match("d_txy_forc7.txt") == (txy, 7)

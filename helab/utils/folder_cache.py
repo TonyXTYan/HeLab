@@ -269,6 +269,9 @@ class FolderCache(QObject):
         self.prefs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         # What the store last confirmed for each folder (listings, saves): shown again if a choice fails.
         self._confirmed_prefs: dict[str, dict[str, Any]] = {}
+        # Each folder's converter flags as the store last said ({"write_beside", "set_at"}; TXY
+        # converter stage 4): only folders asked about (``read_convert_prefs``) or set this session.
+        self.convert_prefs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         # Flag saves in flight: job owner → (path, the choice's set_at, who set it).
         self._pref_writes: dict[str, tuple[str, float, str]] = {}
         # Constants (F0b): the lab's (Settings → Lab parameters, set by the main window), and each
@@ -979,6 +982,40 @@ class FolderCache(QObject):
         while len(self.prefs) > self.MAX_ENTRIES:
             self.prefs.popitem(last=False)
         if self.folder_prefs(path) != before:
+            self.folderPrefsChanged.emit(path)
+
+    def write_beside(self, path: str) -> bool:
+        """Whether HeLab's TXY for ``path`` go beside its raw files (Q9.7), as the store last said
+        (off until a ``convert_prefs`` answer says otherwise). The converter's helper checks the
+        store again before writing there."""
+        return bool((self.convert_prefs.get(path) or {}).get("write_beside"))
+
+    def read_convert_prefs(self, path: str) -> str:
+        """Ask the store for a folder's converter flags (answered by ``convert_prefs`` through
+        ``cacheAdminResult``, and ``folderPrefsChanged`` if they changed); the job's owner, or ""."""
+        return self.cache_admin("convert_prefs", path=path, verified_volumes=self.verified_volumes())
+
+    def set_write_beside(self, path: str, on: bool) -> str:
+        """The user's choice to write ``path``'s TXY beside its raw files: saved by a helper, then
+        shown (``folderPrefsChanged``); the job's owner, or "" (the disk cache off: a folder needs a
+        data root for it, so there is no session-only choice)."""
+        if self.quitting:
+            return ""
+        return self.cache_admin("convert_prefs", path=path, write_beside=on, set_at=time.time(),
+                                verified_volumes=self.verified_volumes())
+
+    def _remember_convert_prefs(self, path: str, prefs: object) -> None:
+        if not isinstance(prefs, dict):
+            return
+        current = self.convert_prefs.get(path)
+        if current is not None and float(current.get("set_at", 0)) > float(prefs.get("set_at", 0)):
+            return
+        before = self.write_beside(path)
+        self.convert_prefs[path] = dict(prefs)
+        self.convert_prefs.move_to_end(path)
+        while len(self.convert_prefs) > self.MAX_ENTRIES:
+            self.convert_prefs.popitem(last=False)
+        if self.write_beside(path) != before:
             self.folderPrefsChanged.emit(path)
 
     def set_folder_prefs(self, path: str, *, no_cache: bool, no_auto_load: bool, remove_cached: bool = False,
@@ -3047,6 +3084,9 @@ class FolderCache(QObject):
         if kind == "folder_prefs":
             self.remember_prefs(event["path"], event["prefs"])
             return
+        if kind == "convert_prefs":
+            self._remember_convert_prefs(event["path"], event["prefs"])
+            return
         if kind == "folder_constants":
             write = self._constant_writes.get(producer.owner)
             for folder, reason in dict(event.get("session_only") or {}).items():
@@ -3067,6 +3107,8 @@ class FolderCache(QObject):
             cleared = {"no_cache": False, "no_auto_load": False, "set_at": float(event.get("set_at", 0))}
             for path in {*event["paths"], *self.prefs}:
                 self.remember_prefs(path, cleared)
+            for path in {*event["paths"], *self.convert_prefs}:
+                self._remember_convert_prefs(path, {"write_beside": False, "set_at": cleared["set_at"]})
             return
         if kind == "removed" and isinstance(event.get("evicted"), list):
             self._results_evicted(event["evicted"])

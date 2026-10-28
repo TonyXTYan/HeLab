@@ -40,6 +40,10 @@ RESULT_REUSE_SETTING = "result_reuse"
 # File › Work Offline (cache-only browsing): remembered across restarts (Tony, 2026-10-26: D2).
 WORK_OFFLINE_SETTING = "work_offline"
 LOG_KEEP_SETTING = "log_files_keep"
+# Where HeLab's own TXY go (Q9.3): HeLab's temp folder or its disk cache folder; writing them beside
+# the raw files is a per-folder flag (Q9.7, the store's ``folder_prefs.write_beside``), not this.
+CONVERT_OUTPUT_SETTING = "converted_txy_output"
+CONVERT_OUTPUTS = ("cache", "temp")
 # The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).
 REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
 OPEN_PLOTS_SETTING = "open_plots"
@@ -86,6 +90,10 @@ SETTINGS: tuple[Setting, ...] = (
             "Log files to keep, every session's helab-<pid>.log files and their rotated copies counted; "
             "at startup the oldest beyond it are deleted, never a running HeLab's, 1 to 100,000 "
             "(Settings → General)."),
+    Setting(CONVERT_OUTPUT_SETTING, str, "cache",
+            "Where HeLab's own TXY files (d_txy_helab_<N>.txy) go: cache (the disk cache's folder, keyed by "
+            "the folder's data root; a folder without one goes to temp) or temp (HeLab's temp folder). "
+            "Folders set to write them beside the raw files do that instead."),
     # The plots that reopen at start (keep these rows together).
     Setting(REOPEN_PLOTS_SETTING, bool, True,
             "Reopen the plots open when HeLab last quit; each reruns on its folder's data in RAM or the disk "

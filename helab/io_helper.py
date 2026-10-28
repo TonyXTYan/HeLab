@@ -14,6 +14,7 @@ import time
 from helab.io_ops import stores
 from helab.io_ops.admin import cache_admin, cache_move_job
 from helab.io_ops.browse import list_folder
+from helab.io_ops.convert import convert_folder
 from helab.io_ops.events import UnverifiedField
 from helab.io_ops.fingerprints import DEFAULT_CHECK_LEVEL
 from helab.io_ops.icons import folder_icons
@@ -39,7 +40,7 @@ CACHE_ONLY = ("cached", "saved_list", "invalidate", "subtree_save", "scan_histor
 # Requests acting on the source folder they name (``path``, or an icon batch's ``paths``), which
 # ``_guard`` checks first under tests; the others name a folder only as a cache key.
 SOURCE_OPERATIONS = frozenset({"list", "icons", "scan", "details", "load", "root_create", "root_reassign",
-                               "root_remove", "marker_save"})
+                               "root_remove", "marker_save", "convert"})
 
 
 # Work Offline (cache-only browsing): requests whose cache options say ``offline`` never run these;
@@ -117,6 +118,8 @@ def main() -> None:
                  check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
                  allow_missing=bool(request.get("allow_missing")), memory_check=request.get("memory_check"),
                  memory_raw_times=request.get("memory_raw_times"))
+        elif operation == "convert":
+            convert_folder(request["path"], request)
         elif operation == "cached":
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")),

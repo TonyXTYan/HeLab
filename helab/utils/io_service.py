@@ -161,7 +161,7 @@ class IOService(QObject):
     CACHE_OPERATIONS = ("cached", "saved_list", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
                         "volumes_verify", "result_find", "result_save")
     LOCAL_CAP = 2
-    PAUSABLE = ("load", "list", "details", "scan", "icons", "roots_verify")
+    PAUSABLE = ("load", "list", "details", "scan", "icons", "roots_verify", "convert")
     # Held while cached data doesn't match several folders (``mismatch_hold``): loads and scans.
     # Browsing, cached reads, cache writes and icons go on.
     MISMATCH_HELD = ("load", "details", "scan")
@@ -181,7 +181,8 @@ class IOService(QObject):
               "volumes_verify": "Verify volumes", "root_create": "Enable disk cache",
               "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root",
               "marker_save": "Save .helab-root to folder", "trace_check": "Check I/O trace folder",
-              "result_find": "Read cached analysis", "result_save": "Save analysis to disk cache"}
+              "result_find": "Read cached analysis", "result_save": "Save analysis to disk cache",
+              "convert": "Convert raw files to TXY"}
     NOUNS = {"load": "load", "cached": "cached data read", "saved_list": "saved listing read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
@@ -190,7 +191,8 @@ class IOService(QObject):
              "volumes_verify": "volume verification", "root_create": "disk cache enabling",
              "root_reassign": "data-root reassignment", "root_remove": ".helab-root removal",
              "marker_save": ".helab-root save", "trace_check": "I/O trace folder check",
-             "result_find": "cached analysis read", "result_save": "analysis save"}
+             "result_find": "cached analysis read", "result_save": "analysis save",
+             "convert": "TXY conversion"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)

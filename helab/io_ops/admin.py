@@ -20,7 +20,8 @@ from helab.io_ops.stores import (_cache_info, _deadline, _removed_event, _result
 NO_ROOT_CONSTANTS = "no .helab-root found here or above"
 UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 
-ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
+ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs",
+                 "convert_prefs", "clear_prefs",
                  "constants", "presets", "forget_root", "root_same", "clear_root", "clear_results",
                  "clear_root_results", "adopt_result", "discard_result", "identity")
 
@@ -46,10 +47,10 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     old: list[str] = []
     if action == "sweep":
         old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
-    # A constants write trusts only the volume hints this session verified, like the other local
+    # A constants or converter-flag write trusts only the volume hints this session verified, like the other local
     # writes keyed by a source folder (scan history, subfolder status); the other actions name
     # no source folder.
-    verified_volumes = params.get("verified_volumes") if action == "constants" else None
+    verified_volumes = params.get("verified_volumes") if action in ("constants", "convert_prefs") else None
     with stores._cache_store(root, local_lane=True, verified_volumes=verified_volumes,
                              offline=bool(cache_options.get("offline"))) as store:
         if (budget is not None and budget_set_at is not None and not store.read_only
@@ -139,6 +140,19 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             send({"kind": "folder_prefs", "path": path, "prefs": saved})
             if flag_removal is not None:
                 send(_removed_event(flag_removal))
+        elif action == "convert_prefs":
+            # The converter's flags for one folder (``write_beside``, Q9.7): set when given, newest
+            # choice wins; without it, read. A folder without a data root has none (an error).
+            path = str(params["path"])
+            if params.get("write_beside") is None:
+                read = store.read_convert_prefs([path])[path]
+                if read.status == "error":
+                    raise StoreError(read.error)
+                prefs = read.value or {"write_beside": False, "set_at": 0.0}
+            else:
+                prefs = store.set_convert_prefs(path, bool(params["write_beside"]),
+                                                float(params.get("set_at") or time.time()))
+            send({"kind": "convert_prefs", "path": path, "prefs": prefs})
         elif action == "constants":
             # A folder's own constants (Folder constants…): every value it sets, newest choice wins.
             from helab.utils.cache_paths import UnresolvedRemotePath, _inside, _normal

@@ -157,6 +157,9 @@ def test_a_real_window_and_settings_read_only_listed_keys_with_their_defaults(
     qtbot.addWidget(dialog)
     window.close()
     assert {key for key, _ in reads} >= {row.key for row in SETTINGS} - {
-        settings_defaults.DIR_TEMPS_SETTING, settings_defaults.DIR_CACHES_SETTING}  # (Overridden in tests.)
+        settings_defaults.DIR_TEMPS_SETTING, settings_defaults.DIR_CACHES_SETTING,  # (Overridden in tests.)
+        # Read by the converter's callers (helab convert; the window once the Live and UI floors
+        # convert from it, which then drop it from here).
+        settings_defaults.CONVERT_OUTPUT_SETTING}
     for key, default in reads:
         assert default == setting(key).default, key

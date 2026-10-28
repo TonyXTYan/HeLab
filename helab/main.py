@@ -1,5 +1,9 @@
 # Frozen I/O helpers must bypass GUI, caches and Dash initialization.
 import sys
+if getattr(sys, "frozen", False):
+    # A process the converter's helper spawned (``io_ops.convert``'s worker pool) runs here and exits.
+    import multiprocessing
+    multiprocessing.freeze_support()
 if "--helab-io-helper" in sys.argv:
     # Windowed PyInstaller executables may have no standard streams. Exchange
     # requests/results through local files instead of relying on console handles.
@@ -9,6 +13,12 @@ if "--helab-io-helper" in sys.argv:
     from helab.io_helper import main as io_helper_main
     io_helper_main()
     raise SystemExit(0)
+
+# The headless converter (``helab convert --watch <folder>``, also ``HeLab convert …`` in the
+# packaged app): before any Qt widgets, caches or Dash.
+if len(sys.argv) > 1 and sys.argv[1] == "convert":
+    from helab.convert_cli import main as convert_main
+    raise SystemExit(convert_main(sys.argv[2:]))
 
 # Query provenance before importing Qt, opening settings/caches or starting Dash.
 if "--version" in sys.argv:

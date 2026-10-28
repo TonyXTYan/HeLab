@@ -39,7 +39,7 @@ HANDLERS = ("list_folder", "folder_icons", "scan", "save_scan_history", "save_su
             "save_held", "load", "read_cached", "cache_move_job", "cache_admin", "result_find", "result_save",
             "verify_known_roots",
             "verify_volumes", "trace_check", "create_root", "reassign_root", "remove_root", "save_marker_copy",
-            "saved_list_folder", "newest_root_folder")
+            "saved_list_folder", "newest_root_folder", "convert_folder")
 
 
 @pytest.fixture(autouse=True)
@@ -102,6 +102,10 @@ LOAD = {"memory": [["d_1.txt", 10, 5]], "base_signature": "base", "signature": "
         "allow_large": 1, "no_cache": 1, "full_check": 1, "cache_base": 1, "check_level": "high",
         "allow_missing": 1, "memory_check": {"quick": True}, "memory_raw_times": [[1, 2]]}
 
+# The converter's request goes to its handler whole (``io_ops.convert.ConvertRequest``).
+CONVERT = {"operation": "convert", "path": PATH, "profile": {"name": "p"}, "temps": FOLDER, "cache": CACHE,
+           "output": "cache", "beside": True, "seen": [["d1.txt", 1, 2]], "workers": 3}
+
 # (request, handler, positional arguments, keyword arguments)
 ROUTES: list[tuple[dict[str, Any], str, tuple[Any, ...], dict[str, Any]]] = [
     ({"operation": "list", "path": PATH, "cache": CACHE}, "list_folder", (PATH,), {"cache_options": CACHE}),
@@ -149,6 +153,7 @@ ROUTES: list[tuple[dict[str, Any], str, tuple[Any, ...], dict[str, Any]]] = [
       "allow_large": 1, "verified_volumes": [["/v", "dev"]]}, "read_cached", (PATH, OUTPUT),
      {"cache_options": CACHE, "limits": {"ram": 9}, "allow_large": True, "verified_volumes": [["/v", "dev"]]}),
     ({"operation": "cache_move", "move": {"to": OTHER}}, "cache_move_job", ({"to": OTHER},), {}),
+    (CONVERT, "convert_folder", (PATH, CONVERT), {}),
     # Work Offline's listing and start folder (cache-only browsing): the disk cache only.
     ({"operation": "saved_list", "path": PATH, "cache": CACHE, "verified_volumes": [["/v", "dev"]]},
      "saved_list_folder", (PATH,), {"cache_options": CACHE, "verified_volumes": [["/v", "dev"]]}),
