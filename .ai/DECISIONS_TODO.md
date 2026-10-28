@@ -156,6 +156,34 @@ From the `agent/txy-helab-core` handoff (`sessions/2026-10-29-claude-txy-helab-c
   This is a deletion in a source folder, so it is on AGENTS.md's housekeeping list, marked to
   confirm. Alternative: leave them and list them for the user.
 
+## Converter stage 4, UI and Live (blocks 14, 15)
+
+From the `agent/txy-ui` and `agent/txy-live` handoffs (`sessions/2026-10-29-claude-txy-{ui,live}/handoff.md`).
+
+- **Q14.1 How "both as two datasets" (Q6.6 c) shows.** Built: one choice per dataset
+  (`matlab-only`, `helab-only`: two plots side by side). Alternatives: one plot drawing both, or a
+  button that opens the twin plot on the other dataset.
+- **Q14.2 Save a plot's TXY source with presets, arrangements and reopened plots?** Not built (a
+  format change in `analysis/presets.py`); a reopened plot uses the default.
+- **Q14.3 HeLab TXY of another profile.** Built: only those of the conversion profile's hash load.
+  Alternative: load any current HeLab TXY (the identity records it per shot). Note: `helab convert`
+  ignores the `convert_profile` setting (`--profile` takes a built-in's name or a file), so its TXY are
+  hidden from the app while another profile is chosen.
+- **Q14.4 Count HeLab's TXY in a folder's status?** Today status and counts come from MATLAB's TXY
+  alone; proposed: count current HeLab TXY once scans can see HeLab's folders cheaply.
+- **Q14.5 Datasets of a non-default source are RAM only.** Proposed: keep it so until (b)/(c) are used
+  much; caching them needs their own store key.
+- **Q15.1 The start-at-launch list is a settings row** (`live_launch_folders`, CoCo approved; Tony to
+  confirm), not a store table: known before any listing, works without a `.helab-root`; Reset all
+  settings clears it.
+- **Q15.2 Several launch folders: Live only in the first.** Live runs in one tab at a time (L1, Tony
+  2026-10-19: switching tabs turns Live off), so the others open in their tabs and say so. Options:
+  (a) as built; (b) let Live run in several tabs at once (changes L1), then every launch folder
+  starts; (c) one launch folder only.
+- **Q15.3 The low-count threshold** `convert_low_hits`: default 100 hits, 0 off, once per shot.
+  Alternatives: a rate like MATLAB's 700 Hz (needs `t_max` in `shot_converted`); per-folder
+  thresholds. A low shot can notify twice (Shot trends' Notify during Live is a separate rule).
+
 ## From the audit (block 2)
 
 These come from the [audit](sessions/2026-10-28-claude-v0.0.6-checks/audit.md), whose finding

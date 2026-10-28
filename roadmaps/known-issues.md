@@ -73,6 +73,18 @@ How to use it:
 
 ## Tests and CI
 
+- [ ] `test_convert_helab.py::test_a_hung_backend_stops_sending_heartbeats` (line 879) and
+  `::test_heartbeats_while_computing_stop_after_the_budget` (line 855) rerun on macOS CI ('assert ([])':
+  no 'converting' heartbeat recorded within the slowed compute window on a loaded runner): runs
+  40764414177 (2×), 40779568331 (5× and 2×), 40780439624. Being fixed (Quick Fixes 5, job 3).
+- [ ] `test_convert_helab.py::test_watch_converts_new_shots_and_stops_on_ctrl_c` failed all 6 attempts
+  in a full local run under load 28-30 (Egret, 2026-10-29): the CLI didn't exit within 20 s of SIGINT;
+  suspected an unread stderr pipe. Passes alone and on CI. Being investigated (Quick Fixes 5, job 2).
+- [ ] `test_test_isolation.py::test_pytest_imports_the_checkout_it_runs_in_before_any_other`: a
+  collection error in pathlib `lstat` on Windows CI (run 40754482305, `agent/txy-packaging` `7d2bff9`),
+  passed on retry.
+- [ ] `test_gui_responsiveness.py::test_stalled_process_keeps_heartbeat_and_shutdown_responsive`:
+  `assert 0.2199… < 0.2` (line 228) on macOS CI (run 40764414177), passed on retry.
 - [ ] Tests that `chdir` while helpers can start: a helper inherits the working folder, which its
   `helab.utils.constants` lists as a developer's data folder (`DEV_POTENTIAL_DATA_PATHS`), so the source
   guard refuses it outside the temp folder and the checkout. `test_window_icon_is_found_from_any_launch_folder`

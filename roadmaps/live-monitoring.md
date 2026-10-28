@@ -90,7 +90,7 @@ notification/push follows the remote connection stage. See the
 | L1 (done 2026-10-19) | Live on/off for the selected folder: new shots found by isolated I/O, settled shots merged into RAM, cache written at stop and quit (with Quit now) | Existing incremental loader |
 | L2 (done 2026-10-19) | Auto-save every N shots, with its setting | L1 |
 | L3 (done 2026-10-19) | Chosen analyses follow Live at a controlled cadence; unpinned views show revisions, pinned keep theirs | L1, [result caching](result-caching.md#stages) R3 |
-| L4 | Acquisition machine: raw → TXY conversion and QC as shots settle ([plan](txy-converter.md)) | L3, [QC](quality-control-and-repair.md) |
+| L4 | Acquisition machine: raw → TXY conversion and QC as shots settle ([plan](txy-converter.md)); auto-convert in Live, start at launch and low-count alerts done 2026-10-29 (`6454b4a`) | L3, [QC](quality-control-and-repair.md) |
 | L5 | Remote Live revision notifications | [Network extension](network-runners-and-web.md), result caching R5 |
 
 ## Decided in L1/L2 (2026-10-19)

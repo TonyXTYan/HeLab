@@ -146,8 +146,8 @@ From the `agent/txy-reference` handoffs ([builder](sessions/2026-10-29-claude-tx
   `floor(N/4)` preallocation, the 2023 cuts (only at gaps over 20,000 bins, or before splitting)
   and one final stable sort by T; test that a split equals the whole on the `phantom_*` and
   `dead_time_x1` cases.
-- **A10.3 Built-in profiles as JSON files** in the package (stage 4, Q6.11), each tested to load
-  equal to the Python definitions.
+- [x] **A10.3 Built-in profiles as JSON files** in the package (stage 4, Q6.11), each tested to load
+  equal to the Python definitions. Done in `475c6a6` (`agent/txy-ui`).
 - **A10.4 Durable HeLab TXY writes** (stage 4): use `txy.write_atomic` (new file with mode
   `0o666` under the umask, fsync, rename, folder fsync) for `d_txy_helab_<N>.txy`, which matters
   once they go beside raw files on a share (Q9.7).
@@ -198,6 +198,23 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 - **A13.1 Helpers start with an explicit working folder** (or, under `SOURCE_GUARD`, the working
   folder leaves the guard's denied list), so a test that `chdir`s can't make a helper's source access
   fail (known-issues, Tests and CI). From Quick Fixes 4's A~2 and Plover's review.
+
+## Converter stage 4, UI and Live (blocks 14, 15)
+
+- **A14.1 An end-to-end GUI test of a plot switching TXY sources** on a folder with real helpers
+  (convert, load, Live): the plot's TXY row is checked by unit tests and offscreen rendering only.
+- **A14.2 A pending Reload's flag on a source change** (Egret, round 3): `instance.py`'s
+  `_reload_from_source` isn't cleared when `set_txy_source` changes the source while a Reload's load
+  is pending, so the released picture can stay "loading its TXY source…" until the next run. Reset
+  the flag (and the released state) in `set_txy_source`.
+- **A15.1 Pace conversions on large shares**: each conversion lists the folder and stats its raw
+  files every `live_interval` while auto-convert is on; if M15.1 shows it costs, convert only after a
+  Live listing found new names.
+- **A15.2 `PresetFolder` and empty folders**: check whether `PresetFolder.check` starts Live twice on
+  a folder with no shots yet, as `LaunchFolder` did; same fix if so.
+- **A15.3 `test_live.run_helper` sends every field `io_helper` does** (`txy`, `memory_origins`,
+  `helab_since`, `listed_mtime`, `seen_names`, `identity_root`), so Live tests elsewhere exercise
+  what the helper runs (`test_live_convert.py` already does).
 
 ## Not AI work (stays in MANUAL_TODO)
 

@@ -169,6 +169,19 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   this PC's: the partial cleanup and `--once` trust the source's mtimes (a clock over an hour behind
   could make another computer's beside write look old).
 
+- [ ] **M14.1 TXY sources in a plot** (synthetic or a lab copy): open a folder converted by HeLab,
+  open a T histogram, switch its TXY between the four choices, check the source line and that Live
+  keeps each plot on its own source.
+- [ ] **M14.2 A user profile end to end**: Settings → TXY converter, duplicate plates-2022, edit a time
+  sum, set it as the conversion profile, Save; convert a folder; check the provenance names it and the
+  plots load those TXY (not the old ones).
+- [ ] **M15.1 Live auto-convert at the acquisition PC**: Live + Auto-convert on a copy of a run folder
+  while raw files arrive: each shot converts once written, the Live line counts them, a truncated file
+  waits with its reason, a near-empty shot notifies once; start-at-launch with the folder listed and
+  with it unplugged (one notification).
+- [ ] **M15.2 The Auto-convert button on Windows and macOS** (its menu arrow, the checked look, the
+  menu's texts).
+
 ## Data roots (v0.0.5a1, added 2026-10-18)
 
 Native checks of the data-roots stages D1–D4 ([plan](sessions/2026-10-16-claude-data-roots/plan.md)).
