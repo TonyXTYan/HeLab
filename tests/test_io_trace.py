@@ -13,6 +13,7 @@ from pathlib import Path
 import subprocess
 import sys
 import time
+from types import SimpleNamespace
 from typing import Any, Callable, Iterator
 import uuid
 
@@ -21,7 +22,8 @@ import pytest
 from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before any QApplication: conftest loads the views)
 from pytestqt.qtbot import QtBot
 
-from helab.io_ops import infra, markers, stores
+from helab.io_ops import infra, loading, markers, stores
+from helab.io_ops import live as live_ops
 from helab.io_ops.browse import list_folder
 from helab.io_ops.identity import _folder_identity
 from helab.io_ops.live import live_check
@@ -196,6 +198,13 @@ def test_tracing_changes_no_event_and_no_source_call(tmp_path: Path, monkeypatch
     info = (run / "d_txy_forc3.txt").stat()
     seen = [[3, info.st_size, info.st_mtime_ns]]
     source = SourceCalls(run, monkeypatch)
+    # A load and a Live check send a file's progress only 0.1 s after the last: on a slow runner the
+    # traced run sent one more (Windows CI, 2026-10-29). Each clock reading here is 1 s on (from
+    # well past 0, as a real clock), so both runs send every one.
+    ticks = iter(range(1000, 10**9))
+    clock = SimpleNamespace(monotonic=lambda: float(next(ticks)), time=time.time)
+    monkeypatch.setattr(loading, "time", clock)
+    monkeypatch.setattr(live_ops, "time", clock)
 
     def calls() -> tuple[list[list[Any]], list[tuple[str, str]]]:
         source.calls.clear()
