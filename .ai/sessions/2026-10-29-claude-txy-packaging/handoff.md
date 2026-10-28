@@ -23,7 +23,7 @@ identically to the reference with all six backends.
 | `native/check_build.py` (new) | Each backend against `reference` on every `tests/data/convert/cases` case × both built-ins (`pipeline.convert_shot` bytes, or the same error). It runs in this Python, or with `--frozen APP` through a packaged app's `convert --watch … --once --output temp --workers 1`: one run per backend and profile, each with its own app, cache and temp folders and its own settings file. Files HeLab leaves waiting (`raw.not_done`) or can't convert are expected to give no TXY. `reference` and `numpy` are always required. A backend that says why it can't run (`unavailable()`, or "Backend 'x' can't run:" from the app) is "unavailable", which passes unless required. A difference or a crash (`unavailable()` raising, any other non-zero exit, a timeout) is "failed", which always fails. In-process, the reference must convert at least half the cases, or every backend's errors would "match" a broken one. It prints each reason and exits 1 on any failure. |
 | `native/pyinstaller-hooks/hook-mlx.py` (new) | mlx's submodules, its dylibs and `mlx.metallib` in `mlx/lib`; no headers or CMake files. |
 | `HeLab.spec` | `hiddenimports`: every `_MODULES` backend (the reference too), plus each optional package present in the build Python (cython `_kernel`; `helab_convert_rs` and `helab_convert_rs.helab_convert_rs`; `numba`, `numba.core.caching`, `numba_kernels`; `mlx`, `mlx.core`). The first module of each is the one probed, and a missing one is printed and left out, so the app still builds without it. `hookspath` points at the mlx hook. `excludes`: `Cython`, `cython`, `pyximport` (only optional imports in pyarrow's conftest, scipy's test utils and pydantic.v1 would collect them: 5.6 MB). The `datas` list stays a literal, as `test_spec_datas` reads it. |
-| `.github/workflows/ci-test.yml` | Two jobs (CoCo's layout, after the macOS test job hit its limit twice). **"Converter backends"** (20 min limit of its own): the full environment, `build.py --ci` (both built, `HELAB_REQUIRE_BACKENDS` set, `check_build.py`), then `pytest tests/test_convert_*.py` with every backend required, so a missing or wrong backend still fails CI. **"Tests"**: the main suite as before the backends shipped. It installs the lock, then uninstalls numba, llvmlite, mlx and mlx-metal; nothing is built, the backend tests skip as before, and `HELAB_REQUIRE_BACKENDS` is unset. No time limit changed. (`build.py --out`/`--prebuilt`, from the artifact version, stay but CI no longer uses them.) |
+| `.github/workflows/ci-test.yml` | Two jobs (CoCo's layout, after the macOS test job hit its limit twice). **"Converter backends"** (20 min limit of its own): the full environment, `build.py --ci` (both built, `HELAB_REQUIRE_BACKENDS` set, `check_build.py`), then the converter tests that run a backend (`test_convert_backend_*`, `test_convert_required_backends`, `test_convert_helab`, `test_convert_split`) with every backend required, so a missing or wrong backend still fails CI. **"Tests"**: the main suite as before the backends shipped. It installs the lock (or `requirements.txt`) without numba, llvmlite, mlx, mlx-metal, Cython and maturin, the base commit's package set, and fails if one is there. Nothing is built, the backend tests skip as before, and `HELAB_REQUIRE_BACKENDS` is unset. No time limit changed. (`build.py --out`/`--prebuilt`, from the artifact version, stay but CI no longer uses them.) |
 | `.github/workflows/ci-build.yml` | "Build and check the converter backends" (`build.py --ci`, building in that job: PyInstaller needs them in its venv) before PyInstaller (skipped for a recovery build of a tag from before `native/build.py`). After PyInstaller, "Check every converter backend in the packaged app" (`check_build.py --frozen`, then `du -sh dist/HeLab`). Timeout raised from 15 to 25 min. |
 | `tests/conftest.py` | `HELAB_REQUIRE_BACKENDS` (comma-separated). In `pytest_configure`, each named backend must load, or the run stops with a `UsageError` listing the reasons. A `pytest_runtest_makereport` wrapper (`trylast`, so it's inside pytest-rerunfailures') turns a skip whose reason names a required backend (as a word) into a failure. `pytest_configure` adds a `--rerun-except` pattern for those skips, so the failure is final, not rerun 5 times. All of this runs only when the variable is set. |
 | `tests/test_convert_required_backends.py` (new) | Tests both halves of the flag (nested pytest runs with this conftest, as `test_left_widgets` does), the name matching, and `check_build` in this Python, including a planted difference and a reference that converts nothing; that a skip-turned failure isn't rerun (a nested `--reruns 2` run, checked to fail without the `--rerun-except` line). |
@@ -169,6 +169,33 @@ test counts per file). That points at runner speed, not this branch: no code of 
 job besides those 10 tests. It is not proved, though: a same-time control (re-running dev's test
 jobs beside this branch's) would settle it.
 
+**The control and the fix.** CoCo found a same-time control (UI's run 40774902856, test jobs
+started within a minute of mine): Windows 21:03, macOS 4:28, Ubuntu 8:33, with more tests. So this
+branch's main job was slower. Its code was the same as dev's: my conftest hooks are no slower than
+the base's in an alternating local timing, and my 10 tests take 12.6 s. Its venv was not: Cython
+and maturin stayed installed, and numba, llvmlite and mlx were installed and then uninstalled.
+On Ubuntu the extra 75 s were scheduling: all six `test_typing` tests (25-35 s each) landed on
+one worker at the end. **`b8516a4`**: the main job installs the lock (or `requirements.txt`) minus
+numba, llvmlite, mlx, mlx-metal, Cython and maturin, the same package set as the base commit's,
+and fails if `pip list` shows one.
+
+**Run 40780776109** (`804a8e3`, dev/v0.0.7 with UI merged): **every job green, no RERUN**. The
+Live branch's run 40780439624, started 2.5 min earlier, is the control:
+
+| Job (suite) | This branch | Live (control) |
+|---|---|---|
+| Windows Tests | 22:46 (20:59) | 27:01 (24:52) |
+| macOS Tests | 10:15 (8:33) | 12:39 (10:51, 1 RERUN, helab-core's heartbeat test) |
+| Ubuntu Tests | 9:58 (8:38) | 6:55 (5:50) |
+| Converter backends | Windows 13:41 (11:02), macOS 3:03, Ubuntu 2:51 (1:06) | |
+| Build | Windows 7:49, macOS 5:49, Ubuntu 3:52 | Windows 6:57, macOS 4:47, Ubuntu 2:32 |
+
+The main job is now within runner variance of the control: faster on two OSes, slower on one.
+The backends job on Windows (13:41 of its own 20 min) spent most of its time on the reader and
+writer tests, which use no backend. **`2a2835c`**: it runs only `test_convert_backend_*`,
+`test_convert_required_backends`, `test_convert_helab` (the helper with every backend, numba's
+cache folder) and `test_convert_split`: 1171 tests (21 s here, against 4220 in 47 s).
+
 The split saves about 1 min of the Windows test job. The same suite varies by 3-5 min between
 runs, so the split alone doesn't keep Windows clear of 30 min, and macOS can now come near 20:
 **Q~2**.
@@ -195,9 +222,9 @@ linux, and `pyright --pythonplatform` Darwin, Windows and Linux: all clean.
   - Module table, `backends/cython` and `backends/rust`: "built by `native/build.py`".
 - **`.ai/architecture/release-and-ci.md`**: `ci-test.yml` has two independent jobs per OS and
   Python. "Converter backends" (20 min) builds and requires every backend (`build.py --ci`) and
-  runs `tests/test_convert_*.py`. "Tests" runs the whole suite without the optional backends:
-  numba, llvmlite, mlx and mlx-metal are uninstalled after the lock, nothing is built, and their
-  tests skip. The build
+  runs the converter tests that use a backend. "Tests" runs the whole suite in the environment it
+  had before the backends shipped: the lock without numba, llvmlite, mlx, mlx-metal, Cython and
+  maturin, nothing built, their tests skipping. The build
   job builds its own (`build.py --ci`) before PyInstaller and checks the app after
   (`check_build.py --frozen`); **its timeout is 25 min** (was 15). `HELAB_REQUIRE_BACKENDS` reaches
   later steps **through `$GITHUB_ENV`**, so in the build job it also applies to "Test the older
