@@ -152,6 +152,23 @@ the 3-core, 7 GB VM is a candidate; not proved). Earlier green runs varied too: 
 (`a6a5de4`) and 9:14 (`0e163d1`) on the same setup. The new layout makes the main test job's
 setup exactly what it was before this branch, whatever the cause.
 
+**Run 40774765952** (`d115552`, the main job without the backends): **every job green, no
+RERUN**.
+
+| Job | macOS | Ubuntu | Windows |
+|---|---|---|---|
+| Converter backends (build + check + `test_convert_*`) | 4:50 (tests 1:30, 4220 passed, mlx required) | 2:26 (1:03) | 9:48 (6:52) |
+| Tests (main, no backends) | 11:22 (suite 9:40) | 11:07 (9:50) | **27:12 (25:30)** |
+| Build (+ packaged-app check) | 6:09 | 3:56 | 8:58 |
+
+The main job now runs exactly dev/v0.0.7's suite setup (8020-8049 tests, as there) plus my 10
+tests (12.6 s on Ubuntu). Yet against dev/v0.0.7 `e064a53` (run 40758706117: Windows 19:55, macOS
+10:32, Ubuntu 6:50) Windows is +7 min and Ubuntu +4. Per test file, the slowdown is again uniform
+over unrelated files (Windows 4,084 → 5,656 worker-seconds, ×1.4; Ubuntu 1,006 → 1,664, ×1.65; same
+test counts per file). That points at runner speed, not this branch: no code of mine runs in that
+job besides those 10 tests. It is not proved, though: a same-time control (re-running dev's test
+jobs beside this branch's) would settle it.
+
 The split saves about 1 min of the Windows test job. The same suite varies by 3-5 min between
 runs, so the split alone doesn't keep Windows clear of 30 min, and macOS can now come near 20:
 **Q~2**.
