@@ -1,0 +1,14 @@
+
+profile matlab-2023-lab-edit (a228f236d317), backend mlx, positions even
+(cut: MATLAB read a half-written raw file; variant: re-converted by another MATLAB variant; empty: no hits, the reference a 0-byte file from another wrapper; each proved again above)
+set                              shots identical     cut variant   empty differ
+2019-halos-old-plates                4         4       0       0       0      0
+2020-halos-weak-trap                 4         4       0       0       0      0
+2022-07-old-plates-he3he4            4         4       0       0       0      0
+2022-07-old-plates-large-he3         4         4       0       0       0      0
+2022-11-ghost-counts-mcp             4         4       0       0       0      0
+2023-02-new-plates-he3he4            4         4       0       0       0      0
+2023-03-momentum-bells               4         4       0       0       0      0
+2024-11-rt-low-occupancy             4         4       0       0       0      0
+all                                 32        32       0       0       0      0
+checked 32 of 157 selected shots (those with a copy in .ai/temp/txy/matlab-2023), at most 4 per set

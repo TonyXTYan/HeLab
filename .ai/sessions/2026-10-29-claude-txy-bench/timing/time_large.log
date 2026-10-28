@@ -1,0 +1,90 @@
+-- time_large reference r1 copies 2 load { 6.74 5.73 5.93 }
+reference: 309898 rows (~5 MB raw), whole 598 ms (8 MB/s)
+  split x2: 302 ms (16 MB/s), identical
+  split x4: 174 ms (29 MB/s), identical
+  split x8: 137 ms (36 MB/s), identical
+-- time_large reference r2 copies 2 load { 6.44 5.68 5.92 }
+reference: 309898 rows (~5 MB raw), whole 596 ms (8 MB/s)
+  split x2: 300 ms (17 MB/s), identical
+  split x4: 171 ms (29 MB/s), identical
+  split x8: 136 ms (36 MB/s), identical
+-- time_large reference r3 copies 2 load { 6.44 5.68 5.92 }
+reference: 309898 rows (~5 MB raw), whole 599 ms (8 MB/s)
+  split x2: 303 ms (16 MB/s), identical
+  split x4: 170 ms (29 MB/s), identical
+  split x8: 136 ms (36 MB/s), identical
+-- time_large numpy r1 copies 10 load { 6.96 5.96 6.01 }
+numpy: 1549490 rows (~25 MB raw), whole 305 ms (81 MB/s)
+  split x2: 221 ms (112 MB/s), identical
+  split x4: 171 ms (145 MB/s), identical
+  split x8: 141 ms (176 MB/s), identical
+-- time_large numpy r2 copies 10 load { 6.80 5.95 6.00 }
+numpy: 1549490 rows (~25 MB raw), whole 304 ms (82 MB/s)
+  split x2: 222 ms (112 MB/s), identical
+  split x4: 172 ms (144 MB/s), identical
+  split x8: 141 ms (176 MB/s), identical
+-- time_large numpy r3 copies 10 load { 6.80 5.95 6.00 }
+numpy: 1549490 rows (~25 MB raw), whole 317 ms (78 MB/s)
+  split x2: 227 ms (109 MB/s), identical
+  split x4: 177 ms (140 MB/s), identical
+  split x8: 143 ms (173 MB/s), identical
+-- time_large numba r1 copies 10 load { 6.09 5.90 5.97 }
+numba: 1549490 rows (~25 MB raw), whole 301 ms (82 MB/s)
+  split x2: 137 ms (181 MB/s), identical
+  split x4: 125 ms (198 MB/s), identical
+  split x8: 118 ms (209 MB/s), identical
+-- time_large numba r2 copies 10 load { 5.85 5.85 5.96 }
+numba: 1549490 rows (~25 MB raw), whole 324 ms (77 MB/s)
+  split x2: 141 ms (176 MB/s), identical
+  split x4: 128 ms (194 MB/s), identical
+  split x8: 122 ms (204 MB/s), identical
+-- time_large numba r3 copies 10 load { 5.85 5.85 5.96 }
+numba: 1549490 rows (~25 MB raw), whole 300 ms (83 MB/s)
+  split x2: 137 ms (181 MB/s), identical
+  split x4: 125 ms (198 MB/s), identical
+  split x8: 120 ms (207 MB/s), identical
+-- time_large cython r1 copies 10 load { 5.71 5.82 5.94 }
+cython: 1549490 rows (~25 MB raw), whole 128 ms (193 MB/s)
+  split x2: 133 ms (186 MB/s), identical
+  split x4: 123 ms (202 MB/s), identical
+  split x8: 118 ms (210 MB/s), identical
+-- time_large cython r2 copies 10 load { 5.58 5.79 5.93 }
+cython: 1549490 rows (~25 MB raw), whole 129 ms (192 MB/s)
+  split x2: 134 ms (186 MB/s), identical
+  split x4: 123 ms (201 MB/s), identical
+  split x8: 120 ms (207 MB/s), identical
+-- time_large cython r3 copies 10 load { 5.58 5.79 5.93 }
+cython: 1549490 rows (~25 MB raw), whole 131 ms (189 MB/s)
+  split x2: 137 ms (180 MB/s), identical
+  split x4: 125 ms (198 MB/s), identical
+  split x8: 121 ms (205 MB/s), identical
+-- time_large rust r1 copies 10 load { 5.73 5.80 5.92 }
+rust: 1549490 rows (~25 MB raw), whole 141 ms (175 MB/s)
+  split x2: 128 ms (193 MB/s), identical
+  split x4: 121 ms (205 MB/s), identical
+  split x8: 117 ms (211 MB/s), identical
+-- time_large rust r2 copies 10 load { 5.73 5.80 5.92 }
+rust: 1549490 rows (~25 MB raw), whole 145 ms (171 MB/s)
+  split x2: 130 ms (191 MB/s), identical
+  split x4: 122 ms (203 MB/s), identical
+  split x8: 119 ms (209 MB/s), identical
+-- time_large rust r3 copies 10 load { 5.73 5.80 5.92 }
+rust: 1549490 rows (~25 MB raw), whole 144 ms (172 MB/s)
+  split x2: 131 ms (190 MB/s), identical
+  split x4: 123 ms (201 MB/s), identical
+  split x8: 118 ms (210 MB/s), identical
+-- time_large mlx r1 copies 10 load { 5.46 5.68 5.87 }
+mlx: 1549490 rows (~25 MB raw), whole 501 ms (49 MB/s)
+  split x2: 318 ms (78 MB/s), identical
+  split x4: 250 ms (99 MB/s), identical
+  split x8: 215 ms (116 MB/s), identical
+-- time_large mlx r2 copies 10 load { 5.35 5.65 5.85 }
+mlx: 1549490 rows (~25 MB raw), whole 475 ms (52 MB/s)
+  split x2: 318 ms (78 MB/s), identical
+  split x4: 254 ms (98 MB/s), identical
+  split x8: 219 ms (113 MB/s), identical
+-- time_large mlx r3 copies 10 load { 5.35 5.65 5.85 }
+mlx: 1549490 rows (~25 MB raw), whole 493 ms (50 MB/s)
+  split x2: 329 ms (75 MB/s), identical
+  split x4: 255 ms (97 MB/s), identical
+  split x8: 217 ms (114 MB/s), identical

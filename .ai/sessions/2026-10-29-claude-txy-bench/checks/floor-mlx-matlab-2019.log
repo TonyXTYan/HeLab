@@ -1,0 +1,11 @@
+profile matlab-2019, positions all
+set                              shots  same    x1 rows contested  changed       hits
+2019-halos-old-plates               43    43     341157      2917     2928     259421
+2020-halos-weak-trap                42    42     215296       530      534     123344
+2022-07-old-plates-he3he4           42    42     366586     15390    16477     287703
+2022-07-old-plates-large-he3        43    43     471751     23894    25590     358269
+2022-11-ghost-counts-mcp            10    10     100665         2        2      70461
+2023-02-new-plates-he3he4           43    43     254377         1        1     145422
+2023-03-momentum-bells              43    43     318405         2        2     202801
+2024-11-rt-low-occupancy            43    43      52570         1        1      33270
+all                                309   309    2120807     42737    45535    1480691

@@ -1,0 +1,389 @@
+== first call  4:33  up 7 days,  6:15, 7 users, load averages: 4.61 4.58 5.81
+reference      import   25.3 ms start    0.4 ms small     3.1 /    3.0 ms large   433.2 /  420.4 ms (load 4.61)
+numpy          import   25.7 ms start    0.5 ms small     0.6 /    0.4 ms large    58.2 /   48.1 ms (load 4.61)
+numba     warm import   28.1 ms start   79.2 ms small    99.2 /    0.3 ms large    54.9 /   44.7 ms (load 4.61)
+numba     cold import   26.8 ms start   76.4 ms small  1185.0 /    0.3 ms large    54.7 /   44.8 ms (load 4.61)
+cython         import   27.5 ms start    2.8 ms small     0.4 /    0.2 ms large    58.0 /   48.7 ms (load 4.61)
+rust           import   28.4 ms start    2.1 ms small     0.4 /    0.2 ms large    53.2 /   43.0 ms (load 4.61)
+mlx            import   29.8 ms start   31.3 ms small     9.2 /    1.4 ms large    71.8 /   63.1 ms (load 4.61)
+reference      import   26.0 ms start    0.4 ms small     3.2 /    2.9 ms large   431.7 /  422.8 ms (load 4.61)
+numpy          import   26.0 ms start    0.5 ms small     0.6 /    0.4 ms large    57.3 /   48.9 ms (load 4.72)
+numba     warm import   27.2 ms start   72.4 ms small    99.2 /    0.3 ms large    55.5 /   44.8 ms (load 4.72)
+numba     cold import   25.8 ms start   71.7 ms small  1140.9 /    0.3 ms large    54.3 /   45.3 ms (load 4.72)
+cython         import   27.4 ms start    3.0 ms small     0.4 /    0.2 ms large    57.6 /   49.6 ms (load 4.72)
+rust           import   30.0 ms start    2.2 ms small     0.4 /    0.2 ms large    53.7 /   44.3 ms (load 4.72)
+mlx            import   28.5 ms start   28.3 ms small     8.0 /    5.2 ms large    72.3 /   62.4 ms (load 4.72)
+reference      import   28.3 ms start    0.5 ms small     3.3 /    3.1 ms large   445.0 /  433.8 ms (load 4.72)
+numpy          import   27.8 ms start    0.7 ms small     0.7 /    0.5 ms large    59.0 /   50.9 ms (load 4.72)
+numba     warm import   30.6 ms start   76.2 ms small    94.2 /    0.3 ms large    53.8 /   44.4 ms (load 4.72)
+numba     cold import   25.8 ms start   73.9 ms small  1121.7 /    0.3 ms large    52.9 /   44.9 ms (load 4.72)
+cython         import   26.3 ms start    2.7 ms small     0.4 /    0.2 ms large    57.9 /   47.9 ms (load 4.74)
+rust           import   25.7 ms start    2.1 ms small     0.4 /    0.2 ms large    52.1 /   43.4 ms (load 4.74)
+mlx            import   25.9 ms start   26.3 ms small     7.1 /    1.5 ms large    77.0 /   59.3 ms (load 4.74)
+== reference  4:33  up 7 days,  6:15, 7 users, load averages: 4.74 4.61 5.81
+reference serial         x1  all   r1 load  4.74 | read   545.4 rec    13.9 write   285.6 core    12.9 wall    12.9 MB/s | lat   39.4 /  462.0 ms
+reference serial         x1  all   r2 load  5.91 | read   544.7 rec    13.9 write   300.1 core    13.0 wall    13.0 MB/s | lat   39.4 /  457.5 ms
+reference serial         x1  all   r3 load  5.64 | read   556.3 rec    14.0 write   307.8 core    13.1 wall    13.1 MB/s | lat   39.4 /  465.2 ms
+reference serial         x1  all   r1 load  5.43 | read   559.9 rec    16.7 write   345.6 core    15.5 wall    15.5 MB/s | lat   36.6 /  458.1 ms
+reference serial         x1  all   r2 load  5.34 | read   559.4 rec    16.6 write   345.4 core    15.4 wall    15.4 MB/s | lat   37.4 /  469.4 ms
+reference serial         x1  all   r3 load  5.41 | read   555.4 rec    16.6 write   337.7 core    15.4 wall    15.4 MB/s | lat   36.7 /  465.4 ms
+reference processes-warm x1  all   r1 load  5.51 | read   548.7 rec    13.9 write   306.4 core    12.9 wall    12.9 MB/s | lat   40.0 /  474.5 ms
+reference processes-warm x1  all   r2 load  4.92 | read   544.9 rec    13.9 write   307.1 core    13.0 wall    13.0 MB/s | lat   39.8 /  460.3 ms
+reference processes-warm x1  all   r3 load  4.63 | read   555.0 rec    14.0 write   308.9 core    13.0 wall    13.0 MB/s | lat   39.3 /  469.1 ms
+reference processes-warm x2  all   r1 load  4.48 | read   519.4 rec    13.7 write   306.5 core    12.8 wall    25.5 MB/s | lat   40.0 /  464.4 ms
+reference processes-warm x2  all   r2 load  4.71 | read   522.5 rec    13.7 write   306.9 core    12.8 wall    25.5 MB/s | lat   39.8 /  463.9 ms
+reference processes-warm x2  all   r3 load  4.73 | read   522.7 rec    13.7 write   301.7 core    12.8 wall    25.5 MB/s | lat   40.6 /  460.3 ms
+reference processes-warm x4  all   r1 load  4.84 | read   501.4 rec    13.5 write   304.8 core    12.6 wall    50.3 MB/s | lat   40.8 /  466.9 ms
+reference processes-warm x4  all   r2 load  5.09 | read   500.8 rec    13.5 write   303.8 core    12.6 wall    50.2 MB/s | lat   40.7 /  470.0 ms
+reference processes-warm x4  all   r3 load  5.33 | read   486.6 rec    13.5 write   295.2 core    12.6 wall    50.1 MB/s | lat   40.8 /  474.2 ms
+reference processes-warm x8  all   r1 load  5.70 | read   478.3 rec    13.4 write   300.9 core    12.5 wall    98.8 MB/s | lat   40.6 /  473.6 ms
+reference processes-warm x8  all   r2 load  6.04 | read   483.2 rec    13.4 write   300.1 core    12.5 wall    99.2 MB/s | lat   40.6 /  476.9 ms
+reference processes-warm x8  all   r3 load  6.04 | read   472.7 rec    13.4 write   299.8 core    12.5 wall    98.6 MB/s | lat   41.2 /  466.2 ms
+reference processes-warm x12 all   r1 load  6.52 | read   448.6 rec    12.6 write   285.4 core    11.7 wall   133.3 MB/s | lat   43.5 /  500.7 ms
+reference processes-warm x12 all   r2 load  6.52 | read   427.4 rec    12.3 write   277.7 core    11.4 wall   130.1 MB/s | lat   45.1 /  511.4 ms
+reference processes-warm x12 all   r3 load  6.24 | read   446.2 rec    12.4 write   284.0 core    11.6 wall   131.6 MB/s | lat   44.0 /  499.6 ms
+reference processes-warm x16 all   r1 load  6.24 | read   377.7 rec    10.3 write   249.3 core     9.7 wall   139.0 MB/s | lat   53.9 /  592.5 ms
+reference processes-warm x16 all   r2 load  6.24 | read   354.9 rec    10.2 write   247.0 core     9.5 wall   135.2 MB/s | lat   55.9 /  596.6 ms
+reference processes-warm x16 all   r3 load  8.30 | read   382.1 rec    10.2 write   252.7 core     9.5 wall   139.2 MB/s | lat   54.8 /  616.1 ms
+reference processes-cold x1  all   r1 load  8.30 | read   540.1 rec    13.8 write   297.9 core    12.9 wall    12.8 MB/s | lat   40.0 /  462.2 ms
+reference processes-cold x1  all   r2 load  7.36 | read   529.8 rec    13.8 write   295.9 core    12.8 wall    12.8 MB/s | lat   40.2 /  458.9 ms
+reference processes-cold x1  all   r3 load  6.84 | read   536.7 rec    13.7 write   298.1 core    12.8 wall    12.7 MB/s | lat   39.9 /  458.6 ms
+reference processes-cold x4  all   r1 load  6.29 | read   502.9 rec    13.5 write   299.9 core    12.6 wall    49.4 MB/s | lat   41.1 /  467.6 ms
+reference processes-cold x4  all   r2 load  6.58 | read   504.2 rec    13.5 write   304.4 core    12.6 wall    49.6 MB/s | lat   40.8 /  467.8 ms
+reference processes-cold x4  all   r3 load  6.78 | read   507.8 rec    13.6 write   300.0 core    12.7 wall    49.6 MB/s | lat   40.6 /  479.7 ms
+reference processes-cold x12 all   r1 load  6.87 | read   429.9 rec    12.4 write   283.4 core    11.6 wall   125.6 MB/s | lat   44.3 /  501.3 ms
+reference processes-cold x12 all   r2 load  6.56 | read   452.7 rec    12.6 write   287.7 core    11.7 wall   126.8 MB/s | lat   43.6 /  496.9 ms
+reference processes-cold x12 all   r3 load  6.56 | read   428.6 rec    12.2 write   275.1 core    11.4 wall   122.2 MB/s | lat   45.0 /  516.9 ms
+reference within-shot    x2  large r1 load  6.56 | read   548.1 rec    38.1 write   886.5 core    34.2 wall    34.2 MB/s | lat  114.9 /  246.2 ms
+reference within-shot    x2  large r2 load  6.52 | read   531.3 rec    37.7 write   881.5 core    33.8 wall    33.8 MB/s | lat  115.2 /  252.8 ms
+reference within-shot    x2  large r3 load  6.48 | read   535.5 rec    37.5 write   873.5 core    33.7 wall    33.7 MB/s | lat  116.3 /  248.8 ms
+reference within-shot    x4  large r1 load  6.48 | read   547.1 rec    40.8 write   885.7 core    36.4 wall    36.4 MB/s | lat  115.5 /  191.9 ms
+reference within-shot    x4  large r2 load  6.60 | read   546.3 rec    40.8 write   879.8 core    36.4 wall    36.4 MB/s | lat  115.1 /  193.8 ms
+reference within-shot    x4  large r3 load  6.87 | read   551.6 rec    40.5 write   868.0 core    36.2 wall    36.2 MB/s | lat  116.9 /  194.5 ms
+reference within-shot    x8  large r1 load  6.87 | read   552.6 rec    43.3 write   881.2 core    38.4 wall    38.4 MB/s | lat  113.1 /  189.3 ms
+reference within-shot    x8  large r2 load  6.80 | read   544.2 rec    42.9 write   859.8 core    38.0 wall    38.0 MB/s | lat  113.7 /  192.6 ms
+reference within-shot    x8  large r3 load  6.74 | read   555.7 rec    43.3 write   884.9 core    38.4 wall    38.4 MB/s | lat  112.9 /  190.8 ms
+reference: 309898 rows (~5 MB raw), whole 598 ms (8 MB/s)
+  split x2: 302 ms (16 MB/s), identical
+  split x4: 174 ms (29 MB/s), identical
+  split x8: 137 ms (36 MB/s), identical
+reference: 309898 rows (~5 MB raw), whole 596 ms (8 MB/s)
+  split x2: 300 ms (17 MB/s), identical
+  split x4: 171 ms (29 MB/s), identical
+  split x8: 136 ms (36 MB/s), identical
+reference: 309898 rows (~5 MB raw), whole 599 ms (8 MB/s)
+  split x2: 303 ms (16 MB/s), identical
+  split x4: 170 ms (29 MB/s), identical
+  split x8: 136 ms (36 MB/s), identical
+== numpy  4:38  up 7 days,  6:20, 7 users, load averages: 6.44 5.68 5.92
+numpy     serial         x1  all   r1 load  6.44 | read   558.0 rec   281.2 write   336.1 core   120.1 wall   120.1 MB/s | lat    4.4 /   60.7 ms
+numpy     serial         x1  all   r2 load  6.48 | read   548.4 rec   275.7 write   322.1 core   116.9 wall   116.8 MB/s | lat    4.6 /   58.0 ms
+numpy     serial         x1  all   r3 load  6.48 | read   555.2 rec   278.7 write   332.5 core   119.1 wall   119.0 MB/s | lat    4.4 /   58.4 ms
+numpy     serial         x1  all   r1 load  6.60 | read   565.1 rec   362.1 write   384.7 core   140.2 wall   140.2 MB/s | lat    4.3 /   59.5 ms
+numpy     serial         x1  all   r2 load  6.60 | read   546.8 rec   348.2 write   359.7 core   133.7 wall   133.6 MB/s | lat    4.6 /   60.7 ms
+numpy     serial         x1  all   r3 load  6.60 | read   566.7 rec   361.1 write   382.1 core   139.8 wall   139.8 MB/s | lat    4.3 /   58.6 ms
+numpy     processes-warm x1  all   r1 load  6.31 | read   554.4 rec   282.8 write   329.9 core   119.5 wall   117.9 MB/s | lat    4.4 /   57.3 ms
+numpy     processes-warm x1  all   r2 load  6.31 | read   541.1 rec   275.2 write   322.2 core   116.5 wall   114.8 MB/s | lat    4.6 /   60.2 ms
+numpy     processes-warm x1  all   r3 load  6.31 | read   558.0 rec   286.3 write   333.0 core   120.7 wall   119.0 MB/s | lat    4.4 /   57.9 ms
+numpy     processes-warm x2  all   r1 load  6.29 | read   512.0 rec   265.7 write   312.0 core   112.1 wall   219.0 MB/s | lat    4.7 /   64.1 ms
+numpy     processes-warm x2  all   r2 load  6.29 | read   532.3 rec   277.6 write   326.3 core   117.0 wall   230.9 MB/s | lat    4.5 /   61.5 ms
+numpy     processes-warm x2  all   r3 load  6.29 | read   534.0 rec   277.1 write   323.1 core   116.6 wall   229.6 MB/s | lat    4.5 /   60.8 ms
+numpy     processes-warm x4  all   r1 load  6.19 | read   492.2 rec   263.6 write   312.5 core   110.8 wall   429.6 MB/s | lat    4.6 /   66.7 ms
+numpy     processes-warm x4  all   r2 load  6.19 | read   482.0 rec   256.2 write   305.4 core   108.1 wall   422.3 MB/s | lat    4.8 /   69.7 ms
+numpy     processes-warm x4  all   r3 load  6.19 | read   482.3 rec   259.8 write   307.9 core   109.0 wall   421.7 MB/s | lat    4.6 /   68.7 ms
+numpy     processes-warm x8  all   r1 load  6.19 | read   452.3 rec   248.9 write   296.2 core   104.1 wall   792.1 MB/s | lat    4.9 /   71.3 ms
+numpy     processes-warm x8  all   r2 load  6.19 | read   456.5 rec   248.7 write   295.5 core   104.2 wall   800.1 MB/s | lat    4.9 /   69.7 ms
+numpy     processes-warm x8  all   r3 load  7.05 | read   453.4 rec   249.2 write   294.2 core   104.0 wall   773.6 MB/s | lat    4.9 /   69.2 ms
+numpy     processes-warm x12 all   r1 load  7.05 | read   420.6 rec   233.2 write   282.6 core    98.0 wall  1116.1 MB/s | lat    5.1 /   74.7 ms
+numpy     processes-warm x12 all   r2 load  7.05 | read   388.8 rec   221.9 write   269.6 core    92.7 wall  1049.3 MB/s | lat    5.4 /   78.3 ms
+numpy     processes-warm x12 all   r3 load  7.05 | read   387.8 rec   220.6 write   268.3 core    92.3 wall  1023.2 MB/s | lat    5.4 /   76.7 ms
+numpy     processes-warm x16 all   r1 load  7.05 | read   335.6 rec   187.8 write   239.7 core    80.1 wall  1148.8 MB/s | lat    6.0 /   81.2 ms
+numpy     processes-warm x16 all   r2 load  7.05 | read   316.4 rec   190.2 write   240.0 core    79.5 wall  1167.8 MB/s | lat    6.0 /   84.0 ms
+numpy     processes-warm x16 all   r3 load  7.05 | read   320.8 rec   186.2 write   227.7 core    77.6 wall  1124.7 MB/s | lat    6.2 /   84.7 ms
+numpy     processes-cold x1  all   r1 load  7.05 | read   542.4 rec   278.1 write   329.8 core   118.1 wall   112.7 MB/s | lat    4.4 /   61.9 ms
+numpy     processes-cold x1  all   r2 load  7.21 | read   541.2 rec   275.5 write   320.9 core   116.4 wall   111.0 MB/s | lat    4.6 /   60.8 ms
+numpy     processes-cold x1  all   r3 load  7.21 | read   539.1 rec   274.7 write   319.9 core   116.0 wall   110.6 MB/s | lat    4.6 /   58.9 ms
+numpy     processes-cold x4  all   r1 load  7.19 | read   497.9 rec   261.6 write   299.2 core   109.0 wall   371.7 MB/s | lat    4.8 /   66.5 ms
+numpy     processes-cold x4  all   r2 load  7.19 | read   492.8 rec   261.3 write   310.6 core   110.2 wall   374.6 MB/s | lat    4.8 /   68.2 ms
+numpy     processes-cold x4  all   r3 load  7.19 | read   489.5 rec   261.4 write   308.9 core   109.8 wall   373.8 MB/s | lat    4.9 /   67.5 ms
+numpy     processes-cold x12 all   r1 load  7.19 | read   417.9 rec   229.7 write   284.6 core    97.5 wall   760.6 MB/s | lat    5.3 /   75.1 ms
+numpy     processes-cold x12 all   r2 load  7.19 | read   412.1 rec   229.4 write   284.6 core    97.1 wall   740.6 MB/s | lat    5.3 /   76.0 ms
+numpy     processes-cold x12 all   r3 load  7.19 | read   415.6 rec   231.0 write   289.4 core    98.1 wall   768.0 MB/s | lat    5.3 /   74.1 ms
+numpy     threads        x1  all   r1 load  7.19 | read   549.6 rec   285.5 write   333.1 core   120.1 wall   120.0 MB/s | lat    4.5 /   60.3 ms
+numpy     threads        x1  all   r2 load  7.01 | read   550.9 rec   281.6 write   326.6 core   118.6 wall   118.4 MB/s | lat    4.4 /   57.9 ms
+numpy     threads        x1  all   r3 load  7.01 | read   547.8 rec   281.6 write   328.9 core   118.8 wall   118.6 MB/s | lat    4.6 /   58.9 ms
+numpy     threads        x4  all   r1 load  7.01 | read   266.8 rec   101.3 write   213.6 core    54.7 wall   218.2 MB/s | lat    9.5 /   76.8 ms
+numpy     threads        x4  all   r2 load  6.69 | read   264.9 rec   102.8 write   206.9 core    54.5 wall   217.9 MB/s | lat    9.6 /   77.0 ms
+numpy     threads        x4  all   r3 load  6.69 | read   255.0 rec    98.2 write   199.3 core    52.3 wall   208.7 MB/s | lat   10.3 /   82.4 ms
+numpy     threads        x8  all   r1 load  6.69 | read   136.7 rec    37.0 write   126.7 core    23.7 wall   188.9 MB/s | lat   24.2 /  161.6 ms
+numpy     threads        x8  all   r2 load  6.69 | read   144.3 rec    37.4 write   129.3 core    24.2 wall   192.7 MB/s | lat   23.6 /  153.9 ms
+numpy     threads        x8  all   r3 load  6.96 | read   142.1 rec    37.7 write   130.8 core    24.3 wall   193.4 MB/s | lat   23.3 /  157.9 ms
+numpy     within-shot    x2  large r1 load  6.96 | read   545.8 rec   378.1 write   938.4 core   180.4 wall   180.4 MB/s | lat   11.3 /   91.3 ms
+numpy     within-shot    x2  large r2 load  6.96 | read   546.3 rec   376.3 write   925.8 core   179.6 wall   179.6 MB/s | lat   11.3 /   91.2 ms
+numpy     within-shot    x2  large r3 load  6.96 | read   536.5 rec   389.5 write   964.1 core   182.9 wall   182.8 MB/s | lat   11.1 /   94.4 ms
+numpy     within-shot    x4  large r1 load  6.96 | read   564.0 rec   399.5 write   952.9 core   187.8 wall   187.7 MB/s | lat   10.8 /   84.0 ms
+numpy     within-shot    x4  large r2 load  6.96 | read   554.2 rec   397.9 write   954.9 core   186.4 wall   186.4 MB/s | lat   10.9 /   85.8 ms
+numpy     within-shot    x4  large r3 load  6.96 | read   562.0 rec   396.1 write   965.6 core   187.3 wall   187.2 MB/s | lat   11.0 /   84.7 ms
+numpy     within-shot    x8  large r1 load  6.96 | read   547.1 rec   395.1 write   913.0 core   183.4 wall   183.3 MB/s | lat   11.5 /   86.0 ms
+numpy     within-shot    x8  large r2 load  6.96 | read   541.0 rec   392.8 write   912.3 core   182.1 wall   182.1 MB/s | lat   11.5 /   85.2 ms
+numpy     within-shot    x8  large r3 load  6.96 | read   548.4 rec   398.6 write   930.0 core   184.9 wall   184.9 MB/s | lat   11.2 /   84.9 ms
+numpy: 1549490 rows (~25 MB raw), whole 305 ms (81 MB/s)
+  split x2: 221 ms (112 MB/s), identical
+  split x4: 171 ms (145 MB/s), identical
+  split x8: 141 ms (176 MB/s), identical
+numpy: 1549490 rows (~25 MB raw), whole 304 ms (82 MB/s)
+  split x2: 222 ms (112 MB/s), identical
+  split x4: 172 ms (144 MB/s), identical
+  split x8: 141 ms (176 MB/s), identical
+numpy: 1549490 rows (~25 MB raw), whole 317 ms (78 MB/s)
+  split x2: 227 ms (109 MB/s), identical
+  split x4: 177 ms (140 MB/s), identical
+  split x8: 143 ms (173 MB/s), identical
+== numba  4:39  up 7 days,  6:21, 7 users, load averages: 6.80 5.95 6.00
+numba     serial         x1  all   r1 load  6.80 | read   568.7 rec   869.1 write   338.5 core   170.6 wall   170.5 MB/s | lat    3.3 /   54.6 ms
+numba     serial         x1  all   r2 load  6.80 | read   570.2 rec   868.9 write   341.4 core   171.4 wall   171.3 MB/s | lat    3.3 /   54.3 ms
+numba     serial         x1  all   r3 load  6.66 | read   549.3 rec   858.1 write   325.3 core   165.0 wall   164.9 MB/s | lat    3.4 /   54.7 ms
+numba     serial         x1  all   r1 load  6.66 | read   556.0 rec   968.9 write   372.7 core   181.4 wall   181.2 MB/s | lat    3.3 /   57.2 ms
+numba     serial         x1  all   r2 load  6.66 | read   571.1 rec   980.6 write   390.1 core   187.5 wall   187.4 MB/s | lat    3.2 /   55.8 ms
+numba     serial         x1  all   r3 load  6.29 | read   559.4 rec   967.8 write   371.5 core   181.4 wall   181.3 MB/s | lat    3.3 /   55.8 ms
+numba     processes-warm x1  all   r1 load  6.29 | read   549.4 rec   853.1 write   329.5 core   165.9 wall   163.2 MB/s | lat    3.3 /   55.8 ms
+numba     processes-warm x1  all   r2 load  6.29 | read   559.6 rec   861.1 write   335.0 core   168.6 wall   166.0 MB/s | lat    3.3 /   53.8 ms
+numba     processes-warm x1  all   r3 load  6.10 | read   546.5 rec   849.9 write   327.0 core   164.9 wall   162.4 MB/s | lat    3.4 /   55.6 ms
+numba     processes-warm x2  all   r1 load  6.10 | read   538.4 rec   844.5 write   332.9 core   165.4 wall   325.5 MB/s | lat    3.4 /   56.5 ms
+numba     processes-warm x2  all   r2 load  6.17 | read   525.6 rec   827.9 write   319.8 core   160.3 wall   313.0 MB/s | lat    3.4 /   57.4 ms
+numba     processes-warm x2  all   r3 load  6.17 | read   514.0 rec   823.4 write   306.7 core   155.7 wall   304.9 MB/s | lat    3.5 /   59.2 ms
+numba     processes-warm x4  all   r1 load  6.17 | read   486.8 rec   798.2 write   312.1 core   153.6 wall   595.2 MB/s | lat    3.4 /   68.3 ms
+numba     processes-warm x4  all   r2 load  6.08 | read   483.3 rec   794.9 write   312.4 core   153.2 wall   593.7 MB/s | lat    3.5 /   64.6 ms
+numba     processes-warm x4  all   r3 load  6.08 | read   476.0 rec   798.3 write   308.6 core   151.7 wall   584.8 MB/s | lat    3.5 /   67.0 ms
+numba     processes-warm x8  all   r1 load  6.08 | read   423.6 rec   747.9 write   280.1 core   137.6 wall  1039.8 MB/s | lat    3.8 /   71.0 ms
+numba     processes-warm x8  all   r2 load  6.08 | read   437.0 rec   752.8 write   289.0 core   141.3 wall  1065.1 MB/s | lat    3.7 /   68.3 ms
+numba     processes-warm x8  all   r3 load  6.08 | read   439.7 rec   749.7 write   290.7 core   141.9 wall  1075.7 MB/s | lat    3.7 /   68.4 ms
+numba     processes-warm x12 all   r1 load  6.15 | read   384.1 rec   697.4 write   264.6 core   127.9 wall  1433.2 MB/s | lat    4.1 /   72.8 ms
+numba     processes-warm x12 all   r2 load  6.15 | read   386.7 rec   703.1 write   267.4 core   129.1 wall  1466.6 MB/s | lat    4.2 /   74.8 ms
+numba     processes-warm x12 all   r3 load  6.15 | read   387.0 rec   703.3 write   269.0 core   129.5 wall  1443.4 MB/s | lat    4.1 /   77.1 ms
+numba     processes-warm x16 all   r1 load  6.15 | read   314.2 rec   594.1 write   234.2 core   109.5 wall  1550.1 MB/s | lat    4.7 /   79.2 ms
+numba     processes-warm x16 all   r2 load  6.86 | read   311.1 rec   600.8 write   183.4 core    96.8 wall  1431.3 MB/s | lat    4.9 /   81.3 ms
+numba     processes-warm x16 all   r3 load  6.86 | read   307.9 rec   573.3 write   223.4 core   105.6 wall  1472.1 MB/s | lat    4.7 /   86.8 ms
+numba     processes-cold x1  all   r1 load  6.86 | read   551.5 rec   496.1 write   333.5 core   146.5 wall   135.1 MB/s | lat    3.4 /  189.4 ms
+numba     processes-cold x1  all   r2 load  6.86 | read   566.2 rec   521.1 write   340.9 core   151.1 wall   139.7 MB/s | lat    3.3 /  172.0 ms
+numba     processes-cold x1  all   r3 load  6.55 | read   545.1 rec   505.5 write   326.1 core   145.4 wall   132.9 MB/s | lat    3.5 /  178.8 ms
+numba     processes-cold x4  all   r1 load  6.55 | read   499.1 rec   206.8 write   320.5 core   100.4 wall   305.4 MB/s | lat    3.5 /  202.8 ms
+numba     processes-cold x4  all   r2 load  6.55 | read   505.5 rec   217.4 write   326.2 core   103.7 wall   317.5 MB/s | lat    3.4 /  190.0 ms
+numba     processes-cold x4  all   r3 load  6.55 | read   508.4 rec   218.6 write   325.0 core   104.0 wall   317.5 MB/s | lat    3.5 /  188.3 ms
+numba     processes-cold x12 all   r1 load  6.59 | read   457.4 rec    82.2 write   302.0 core    56.6 wall   401.1 MB/s | lat    3.8 /  206.1 ms
+numba     processes-cold x12 all   r2 load  6.59 | read   448.4 rec    82.6 write   297.9 core    56.5 wall   399.1 MB/s | lat    3.9 /  210.0 ms
+numba     processes-cold x12 all   r3 load  6.59 | read   430.0 rec    78.2 write   291.9 core    54.0 wall   385.6 MB/s | lat    3.9 /  227.7 ms
+numba     threads        x1  all   r1 load  6.59 | read   554.7 rec   860.5 write   331.8 core   167.3 wall   166.9 MB/s | lat    3.4 /   55.1 ms
+numba     threads        x1  all   r2 load  6.59 | read   570.0 rec   873.3 write   341.5 core   171.6 wall   171.4 MB/s | lat    3.3 /   54.9 ms
+numba     threads        x1  all   r3 load  6.38 | read   562.4 rec   864.9 write   338.2 core   169.8 wall   169.4 MB/s | lat    3.3 /   54.0 ms
+numba     threads        x4  all   r1 load  6.38 | read   307.6 rec   636.4 write   153.1 core    88.1 wall   351.3 MB/s | lat    7.3 /   69.1 ms
+numba     threads        x4  all   r2 load  6.38 | read   295.9 rec   657.4 write   151.4 core    86.9 wall   346.7 MB/s | lat    7.2 /   77.4 ms
+numba     threads        x4  all   r3 load  6.38 | read   311.6 rec   644.9 write   165.7 core    92.6 wall   369.7 MB/s | lat    6.6 /   68.0 ms
+numba     threads        x8  all   r1 load  6.19 | read   146.5 rec   534.5 write    91.0 core    50.8 wall   404.7 MB/s | lat   12.7 /   80.7 ms
+numba     threads        x8  all   r2 load  6.19 | read   155.2 rec   536.4 write    87.3 core    50.6 wall   403.0 MB/s | lat   12.6 /   82.4 ms
+numba     threads        x8  all   r3 load  6.19 | read   139.7 rec   527.8 write    88.2 core    49.0 wall   390.3 MB/s | lat   13.4 /   80.8 ms
+numba     within-shot    x2  large r1 load  6.19 | read   596.3 rec   713.7 write   927.8 core   240.6 wall   240.5 MB/s | lat    9.3 /   67.9 ms
+numba     within-shot    x2  large r2 load  6.19 | read   602.8 rec   720.8 write   977.7 core   245.8 wall   245.7 MB/s | lat    9.3 /   68.1 ms
+numba     within-shot    x2  large r3 load  6.19 | read   606.7 rec   720.3 write   984.0 core   246.7 wall   246.7 MB/s | lat    8.9 /   67.9 ms
+numba     within-shot    x4  large r1 load  6.09 | read   607.8 rec   730.1 write   966.1 core   246.9 wall   246.9 MB/s | lat    9.0 /   66.9 ms
+numba     within-shot    x4  large r2 load  6.09 | read   599.2 rec   724.1 write   960.7 core   244.5 wall   244.4 MB/s | lat    9.1 /   66.4 ms
+numba     within-shot    x4  large r3 load  6.09 | read   598.4 rec   713.4 write   940.7 core   241.8 wall   241.7 MB/s | lat    9.3 /   68.3 ms
+numba     within-shot    x8  large r1 load  6.09 | read   590.4 rec   715.5 write   922.9 core   239.5 wall   239.4 MB/s | lat    9.2 /   67.0 ms
+numba     within-shot    x8  large r2 load  6.09 | read   591.9 rec   726.4 write   959.6 core   243.4 wall   243.4 MB/s | lat    9.1 /   66.6 ms
+numba     within-shot    x8  large r3 load  6.09 | read   596.8 rec   737.1 write   970.5 core   246.1 wall   246.1 MB/s | lat    9.1 /   66.0 ms
+numba: 1549490 rows (~25 MB raw), whole 301 ms (82 MB/s)
+  split x2: 137 ms (181 MB/s), identical
+  split x4: 125 ms (198 MB/s), identical
+  split x8: 118 ms (209 MB/s), identical
+numba: 1549490 rows (~25 MB raw), whole 324 ms (77 MB/s)
+  split x2: 141 ms (176 MB/s), identical
+  split x4: 128 ms (194 MB/s), identical
+  split x8: 122 ms (204 MB/s), identical
+numba: 1549490 rows (~25 MB raw), whole 300 ms (83 MB/s)
+  split x2: 137 ms (181 MB/s), identical
+  split x4: 125 ms (198 MB/s), identical
+  split x8: 120 ms (207 MB/s), identical
+== cython  4:40  up 7 days,  6:22, 7 users, load averages: 5.94 5.87 5.96
+cython    serial         x1  all   r1 load  5.94 | read   556.0 rec   923.9 write   335.6 core   170.6 wall   170.5 MB/s | lat    3.2 /   58.8 ms
+cython    serial         x1  all   r2 load  5.94 | read   541.5 rec   904.9 write   324.7 core   165.8 wall   165.7 MB/s | lat    3.4 /   61.7 ms
+cython    serial         x1  all   r3 load  5.94 | read   556.7 rec   915.1 write   334.7 core   170.2 wall   170.1 MB/s | lat    3.2 /   62.4 ms
+cython    serial         x1  all   r1 load  5.70 | read   568.7 rec   996.0 write   387.4 core   187.1 wall   187.0 MB/s | lat    3.2 /   57.6 ms
+cython    serial         x1  all   r2 load  5.70 | read   553.6 rec   971.6 write   368.2 core   180.1 wall   180.0 MB/s | lat    3.3 /   58.9 ms
+cython    serial         x1  all   r3 load  5.70 | read   552.3 rec   974.7 write   370.0 core   180.5 wall   180.4 MB/s | lat    3.3 /   60.2 ms
+cython    processes-warm x1  all   r1 load  5.70 | read   561.6 rec   915.9 write   337.9 core   171.5 wall   168.7 MB/s | lat    3.2 /   58.7 ms
+cython    processes-warm x1  all   r2 load  5.73 | read   553.0 rec   910.3 write   329.3 core   168.3 wall   165.2 MB/s | lat    3.2 /   57.2 ms
+cython    processes-warm x1  all   r3 load  5.73 | read   542.6 rec   898.3 write   320.9 core   164.7 wall   161.4 MB/s | lat    3.3 /   59.8 ms
+cython    processes-warm x2  all   r1 load  5.73 | read   535.3 rec   887.5 write   327.9 core   165.4 wall   325.0 MB/s | lat    3.3 /   62.9 ms
+cython    processes-warm x2  all   r2 load  5.67 | read   538.0 rec   903.6 write   334.2 core   167.9 wall   327.7 MB/s | lat    3.3 /   61.4 ms
+cython    processes-warm x2  all   r3 load  5.67 | read   530.2 rec   881.1 write   321.6 core   163.1 wall   319.8 MB/s | lat    3.4 /   61.0 ms
+cython    processes-warm x4  all   r1 load  5.67 | read   477.3 rec   840.0 write   309.7 core   153.5 wall   587.8 MB/s | lat    3.4 /   70.9 ms
+cython    processes-warm x4  all   r2 load  5.67 | read   473.4 rec   828.2 write   308.0 core   152.3 wall   582.7 MB/s | lat    3.4 /   71.4 ms
+cython    processes-warm x4  all   r3 load  5.67 | read   485.4 rec   830.0 write   313.3 core   154.9 wall   594.5 MB/s | lat    3.4 /   71.6 ms
+cython    processes-warm x8  all   r1 load  5.67 | read   459.9 rec   808.9 write   301.8 core   148.7 wall  1128.9 MB/s | lat    3.6 /   69.5 ms
+cython    processes-warm x8  all   r2 load  6.09 | read   435.6 rec   772.2 write   287.1 core   141.4 wall  1050.2 MB/s | lat    3.7 /   74.9 ms
+cython    processes-warm x8  all   r3 load  6.09 | read   438.6 rec   782.4 write   288.5 core   142.4 wall  1063.8 MB/s | lat    3.7 /   73.5 ms
+cython    processes-warm x12 all   r1 load  6.09 | read   377.7 rec   718.6 write   258.7 core   126.5 wall  1363.1 MB/s | lat    4.1 /   81.7 ms
+cython    processes-warm x12 all   r2 load  6.09 | read   368.5 rec   694.4 write   260.1 core   125.0 wall  1354.0 MB/s | lat    4.2 /   83.9 ms
+cython    processes-warm x12 all   r3 load  6.09 | read   412.0 rec   739.5 write   256.4 core   130.2 wall  1464.0 MB/s | lat    4.1 /   78.0 ms
+cython    processes-warm x16 all   r1 load  6.09 | read   314.0 rec   619.2 write   225.9 core   108.4 wall  1499.8 MB/s | lat    4.8 /   84.2 ms
+cython    processes-warm x16 all   r2 load  6.09 | read   313.8 rec   589.3 write   231.3 core   108.6 wall  1524.9 MB/s | lat    4.7 /   89.9 ms
+cython    processes-warm x16 all   r3 load  6.09 | read   327.3 rec   613.2 write   237.2 core   112.3 wall  1638.1 MB/s | lat    4.4 /   91.5 ms
+cython    processes-cold x1  all   r1 load  6.09 | read   565.6 rec   927.1 write   343.5 core   173.7 wall   163.5 MB/s | lat    3.2 /   59.5 ms
+cython    processes-cold x1  all   r2 load  5.85 | read   552.6 rec   908.6 write   329.3 core   168.2 wall   157.6 MB/s | lat    3.4 /   58.1 ms
+cython    processes-cold x1  all   r3 load  5.85 | read   541.9 rec   905.8 write   329.0 core   167.0 wall   156.6 MB/s | lat    3.4 /   65.9 ms
+cython    processes-cold x4  all   r1 load  5.85 | read   509.7 rec   859.6 write   327.0 core   161.7 wall   522.3 MB/s | lat    3.4 /   67.2 ms
+cython    processes-cold x4  all   r2 load  5.85 | read   511.2 rec   856.5 write   326.1 core   161.5 wall   525.0 MB/s | lat    3.4 /   65.6 ms
+cython    processes-cold x4  all   r3 load  5.86 | read   510.3 rec   852.5 write   327.6 core   161.7 wall   523.6 MB/s | lat    3.4 /   65.6 ms
+cython    processes-cold x12 all   r1 load  5.86 | read   449.4 rec   762.8 write   300.3 core   145.7 wall   995.8 MB/s | lat    3.8 /   75.7 ms
+cython    processes-cold x12 all   r2 load  5.86 | read   433.2 rec   771.5 write   294.7 core   142.9 wall   949.1 MB/s | lat    3.9 /   72.8 ms
+cython    processes-cold x12 all   r3 load  5.86 | read   451.1 rec   783.6 write   297.7 core   145.9 wall   998.6 MB/s | lat    3.8 /   71.8 ms
+cython    threads        x1  all   r1 load  5.86 | read   545.3 rec   903.7 write   327.0 core   166.7 wall   166.3 MB/s | lat    3.4 /   60.1 ms
+cython    threads        x1  all   r2 load  5.86 | read   557.8 rec   917.4 write   341.4 core   172.1 wall   171.8 MB/s | lat    3.2 /   58.3 ms
+cython    threads        x1  all   r3 load  5.86 | read   567.8 rec   930.3 write   346.0 core   174.6 wall   174.4 MB/s | lat    3.2 /   57.7 ms
+cython    threads        x4  all   r1 load  5.95 | read   335.4 rec   601.7 write   152.4 core    89.2 wall   356.2 MB/s | lat    7.1 /   81.1 ms
+cython    threads        x4  all   r2 load  5.95 | read   287.2 rec   585.2 write   163.3 core    88.4 wall   352.6 MB/s | lat    7.1 /   74.0 ms
+cython    threads        x4  all   r3 load  5.95 | read   295.6 rec   578.8 write   164.5 core    89.4 wall   356.8 MB/s | lat    7.0 /   74.0 ms
+cython    threads        x8  all   r1 load  5.95 | read   129.5 rec   425.6 write    93.9 core    48.3 wall   384.2 MB/s | lat   13.4 /   86.1 ms
+cython    threads        x8  all   r2 load  5.95 | read   135.8 rec   430.1 write    93.1 core    48.9 wall   390.1 MB/s | lat   12.9 /   84.3 ms
+cython    threads        x8  all   r3 load  5.95 | read   149.6 rec   430.9 write    91.2 core    50.1 wall   398.8 MB/s | lat   12.9 /   84.2 ms
+cython    within-shot    x2  large r1 load  5.95 | read   594.4 rec   741.3 write   967.9 core   246.0 wall   246.0 MB/s | lat    9.0 /   68.0 ms
+cython    within-shot    x2  large r2 load  5.71 | read   608.4 rec   745.1 write   973.9 core   249.2 wall   249.2 MB/s | lat    9.1 /   67.3 ms
+cython    within-shot    x2  large r3 load  5.71 | read   605.1 rec   739.9 write   988.6 core   249.0 wall   249.0 MB/s | lat    9.0 /   66.4 ms
+cython    within-shot    x4  large r1 load  5.71 | read   594.4 rec   733.9 write   944.6 core   243.7 wall   243.6 MB/s | lat    9.2 /   68.4 ms
+cython    within-shot    x4  large r2 load  5.71 | read   584.9 rec   733.5 write   934.1 core   241.3 wall   241.3 MB/s | lat    9.2 /   68.8 ms
+cython    within-shot    x4  large r3 load  5.71 | read   600.8 rec   737.7 write   954.0 core   245.8 wall   245.7 MB/s | lat    9.1 /   67.4 ms
+cython    within-shot    x8  large r1 load  5.71 | read   586.6 rec   735.7 write   955.8 core   243.3 wall   243.2 MB/s | lat    9.4 /   71.3 ms
+cython    within-shot    x8  large r2 load  5.71 | read   603.7 rec   743.1 write   969.2 core   247.9 wall   247.8 MB/s | lat    8.9 /   66.7 ms
+cython    within-shot    x8  large r3 load  5.71 | read   604.6 rec   747.1 write   963.0 core   248.1 wall   248.0 MB/s | lat    8.9 /   66.7 ms
+cython: 1549490 rows (~25 MB raw), whole 128 ms (193 MB/s)
+  split x2: 133 ms (186 MB/s), identical
+  split x4: 123 ms (202 MB/s), identical
+  split x8: 118 ms (210 MB/s), identical
+cython: 1549490 rows (~25 MB raw), whole 129 ms (192 MB/s)
+  split x2: 134 ms (186 MB/s), identical
+  split x4: 123 ms (201 MB/s), identical
+  split x8: 120 ms (207 MB/s), identical
+cython: 1549490 rows (~25 MB raw), whole 131 ms (189 MB/s)
+  split x2: 137 ms (180 MB/s), identical
+  split x4: 125 ms (198 MB/s), identical
+  split x8: 121 ms (205 MB/s), identical
+== rust  4:41  up 7 days,  6:23, 7 users, load averages: 5.58 5.79 5.93
+rust      serial         x1  all   r1 load  5.58 | read   550.9 rec  1045.6 write   331.4 core   172.7 wall   172.6 MB/s | lat    3.2 /   56.1 ms
+rust      serial         x1  all   r2 load  5.58 | read   566.5 rec  1056.2 write   342.9 core   177.7 wall   177.6 MB/s | lat    3.0 /   53.2 ms
+rust      serial         x1  all   r3 load  5.53 | read   566.2 rec  1059.0 write   343.2 core   177.8 wall   177.7 MB/s | lat    3.1 /   53.5 ms
+rust      serial         x1  all   r1 load  5.53 | read   551.2 rec  1037.9 write   368.8 core   182.2 wall   182.0 MB/s | lat    3.2 /   55.2 ms
+rust      serial         x1  all   r2 load  5.53 | read   558.4 rec  1044.7 write   380.2 core   185.9 wall   185.8 MB/s | lat    3.0 /   54.8 ms
+rust      serial         x1  all   r3 load  5.53 | read   570.9 rec  1052.8 write   393.3 core   190.7 wall   190.6 MB/s | lat    3.0 /   55.9 ms
+rust      processes-warm x1  all   r1 load  5.73 | read   544.7 rec  1024.3 write   328.1 core   170.6 wall   167.4 MB/s | lat    3.1 /   54.2 ms
+rust      processes-warm x1  all   r2 load  5.73 | read   538.7 rec  1029.4 write   315.2 core   166.6 wall   163.0 MB/s | lat    3.3 /   55.1 ms
+rust      processes-warm x1  all   r3 load  5.73 | read   561.8 rec  1048.7 write   339.0 core   175.9 wall   172.7 MB/s | lat    3.1 /   53.7 ms
+rust      processes-warm x2  all   r1 load  5.75 | read   536.1 rec  1024.2 write   328.9 core   170.0 wall   333.2 MB/s | lat    3.2 /   55.4 ms
+rust      processes-warm x2  all   r2 load  5.75 | read   518.0 rec  1008.5 write   314.9 core   164.0 wall   317.7 MB/s | lat    3.3 /   56.5 ms
+rust      processes-warm x2  all   r3 load  5.75 | read   519.9 rec  1006.6 write   310.0 core   162.8 wall   317.1 MB/s | lat    3.4 /   56.6 ms
+rust      processes-warm x4  all   r1 load  5.75 | read   496.8 rec   991.4 write   319.8 core   162.6 wall   629.4 MB/s | lat    3.3 /   61.6 ms
+rust      processes-warm x4  all   r2 load  5.75 | read   486.5 rec   984.5 write   312.8 core   159.5 wall   608.8 MB/s | lat    3.3 /   62.8 ms
+rust      processes-warm x4  all   r3 load  5.93 | read   503.0 rec   993.1 write   317.2 core   162.7 wall   631.0 MB/s | lat    3.2 /   60.0 ms
+rust      processes-warm x8  all   r1 load  5.93 | read   450.4 rec   943.0 write   294.9 core   149.9 wall  1133.3 MB/s | lat    3.5 /   64.8 ms
+rust      processes-warm x8  all   r2 load  5.93 | read   431.9 rec   904.7 write   282.0 core   143.5 wall  1053.7 MB/s | lat    3.6 /   68.2 ms
+rust      processes-warm x8  all   r3 load  5.93 | read   429.2 rec   922.2 write   286.7 core   144.9 wall  1098.4 MB/s | lat    3.5 /   69.0 ms
+rust      processes-warm x12 all   r1 load  5.93 | read   385.3 rec   863.2 write   261.9 core   132.1 wall  1452.4 MB/s | lat    4.1 /   73.2 ms
+rust      processes-warm x12 all   r2 load  5.93 | read   408.1 rec   889.7 write   273.2 core   138.2 wall  1536.8 MB/s | lat    3.9 /   70.6 ms
+rust      processes-warm x12 all   r3 load  5.93 | read   406.6 rec   870.1 write   268.1 core   136.3 wall  1465.6 MB/s | lat    3.9 /   71.4 ms
+rust      processes-warm x16 all   r1 load  5.93 | read   328.5 rec   783.5 write   240.1 core   117.9 wall  1719.1 MB/s | lat    4.3 /   76.8 ms
+rust      processes-warm x16 all   r2 load  5.69 | read   308.4 rec   722.9 write   232.3 core   112.0 wall  1589.9 MB/s | lat    4.4 /   80.6 ms
+rust      processes-warm x16 all   r3 load  5.69 | read   305.2 rec   731.1 write   232.7 core   111.8 wall  1565.1 MB/s | lat    4.3 /   81.1 ms
+rust      processes-cold x1  all   r1 load  5.69 | read   547.2 rec  1043.2 write   327.4 core   171.2 wall   160.3 MB/s | lat    3.2 /   54.7 ms
+rust      processes-cold x1  all   r2 load  5.69 | read   549.8 rec  1041.4 write   328.6 core   171.7 wall   160.7 MB/s | lat    3.2 /   54.3 ms
+rust      processes-cold x1  all   r3 load  5.69 | read   567.2 rec  1056.6 write   321.2 core   171.7 wall   161.9 MB/s | lat    3.1 /   53.3 ms
+rust      processes-cold x4  all   r1 load  5.56 | read   511.4 rec   992.4 write   322.3 core   164.9 wall   532.1 MB/s | lat    3.2 /   59.2 ms
+rust      processes-cold x4  all   r2 load  5.56 | read   509.4 rec   990.1 write   321.9 core   164.5 wall   529.6 MB/s | lat    3.2 /   60.0 ms
+rust      processes-cold x4  all   r3 load  5.56 | read   499.9 rec   986.2 write   317.4 core   162.2 wall   517.5 MB/s | lat    3.3 /   60.7 ms
+rust      processes-cold x12 all   r1 load  5.56 | read   426.4 rec   886.4 write   287.3 core   143.8 wall   958.2 MB/s | lat    3.9 /   66.6 ms
+rust      processes-cold x12 all   r2 load  5.56 | read   425.6 rec   889.5 write   281.9 core   142.4 wall   957.3 MB/s | lat    3.9 /   65.2 ms
+rust      processes-cold x12 all   r3 load  5.56 | read   427.8 rec   882.4 write   285.2 core   143.3 wall   969.5 MB/s | lat    3.9 /   65.6 ms
+rust      threads        x1  all   r1 load  5.56 | read   557.8 rec  1051.0 write   337.6 core   175.3 wall   174.9 MB/s | lat    3.2 /   55.2 ms
+rust      threads        x1  all   r2 load  5.56 | read   570.0 rec  1062.4 write   346.1 core   179.0 wall   178.8 MB/s | lat    3.1 /   52.2 ms
+rust      threads        x1  all   r3 load  5.43 | read   560.6 rec  1056.0 write   337.1 core   175.5 wall   175.2 MB/s | lat    3.1 /   52.9 ms
+rust      threads        x4  all   r1 load  5.43 | read   267.5 rec   822.2 write   159.8 core    89.2 wall   356.0 MB/s | lat    7.0 /   69.0 ms
+rust      threads        x4  all   r2 load  5.43 | read   261.8 rec   805.1 write   170.7 core    91.6 wall   365.6 MB/s | lat    6.7 /   72.6 ms
+rust      threads        x4  all   r3 load  5.43 | read   278.3 rec   828.9 write   171.5 core    94.1 wall   375.3 MB/s | lat    6.4 /   68.7 ms
+rust      threads        x8  all   r1 load  5.43 | read   127.9 rec   717.9 write    95.4 core    50.8 wall   404.4 MB/s | lat   13.0 /   77.9 ms
+rust      threads        x8  all   r2 load  5.43 | read   136.0 rec   730.5 write    91.7 core    51.0 wall   405.7 MB/s | lat   12.8 /   80.4 ms
+rust      threads        x8  all   r3 load  5.80 | read   125.0 rec   741.5 write    96.1 core    50.6 wall   403.3 MB/s | lat   13.0 /   76.2 ms
+rust      within-shot    x2  large r1 load  5.80 | read   608.4 rec   792.6 write   964.9 core   253.7 wall   253.6 MB/s | lat    8.9 /   67.1 ms
+rust      within-shot    x2  large r2 load  5.80 | read   596.3 rec   779.9 write   933.9 core   248.1 wall   248.1 MB/s | lat    9.3 /   68.1 ms
+rust      within-shot    x2  large r3 load  5.80 | read   589.0 rec   771.1 write   929.3 core   245.7 wall   245.6 MB/s | lat    9.3 /   68.6 ms
+rust      within-shot    x4  large r1 load  5.80 | read   590.2 rec   777.6 write   944.5 core   247.6 wall   247.5 MB/s | lat    9.1 /   68.0 ms
+rust      within-shot    x4  large r2 load  5.80 | read   584.4 rec   782.9 write   981.2 core   249.5 wall   249.5 MB/s | lat    8.8 /   70.1 ms
+rust      within-shot    x4  large r3 load  5.80 | read   604.1 rec   798.9 write   986.8 core   255.1 wall   255.0 MB/s | lat    8.8 /   66.8 ms
+rust      within-shot    x8  large r1 load  5.80 | read   607.6 rec   791.2 write   965.6 core   253.5 wall   253.4 MB/s | lat    8.7 /   66.7 ms
+rust      within-shot    x8  large r2 load  5.73 | read   599.7 rec   800.7 write   968.1 core   253.2 wall   253.1 MB/s | lat    8.9 /   67.8 ms
+rust      within-shot    x8  large r3 load  5.73 | read   601.7 rec   794.1 write   950.3 core   251.7 wall   251.6 MB/s | lat    8.8 /   66.7 ms
+rust: 1549490 rows (~25 MB raw), whole 141 ms (175 MB/s)
+  split x2: 128 ms (193 MB/s), identical
+  split x4: 121 ms (205 MB/s), identical
+  split x8: 117 ms (211 MB/s), identical
+rust: 1549490 rows (~25 MB raw), whole 145 ms (171 MB/s)
+  split x2: 130 ms (191 MB/s), identical
+  split x4: 122 ms (203 MB/s), identical
+  split x8: 119 ms (209 MB/s), identical
+rust: 1549490 rows (~25 MB raw), whole 144 ms (172 MB/s)
+  split x2: 131 ms (190 MB/s), identical
+  split x4: 123 ms (201 MB/s), identical
+  split x8: 118 ms (210 MB/s), identical
+== mlx  4:42  up 7 days,  6:24, 7 users, load averages: 5.73 5.80 5.92
+mlx       serial         x1  all   r1 load  5.73 | read   555.5 rec   111.3 write   322.3 core    72.0 wall    72.0 MB/s | lat    7.5 /   70.2 ms
+mlx       serial         x1  all   r2 load  5.60 | read   541.1 rec   113.5 write   321.8 core    72.6 wall    72.6 MB/s | lat    7.4 /   76.8 ms
+mlx       serial         x1  all   r3 load  5.63 | read   543.6 rec   110.8 write   310.8 core    71.0 wall    71.0 MB/s | lat    7.6 /   72.2 ms
+mlx       serial         x1  all   r1 load  5.63 | read   560.0 rec   156.2 write   375.4 core    92.2 wall    92.1 MB/s | lat    6.3 /   71.4 ms
+mlx       serial         x1  all   r2 load  5.66 | read   544.0 rec   155.3 write   350.0 core    89.8 wall    89.8 MB/s | lat    6.9 /   72.4 ms
+mlx       serial         x1  all   r3 load  5.66 | read   562.6 rec   151.2 write   380.0 core    90.7 wall    90.7 MB/s | lat    6.3 /   71.7 ms
+mlx       processes-warm x1  all   r1 load  5.52 | read   537.9 rec   112.0 write   309.4 core    71.3 wall    70.6 MB/s | lat    7.4 /   72.5 ms
+mlx       processes-warm x1  all   r2 load  5.52 | read   541.3 rec   111.4 write   301.1 core    70.7 wall    70.0 MB/s | lat    7.6 /   71.8 ms
+mlx       processes-warm x1  all   r3 load  5.48 | read   548.9 rec   115.5 write   323.5 core    73.7 wall    73.0 MB/s | lat    7.0 /   73.0 ms
+mlx       processes-warm x2  all   r1 load  5.28 | read   499.8 rec    97.2 write   296.9 core    63.9 wall   126.3 MB/s | lat    8.4 /   81.9 ms
+mlx       processes-warm x2  all   r2 load  5.28 | read   521.5 rec   101.3 write   313.6 core    66.8 wall   131.8 MB/s | lat    8.1 /   73.8 ms
+mlx       processes-warm x2  all   r3 load  5.02 | read   500.1 rec   102.7 write   295.8 core    66.1 wall   130.6 MB/s | lat    8.2 /   78.1 ms
+mlx       processes-warm x4  all   r1 load  5.02 | read   465.0 rec   100.2 write   294.2 core    64.4 wall   254.0 MB/s | lat    8.2 /   84.6 ms
+mlx       processes-warm x4  all   r2 load  5.42 | read   465.7 rec   103.8 write   295.0 core    65.9 wall   259.8 MB/s | lat    8.1 /   86.4 ms
+mlx       processes-warm x4  all   r3 load  5.42 | read   453.2 rec    99.1 write   285.1 core    63.3 wall   248.3 MB/s | lat    8.4 /   87.8 ms
+mlx       processes-warm x8  all   r1 load  5.42 | read   371.7 rec    73.1 write   260.3 core    49.5 wall   388.1 MB/s | lat   10.4 /  110.9 ms
+mlx       processes-warm x8  all   r2 load  5.42 | read   391.9 rec    68.0 write   268.9 core    47.7 wall   371.9 MB/s | lat   10.9 /  103.6 ms
+mlx       processes-warm x8  all   r3 load  5.46 | read   389.8 rec    74.2 write   274.4 core    50.8 wall   398.7 MB/s | lat   10.4 /  106.3 ms
+mlx       processes-warm x12 all   r1 load  5.46 | read   306.1 rec    52.2 write   245.8 core    37.7 wall   443.2 MB/s | lat   14.2 /  159.3 ms
+mlx       processes-warm x12 all   r2 load  5.46 | read   297.1 rec    52.7 write   243.3 core    37.8 wall   442.9 MB/s | lat   14.2 /  156.3 ms
+mlx       processes-warm x12 all   r3 load  5.46 | read   309.4 rec    52.2 write   245.7 core    37.8 wall   444.0 MB/s | lat   13.7 /  139.2 ms
+mlx       processes-warm x16 all   r1 load  5.46 | read   275.1 rec    38.8 write   240.7 core    29.8 wall   467.7 MB/s | lat   17.8 /  167.3 ms
+mlx       processes-warm x16 all   r2 load  5.67 | read   276.3 rec    38.2 write   240.8 core    29.4 wall   452.7 MB/s | lat   17.2 /  166.2 ms
+mlx       processes-warm x16 all   r3 load  5.67 | read   258.2 rec    37.9 write   226.6 core    28.8 wall   443.4 MB/s | lat   18.1 /  178.5 ms
+mlx       processes-cold x1  all   r1 load  5.67 | read   540.9 rec   110.0 write   316.0 core    70.9 wall    67.4 MB/s | lat    7.8 /   71.8 ms
+mlx       processes-cold x1  all   r2 load  5.37 | read   524.7 rec   104.1 write   264.1 core    65.4 wall    62.3 MB/s | lat    8.2 /  128.6 ms
+mlx       processes-cold x1  all   r3 load  5.37 | read   522.9 rec   110.3 write   301.7 core    69.9 wall    66.5 MB/s | lat    7.7 /   78.1 ms
+mlx       processes-cold x4  all   r1 load  5.34 | read   449.8 rec    90.8 write   280.8 core    59.5 wall   209.0 MB/s | lat    8.8 /   89.5 ms
+mlx       processes-cold x4  all   r2 load  5.34 | read   454.9 rec    97.2 write   283.9 core    62.5 wall   220.9 MB/s | lat    8.4 /   86.0 ms
+mlx       processes-cold x4  all   r3 load  5.34 | read   472.2 rec    96.3 write   280.3 core    62.2 wall   225.9 MB/s | lat    8.2 /   93.9 ms
+mlx       processes-cold x12 all   r1 load  5.56 | read   315.7 rec    48.3 write   252.3 core    36.0 wall   357.6 MB/s | lat   13.3 /  148.5 ms
+mlx       processes-cold x12 all   r2 load  5.56 | read   293.1 rec    48.2 write   241.7 core    35.3 wall   346.3 MB/s | lat   13.8 /  159.3 ms
+mlx       processes-cold x12 all   r3 load  5.56 | read   298.0 rec    47.4 write   243.3 core    35.0 wall   341.5 MB/s | lat   13.5 /  151.4 ms
+mlx       within-shot    x2  large r1 load  5.56 | read   535.2 rec   228.5 write   894.1 core   135.8 wall   135.8 MB/s | lat   18.8 /   99.5 ms
+mlx       within-shot    x2  large r2 load  5.56 | read   550.5 rec   227.7 write   945.7 core   137.6 wall   137.6 MB/s | lat   17.8 /   98.4 ms
+mlx       within-shot    x2  large r3 load  5.59 | read   551.6 rec   231.7 write   942.4 core   139.1 wall   139.1 MB/s | lat   15.9 /   99.0 ms
+mlx       within-shot    x4  large r1 load  5.59 | read   548.8 rec   221.5 write   912.9 core   134.5 wall   134.5 MB/s | lat   17.2 /   92.9 ms
+mlx       within-shot    x4  large r2 load  5.59 | read   544.9 rec   227.9 write   922.6 core   136.9 wall   136.8 MB/s | lat   17.7 /   95.0 ms
+mlx       within-shot    x4  large r3 load  5.59 | read   552.3 rec   235.9 write   955.3 core   140.9 wall   140.9 MB/s | lat   16.4 /   92.9 ms
+mlx       within-shot    x8  large r1 load  5.59 | read   557.8 rec   242.8 write   943.4 core   143.4 wall   143.4 MB/s | lat   17.3 /   91.4 ms
+mlx       within-shot    x8  large r2 load  5.46 | read   558.2 rec   234.4 write   918.8 core   139.9 wall   139.9 MB/s | lat   17.1 /   92.8 ms
+mlx       within-shot    x8  large r3 load  5.46 | read   542.6 rec   221.4 write   893.0 core   133.7 wall   133.7 MB/s | lat   18.4 /   92.5 ms
+mlx: 1549490 rows (~25 MB raw), whole 501 ms (49 MB/s)
+  split x2: 318 ms (78 MB/s), identical
+  split x4: 250 ms (99 MB/s), identical
+  split x8: 215 ms (116 MB/s), identical
+mlx: 1549490 rows (~25 MB raw), whole 475 ms (52 MB/s)
+  split x2: 318 ms (78 MB/s), identical
+  split x4: 254 ms (98 MB/s), identical
+  split x8: 219 ms (113 MB/s), identical
+mlx: 1549490 rows (~25 MB raw), whole 493 ms (50 MB/s)
+  split x2: 329 ms (75 MB/s), identical
+  split x4: 255 ms (97 MB/s), identical
+  split x8: 217 ms (114 MB/s), identical
+== done  4:43  up 7 days,  6:25, 7 users, load averages: 5.35 5.65 5.85
