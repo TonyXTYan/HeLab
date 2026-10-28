@@ -129,7 +129,10 @@ Finding numbers refer to the [planning-docs audit](sessions/2026-10-28-claude-do
 - **A9.1 Remove unused converter backends from the build** (Q9.2): every backend ships while the
   converter is tested; once the default and the optional fast ones are settled, drop the rest
   from `requirements.txt`, the lock and `HeLab.spec`, and note the size saved. Input: the stage 2
-  results (`sessions/2026-10-29-claude-txy-bench/results.md`) and Q11.2.
+  results (`sessions/2026-10-29-claude-txy-bench/results.md`) and Q11.2. Packaging's sizes (macOS app):
+  mlx +234 MB (78 zipped), numba+llvmlite +127 (40), rust +0.48, cython +0.27. Dropping numba means
+  removing it from the lock (or adding it to `excludes`): once it is in the lock, pandas' and scipy's
+  optional imports pack it even without the spec.
 
 ## Converter stage 1 (block 10)
 
@@ -215,6 +218,16 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 - **A15.3 `test_live.run_helper` sends every field `io_helper` does** (`txy`, `memory_origins`,
   `helab_since`, `listed_mtime`, `seen_names`, `identity_root`), so Live tests elsewhere exercise
   what the helper runs (`test_live_convert.py` already does).
+
+## Converter stage 4, packaging (block 16)
+
+- **A16.1 Rust build cache in CI**: every build job compiles the rust crate from cold (LTO fat,
+  `codegen-units = 1`); if CI time matters, `Swatinem/rust-cache@v2` with `workspaces: native/rust`.
+- **A16.2 The compatibility jobs** (3.11, 3.12, 3.14, unpinned; PR-only, experimental) also build and
+  require cython, rust and numba: watch the first PR run, and make numba conditional there if a
+  Python has no wheel.
+- **A16.3 `native/build.py`'s `--out`/`--prebuilt`** are no longer used by any workflow (Puffin): drop
+  them, or fix the module docstring that says the test job takes a build job's `--out`.
 
 ## Not AI work (stays in MANUAL_TODO)
 

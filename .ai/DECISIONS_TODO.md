@@ -184,6 +184,18 @@ From the `agent/txy-ui` and `agent/txy-live` handoffs (`sessions/2026-10-29-clau
   Alternatives: a rate like MATLAB's 700 Hz (needs `t_max` in `shot_converted`); per-folder
   thresholds. A low shot can notify twice (Shot trends' Notify during Live is a separate rule).
 
+## Converter stage 4, packaging (block 16)
+
+- **Q16.1 A `setup.py` extra for the fast backends?** (`pip install -e .[fast]`, or building the
+  extensions during `pip install`). Proposed: no: it needs a compiler and Rust on every lab PC, and
+  `native/build.py` does it for developers and CI.
+- **Q16.2 CI test-job time limits.** Windows' test job ran 20-25 min tonight (limit 30, Q2.6), and one
+  macOS job hit its 20-min limit on a slow runner (normally 5-11). Options: (a) raise the limits
+  (Windows 40, others 30); (b) split the test job into two shards per OS (one more runner each);
+  (c) leave them and re-run a job that hits the limit. Proposed (packaging floor): (a) now, (b) when
+  the suite grows again. Ubuntu's slow tail is all six `test_typing` tests landing on one worker at the
+  end (~3 min), a candidate fix. No limit was changed overnight (Side).
+
 ## From the audit (block 2)
 
 These come from the [audit](sessions/2026-10-28-claude-v0.0.6-checks/audit.md), whose finding

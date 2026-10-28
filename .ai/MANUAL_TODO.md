@@ -182,6 +182,12 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
 - [ ] **M15.2 The Auto-convert button on Windows and macOS** (its menu arrow, the checked look, the
   menu's texts).
 
+- [ ] **M16.1 Compiled backends on the Sandy Bridge lab PC**: the CI Windows build's `HeLab.exe convert
+  --watch <copy of a run> --once --backend rust` and `--backend cython` load and convert (no AVX2: the
+  rust crate has no `target-cpu`, cython builds with `/O2 /fp:precise`). Supersedes M11.2.
+- [ ] **M16.2 macOS signing and Gatekeeper** accept the new `.so`/`.dylib` files in a release
+  `HeLab.app` (`helab_convert_rs.abi3.so`, the cython `_kernel`, libmlx, libllvmlite).
+
 ## Data roots (v0.0.5a1, added 2026-10-18)
 
 Native checks of the data-roots stages D1–D4 ([plan](sessions/2026-10-16-claude-data-roots/plan.md)).

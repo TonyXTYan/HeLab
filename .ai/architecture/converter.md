@@ -34,8 +34,8 @@ HeLab converts in its helpers and with `helab convert` (stage 4, below).
 | `timing` | `time_shot`/`time_shots` with `Parallelism` (serial, processes, threads, within-shot through `split`); `summarise` (SI MB/s per stage, latency). |
 | `backends/numpy_backend` | `numpy`, the default (stage 2): vectorised match, an exact sequential pass only for interfering x1s. |
 | `backends/numba_backend`, `numba_kernels` | `numba` (optional): the loops under `@njit`, no fastmath, nogil; kernels imported only with numba; their cache folder set by the caller (`set_cache_folder`, absolute). |
-| `backends/cython` | `cython` (optional): the loops compiled from `native/cython/_kernel.pyx` by `native/cython/build.py` (never committed); GIL released; unavailable until built or when stale (the source's SHA-256 is compiled in). |
-| `backends/rust` | `rust` (optional): `native/rust/` (PyO3, maturin, abi3); GIL released; `reconstruct_rust(threads, piece_rows)` splits one shot itself. |
+| `backends/cython` | `cython` (optional): the loops compiled from `native/cython/_kernel.pyx` by `native/build.py` (never committed); GIL released; unavailable until built or when stale (the source's SHA-256 is compiled in). |
+| `backends/rust` | `rust` (optional): `native/rust/` (PyO3, maturin, abi3), built by `native/build.py`; GIL released; `reconstruct_rust(threads, piece_rows)` splits one shot itself. |
 | `backends/mlx_gpu` | `mlx` (optional; Apple Silicon, macOS ≥ 14): first choices on the GPU in int32 differences, the greedy check and float64 output on the CPU. |
 
 `dev/txy/` holds the scripts that read the sample set (tests never do): `check_samples.py` (exit 1
@@ -103,7 +103,10 @@ case in `tests/data/convert/`, both built-ins, the quirks above, and every sampl
   extension not built or stale, no Metal); any error while loading (not only `ImportError`) leaves
   it unavailable with the reason, logged, never raised out of `available_backends()`. The loader is
   thread-safe (the timing harness's threads all make their first call at once). Its tests skip with
-  an explicit reason (e.g. "cython extension not built (stage 4 packaging)") until CI builds it.
+  an explicit reason (e.g. "cython extension not built (stage 4 packaging)") where it isn't built.
+  CI's "Converter backends" job sets `HELAB_REQUIRE_BACKENDS` (cython, rust, numba; mlx where
+  `mx.metal.is_available()`), so there a backend that can't load stops the run and a skip naming one
+  fails (`tests/conftest.py`).
   An optional package's import carries a targeted pyright ignore, since pyright runs in the suite
   where the package isn't installed.
 - **Exact bits.** No FMA contraction or fast-math (`-ffp-contract=off`, `/fp:precise`, no `mul_add`,
@@ -130,12 +133,23 @@ dense 25 MB shot: rust 144 ms, numpy 305 ms, Live's worst case). Recommendation 
 the default everywhere (meets both targets on one core); one optional compiled backend (rust, or
 cython); drop numba (+145 MB) and mlx (+240 MB, slower than numpy).
 
-**Frozen builds:** backends are imported by name from `_MODULES`, so `HeLab.spec` needs
-`hiddenimports` for every backend module, the reference included (without it a frozen app can't
-find `helab.convert.backends`); mlx also needs `collect_submodules('mlx')` and
-`collect_data_files('mlx')`; numba ignores `NUMBA_CACHE_DIR` when frozen (its cache folder is set
-through `set_cache_folder`, under `cache_dir()`, Q11.1). Compiled sources and build scripts live
-in `native/` (`cython/`, `rust/`); binaries are never committed.
+**Frozen builds** (`agent/txy-packaging`, landed `7cb168e`): `HeLab.spec` lists every `_MODULES`
+backend in `hiddenimports` (the reference too: without it a frozen app can't find
+`helab.convert.backends`), plus each optional package present in the build Python (the cython
+`_kernel`, `helab_convert_rs`, numba, mlx); a missing one is left out with a printed line, and the
+app has that backend unavailable with the reason. mlx's libraries and `mlx.metallib` come through
+`native/pyinstaller-hooks/hook-mlx.py`; Cython is excluded; the built-in profiles are datas. numba
+ignores `NUMBA_CACHE_DIR` when frozen (its cache folder is set through `set_cache_folder`, under
+`cache_dir()`, Q11.1). Compiled sources and build scripts live in `native/` (`cython/`, `rust/`);
+binaries are never committed. `python native/build.py` builds the cython kernel in place and installs
+the rust module's abi3 wheel into the running Python (neither is part of `pip install -e .`; maturin
+`--locked`); `native/check_build.py` checks every backend against the reference on
+`tests/data/convert/` (reference and numpy always required; a crash is a failure), in this Python or
+(`--frozen APP`) through a packaged app's `convert --once`. CI runs the converter tests that use a
+backend only in its "Converter backends" job (listed by hand in `ci-test.yml`): a new converter test
+that runs every available backend outside `test_convert_backend_*`, `test_convert_helab` or
+`test_convert_split` must be added there, or it runs only without backends. `test_typing` and
+`test_headless_imports` run in CI only without numba and mlx installed; with them, only locally.
 
 ## Writing TXY
 

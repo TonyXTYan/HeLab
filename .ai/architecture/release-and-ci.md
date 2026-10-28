@@ -28,7 +28,18 @@ macOS, Windows and Ubuntu for every branch push and PR to `main`. A push to a
 branch with an open PR to `main` runs only the detection job, since the PR's own
 run tests the same commit (if the PR lookup fails, everything runs). Separate
 Python 3.11, 3.12 and 3.14 compatibility matrices run only on PRs to `main`,
-with soft failures. Shared steps live in `ci-test.yml` and `ci-build.yml`, with
+with soft failures. `ci-test.yml` has two independent jobs per OS and Python (converter stage 4,
+2026-10-29): "Converter backends" (20 min) builds and requires every compiled backend
+(`native/build.py --ci`) and runs the converter tests that use a backend; "Tests" runs the whole
+suite in the environment it had before the backends shipped (the lock without numba, llvmlite, mlx,
+mlx-metal, Cython and maturin, nothing built, their tests skipping; a `pip list` guard fails the job
+if one is present). The build job builds them (`build.py --ci`) before PyInstaller and checks the
+app after (`check_build.py --frozen`); its timeout is 25 min. `HELAB_REQUIRE_BACKENDS` reaches later
+steps through `$GITHUB_ENV`, so in the build job it also applies to "Test the older tagged commit
+before rebuilding recovery assets" (skipped, and the variable unset, for a tag from before
+`native/build.py`). Runners need Rust and a C compiler (MSVC on `windows-latest`); GitHub's macOS
+arm64 runners have Metal, so mlx is required there. Test-job times (Windows ~20-25 of 30 min) are
+Q16.2. Shared steps live in `ci-test.yml` and `ci-build.yml`, with
 Codecov uploads. Runs keep no artifacts: builds are uploaded (`upload`) only in a
 run that releases, for the release job; test results go to Codecov only. Compatibility matrices expand on pushes, but pass `enabled: false`
 to the called jobs, recording individual skips without starting runners. All
