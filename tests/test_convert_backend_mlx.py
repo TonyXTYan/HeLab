@@ -413,3 +413,20 @@ def test_gpu_memory_stays_bounded_on_a_large_shot() -> None:
     first = mlx_gpu.first_choices_mlx(prep)
     assert mx.get_peak_memory() < 600e6
     assert int(np.count_nonzero(first.y1 != mlx_gpu.NONE)) == 400_000
+
+
+@pytest.mark.parametrize("gpu", [pytest.param(True, marks=needs_gpu), False], ids=["gpu", "cpu"])
+def test_hits_are_always_a_contiguous_two_d_float64_array(gpu: bool) -> None:
+    """The shared TXY formatter refuses anything else (it reinterprets the bits): every path, the
+    reference fallback and no hits included, gives an (n, 3) C-contiguous float64 array."""
+    inputs = [parse_raw((CASES / case / "d1.txt").read_bytes()) for case in case_names()]
+    inputs += [with_rows(fuzz_pulses(5, rows=80), [(1.0, 0.5)], 4),          # a fraction: the reference
+               corner_hits(), RawPulses(channels=np.array([5.0]), times=np.array([1.0]))]
+    for pulses in inputs:
+        for profile in (MATLAB_2019, MATLAB_2023_LAB_EDIT):
+            try:
+                hits = mlx_gpu.reconstruct_mlx(pulses, profile, gpu=gpu)
+            except NoRowsError:
+                continue
+            assert hits.dtype == np.float64 and hits.ndim == 2 and hits.shape[1] == 3
+            assert hits.flags.c_contiguous
