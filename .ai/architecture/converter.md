@@ -152,8 +152,9 @@ never replaces an existing file (HeLab's writes beside raw files).
 
 #### The operation
 
-`IOService.submit(owner, generation, path, "convert", payload)` (through `FolderCache`; Live
-auto-convert is the first caller). Background lane unless `FolderCache` makes it
+`IOService.submit(owner, generation, path, "convert", payload)` (through `FolderCache.convert(owner, path)`,
+which builds the payload and sends the folder's last summary's lists back; Live auto-convert is the
+first caller, [live](live.md)). Background lane unless `FolderCache` makes it
 foreground; pausable; refused by Work Offline; held during a cache move (its payload carries
 `cache`, so `IOService.uses_cache` is true) and killed by `hold_cache`, like loads. The no-progress
 timeout applies (heartbeats while reading, per 8 MB block, and while computing; none while a read
@@ -235,6 +236,41 @@ file or TXY changed, another profile hash); backend and profile name/version don
 (equal hashes convert alike). Why a record per shot and not a manifest: each is written once by
 the conversion that made its TXY, atomically, so two conversions never rewrite each other's, and
 Live writes one small file per shot instead of the folder's whole list each time.
+
+#### TXY sources (Q6.6; `agent/txy-ui`, landed `475c6a6`)
+
+Four sources (`helab/utils/txy_sources.py`): `matlab` (the default for tabs and Live: MATLAB's
+`d_txy_forc`, HeLab's current TXY filling shots MATLAB lacks), `helab` (HeLab's wherever current),
+and, for comparing, `matlab-only` and `helab-only`. `io_ops.helab_txy` finds HeLab's TXY in its
+folders (`folders()`: the cache base by root key, temps by root key, temps by path) and beside the raw
+files, current only by provenance for the conversion profile's hash (`could_take` limits which records
+are read). `load`, `live_check` and `save_held` take `txy` (FolderCache adds it to every load,
+`with_txy`) and the held origins; shots are reused only from the same kind of TXY, and a held one is
+trusted only with the wanted profile hash. **Only MATLAB's TXY feed the folder-mismatch rule**: a
+held HeLab shot whose TXY is gone, changed or no longer current is read again or dropped as removed,
+never a mismatch (HeLab's can go or be rewritten legitimately). The dataset signature is the
+folder's MATLAB one (`helab_txy.folder_print`: the data's MATLAB shots plus the settled MATLAB TXY of
+HeLab-held shots, never waiting or young files), so data of MATLAB's TXY alone keeps its identity and
+saved results. Per-shot origins (`helab:<hash>`) are in the dataset's `info.txy`, `ViewIdentity.source`
+and `Coverage.origins`; a 0-byte HeLab TXY is an empty shot. Each plot's settings have a TXY row
+(`helab/views/plots/txy_source.py`): the default runs on the tab's data; another source is a dataset the
+plot loads itself through FolderCache (RAM only, job key `load:<source>`), reloaded at each Live
+revision; Reload of a released plot loads its own source. Live finds the root key itself when the app
+has none (asked once per folder per session, `key_asked`).
+
+#### Profiles in the app
+
+Built-ins: `matlab-2019` (default), `matlab-2023-lab-edit`, and the plate profiles `plates-2017`,
+`plates-2022`, `plates-2025` (equal to `matlab-2019` in output until calibrated; `plates-2025` marked
+uncalibrated), shipped as `helab/convert/builtin_profiles/*.json` (`builtin_files`, tested equal to the
+definitions; in `setup.py`'s package data and `HeLab.spec`'s datas). User profiles are JSON files in
+`<app folder>/profiles` (`helab/convert/user_profiles.py`). Settings → TXY converter
+(`helab/views/ConverterTab.py`): the conversion profile, backend and output (rows `convert_profile`,
+`convert_backend`, `converted_txy_output`, read by `read_convert_profile`/`read_convert_backend`/
+`read_convert_output`), and the profile manager (built-ins read-only; duplicate, validated edit with
+the hash shown, import, export; delete asks, and deleting the profile in use resets the setting;
+edits save at once). Names sharing a hash are all shown. Each plot's settings suggest the plate profile
+for the folder's date (`PLATE_SWAPS`, `suggested_plates`, Q6.10), never applied.
 
 #### `helab convert --watch FOLDER` (`helab/convert_cli.py`, Q9.5)
 
