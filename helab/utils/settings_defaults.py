@@ -48,6 +48,10 @@ CONVERT_OUTPUTS = ("cache", "temp")
 # profile is a built-in's name or a user profile's (``helab.convert.user_profiles``).
 CONVERT_PROFILE_SETTING = "convert_profile"
 CONVERT_BACKEND_SETTING = "convert_backend"
+# Live auto-convert (TXY converter stage 4): the folders that start Live and auto-convert when HeLab
+# launches (Q9.6; helab/views/live_launch.py), and the hits below which a converted shot notifies (Q9.4).
+LIVE_LAUNCH_FOLDERS_SETTING = "live_launch_folders"
+CONVERT_LOW_HITS_SETTING = "convert_low_hits"
 # The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).
 REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
 OPEN_PLOTS_SETTING = "open_plots"
@@ -105,6 +109,13 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(CONVERT_BACKEND_SETTING, str, "numpy",
             "The converter backend HeLab's conversions use (Settings → TXY converter): numpy (always there), or an "
             "optional compiled one; a conversion with a backend that can't run says why."),
+    Setting(LIVE_LAUNCH_FOLDERS_SETTING, str, "",
+            "Folders that open in a tab each and start Live with auto-convert when HeLab launches (the Live "
+            "line's Auto-convert menu): a JSON list of paths. Live follows the current tab, so it starts in the "
+            "first one only. Unset: none."),
+    Setting(CONVERT_LOW_HITS_SETTING, int, 100,
+            "Live auto-convert: a converted shot with fewer hits than this raises a system notification, once "
+            "per shot (the Auto-convert menu); 0: never."),
     # The plots that reopen at start (keep these rows together).
     Setting(REOPEN_PLOTS_SETTING, bool, True,
             "Reopen the plots open when HeLab last quit; each reruns on its folder's data in RAM or the disk "
