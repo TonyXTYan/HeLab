@@ -146,14 +146,15 @@ def _pulses(values: Floats) -> RawPulses:
 # MATLAB converted 0.25 s after its last write and so lost the end of the shot.
 
 # Why a raw file isn't converted yet, or can't be: the codes events carry (``io_ops.convert``).
-SETTLING = "settling"  # modified within the settle age, or dated ahead of this computer's clock
+SETTLING = "settling"  # modified within the settle age (or dated a little ahead of this computer's clock)
+FUTURE = "future"  # dated well ahead of this computer's clock: the computers' clocks differ
 CHANGED = "changed"  # its size or mtime differ between two checks, or changed while it was read
 NO_FINAL_NEWLINE = "no_final_newline"  # the writer may be mid-line
 NOT_TRIGGER_FIRST = "not_trigger_first"  # the first line isn't on the profile's trigger channel
 NO_ROWS = "no_rows"  # 0 bytes or blank lines only: MATLAB fails on it (Q10.2)
 # Not yet done: skipped now and looked at again when the file changes. NO_ROWS is final once the
 # file has settled (an unconvertible shot), as are a failed read or conversion.
-WAITING = (SETTLING, CHANGED, NO_FINAL_NEWLINE, NOT_TRIGGER_FIRST)
+WAITING = (SETTLING, FUTURE, CHANGED, NO_FINAL_NEWLINE, NOT_TRIGGER_FIRST)
 
 _FIRST_FIELD = re.compile(rb"[ \t]*([0-9]+)[ \t]*,")
 

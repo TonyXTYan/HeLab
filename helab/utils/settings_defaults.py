@@ -41,7 +41,7 @@ RESULT_REUSE_SETTING = "result_reuse"
 WORK_OFFLINE_SETTING = "work_offline"
 LOG_KEEP_SETTING = "log_files_keep"
 # Where HeLab's own TXY go (Q9.3): HeLab's temp folder or its disk cache folder; writing them beside
-# the raw files is a per-folder flag (Q9.7, the store's ``folder_prefs.write_beside``), not this.
+# the raw files is a per-folder flag (Q9.7, the store's ``convert_prefs.write_beside``), not this.
 CONVERT_OUTPUT_SETTING = "converted_txy_output"
 CONVERT_OUTPUTS = ("cache", "temp")
 # The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).

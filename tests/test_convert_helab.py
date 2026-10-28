@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import builtins
+import io
 import json
 import os
 from pathlib import Path
@@ -56,8 +57,10 @@ def options(private_store: str) -> dict[str, Any]:
 
 
 def request_for(path: Path, tmp_path: Path, private_store: str | None = None, **fields: Any) -> ConvertRequest:
+    # (seen None: one check, which with no settle age in tests converts at once; the two-check
+    # rule has its own tests.)
     request: ConvertRequest = {"path": str(path), "profile": MATLAB_2019.to_dict(), "temps": str(tmp_path / "temps"),
-                               "output": "temp", "workers": 1}
+                               "seen": None, "output": "temp", "workers": 1}
     if private_store is not None:
         request["cache"] = options(private_store)
     request.update(fields)  # type: ignore[typeddict-item]
@@ -216,11 +219,13 @@ def test_files_that_may_still_be_written_wait(source: Path, tmp_path: Path, monk
     write_raw(source, 1, whole, mtime=time.time() - 1)  # Modified a second ago.
     write_raw(source, 2, whole[:-5])  # Ends mid-line (settled by age, but half-written).
     write_raw(source, 3, raw_bytes(10_000, trigger=0))  # Doesn't start on the trigger.
-    write_raw(source, 4, whole, mtime=time.time() + 120)  # Dated ahead of this clock.
+    write_raw(source, 4, whole, mtime=time.time() + 120)  # Dated ahead of this clock: the clocks differ.
     write_raw(source, 5, whole)
     events = run(source, request_for(source, tmp_path))
     waiting = {event["shot"]: event["reason"] for event in of(events, "shot_waiting")}
-    assert waiting == {1: raw.SETTLING, 2: raw.NO_FINAL_NEWLINE, 3: raw.NOT_TRIGGER_FIRST, 4: raw.SETTLING}
+    assert waiting == {1: raw.SETTLING, 2: raw.NO_FINAL_NEWLINE, 3: raw.NOT_TRIGGER_FIRST, 4: raw.FUTURE}
+    [skew] = of(events, "clock_skew")
+    assert skew["path"] == str(source) and 100 < skew["seconds"] < 130
     assert [event["shot"] for event in of(events, "shot_converted")] == [5]
     folder = Path(of(events, "convert_plan")[0]["folder"])
     assert sorted(path.name for path in folder.glob("*.txy")) == ["d_txy_helab_5.txy"]
@@ -364,8 +369,10 @@ class Writes:
                 self.paths.append(str(path))
             return real_os_open(path, flag, *args, **kwargs)
         monkeypatch.setattr(builtins, "open", opened)
+        monkeypatch.setattr(io, "open", opened)  # (pathlib's open, write_bytes and write_text use it.)
         monkeypatch.setattr(os, "open", os_opened)
-        for name in ("replace", "rename", "link", "unlink", "remove", "mkdir", "makedirs", "rmdir", "utime"):
+        for name in ("replace", "rename", "renames", "link", "symlink", "unlink", "remove", "mkdir", "makedirs",
+                     "rmdir", "utime", "truncate", "chmod"):
             real = getattr(os, name)
 
             def wrapped(*args: Any, _real: Any = real, **kwargs: Any) -> Any:
@@ -652,3 +659,226 @@ def test_watch_converts_new_shots_and_stops_on_ctrl_c(source: Path, watching: su
     watching.send_signal(signal.SIGINT)
     assert watching.wait(20) == 0
     assert watching.stderr is not None and "Stopped" in watching.stderr.read()
+
+
+# Gannet's review: the two-check rule, the clock, kept shots, the record first, leftovers, budgets.
+
+
+def test_a_request_without_seen_is_refused(source: Path, tmp_path: Path) -> None:
+    write_raw(source, 1, raw_bytes(10_000))
+    request = request_for(source, tmp_path)
+    del request["seen"]  # type: ignore[misc]
+    with pytest.raises(ValueError, match="needs `seen`"):
+        run(source, request)
+
+
+def test_a_first_conversion_only_records_then_converts_and_finds_converted_shots_current(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", 5.0)
+    for shot in (1, 2):
+        write_raw(source, shot, raw_bytes(10_000 * shot))
+    first = run(source, request_for(source, tmp_path, seen=[]))
+    assert of(first, "shot_converted") == [] and {e["reason"] for e in of(first, "shot_waiting")} == {raw.CHANGED}
+    second = run(source, request_for(source, tmp_path, seen=summary(first)["waiting"]))
+    assert sorted(event["shot"] for event in of(second, "shot_converted")) == [1, 2]
+    # Another session's first look (seen=[]): converted shots are current at once, only new ones wait.
+    write_raw(source, 3, raw_bytes(30_000))
+    third = run(source, request_for(source, tmp_path, seen=[]))
+    assert sorted(entry[0] for entry in summary(third)["current"]) == ["d1.txt", "d2.txt"]
+    assert [event["shot"] for event in of(third, "shot_waiting")] == [3]
+
+
+def test_a_single_check_wants_a_minute_of_age(source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """seen None (helab convert --once): no second check, so the age stands for it."""
+    monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", 5.0)
+    write_raw(source, 1, raw_bytes(10_000), mtime=time.time() - 30)
+    write_raw(source, 2, raw_bytes(20_000), mtime=time.time() - 70)
+    events = run(source, request_for(source, tmp_path, seen=None))
+    assert [(event["shot"], event["reason"]) for event in of(events, "shot_waiting")] == [(1, raw.SETTLING)]
+    assert [event["shot"] for event in of(events, "shot_converted")] == [2]
+    # With two checks, 5 s of age is enough.
+    again = run(source, request_for(source, tmp_path, seen=summary(events)["waiting"]))
+    assert [event["shot"] for event in of(again, "shot_converted")] == [1]
+
+
+def test_kept_shots_stay_kept_when_the_summary_is_sent_back(source: Path, tmp_path: Path) -> None:
+    write_raw(source, 1, raw_bytes(10_000))
+    write_raw(source, 2, raw_bytes(20_000))
+    (source / "d_txy_helab_1.txy").write_bytes(b"another computer's\n")
+    request = request_for(source, tmp_path, beside=True, beside_confirmed=True, seen=[])
+    events = run(source, request)
+    assert [event["shot"] for event in of(events, "shot_kept")] == [1]
+    for _ in range(3):
+        done = summary(events)
+        request["seen"], request["done"] = done["waiting"], done["current"]
+        request["kept"], request["skip"] = done["kept"], done["unconvertible"]
+        events = run(source, request)
+        assert of(events, "shot_kept") == [] and all(event["shot"] != 1 for event in of(events, "shot_waiting"))
+        assert [entry[0] for entry in summary(events)["kept"]] == ["d1.txt"]
+    assert (source / "d_txy_helab_1.txy").read_bytes() == b"another computer's\n"
+    assert (source / "d_txy_helab_2.txy").is_file()
+
+
+def test_a_beside_write_stopped_after_its_record_is_converted_again(source: Path, tmp_path: Path,
+                                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    write_raw(source, 1, raw_bytes(10_000))
+    request = request_for(source, tmp_path, beside=True, beside_confirmed=True)
+    original = txy.write_atomic
+
+    def stopped(path: Any, data: bytes, *, replace: bool = True) -> None:
+        if Path(path).parent == source:
+            raise KeyboardInterrupt  # (Killed between the record and the TXY.)
+        original(path, data, replace=replace)
+    monkeypatch.setattr(txy, "write_atomic", stopped)
+    with pytest.raises(KeyboardInterrupt):
+        run(source, request)
+    monkeypatch.setattr(txy, "write_atomic", original)
+    folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
+    assert (folder / "d_txy_helab_1.json").is_file() and not (source / "d_txy_helab_1.txy").exists()
+    events = run(source, request)
+    assert [event["shot"] for event in of(events, "shot_converted")] == [1] and of(events, "shot_kept") == []
+
+
+PARTIAL_NAME = ".d_txy_helab_1.txy.0123456789abcdef.partial"
+
+
+def age(path: Path, seconds: float) -> None:
+    then = time.time() - seconds
+    if path.is_symlink():
+        os.utime(path, (then, then), follow_symlinks=False)
+    else:
+        os.utime(path, (then, then))
+
+
+def test_the_partial_pattern_is_exactly_write_atomics_names(tmp_path: Path) -> None:
+    pattern = convert.partial()
+    made: list[str] = []
+    real_open = os.open
+
+    def spy(path: Any, *args: Any, **kwargs: Any) -> int:
+        made.append(Path(path).name)
+        return real_open(path, *args, **kwargs)
+    with pytest.MonkeyPatch.context() as patches:
+        patches.setattr(os, "open", spy)
+        txy.write_atomic(tmp_path / "d_txy_helab_12.txy", b"")
+    assert any(pattern.match(name) for name in made)
+    assert pattern.match(PARTIAL_NAME)
+    for name in (".d_txy_helab_1.txy.0123456789abcdeg.partial", ".d_txy_helab_1.txy.0123456789abcde.partial",
+                 PARTIAL_NAME + ".bak", "x" + PARTIAL_NAME, PARTIAL_NAME[1:], ".d_txy_forc1.txt.0123456789abcdef.partial",
+                 ".d_txy_helab_1.txy.0123456789ABCDEF.partial", ".d1.txt.0123456789abcdef.partial"):
+        assert not pattern.match(name), name
+
+
+def test_a_beside_conversion_removes_only_its_own_old_leftovers(source: Path, tmp_path: Path) -> None:
+    write_raw(source, 1, raw_bytes(10_000))
+    old = source / PARTIAL_NAME
+    old.write_bytes(b"half")
+    age(old, 2 * 3600)
+    young = source / ".d_txy_helab_2.txy.fedcba9876543210.partial"
+    young.write_bytes(b"half")
+    age(young, 600)
+    lookalikes = [source / name for name in (".d_txy_helab_3.txy.0123456789abcdeg.partial", PARTIAL_NAME + ".bak",
+                                             ".d_txy_forc1.txt.0123456789abcdef.partial", "notes.partial")]
+    for path in lookalikes:
+        path.write_bytes(b"keep")
+        age(path, 2 * 3600)
+    elsewhere = tmp_path / "elsewhere.txt"
+    elsewhere.write_bytes(b"not HeLab's")
+    age(elsewhere, 2 * 3600)
+    link = source / ".d_txy_helab_4.txy.aaaaaaaaaaaaaaaa.partial"
+    try:
+        link.symlink_to(elsewhere)
+        age(link, 2 * 3600)
+    except (OSError, NotImplementedError):  # (Windows without the privilege to make links.)
+        pass
+    # Not writing beside: nothing removed.
+    run(source, request_for(source, tmp_path))
+    assert old.exists()
+    events = run(source, request_for(source, tmp_path, beside=True, beside_confirmed=True))
+    assert [(event["file"], event["size"]) for event in of(events, "partial_removed")] == [(PARTIAL_NAME, 4)]
+    assert not old.exists() and young.exists() and elsewhere.read_bytes() == b"not HeLab's"
+    assert link.is_symlink() or sys.platform == "win32"
+    assert all(path.exists() for path in lookalikes)
+
+
+KILLED_WRITE = """
+import json, os, sys
+from helab.convert import txy
+from helab.io_ops import convert
+request = json.loads(sys.argv[1])
+# Killed mid-write: the temporary file beside the raw files has its bytes, not yet renamed.
+txy._rename_new = lambda temporary, target: os._exit(9)
+convert.convert_folder(request["path"], request, lambda event: None)
+"""
+
+
+def test_a_killed_beside_writes_leftover_goes_on_a_later_pass_once_old(source: Path, tmp_path: Path) -> None:
+    write_raw(source, 1, raw_bytes(10_000))
+    request = request_for(source, tmp_path, beside=True, beside_confirmed=True)
+    done = subprocess.run([sys.executable, "-c", KILLED_WRITE, json.dumps(request)], cwd=ROOT, env=dict(os.environ),
+                          timeout=60, capture_output=True, text=True)
+    leftovers = [path for path in source.iterdir() if convert.partial().match(path.name)]
+    assert done.returncode == 9 and len(leftovers) == 1 and not (source / "d_txy_helab_1.txy").exists(), done.stderr
+    events = run(source, request)  # Too young: left, and the shot converted beside it.
+    assert of(events, "partial_removed") == [] and leftovers[0].exists()
+    assert (source / "d_txy_helab_1.txy").is_file()
+    age(leftovers[0], 2 * 3600)
+    events = run(source, request)
+    assert [event["file"] for event in of(events, "partial_removed")] == [leftovers[0].name]
+    assert sorted(path.name for path in source.iterdir()) == ["d1.txt", "d_txy_helab_1.txy"]
+
+
+def test_heartbeats_while_computing_stop_after_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.io_ops.infra import Heartbeat
+    monkeypatch.setattr(Heartbeat, "INTERVAL", 0.02)
+    beats: list[float] = []
+    with convert._Ticker(lambda event: beats.append(time.monotonic()), "converting", 0.15):
+        started = time.monotonic()
+        time.sleep(0.5)
+    assert beats and max(beats) - started < 0.25
+    assert convert.still_computing([10.0, 20.0], 15.0) and not convert.still_computing([10.0, 12.0], 15.0)
+    assert not convert.still_computing([], 0.0)
+    assert convert.compute_budget(0) == convert.COMPUTE_SECONDS
+    assert convert.compute_budget(50 * 10**6) == convert.COMPUTE_SECONDS + 50
+
+
+def test_a_hung_backend_stops_sending_heartbeats(source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.convert import pipeline
+    from helab.io_ops.infra import Heartbeat
+    monkeypatch.setattr(Heartbeat, "INTERVAL", 0.02)
+    monkeypatch.setattr(convert, "COMPUTE_SECONDS", 0.1)
+    original = pipeline.convert_shot
+
+    def slow(*args: Any, **kwargs: Any) -> Any:
+        time.sleep(0.6)
+        return original(*args, **kwargs)
+    monkeypatch.setattr(pipeline, "convert_shot", slow)
+    write_raw(source, 1, raw_bytes(10_000))
+    stamped: list[tuple[float, dict[str, Any]]] = []
+    convert_folder(str(source), request_for(source, tmp_path),
+                   lambda event: stamped.append((time.monotonic(), dict(event))))
+    beats = [at for at, event in stamped if event["kind"] == "heartbeat" and event["phase"] == "converting"]
+    [converted_at] = [at for at, event in stamped if event["kind"] == "shot_converted"]
+    assert beats and converted_at - max(beats) > 0.3
+
+
+@pytest.mark.no_auto_data_root
+def test_beside_without_a_data_root_says_where_the_records_go(source: Path, tmp_path: Path,
+                                                              private_store: str) -> None:
+    write_raw(source, 1, raw_bytes(10_000))
+    events = run(source, request_for(source, tmp_path, private_store, output="cache", beside=True,
+                                     beside_confirmed=True))
+    [plan] = of(events, "convert_plan")
+    assert plan["output"] == "beside"
+    assert plan["fallback"] == "the provenance records go to the temp folder: no .helab-root found here or above"
+
+
+def test_a_flag_that_cant_be_read_is_said_so(source: Path, tmp_path: Path, private_store: str,
+                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils.cache_store import CacheStore, Read
+    monkeypatch.setattr(CacheStore, "read_convert_prefs",
+                        lambda self, paths: {path: Read("error", None, "database is locked") for path in paths})
+    write_raw(source, 1, raw_bytes(10_000))
+    events = run(source, request_for(source, tmp_path, private_store, output="cache", beside=True))
+    [plan] = of(events, "convert_plan")
+    assert plan["output"] == "cache" and plan["fallback"] == "the folder's flag couldn't be read (database is locked)"

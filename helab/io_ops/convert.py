@@ -9,17 +9,28 @@ function in its own process (``helab.convert_cli``); the app runs it in a helper
 
 **Settle checks** (A10.1; 2019-halos d3667 is the evidence: MATLAB converted it 0.25 s after its
 last write). A raw file is converted only when it is unmodified for ``fingerprints.SETTLE_SECONDS``
-(5 s) and not dated in the future; its (size, mtime) are the same at two checks (the previous
-conversion's, when the caller sends them back as ``seen``, and always the listing's and the open
-file's once read); it ends with a newline; and its first line is on the profile's trigger channel
-(``raw.not_done``). Otherwise it waits (``shot_waiting``) and nothing is written; it is looked at
-again by a later conversion, never read twice in a row as if done. A settled file with no rows is
-unconvertible (``shot_unconvertible``, Q10.2); so is one the converter fails on.
+(5 s) by this computer's clock and not dated in the future; its (size, mtime) are the same at two
+checks a check interval apart, the previous conversion's (the caller sends its ``waiting`` list
+back as ``seen``: a file not in it waits for the next check) and this one's, and the same again
+before and after it is read; it ends with a newline; and its first line is on the profile's
+trigger channel (``raw.not_done``). Otherwise it waits (``shot_waiting``) and nothing is written;
+it is looked at again by a later conversion, never read twice in a row as if done. The age alone
+can be fooled (a source clock behind ours, a share's stale attribute cache), so the app always
+sends ``seen``; only ``helab convert --once`` sends None (one check), and then a file must be
+unmodified for ``ONCE_SETTLE_SECONDS`` (60 s) instead. A file dated more than
+``fingerprints.FUTURE_SECONDS`` ahead waits as ``future``, and ``clock_skew`` says so once per
+conversion. A settled file with no rows is unconvertible (``shot_unconvertible``, Q10.2); so is one
+the converter fails on.
 
 **Output** (Q9.3, Q9.7). ``beside`` writes the TXY next to the raw files, only when the folder's
 ``write_beside`` flag is on in the store (or the command line asked, ``beside_confirmed``), and
 never replaces a file there (a TXY in a source folder is never modified); nothing else is written
-to a source folder: the temporary name is renamed, and the provenance stays in HeLab's folder.
+to a source folder: the temporary name is renamed, and the provenance stays in HeLab's folder
+(written before the TXY there, so a conversion stopped between them leaves a stale record, never a
+TXY kept for good). A beside conversion also removes its own leftover temporary files there (a
+helper killed mid-write), only those matching exactly the name ``write_atomic`` gives
+(``partial()``), regular files (links aren't followed) unmodified for ``PARTIAL_MAX_AGE`` (1 h), each
+sent as ``partial_removed``.
 ``cache`` writes under the cache folder, keyed by the folder's data root like the store
 (``root://<uuid>/<relative>``); a folder without one, or with the disk cache off, goes to ``temp``
 (HeLab's temp folder) and ``convert_plan`` says why (``fallback``). HeLab's folder for a source
@@ -31,19 +42,23 @@ of spawned processes (4–8 give 3–5×, the NumPy floor measured), or, for one
 (``split``). A worker only computes: killed with this helper (a cancel, a timeout, a cache move),
 it notices its parent's end through a pipe and exits, and has nothing to write.
 
-Heartbeats: while reading (per block) and while workers compute. A read that stalls sends none,
-so the app's no-progress timeout still stops it.
+Heartbeats: while reading (per block) and while a shot computes, up to its budget
+(``compute_budget``: ``COMPUTE_SECONDS`` plus a second per ``COMPUTE_RATE`` bytes); a read that
+stalls, or a backend that hangs past its budget, sends none, so the app's no-progress timeout still
+stops it.
 """
 from __future__ import annotations
 
 import concurrent.futures
+import functools
 import hashlib
 import json
 import os
+import re
 import sys
 import threading
 import time
-from typing import Any, Callable, NotRequired, TypedDict, TYPE_CHECKING
+from typing import Any, Callable, Iterable, NotRequired, TypedDict, TYPE_CHECKING
 
 from helab.io_ops import fingerprints, stores
 from helab.io_ops.events import ConvertProfile, ConvertSeconds, HelperEvent
@@ -64,6 +79,14 @@ READ_BLOCK = 8 * 1024 * 1024
 # One shot this large (raw bytes) is cut into pieces for the pool, for Live's latency.
 SPLIT_BYTES = 20 * 10**6
 PROGRESS_INTERVAL = 0.25
+# A single check (seen None: ``helab convert --once`` only) wants a file this long unmodified.
+ONCE_SETTLE_SECONDS = 60.0
+# Heartbeats while a shot computes stop after this, plus a second per COMPUTE_RATE raw bytes (ten
+# times slower than the plain-Python reference): a hung backend then times out.
+COMPUTE_SECONDS = 60.0
+COMPUTE_RATE = 10**6
+# Leftover temporary TXY of a killed beside write: removed once this old, by a beside conversion.
+PARTIAL_MAX_AGE = 3600.0
 # Workers when the request doesn't say: across shots in processes. A frozen app's spawned workers
 # need multiprocessing.freeze_support() first in helab/main.py (there) and a check in the built
 # app (the packaging floor), so it converts in-process until that is done.
@@ -78,20 +101,24 @@ class ConvertRequest(TypedDict):
     ``write_beside`` flag is on (checked again in the store here); ``beside_confirmed``: the user
     asked for beside for this run (the command line only). ``temps``: HeLab's temp folder.
     ``cache``: ``store_options()``. ``shots``: only these (None: every raw file).
-    ``seen``, ``done``, ``skip``: the previous conversion's ``waiting``, ``current`` and
-    ``unconvertible`` lists (``convert_summary``). ``redo``: ``stale`` (convert a shot whose TXY
-    isn't current, the default) or ``always``. ``workers``: processes for converting."""
+    ``seen`` (required): the previous conversion's ``waiting`` list, ``[]`` for a folder's first
+    conversion (which then only records: every file waits for a second check); None only from
+    ``helab convert --once`` (one check, ``ONCE_SETTLE_SECONDS``). Live and every other caller in
+    the app always send a list. ``done``, ``kept``, ``skip``: the previous ``current``, ``kept`` and
+    ``unconvertible`` lists, not checked again while unchanged. ``redo``: ``stale`` (convert a shot
+    whose TXY isn't current, the default) or ``always``. ``workers``: processes for converting."""
     path: str
     profile: dict[str, Any]
     temps: str
+    seen: list[list[Any]] | None
     backend: NotRequired[str]
     output: NotRequired[str]
     beside: NotRequired[bool]
     beside_confirmed: NotRequired[bool]
     cache: NotRequired[dict[str, Any]]
     shots: NotRequired[list[int] | None]
-    seen: NotRequired[list[list[Any]] | None]
     done: NotRequired[list[list[Any]]]
+    kept: NotRequired[list[list[Any]]]
     skip: NotRequired[list[list[Any]]]
     redo: NotRequired[str]
     workers: NotRequired[int]
@@ -138,17 +165,33 @@ def _locked(send: Emit) -> Emit:
     return locked
 
 
+@functools.cache
+def partial() -> re.Pattern[str]:
+    """The temporary names ``txy.write_atomic`` gives HeLab's TXY, and nothing else. (Built on first
+    use: every helper imports this module, and ``txy`` brings NumPy.)"""
+    from helab.convert.provenance import TXY_PATTERN
+    from helab.convert.txy import partial_pattern
+    return partial_pattern(TXY_PATTERN.pattern.removeprefix("^").removesuffix("$"))
+
+
+def compute_budget(raw_bytes: int) -> float:
+    """Seconds a shot of ``raw_bytes`` may compute while heartbeats go on."""
+    return COMPUTE_SECONDS + raw_bytes / COMPUTE_RATE
+
+
 class _Ticker:
     """Heartbeats from a thread while this process or its workers compute (not while reading: a
-    stalled read must still time out)."""
+    stalled read must still time out), for at most ``budget`` seconds: a backend that hangs then
+    times out."""
 
-    def __init__(self, send: Emit, phase: str) -> None:
-        self.send, self.phase = send, phase
+    def __init__(self, send: Emit, phase: str, budget: float) -> None:
+        self.send, self.phase, self.budget = send, phase, budget
         self.stop = threading.Event()
         self.thread = threading.Thread(target=self._run, daemon=True)
 
     def _run(self) -> None:
-        while not self.stop.wait(Heartbeat.INTERVAL):
+        until = time.monotonic() + self.budget
+        while not self.stop.wait(Heartbeat.INTERVAL) and time.monotonic() < until:
             self.send({"kind": "heartbeat", "phase": self.phase, "entries": 0})
 
     def __enter__(self) -> _Ticker:
@@ -169,13 +212,15 @@ def _places(path: str, request: ConvertRequest) -> _Places:
     if output not in OUTPUTS:
         raise ValueError(f"Unknown converter output {output!r} (have {', '.join(OUTPUTS)})")
     cache_options = request.get("cache") or {}
-    key, problem, flag = "", "", False
+    key, problem, flag, flag_problem = "", "", False, ""
     if cache_options:
         try:
             with stores._cache_store(cache_options["directory"], [path]) as store:
                 key = store._path_key(path)
-                if request.get("beside"):
+                if request.get("beside") and not request.get("beside_confirmed"):
                     found = store.read_convert_prefs([path])[path]
+                    if found.status == "error":
+                        flag_problem = f"the folder's flag couldn't be read ({found.error})"
                     flag = bool(found.value and found.value.get("write_beside"))
         except UnresolvedRemotePath as exc:
             problem = "no .helab-root found here or above" if isinstance(exc, NoDataRoot) else str(exc)
@@ -186,11 +231,14 @@ def _places(path: str, request: ConvertRequest) -> _Places:
     fallback = ""
     beside = bool(request.get("beside_confirmed")) or bool(request.get("beside")) and flag
     if request.get("beside") and not beside:
-        fallback = ("writing beside the raw files is off for this folder" if not problem
+        fallback = (flag_problem or "writing beside the raw files is off for this folder" if not problem
                     else f"writing beside the raw files needs the folder's flag, and {problem}")
     if output == "cache" and not key:
         output = "temp"
-        fallback = fallback or problem
+        if beside:
+            fallback = f"the provenance records go to the temp folder: {problem}"
+        else:
+            fallback = fallback or problem
     base = os.path.dirname(os.path.abspath(cache_options["directory"])) if output == "cache" else request["temps"]
     folder = folder_for(base, key or "path:" + os.path.abspath(path))
     return {"output": "beside" if beside else output, "fallback": fallback, "folder": folder,
@@ -333,25 +381,30 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     beside = places["output"] == "beside"
     wanted = None if request.get("shots") is None else {int(shot) for shot in request.get("shots") or []}
 
-    seen_list = request.get("seen")
+    if "seen" not in request:
+        raise ValueError("A conversion needs `seen`: the previous conversion's waiting list, [] for the first")
+    seen_list = request["seen"]
     seen = None if seen_list is None else _stats(seen_list)
     # Files the previous conversion read and found unfinished (no final newline, another first
     # channel): their (size, mtime), reason and message.
     unfinished = {str(entry[0]): ((int(entry[1]), int(entry[2])), str(entry[3]), str(entry[4]))
                   for entry in seen_list or [] if isinstance(entry, (list, tuple)) and len(entry) == 5
                   and entry[3] in (raw.NO_FINAL_NEWLINE, raw.NOT_TRIGGER_FIRST)}
-    done, skip = _stats(request.get("done")), _stats(request.get("skip"))
+    done, kept_before, skip = _stats(request.get("done")), _stats(request.get("kept")), _stats(request.get("skip"))
     redo = str(request.get("redo") or "stale")
 
     # The listing: raw files, and (beside) HeLab's TXY already there.
     raws: list[_Shot] = []
     beside_txy: dict[int, int] = {}
+    partials: list[os.DirEntry[str]] = []
     beat = Heartbeat(send, "listing")
     with _scandir(path, "convert: listing") as directory:
         for entry in directory:
             beat()
             matched = file_kinds.match(entry.name)
             if matched is None:
+                if beside and partial().match(entry.name):
+                    partials.append(entry)
                 continue
             kind, number = matched
             if wanted is not None and number not in wanted:
@@ -363,13 +416,18 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
                 beside_txy[number] = _entry_stat(entry, "convert: existing TXY").st_size
     raws.sort(key=lambda item: item.shot)
 
+    for leftover in partials:
+        _remove_partial(path, leftover, send)
     current: list[list[Any]] = []
     waiting: list[list[Any]] = []
     unconvertible: list[list[Any]] = []
-    kept: list[int] = []
+    kept: list[list[Any]] = []
     todo: list[_Shot] = []
     now = time.time()
     settle = fingerprints.SETTLE_SECONDS
+    if seen is None and settle > 0:
+        settle = max(settle, ONCE_SETTLE_SECONDS)  # (One check: the age must stand for the second.)
+    skewed = fingerprints._clock_ahead(path, [(shot.shot, shot.size, shot.mtime_ns) for shot in raws], send)
 
     def wait(shot: _Shot, code: str, message: str) -> None:
         waiting.append([*shot.entry, code, message])
@@ -389,17 +447,11 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
         if done.get(shot.name) == stat and redo != "always":
             current.append(shot.entry)
             continue
-        if not raw.settled_by_age(shot.mtime_ns, now, settle):
-            wait(shot, raw.SETTLING, f"Modified within {settle:g} s (or dated in the future): may still be being written")
+        if kept_before.get(shot.name) == stat:
+            kept.append(shot.entry)
             continue
-        if seen is not None and seen.get(shot.name) != stat:
-            wait(shot, raw.CHANGED, "Not seen with this size and date at the previous check: checked again at the next"
-                 if shot.name not in seen else "Its size or date changed since the previous check")
-            continue
-        if shot.name in unfinished and unfinished[shot.name][0] == stat:
-            # Read before and found unfinished, and unchanged since: still so, without reading it again.
-            wait(shot, *unfinished[shot.name][1:])
-            continue
+        # A current TXY needs no read, so it is told apart first (a folder's first conversion
+        # finds its converted shots current rather than waiting).
         if beside:
             txy_size = beside_txy.get(shot.shot)
         else:
@@ -412,17 +464,32 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
             current.append(shot.entry)
             continue
         if beside and txy_size is not None:
-            kept.append(shot.shot)
+            kept.append(shot.entry)
             send({"kind": "shot_kept", "path": path, "shot": shot.shot,
                   "txy": os.path.join(path, provenance.txy_name(shot.shot)),
                   "reason": f"{why or 'converted again on request'}; a TXY in a source folder is never replaced"})
+            continue
+        if skewed and shot.mtime_ns / 1e9 > now + fingerprints.FUTURE_SECONDS:
+            wait(shot, raw.FUTURE, f"Dated {shot.mtime_ns / 1e9 - now:.0f} s ahead of this computer's clock: "
+                 "the computers' clocks differ, so it waits until that time has passed")
+            continue
+        if not raw.settled_by_age(shot.mtime_ns, now, settle):
+            wait(shot, raw.SETTLING, f"Modified within {settle:g} s: may still be being written")
+            continue
+        if seen is not None and seen.get(shot.name) != stat:
+            wait(shot, raw.CHANGED, "Not seen with this size and date at the previous check: checked again at the next"
+                 if shot.name not in seen else "Its size or date changed since the previous check")
+            continue
+        if shot.name in unfinished and unfinished[shot.name][0] == stat:
+            # Read before and found unfinished, and unchanged since: still so, without reading it again.
+            wait(shot, *unfinished[shot.name][1:])
             continue
         shot.replaced = "" if txy_size is None else (why or "converted again on request")
         todo.append(shot)
 
     workers = max(1, int(request.get("workers") or DEFAULT_WORKERS))
     single_large = len(todo) == 1 and todo[0].size >= SPLIT_BYTES
-    workers = min(workers, len(todo)) if not single_large else workers
+    workers = max(1, min(workers, len(todo))) if not single_large else workers
     send({"kind": "convert_plan", "path": path, **places, "profile": profile_info, "backend": backend,
           "workers": workers, "raw": len(raws), "todo": len(todo)})
     if todo:
@@ -451,19 +518,6 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
         else:
             write_started = time.perf_counter()
             target = os.path.join(places["txy_folder"], provenance.txy_name(shot.shot))
-            if beside:
-                _guard(target)
-            try:
-                txy.write_atomic(target, result.txy, replace=not beside)
-            except FileExistsError:
-                # (Beside: another conversion wrote it since the listing; it stays.)
-                kept.append(shot.shot)
-                send({"kind": "shot_kept", "path": path, "shot": shot.shot, "txy": target,
-                      "reason": "written by another conversion meanwhile; a TXY in a source folder is never replaced"})
-                progress()
-                return
-            if beside:
-                _trace("write", target, "convert: TXY beside", bytes=len(result.txy))
             record_path = os.path.join(places["folder"], provenance.provenance_name(shot.shot))
             seconds: ConvertSeconds = {"read": read_seconds, "parse": result.parse_seconds,
                                        "reconstruct": result.reconstruct_seconds, "format": result.format_seconds,
@@ -477,8 +531,28 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
                 txy_sha256=hashlib.sha256(result.txy).hexdigest(), hits=result.hits, converted_at=time.time(),
                 helab_version=__version__, read_seconds=read_seconds, parse_seconds=result.parse_seconds,
                 reconstruct_seconds=result.reconstruct_seconds, format_seconds=result.format_seconds,
-                write_seconds=time.perf_counter() - write_started)
-            txy.write_atomic(record_path, record.to_json().encode("utf-8"))
+                write_seconds=0.0)
+            if beside:
+                # The record first: stopped before the TXY, the shot is stale (no TXY), converted
+                # again; the other way round, a TXY without its record would be kept for good.
+                txy.write_atomic(record_path, record.to_json().encode("utf-8"))
+                _guard(target)
+                try:
+                    txy.write_atomic(target, result.txy, replace=False)
+                except FileExistsError:
+                    # (Another conversion wrote it since the listing; it stays, and the record goes.)
+                    os.unlink(record_path)
+                    kept.append(shot.entry)
+                    send({"kind": "shot_kept", "path": path, "shot": shot.shot, "txy": target,
+                          "reason": "written by another conversion meanwhile; a TXY in a source folder is never "
+                                    "replaced"})
+                    progress()
+                    return
+                _trace("write", target, "convert: TXY beside", bytes=len(result.txy))
+            else:
+                # The TXY first: stopped before the record, the old record no longer matches it.
+                txy.write_atomic(target, result.txy)
+                txy.write_atomic(record_path, record.to_json().encode("utf-8"))
             seconds["write"] = time.perf_counter() - write_started
             converted += 1
             current.append(shot.entry)
@@ -524,7 +598,7 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
                 data, read_seconds = got
                 outcome: Converted | BaseException
                 try:
-                    with _Ticker(send, "converting"):
+                    with _Ticker(send, "converting", compute_budget(len(data))):
                         outcome = convert_shot(data, profile, backend,
                                                executor=pool.executor if pool is not None else None,
                                                max_pieces=workers if pool is not None else None)
@@ -542,6 +616,32 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
           "unconvertible": unconvertible, "kept": kept, "seconds": time.monotonic() - started})
 
 
+def _remove_partial(path: str, entry: os.DirEntry[str], send: Emit) -> None:
+    """Remove a leftover temporary TXY of a beside write (``partial()``) once ``PARTIAL_MAX_AGE`` old:
+    a regular file (a link is left alone, never followed), as the listing found it."""
+    import stat
+    try:
+        info = _entry_stat(entry, "convert: leftover", follow_symlinks=False)
+    except OSError:
+        return
+    age = time.time() - info.st_mtime
+    if not stat.S_ISREG(info.st_mode) or age < PARTIAL_MAX_AGE:
+        return
+    _guard(entry.path)
+    try:
+        os.unlink(entry.path)
+    except OSError as exc:
+        _traced_error("unlink", entry.path, "convert: leftover", exc)
+        return
+    _trace("unlink", entry.path, "convert: leftover", age=round(age))
+    send({"kind": "partial_removed", "path": path, "file": entry.name, "size": info.st_size, "age": age})
+
+
+def still_computing(deadlines: Iterable[float], now: float) -> bool:
+    """Whether heartbeats go on: some shot in flight is within its compute budget."""
+    return any(now < deadline for deadline in deadlines)
+
+
 def _convert_in_pool(pool: _Pool, todo: list[_Shot], read: Callable[[_Shot], tuple[bytes, float] | None],
                      finish: Callable[[_Shot, bytes, float, Converted | BaseException], None],
                      progress: Callable[[], None], profile: dict[str, Any], backend: str, workers: int,
@@ -549,6 +649,8 @@ def _convert_in_pool(pool: _Pool, todo: list[_Shot], read: Callable[[_Shot], tup
     """Read here, one shot after another, while the workers convert; write each as it is done.
     At most two shots per worker in flight, so memory stays bounded."""
     flight: dict[concurrent.futures.Future[Converted], tuple[_Shot, bytes, float]] = {}
+    # Each shot's heartbeat deadline, from when it was handed over (``compute_budget``).
+    deadlines: dict[concurrent.futures.Future[Converted], float] = {}
 
     def collect(block: bool) -> None:
         while flight:
@@ -557,10 +659,12 @@ def _convert_in_pool(pool: _Pool, todo: list[_Shot], read: Callable[[_Shot], tup
             if not finished:
                 if not block:
                     return
-                send({"kind": "heartbeat", "phase": "converting", "entries": len(flight)})
+                if still_computing(deadlines.values(), time.monotonic()):
+                    send({"kind": "heartbeat", "phase": "converting", "entries": len(flight)})
                 continue
             for future in sorted(finished, key=lambda item: flight[item][0].shot):
                 shot, data, read_seconds = flight.pop(future)
+                deadlines.pop(future, None)
                 error = future.exception()
                 if isinstance(error, concurrent.futures.BrokenExecutor):
                     raise error  # (Not the shot's fault: the conversion fails, and is tried again.)
@@ -575,7 +679,9 @@ def _convert_in_pool(pool: _Pool, todo: list[_Shot], read: Callable[[_Shot], tup
             progress()
         else:
             data, read_seconds = got
-            flight[pool.executor.submit(_worker_convert, data, profile, backend)] = (shot, data, read_seconds)
+            future = pool.executor.submit(_worker_convert, data, profile, backend)
+            flight[future] = (shot, data, read_seconds)
+            deadlines[future] = time.monotonic() + compute_budget(len(data))
         collect(block=len(flight) >= 2 * workers)
     while flight:
         collect(block=True)

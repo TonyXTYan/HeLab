@@ -21,6 +21,7 @@ import errno
 import math
 import os
 from pathlib import Path
+import re
 import secrets
 
 import numpy as np
@@ -32,6 +33,18 @@ Hits = npt.NDArray[np.float64]
 COLUMNS = 3
 _NON_FINITE = {math.inf: "Inf", -math.inf: "-Inf"}
 _CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+_TOKEN_BYTES = 8
+
+
+def partial_name(name: str, token: str) -> str:
+    """The temporary name ``write_atomic`` writes ``name`` under first (``token``: 16 hex digits)."""
+    return f".{name}.{token}.partial"
+
+
+def partial_pattern(name_pattern: str) -> re.Pattern[str]:
+    """The temporary names ``write_atomic`` makes for targets matching ``name_pattern`` (a regex
+    without anchors), and nothing else: what a writer's leftovers can be matched by."""
+    return re.compile(rf"^\.(?:{name_pattern})\.[0-9a-f]{{{2 * _TOKEN_BYTES}}}\.partial$")
 
 
 def format_value(value: float) -> str:
@@ -68,7 +81,7 @@ def write_txy(path: str | os.PathLike[str], hits: Hits) -> None:
 def write_atomic(path: str | os.PathLike[str], data: bytes, *, replace: bool = True) -> None:
     target = Path(path)
     for _ in range(100):
-        temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.partial")
+        temporary = target.with_name(partial_name(target.name, secrets.token_hex(_TOKEN_BYTES)))
         try:
             descriptor = os.open(temporary, _CREATE, 0o666)
             break

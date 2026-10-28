@@ -127,6 +127,7 @@ class _Log:
     def __init__(self) -> None:
         self.waiting: dict[str, str] = {}
         self.kept: set[int] = set()
+        self.skewed: set[str] = set()
         self.summary: dict[str, Any] = {}  # The last ``convert_summary``.
         self.plans = 0
 
@@ -135,10 +136,11 @@ class _Log:
             self.plans += 1
             if event["todo"] or self.plans == 1:
                 profile = event["profile"]
-                LOG.info("%s: %d of %d raw files to convert → %s (%s; profile %s v%d %s; backend %s; %d worker%s)",
+                workers = (f"; {event['workers']} worker{'' if event['workers'] == 1 else 's'}" if event["todo"]
+                           else "")
+                LOG.info("%s: %d of %d raw files to convert → %s (%s; profile %s v%d %s; backend %s%s)",
                          event["path"], event["todo"], event["raw"], event["txy_folder"], event["output"],
-                         profile["name"], profile["version"], profile["hash"][:12], event["backend"],
-                         event["workers"], "" if event["workers"] == 1 else "s")
+                         profile["name"], profile["version"], profile["hash"][:12], event["backend"], workers)
             if event["fallback"] and self.plans == 1:
                 LOG.warning("Writing to %s: %s", event["output"], event["fallback"])
         elif event["kind"] == "shot_converted":
@@ -164,6 +166,14 @@ class _Log:
             if event["converted"]:
                 LOG.info("%d converted, %d current, %d waiting, %d unconvertible (%.1f s)", event["converted"],
                          len(event["current"]), len(event["waiting"]), len(event["unconvertible"]), event["seconds"])
+        elif event["kind"] == "partial_removed":
+            LOG.info("Removed a leftover temporary file of an interrupted conversion: %s (%d bytes, %.0f h old)",
+                     os.path.join(event["path"], event["file"]), event["size"], event["age"] / 3600)
+        elif event["kind"] == "clock_skew":
+            if event["location"] not in self.skewed:
+                self.skewed.add(event["location"])
+                LOG.warning("Files in %s are dated %.0f s ahead of this computer's clock: the clocks differ, so "
+                            "those shots wait until that time has passed", event["path"], event["seconds"])
         elif event["kind"] == "convert_progress":
             LOG.debug("%d of %d done", event["done"], event["todo"])
         elif event["kind"] == "cache_warning":
@@ -197,14 +207,18 @@ def main(argv: list[str]) -> int:
     log = _Log()
     _discover_root(folder, cache, log)
     output = args.output or read_convert_output(app_settings())
+    # --watch: the first pass only records each file (seen=[]), the second converts those unchanged
+    # since. --once: one check (seen None), so a file must be unmodified for ONCE_SETTLE_SECONDS.
     request: ConvertRequest = {"path": folder, "profile": profile, "temps": DIR_TEMPS, "backend": args.backend,
+                               "seen": None if args.once else [],
                                "output": read_convert_output(app_settings()) if output == "beside" else output,
                                "cache": cache, "redo": "always" if args.again else "stale"}
     if output == "beside":
         request["beside"] = request["beside_confirmed"] = True
     if args.workers:
         request["workers"] = args.workers
-    LOG.info("Watching %s%s (Ctrl-C stops)", folder, " once" if args.once else f" every {args.interval:g} s")
+    LOG.info("Watching %s%s (Ctrl-C stops)", folder, " once (files unmodified for a minute)" if args.once
+             else f" every {args.interval:g} s (a file is converted once unchanged between two checks)")
     status = 0
     try:
         while True:
@@ -220,6 +234,7 @@ def main(argv: list[str]) -> int:
                 request["seen"] = summary.get("waiting", [])
                 request["done"] = summary.get("current", [])
                 request["skip"] = summary.get("unconvertible", [])
+                request["kept"] = summary.get("kept", [])
                 request["redo"] = "stale"
                 if args.once:
                     if summary.get("waiting"):

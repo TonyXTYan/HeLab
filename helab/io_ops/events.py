@@ -909,7 +909,8 @@ class ShotConvertedEvent(TypedDict):
 
 class ShotWaitingEvent(TypedDict):
     """A raw file not converted yet: it may still be being written (``reason``: ``settling``,
-    ``changed``, ``no_final_newline``, ``not_trigger_first``) or couldn't be read now
+    ``changed``, ``no_final_newline``, ``not_trigger_first``), is dated ahead of this computer's
+    clock (``future``, with ``clock_skew`` for the folder) or couldn't be read now
     (``read_failed``). Nothing was written; it is looked at again by a later conversion."""
     kind: Literal["shot_waiting"]
     path: str
@@ -959,9 +960,10 @@ class ConvertProgressEvent(TypedDict):
 class ConvertSummaryEvent(TypedDict):
     """The conversion's end (before ``done``). Shot lists are the raw files' ``[name, size,
     mtime_ns]``: ``current`` (a current HeLab TXY: converted now or before), ``waiting`` (with its
-    reason and message after them) and ``unconvertible``; the next conversion of the folder (Live,
-    ``helab convert --watch``) sends them back as ``done``, ``seen`` and ``skip``, so it neither
-    checks done shots again, nor takes a file whose size or mtime changed between two checks as
+    reason and message after them), ``unconvertible`` and ``kept`` (beside: a TXY there this
+    conversion doesn't stand behind); the next conversion of the folder (Live, ``helab convert
+    --watch``) sends them back as ``done``, ``seen``, ``skip`` and ``kept``, so it neither checks
+    done or kept shots again, nor takes a file whose size or mtime changed between two checks as
     finished, nor reads an unfinished one again while it is unchanged."""
     kind: Literal["convert_summary"]
     path: str
@@ -972,8 +974,19 @@ class ConvertSummaryEvent(TypedDict):
     current: list[list[Any]]
     waiting: list[list[Any]]
     unconvertible: list[list[Any]]
-    kept: list[int]
+    kept: list[list[Any]]
     seconds: float
+
+
+class PartialRemovedEvent(TypedDict):
+    """A beside conversion removed a leftover temporary TXY of its own (``.d_txy_helab_<N>.txy.<16
+    hex>.partial``, a regular file over ``io_ops.convert.PARTIAL_MAX_AGE`` old: a write a killed
+    helper left) from the source folder ``path``."""
+    kind: Literal["partial_removed"]
+    path: str
+    file: str
+    size: int
+    age: float  # seconds since it was last modified
 
 
 HelperEvent = Union[
@@ -995,7 +1008,7 @@ HelperEvent = Union[
     MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
     ResultFoundEvent, ResultMissingEvent, ResultSavedEvent, ResultNotSavedEvent, ResultPendingEvent,
     ConvertPrefsEvent, ConvertPlanEvent, ShotConvertedEvent, ShotWaitingEvent, ShotUnconvertibleEvent, ShotKeptEvent,
-    ConvertProgressEvent, ConvertSummaryEvent,
+    ConvertProgressEvent, ConvertSummaryEvent, PartialRemovedEvent,
 ]
 
 # Every kind a helper sends.
@@ -1016,5 +1029,5 @@ KINDS = frozenset({
     "roots_verified", "result_found", "result_missing", "result_saved", "result_not_saved",
     "result_pending",
     "convert_prefs", "convert_plan", "shot_converted", "shot_waiting", "shot_unconvertible", "shot_kept",
-    "convert_progress", "convert_summary",
+    "convert_progress", "convert_summary", "partial_removed",
 })
