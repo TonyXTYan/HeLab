@@ -1,0 +1,4 @@
+# Build-time only, for native/cython/build.py (floor venv; not in requirements.txt or the lock, Q9.2).
+# The built kernel needs neither at run time (only NumPy, already a dependency).
+Cython==3.3.0
+setuptools==84.2.0

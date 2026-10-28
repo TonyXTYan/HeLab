@@ -59,6 +59,7 @@ _BACKENDS: dict[str, Backend] = {}
 # processes.
 _MODULES = {
     "reference": "helab.convert.backends.reference",
+    "cython": "helab.convert.backends.cython",
     "rust": "helab.convert.backends.rust",
 }
 
