@@ -1,0 +1,7 @@
+{
+  "variant": "2019",
+  "matlab": "25.2.0.3055257 (R2025b) Update 2",
+  "status": "error",
+  "message": "MATLAB:badsubscript: Index in position 1 exceeds array bounds.",
+  "hits": 0
+}
