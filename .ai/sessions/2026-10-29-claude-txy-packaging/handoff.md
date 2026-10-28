@@ -196,6 +196,17 @@ writer tests, which use no backend. **`2a2835c`**: it runs only `test_convert_ba
 `test_convert_required_backends`, `test_convert_helab` (the helper with every backend, numba's
 cache folder) and `test_convert_split`: 1171 tests (21 s here, against 4220 in 47 s).
 
+**Run 40784790360** (`b2ca3d3`, dev/v0.0.7 `6454b4a` merged, the narrowed backends job): **every
+job green, no RERUN**. Tests: Windows 24:12 (suite 22:29), macOS 9:47 (8:25), Ubuntu 11:17 (10:04).
+Converter backends: Windows **5:53** (was 13:41; tests 2:15, 1061 passed), macOS 3:08, Ubuntu 3:00.
+Build: Windows 7:46, macOS 6:12, Ubuntu 2:44. dev/v0.0.7's own runs, overlapping it, varied as
+much: `6454b4a` (23:01) Windows 17:26, macOS 5:33, Ubuntu 7:23; `18a93d9` (23:07, beside mine)
+Windows 21:29, macOS 12:14, Ubuntu 10:20. Against those two controls this branch's main job was
++2:43/-2:27/+1:00 and, against Live's, -4:15/-2:24/+3:03: within dev's own spread. dev's Ubuntu
+run also ran all six `test_typing` tests on one worker at the end (a 3 min tail), so that tail is
+xdist's ordering, on dev too (a candidate fix for Q~2: run `test_typing.py` first, or in its own
+job).
+
 The split saves about 1 min of the Windows test job. The same suite varies by 3-5 min between
 runs, so the split alone doesn't keep Windows clear of 30 min, and macOS can now come near 20:
 **Q~2**.
