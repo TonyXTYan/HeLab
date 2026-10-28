@@ -307,6 +307,17 @@ class FolderExplorer(QWidget):
         self.selected_folder_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         self.folder_cache_label = ElidedLabel("Cache not checked", self.summary_widget)
         self.folder_freshness_label = ElidedLabel("Live updates off", self.summary_widget)
+        # Shown at the Live line's end once Live is on (Q6.8): auto-convert on or off, and its menu.
+        self.live_row = QWidget(self.summary_widget)
+        self.auto_convert_button = QToolButton(self.live_row)
+        self.auto_convert_button.setText("Auto-convert")
+        self.auto_convert_button.setCheckable(True)
+        self.auto_convert_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.auto_convert_button.clicked.connect(lambda on: self.live_control.set_auto_convert(on))
+        self.auto_convert_menu = QMenu(self.auto_convert_button)
+        self.auto_convert_menu.aboutToShow.connect(lambda: self.live_control.fill_convert_menu(self.auto_convert_menu))
+        self.auto_convert_button.setMenu(self.auto_convert_menu)
+        self.auto_convert_button.hide()
         self.cancel_load_button = QToolButton(self.folder_counts_row)
         self.cancel_load_button.setText("Cancel")
         self.cancel_load_button.setToolTip("Cancel loading in this tab (Esc)")
@@ -350,9 +361,9 @@ class FolderExplorer(QWidget):
             self.selected_folder_label, self.folder_summary_label,
             self.folder_cache_label, self.folder_freshness_label))
         for line in (self.folder_counts_row, self.selected_folder_label, self.folder_summary_label,
-                     self.folder_cache_label, self.folder_freshness_label):
+                     self.folder_cache_label, self.folder_freshness_label, self.live_row):
             line.setFixedHeight(line_height)
-        for button in self.summary_buttons:
+        for button in (*self.summary_buttons, self.auto_convert_button):
             button.setFont(small_font)
             button.setFixedHeight(line_height)
             button.setStyleSheet("""
@@ -376,7 +387,12 @@ class FolderExplorer(QWidget):
         summary_layout.setSpacing(0)
         summary_layout.addWidget(self.folder_counts_row)
         summary_layout.addWidget(self.folder_cache_label)
-        summary_layout.addWidget(self.folder_freshness_label)
+        live_layout = QHBoxLayout(self.live_row)
+        live_layout.setContentsMargins(0, 0, 0, 0)
+        live_layout.setSpacing(4)
+        live_layout.addWidget(self.folder_freshness_label, 1)
+        live_layout.addWidget(self.auto_convert_button)
+        summary_layout.addWidget(self.live_row)
         self.summary_widget.setFixedHeight(3 * line_height)
         self.summary_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         layout = QVBoxLayout(self)
@@ -1690,7 +1706,7 @@ class FolderExplorer(QWidget):
         large = self.large_state(path) if path == self.selected_path_globally else None
         offer_large = large is not None and not large[1] and not self.load_error
         idle = not (self.loading or self.load_waiting or retrying)
-        live_error = bool(self.live is not None and self.live.error)
+        live_error = bool(self.live is not None and (self.live.error or self.live.convert and self.live.convert.error))
         self.retry_button.setVisible(bool(self.load_error or scan_error or root_error or paused or offer_large or off
                                           or live_error) and idle)
         retry_path = self.listing_retry_path
@@ -1856,6 +1872,23 @@ class FolderExplorer(QWidget):
         style = f"color: {AMBER};" if stopped else ""
         if self.folder_freshness_label.styleSheet() != style:
             self.folder_freshness_label.setStyleSheet(style)
+        self._update_auto_convert_button(path)
+
+    def _update_auto_convert_button(self, path: str) -> None:
+        """The Live line's Auto-convert: shown while Live watches the selected folder."""
+        button = self.auto_convert_button
+        watching = self.live is not None and self.live.path == path
+        if button.isHidden() == watching:
+            button.setVisible(watching)
+        on = self.live_control.auto_converting(path)
+        if button.isChecked() != on:
+            button.setChecked(on)
+        tooltip = ("Auto-convert is on: each Live check also converts the folder's new raw files (d<N>.txt) "
+                   "to HeLab's TXY once written. Click to stop; the arrow has its choices." if on else
+                   "Auto-convert: also convert the folder's new raw files (d<N>.txt) to HeLab's TXY once "
+                   "written, while Live is on. The arrow has its choices.")
+        if button.toolTip() != tooltip:
+            button.setToolTip(tooltip)
 
     def _fit_selected_label(self) -> None:
         """Share line 1: the selected path gets its full width or at least 2/5 of the free space."""

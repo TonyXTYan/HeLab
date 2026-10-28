@@ -44,6 +44,10 @@ LOG_KEEP_SETTING = "log_files_keep"
 # the raw files is a per-folder flag (Q9.7, the store's ``convert_prefs.write_beside``), not this.
 CONVERT_OUTPUT_SETTING = "converted_txy_output"
 CONVERT_OUTPUTS = ("cache", "temp")
+# Live auto-convert (TXY converter stage 4): the folders that start Live and auto-convert when HeLab
+# launches (Q9.6; helab/views/live_launch.py), and the hits below which a converted shot notifies (Q9.4).
+LIVE_LAUNCH_FOLDERS_SETTING = "live_launch_folders"
+CONVERT_LOW_HITS_SETTING = "convert_low_hits"
 # The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).
 REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
 OPEN_PLOTS_SETTING = "open_plots"
@@ -94,6 +98,13 @@ SETTINGS: tuple[Setting, ...] = (
             "Where HeLab's own TXY files (d_txy_helab_<N>.txy) go: cache (the disk cache's folder, keyed by "
             "the folder's data root; a folder without one goes to temp) or temp (HeLab's temp folder). "
             "Folders set to write them beside the raw files do that instead."),
+    Setting(LIVE_LAUNCH_FOLDERS_SETTING, str, "",
+            "Folders that open in a tab each and start Live with auto-convert when HeLab launches (the Live "
+            "line's Auto-convert menu): a JSON list of paths. Live follows the current tab, so it starts in the "
+            "first one only. Unset: none."),
+    Setting(CONVERT_LOW_HITS_SETTING, int, 100,
+            "Live auto-convert: a converted shot with fewer hits than this raises a system notification, once "
+            "per shot (the Auto-convert menu); 0: never."),
     # The plots that reopen at start (keep these rows together).
     Setting(REOPEN_PLOTS_SETTING, bool, True,
             "Reopen the plots open when HeLab last quit; each reruns on its folder's data in RAM or the disk "

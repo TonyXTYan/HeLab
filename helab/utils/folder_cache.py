@@ -272,6 +272,14 @@ class FolderCache(QObject):
         # Each folder's converter flags as the store last said ({"write_beside", "set_at"}; TXY
         # converter stage 4): only folders asked about (``read_convert_prefs``) or set this session.
         self.convert_prefs: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        # Live auto-convert (TXY converter stage 4): the folders whose Live converts new raw shots
+        # this session (Q9.6: reset each session, except the folders set to start at launch), and
+        # each folder's last conversion's lists (``convert_summary``), sent back with the next one
+        # (``convert``). The detector profile conversions use (``DetectorProfile.to_dict()``; None:
+        # the default built-in), for the profile manager to set.
+        self.auto_convert: set[str] = set()
+        self.convert_lists: OrderedDict[str, dict[str, Any]] = OrderedDict()
+        self.convert_profile: dict[str, Any] | None = None
         # Flag saves in flight: job owner → (path, the choice's set_at, who set it).
         self._pref_writes: dict[str, tuple[str, float, str]] = {}
         # Constants (F0b): the lab's (Settings → Lab parameters, set by the main window), and each
@@ -1017,6 +1025,40 @@ class FolderCache(QObject):
             self.convert_prefs.popitem(last=False)
         if self.write_beside(path) != before:
             self.folderPrefsChanged.emit(path)
+
+    def convert(self, owner: str, path: str) -> bool:
+        """Convert ``path``'s settled raw files to HeLab's TXY (``io_ops.convert``; the helper's
+        background lane, pausable, refused while working offline: answered ``offline``). Sends
+        the folder's last conversion's lists back (``seen``, ``done``, ``kept``, ``skip``; ``seen``
+        is ``[]`` for its first this session, which only records), so done shots aren't checked
+        again and a file is taken as finished only after two conversions saw it unchanged. One
+        conversion per folder at a time (a second asker joins it). Whether it was accepted."""
+        from helab.convert.profile import builtin_profile
+        from helab.utils import constants
+        from helab.utils.settings_store import app_settings
+        path = self.key(path)
+        profile = self.convert_profile if self.convert_profile is not None else builtin_profile().to_dict()
+        payload: dict[str, Any] = {"path": path, "profile": profile, "temps": constants.DIR_TEMPS,
+                                   "cache": store_options(), "output": constants.read_convert_output(app_settings()),
+                                   "beside": self.write_beside(path), "seen": []}
+        lists = self.convert_lists.get(path)
+        if lists is not None:
+            payload["seen"] = lists["waiting"]
+            payload["skip"] = lists["unconvertible"]
+            if lists["profile"] == profile:
+                # (Another profile's current shots aren't this one's: checked again.)
+                payload["done"], payload["kept"] = lists["current"], lists["kept"]
+        return self.submit(owner, 0, path, "convert", payload)
+
+    def _remember_convert(self, job: SharedJob, event: dict[str, Any]) -> None:
+        """A conversion's lists, for the folder's next one (``convert``)."""
+        lists: dict[str, Any] = {key: [list(entry) for entry in event.get(key) or ()]
+                                 for key in ("current", "waiting", "unconvertible", "kept")}
+        lists["profile"] = job.payload.get("profile")
+        self.convert_lists[job.path] = lists
+        self.convert_lists.move_to_end(job.path)
+        while len(self.convert_lists) > self.MAX_SNAPSHOTS:
+            self.convert_lists.popitem(last=False)
 
     def set_folder_prefs(self, path: str, *, no_cache: bool, no_auto_load: bool, remove_cached: bool = False,
                          owner: str = "") -> bool:
@@ -3787,6 +3829,8 @@ class FolderCache(QObject):
                 for path in job.payload["paths"]:
                     if path not in self.folder_icons:
                         self.remember_folder_icon(path)
+        elif job.operation == "convert" and kind == "convert_summary":
+            self._remember_convert(job, event)
         elif job.operation == "invalidate" and kind in ("removed", "admin_result"):
             # Its state was reset when it was submitted; only the cleanup deadline and usage are new.
             self._schedule_sweep(event.get("next_deadline"))

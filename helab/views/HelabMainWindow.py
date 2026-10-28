@@ -49,6 +49,7 @@ from helab.views.FolderExplorer import (
 )
 from helab.views.explorer_text import large_text
 from helab.views.FolderTabWidget import FolderTabWidget
+from helab.views import live_launch
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.MissingShotsWindow import MissingShotsWindow
 from helab.views.QuitSaveDialog import QuitSaveDialog
@@ -167,6 +168,7 @@ class HelabMainWindow(QMainWindow):
 
         # Delay the execution of add_new_folder_explorer_tab until the GUI is loaded
         QTimer.singleShot(10, self.add_new_folder_explorer_tab)
+        QTimer.singleShot(40, lambda: live_launch.start(self))  # Folders set to start Live at launch.
         QTimer.singleShot(30, self.plot_reopen.restore)
         QTimer.singleShot(50, self.update_tool_enabled_state)
         # QTimer.singleShot(20, self.on_folder_explorer_selection_changed)

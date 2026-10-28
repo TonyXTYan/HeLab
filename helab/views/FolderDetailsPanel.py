@@ -100,7 +100,7 @@ class FolderDetailsPanel(QScrollArea):
 
     ROWS = (("folder", "Folder"), ("state", "State"), ("files", "Files"), ("time", "Time"), ("rate", "Rate"),
             ("data", "Data"), ("loaded", "Loaded"), ("source", "Source"), ("cache", "Disk cache"),
-            ("errors", "Problems"),
+            ("convert", "Auto-convert"), ("errors", "Problems"),
             ("tab", "This tab"), ("io", "All I/O"))
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -293,6 +293,12 @@ class FolderDetailsPanel(QScrollArea):
             # A save held for the user's answer (Make room / Save update); one question at a time.
             rows["cache"] = (waiting, "The disk cache asks before this save: Make room or Save update, or don't "
                                       "cache it now. The loaded data stays in RAM either way.")
+        session = explorer.live
+        if session is not None and session.path == path and session.convert is not None:
+            # Live's auto-convert (TXY converter stage 4): what it converts and what waits, and why.
+            text, lines, _ = explorer.live_control.convert_line(session)
+            text = text if session.convert.error else text.removeprefix("auto-convert ")
+            rows["convert"] = (text[:1].upper() + text[1:], "\n".join(lines))
         if dataset is None or not shown:
             return rows
         self._data_rows(explorer, dataset.metadata, rows, loading, opened)
