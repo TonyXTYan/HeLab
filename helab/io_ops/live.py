@@ -265,7 +265,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                     fingerprint.append((shot, *held[shot]))  # (Held as it was until then.)
             else:
                 artifact = os.path.join(output, f"{shot}.npy")
-                np.save(artifact, array, allow_pickle=False)
+                infra._save_artifact(artifact, array)
                 rows += len(array)
                 size += array.nbytes
                 if again:

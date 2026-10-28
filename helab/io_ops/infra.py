@@ -329,6 +329,22 @@ def _read_txy_file(filename: str, reason: str) -> Any:
     return pd.read_csv(io.BytesIO(raw), sep=",", names=["t", "x", "y"], dtype=np.float64)
 
 
+class ArtifactWriteFailed(RuntimeError):
+    """A shot read from its source couldn't be handed to the app: writing its array into the
+    operation's output folder (local, e.g. a full disk) failed. Not the source's fault, so the
+    operation fails with this error (Live keeps its Retry) rather than keeping the shot as
+    unreadable, which would never read it again while it stays unchanged."""
+
+
+def _save_artifact(artifact: str, array: Any) -> None:
+    """Write a shot's array for the app (``np.save``); a failure is ``ArtifactWriteFailed``."""
+    import numpy as np
+    try:
+        np.save(artifact, array, allow_pickle=False)
+    except OSError as exc:
+        raise ArtifactWriteFailed(f"Couldn't write a loaded shot to {os.path.dirname(artifact)}: {exc}") from exc
+
+
 def _mounts(reason: str) -> list[Mount]:
     """The mount table (``cache_paths.current_mounts``): the OS's list of mounts, which asks no
     source folder or server (psutil's getfsstat without waiting; Windows' drive types and mapped

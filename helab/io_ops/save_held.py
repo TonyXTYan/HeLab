@@ -132,7 +132,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
                     continue
                 assert output is not None
                 artifact = os.path.join(output, f"{shot}.npy")
-                np.save(artifact, array, allow_pickle=False)
+                infra._save_artifact(artifact, array)
                 data[shot] = array
                 problematic = sorted((set(problematic) - {shot}) | ({shot} if invalid else set()))
                 times.pop(shot, None)

@@ -2,6 +2,7 @@
 held shots reused only from the same folder, new files read once seen unchanged a check apart."""
 from __future__ import annotations
 
+import errno
 import os
 from pathlib import Path
 import time
@@ -344,6 +345,38 @@ def test_unreadable_new_files_are_kept_known_and_not_read_again(
     monkeypatch.setattr(infra, "_read_txy_file", read_file)
     again = check(folder, tmp_path, memory, known=known)
     assert last(again, "live_unchanged")["total_files"] == 3 and not reads
+
+
+def no_space(*args: Any, **kwargs: Any) -> None:
+    raise OSError(errno.ENOSPC, "No space left on device")
+
+
+def test_a_full_local_disk_fails_the_check_and_never_marks_the_shot_unreadable(
+    monkeypatch: pytest.MonkeyPatch, folder: Path, tmp_path: Path,
+) -> None:
+    """Writing a shot read from its source for the app failed (here: no space): the check fails
+    (Live's Retry) and keeps nothing; the shot is read once there's space (review on PR #9)."""
+    memory = held(folder, tmp_path)
+    since = folder.stat().st_mtime_ns
+    write_shot(folder, 3)
+    age_folder(folder, 30)
+    seen = last(check(folder, tmp_path, memory, since=since), "live_unchanged")
+    with monkeypatch.context() as patch:
+        patch.setattr(np, "save", no_space)
+        with pytest.raises(infra.ArtifactWriteFailed, match="No space left"):
+            check(folder, tmp_path, memory, seen=seen["live_seen"], identity=seen["live_identity"])
+    events = check(folder, tmp_path, memory, seen=seen["live_seen"], identity=seen["live_identity"])
+    assert [event["shot"] for event in events if event["kind"] == "shot"] == [3]
+    loaded = last(events, "loaded")
+    assert loaded["failed_files"] == 0 and 3 not in loaded["problematic"]
+
+
+def test_a_full_local_disk_fails_a_load_rather_than_its_shots(
+    monkeypatch: pytest.MonkeyPatch, folder: Path, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(np, "save", no_space)
+    with pytest.raises(infra.ArtifactWriteFailed, match="No space left"):
+        check_load(folder, tmp_path)
 
 
 def test_held_shots_gone_from_the_folder_stop_the_check(folder: Path, tmp_path: Path) -> None:

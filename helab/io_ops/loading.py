@@ -541,7 +541,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                     problematic[:] = [value for value in problematic if value != shot]
             if array is not None:
                 artifact = os.path.join(output, f"{shot}.npy")
-                np.save(artifact, array, allow_pickle=False)
+                infra._save_artifact(artifact, array)
                 rows += len(array)
                 size += array.nbytes
                 loaded += 1
