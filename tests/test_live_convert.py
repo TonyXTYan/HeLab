@@ -27,7 +27,7 @@ from helab.views import live_launch
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.FolderExplorer import FolderExplorer
 from test_convert_helab import raw_bytes
-from test_live import age_folder, deliver, next_request, producer, replay, service, write_shot  # noqa: F401
+from test_live import age_folder, deliver, job_of, next_request, producer, replay, service, write_shot  # noqa: F401
 
 OLD = 1_700_000_000  # A raw file's mtime long settled.
 
@@ -111,9 +111,14 @@ def watching_raw_folder(qtbot: QtBot, tmp_path: Path, *, auto_convert: bool = Tr
 
 
 def cycle(qtbot: QtBot, explorer: FolderExplorer, path: str, tmp_path: Path) -> tuple[IORequest, list[dict[str, Any]]]:
-    """One Live tick with auto-convert on: its conversion (run first), then its check."""
+    """One Live tick with auto-convert on: its conversion (run first), then its check. A check that
+    a converted shot asked for comes alone (conversions keep their interval): answered first."""
     cache = explorer.model.cache
-    qtbot.waitUntil(lambda: ("convert", path) in cache.jobs)
+    for _ in range(3):
+        qtbot.waitUntil(lambda: ("convert", path) in cache.jobs or job_of(cache, path) is not None)
+        if ("convert", path) in cache.jobs:
+            break
+        replay(cache, path, tmp_path)
     request = producer(cache, path, "convert")
     sent = run_convert(cache, path)
     next_request(qtbot, explorer, path)
