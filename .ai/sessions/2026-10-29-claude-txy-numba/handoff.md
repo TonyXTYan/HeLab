@@ -42,8 +42,11 @@ rows used).
 
 ## Checks
 
+- After merging `dev/v0.0.7` (Cython, MLX and Rust landed; every `_MODULES` and `PURE` entry
+  kept): **6418 passed, 462 skipped (the unbuilt or uninstalled Cython, MLX and Rust backends),
+  no RERUN**; mypy --strict, pyright and pyright against Ground's numba-free venv clean.
 - `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` (numba installed, at load
-  ~10 from the other floors): latest **6292 passed, 8 skipped, no RERUN** (after Kite's fixes); then 6290; after the cache seam 6286; at the
+  ~10 from the other floors), before the merges: latest **6292 passed, 8 skipped, no RERUN** (after Kite's fixes); then 6290; after the cache seam 6286; at the
   pushed `7ef5935` 6284 passed; earlier 6282; no RERUN in any run. The 8 skips: 4 in my file and 2 in
   `test_convert_profile.py` are the single-value fields `x2_handling`/`y_handling`; 2 predate this floor.
 - `mypy helab/ --strict` (175 files), `mypy tests --strict` (145), `pyright helab tests`: clean.
@@ -130,6 +133,9 @@ one).
   (checked: 0 after a run). Proposed for `tests/conftest.py`: a session-scoped autouse fixture that
   calls `numba_backend.set_cache_folder(<session temp>/numba-cache)` (cheap: it imports no numba),
   so any later test that touches the numba backend inherits it; then my file's fixture can go.
+  It also fixes a trap Kite noted (round 2): my session-scoped fixture would raise `BackendError`
+  if another file's in-process numba test loaded the kernels first on the same xdist worker
+  (the folder is fixed at first load); no such test exists today.
 - **Landing** (Kite 5): `dev/v0.0.7` gets one `_MODULES` entry and one `PURE` entry from each
   backend floor; keep every one when merging (`helab/convert/reconstruct.py`,
   `tests/test_headless_imports.py`).
