@@ -224,6 +224,18 @@ def test_files_that_may_still_be_written_wait(source: Path, tmp_path: Path, monk
     assert [event["shot"] for event in of(events, "shot_converted")] == [5]
     folder = Path(of(events, "convert_plan")[0]["folder"])
     assert sorted(path.name for path in folder.glob("*.txy")) == ["d_txy_helab_5.txy"]
+    # Looked at again with the summary sent back: shot 2, unchanged, isn't read again.
+    reads: list[int] = []
+    original = convert._read_raw
+
+    def counted(shot: Any, beat: Any) -> bytes | str:
+        reads.append(shot.shot)
+        return original(shot, beat)
+    monkeypatch.setattr(convert, "_read_raw", counted)
+    again = run(source, request_for(source, tmp_path, seen=summary(events)["waiting"],
+                                    done=summary(events)["current"]))
+    assert {event["shot"]: event["reason"] for event in of(again, "shot_waiting")}[2] == raw.NO_FINAL_NEWLINE
+    assert 2 not in reads
     # The writer finishes shot 2 and it settles: then it converts.
     write_raw(source, 2, whole)
     later = run(source, request_for(source, tmp_path))

@@ -126,6 +126,7 @@ class _Log:
 
     def __init__(self) -> None:
         self.waiting: dict[str, str] = {}
+        self.kept: set[int] = set()
         self.summary: dict[str, Any] = {}  # The last ``convert_summary``.
         self.plans = 0
 
@@ -155,7 +156,9 @@ class _Log:
             self.waiting.pop(event["raw_name"], None)
             LOG.warning("%s can't be converted: %s", event["raw_name"], event["message"])
         elif event["kind"] == "shot_kept":
-            LOG.warning("Shot %d: %s kept (%s)", event["shot"], event["txy"], event["reason"])
+            if event["shot"] not in self.kept:
+                self.kept.add(event["shot"])
+                LOG.warning("Shot %d: %s kept (%s)", event["shot"], event["txy"], event["reason"])
         elif event["kind"] == "convert_summary":
             self.summary = dict(event)
             if event["converted"]:

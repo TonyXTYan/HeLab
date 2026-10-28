@@ -958,10 +958,11 @@ class ConvertProgressEvent(TypedDict):
 
 class ConvertSummaryEvent(TypedDict):
     """The conversion's end (before ``done``). Shot lists are the raw files' ``[name, size,
-    mtime_ns]``: ``current`` (a current HeLab TXY: converted now or before), ``waiting`` and
-    ``unconvertible``; the next conversion of the folder (Live, ``helab convert --watch``) sends
-    them back as ``done``, ``seen`` and ``skip``, so it neither checks done shots again nor takes a
-    file whose size or mtime changed between two checks as finished."""
+    mtime_ns]``: ``current`` (a current HeLab TXY: converted now or before), ``waiting`` (with its
+    reason and message after them) and ``unconvertible``; the next conversion of the folder (Live,
+    ``helab convert --watch``) sends them back as ``done``, ``seen`` and ``skip``, so it neither
+    checks done shots again, nor takes a file whose size or mtime changed between two checks as
+    finished, nor reads an unfinished one again while it is unchanged."""
     kind: Literal["convert_summary"]
     path: str
     output: str

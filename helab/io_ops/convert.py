@@ -200,7 +200,7 @@ def _places(path: str, request: ConvertRequest) -> _Places:
 def _stats(entries: list[list[Any]] | None) -> dict[str, tuple[int, int]]:
     """Raw files' (size, mtime) by name, from a summary's ``[name, size, mtime_ns]`` lists."""
     return {str(entry[0]): (int(entry[1]), int(entry[2])) for entry in entries or []
-            if isinstance(entry, (list, tuple)) and len(entry) == 3}
+            if isinstance(entry, (list, tuple)) and len(entry) >= 3}
 
 
 def _write_folder_record(folder: str, path: str, key: str) -> None:
@@ -335,6 +335,11 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
 
     seen_list = request.get("seen")
     seen = None if seen_list is None else _stats(seen_list)
+    # Files the previous conversion read and found unfinished (no final newline, another first
+    # channel): their (size, mtime), reason and message.
+    unfinished = {str(entry[0]): ((int(entry[1]), int(entry[2])), str(entry[3]), str(entry[4]))
+                  for entry in seen_list or [] if isinstance(entry, (list, tuple)) and len(entry) == 5
+                  and entry[3] in (raw.NO_FINAL_NEWLINE, raw.NOT_TRIGGER_FIRST)}
     done, skip = _stats(request.get("done")), _stats(request.get("skip"))
     redo = str(request.get("redo") or "stale")
 
@@ -367,7 +372,7 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     settle = fingerprints.SETTLE_SECONDS
 
     def wait(shot: _Shot, code: str, message: str) -> None:
-        waiting.append(shot.entry)
+        waiting.append([*shot.entry, code, message])
         send({"kind": "shot_waiting", "path": path, "shot": shot.shot, "raw_name": shot.name, "raw_size": shot.size,
               "raw_mtime_ns": shot.mtime_ns, "reason": code, "message": message})
 
@@ -390,6 +395,10 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
         if seen is not None and seen.get(shot.name) != stat:
             wait(shot, raw.CHANGED, "Not seen with this size and date at the previous check: checked again at the next"
                  if shot.name not in seen else "Its size or date changed since the previous check")
+            continue
+        if shot.name in unfinished and unfinished[shot.name][0] == stat:
+            # Read before and found unfinished, and unchanged since: still so, without reading it again.
+            wait(shot, *unfinished[shot.name][1:])
             continue
         if beside:
             txy_size = beside_txy.get(shot.shot)
