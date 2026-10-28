@@ -193,7 +193,8 @@ are a table of their own with the same rules: newest `set_at` wins, never remove
 purges or making room, turned off by Clear folder preferences, moved by a nested root's re-key;
 `cache_admin convert_prefs` reads or sets one (`FolderCache.write_beside`/`set_write_beside`)."
 Add `convert_prefs` to the `_migrate` list. And: "HeLab's own TXY under the cache folder
-(`converted-txy/`) aren't in the store: outside the disk budget, and nothing removes them (Q~3)."
+(`converted-txy/`) aren't in the store: outside the disk budget, and nothing removes them without
+asking (Q~3; whether they join the budget later, and so the housekeeping list, is Tony's)."
 
 ### `AGENTS.md`
 
@@ -201,24 +202,38 @@ Add `convert_prefs` to the `_migrate` list. And: "HeLab's own TXY under the cach
   [converter](.ai/architecture/converter.md)", and `convert` in the `io_helper` row's operations.
 - The cache rule "Only helpers open the store": "Only helpers (and `helab convert`, a headless
   process without the GUI) open the store".
+- The write rule (Q~4, Side at landing): "…and, where the user turns it on per folder, or asks for
+  it on the command line, converted `d_txy_helab_<N>.txy`".
 
 ## Provisional items
 
-- **Q~1** (Tony): a folder without a data root, asked for `cache`, converts to the temp folder
-  (`convert_plan.fallback` says "no .helab-root found here or above"), following "no data root,
-  no disk cache". Proposed: yes (built).
-- **Q~2** (Tony): provenance is never written beside the raw files (only `d_txy_helab_<N>.txy`
-  is allowed there), so another computer reading a beside TXY doesn't know its profile.
-  Options: (a) as now; (b) allow `d_txy_helab_<N>.json` beside too (amends AGENTS.md's write
-  rule). Proposed: (a) until a second HeLab needs it (stage 5 or Q6.7).
-- **Q~3** (Tony): HeLab's TXY in the cache folder are outside the 8 GB budget and no housekeeping
-  removes them. Proposed: the UI floor shows their size in Settings → Cache with a Clear (asked
-  first); counting them in the budget later, if they grow.
-- **Q~4** (Tony): `helab convert --output beside` writes beside for that run without the folder's
-  flag (the command line is the user's choice for that folder), and saves no flag. Proposed: yes.
-- **Q~5** (Tony): a settled raw file that never gets a final newline (or starts off the trigger
-  channel) waits for good, re-checked only when it changes. Proposed: keep waiting; Live shows
-  it as waiting with the reason (no timer turning it unconvertible).
+Q~1–Q~5 were **decided by Side overnight as proposed, for Tony to confirm** (2026-10-29).
+
+- **Q~1** (decided by Side, for Tony to confirm): a folder without a data root, asked for
+  `cache`, converts to the temp folder (`convert_plan.fallback` says "no .helab-root found here or
+  above"), following "no data root, no disk cache". Decided: yes (built).
+- **Q~2** (decided by Side, for Tony to confirm): provenance is never written beside the raw files
+  (only `d_txy_helab_<N>.txy` is allowed there), so another computer reading a beside TXY doesn't
+  know its profile. Options: (a) as now; (b) allow `d_txy_helab_<N>.json` beside too (amends
+  AGENTS.md's write rule). Decided: (a) until a second HeLab needs it (stage 5 or Q6.7).
+- **Q~3** (decided by Side, for Tony to confirm): HeLab's TXY in the cache folder are outside the
+  8 GB budget and no housekeeping removes them. Decided: the UI floor shows their size in Settings →
+  Cache with a Clear (asked first). **For Tony:** whether converted TXY join the disk budget later;
+  that would add them to AGENTS.md's housekeeping list. Until then nothing removes them without
+  asking.
+- **Q~4** (decided by Side, for Tony to confirm): `helab convert --output beside` writes beside for
+  that run without the folder's flag (the command line is the user's choice for that folder), and
+  saves no flag. Decided: yes. Side updates AGENTS.md's write rule at landing ("where the user
+  turns it on per folder, or asks for it on the command line").
+- **Q~5** (decided by Side, for Tony to confirm): a settled raw file that never gets a final
+  newline (or starts off the trigger channel) waits for good, re-checked only when it changes.
+  Decided: keep waiting; Live shows it as waiting with the reason (no timer turning it
+  unconvertible).
+- **Q~6** (idea for Tony, from Side; not built): a manual **Convert anyway** for a file stuck
+  waiting (no final newline, or off the trigger channel): the user's choice to convert it as it
+  is, still never one modified within the settle age. A seam for it: a request field naming the
+  shots to convert despite the content checks (e.g. `force_shots`), recorded in the provenance;
+  for the Live or UI floor if Tony wants it.
 - **A~1** (packaging floor): in the built app, run a `convert` with `workers` 2 (spawned workers
   through `freeze_support`) on all three OSes; if it works, make `DEFAULT_WORKERS` the same as
   from source.
