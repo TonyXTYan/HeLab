@@ -2,7 +2,7 @@ import os
 import sys
 import tempfile
 import logging
-from typing import List
+from typing import TYPE_CHECKING, List
 from helab._version import __version__
 from helab.build_info import get_build_info
 
@@ -14,7 +14,9 @@ from helab.utils.settings_store import app_settings
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING as AUTO_SCAN_VISIBLE_SETTING,
     CHECK_LEVEL_SETTING as CHECK_LEVEL_SETTING,
+    CONVERT_BACKEND_SETTING as CONVERT_BACKEND_SETTING,
     CONVERT_OUTPUT_SETTING as CONVERT_OUTPUT_SETTING,
+    CONVERT_PROFILE_SETTING as CONVERT_PROFILE_SETTING,
     DIR_CACHES_SETTING as DIR_CACHES_SETTING,
     DIR_TEMPS_SETTING as DIR_TEMPS_SETTING,
     DISK_BUDGET_SETTING as DISK_BUDGET_SETTING,
@@ -25,6 +27,8 @@ from helab.utils.settings_defaults import (
     RAM_BUDGET_SETTING as RAM_BUDGET_SETTING,
     SIMULTANEOUS_IO_SETTING as SIMULTANEOUS_IO_SETTING,
     CONVERT_OUTPUTS, LOG_KEEP_SETTING, read_setting, setting_default)
+if TYPE_CHECKING:
+    from helab.convert.profile import DetectorProfile
 # from PyQt6.QtGui import QFontDatabase, QFont
 
 # try:
@@ -218,6 +222,35 @@ def read_convert_output(settings: QSettings) -> str:
     reads as the default."""
     value = read_setting(settings, CONVERT_OUTPUT_SETTING, typed=True)
     return value if value in CONVERT_OUTPUTS else str(setting_default(CONVERT_OUTPUT_SETTING))
+
+
+def profiles_folder() -> str:
+    """The user's detector profiles (``helab.convert.user_profiles``): a folder of the app folder."""
+    from helab.convert.user_profiles import FOLDER_NAME
+    return os.path.join(app_folder(), FOLDER_NAME)
+
+
+def read_convert_profile(settings: QSettings) -> "DetectorProfile":
+    """The detector profile HeLab's conversions use (Q6.11): the setting's built-in or user profile;
+    one that no longer exists or can't be read gives the default, ``matlab-2019`` (logged)."""
+    from helab.convert.profile import DEFAULT_PROFILE, builtin_profile
+    from helab.convert.user_profiles import ProfileLibrary
+    name = str(read_setting(settings, CONVERT_PROFILE_SETTING, typed=True) or "")
+    found = ProfileLibrary(profiles_folder()).find(name) if name else None
+    if found is None:
+        if name and name != DEFAULT_PROFILE:
+            logging.warning("Detector profile %r not found: conversions use %s", name, DEFAULT_PROFILE)
+        return builtin_profile()
+    return found
+
+
+def read_convert_backend(settings: QSettings) -> str:
+    """The converter backend HeLab's conversions use: the setting when it names a known backend
+    (whether it can run here is the helper's to say), else ``numpy``."""
+    from helab.convert.pipeline import APP_BACKEND
+    from helab.convert.reconstruct import _MODULES
+    value = str(read_setting(settings, CONVERT_BACKEND_SETTING, typed=True) or "")
+    return value if value in _MODULES else APP_BACKEND
 
 
 def read_live_autosave(settings: QSettings) -> int:

@@ -33,7 +33,8 @@ setup(
     cmdclass={"build_py": BuildPy},
     include_package_data=True,
     # The window's icon too (R-12; HeLab.spec bundles it for the packaged app).
-    package_data={"helab.resources": ["*.svg", "ai-icon.icns"], "helab": [BUILD_INFO_FILENAME]},
+    package_data={"helab.resources": ["*.svg", "ai-icon.icns"], "helab": [BUILD_INFO_FILENAME],
+                  "helab.convert": ["builtin_profiles/*.json"]},
     install_requires=[
         "PyQt6>=6.7.1",
         "pytablericons>=1.0.1",

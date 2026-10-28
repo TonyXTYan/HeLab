@@ -3,9 +3,11 @@
 ``matlab-2019`` (the default, Q6.10) holds the constants of
 ``legacy/tdc_autoconverter/lib/dld_read_5channels_reconst_multi_imp.m`` and reproduces its output
 byte for byte; ``matlab-2023-lab-edit`` those of the front panel's copy
-(``legacy/DLD_front_panel/lib/Core_BEC_Analysis/lib/import_mcp_tdc_data/``). Plate profiles
-(``plates-2017``, ``plates-2022``, ``plates-2025``) start from ``matlab-2019`` in stage 4 and change
-only through calibration (stage 3).
+(``legacy/DLD_front_panel/lib/Core_BEC_Analysis/lib/import_mcp_tdc_data/``). The plate profiles
+(``plates-2017``, ``plates-2022``, ``plates-2025``, the last marked uncalibrated) start as copies of
+``matlab-2019`` and change only through calibration (stage 3); ``PLATE_SWAPS`` dates them, and
+``suggested_plates`` names the one for a day (a suggestion: the default stays ``matlab-2019``).
+Each built-in also ships as a JSON file (``builtin_files``, A10.3).
 
 Times and tolerances are in TDC bins (``bin_time`` seconds each) unless named otherwise; dead
 times are in seconds, as MATLAB writes them (``0.5e-6/bin_time``). A profile is saved as JSON
@@ -32,6 +34,7 @@ from dataclasses import dataclass
 import hashlib
 import json
 import math
+import re
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
@@ -247,8 +250,41 @@ MATLAB_2023_LAB_EDIT = MATLAB_2019.replace(
     write_empty_txy=True,
 )
 
+# The plate profiles (Q6.11): the 2017, 2022 and 2025 MCP plates. They start as copies of
+# ``matlab-2019`` (equal output, so equal content hash) and change only through calibration (stage 3).
+_PLATES_NOTES = ("Copy of matlab-2019 until this plate is calibrated (stage 3): same output, so same content "
+                 "hash. ")
+PLATES_2017 = MATLAB_2019.replace(
+    name="plates-2017",
+    notes=_PLATES_NOTES + "The MCP plates fitted on 2017-03-17.")
+PLATES_2022 = MATLAB_2019.replace(
+    name="plates-2022",
+    notes=_PLATES_NOTES + "The MCP plates fitted in ~2022 (between 2022-08-22 and 2022-11-03; 2022-11-03 for "
+                          "now). Measured with MCP pulses in 2022-11: time sums x 3367, y 3294 bins.")
+PLATES_2025 = MATLAB_2019.replace(
+    name="plates-2025",
+    notes="Uncalibrated: no calibration data for these plates yet (Q6.11). " + _PLATES_NOTES
+          + "The MCP plates fitted on 2025-06-18.")
+# Marked uncalibrated in the profile manager: a plate with no calibration data at all (Q6.11,
+# Tony 2026-10-28: "the 2025 profile is marked uncalibrated").
+UNCALIBRATED = frozenset({"plates-2025"})
+
 BUILTIN_PROFILES: Mapping[str, DetectorProfile] = MappingProxyType(
-    {profile.name: profile for profile in (MATLAB_2019, MATLAB_2023_LAB_EDIT)})
+    {profile.name: profile for profile in (MATLAB_2019, MATLAB_2023_LAB_EDIT, PLATES_2017, PLATES_2022, PLATES_2025)})
+
+# When each plate profile's plates went in (local dates, Q6.10): a folder's date can suggest one,
+# never apply it (the default stays ``matlab-2019``). The 2022 date is provisional: the first run on
+# X named for the new plates (Tony, 2026-10-29).
+PLATE_SWAPS: tuple[tuple[str, str], ...] = (
+    ("2017-03-17", "plates-2017"),
+    ("2022-11-03", "plates-2022"),
+    ("2025-06-18", "plates-2025"),
+)
+
+# The built-ins as JSON files in the package (A10.3): ``builtin_files`` reads them, and a test
+# checks each equals its definition here. (The app uses the definitions, so a build that leaves
+# the files out still converts.)
+BUILTIN_FOLDER = "builtin_profiles"
 
 
 def builtin_profile(name: str = DEFAULT_PROFILE) -> DetectorProfile:
@@ -256,3 +292,26 @@ def builtin_profile(name: str = DEFAULT_PROFILE) -> DetectorProfile:
         return BUILTIN_PROFILES[name]
     except KeyError:
         raise ProfileError(f"No built-in profile {name!r} (have {sorted(BUILTIN_PROFILES)})") from None
+
+
+def builtin_files() -> dict[str, DetectorProfile]:
+    """The built-in profiles as their packaged JSON files hold them, by name (A10.3)."""
+    from importlib import resources
+    found: dict[str, DetectorProfile] = {}
+    for entry in resources.files(__package__).joinpath(BUILTIN_FOLDER).iterdir():
+        if entry.name.endswith(".json"):
+            profile = DetectorProfile.from_json(entry.read_text(encoding="utf-8"))
+            found[profile.name] = profile
+    return found
+
+
+def suggested_plates(day: str) -> str | None:
+    """The plate profile whose plates were in on ``day`` (``YYYY-MM-DD``), or None before the first
+    swap listed (or for a malformed date). A suggestion only (Q6.10)."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+        return None
+    chosen = None
+    for since, name in PLATE_SWAPS:
+        if day >= since:
+            chosen = name
+    return chosen
