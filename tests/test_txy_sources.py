@@ -47,7 +47,7 @@ def make_run(tmp_path: Path, private_store: str, shots: int = 4, matlab: tuple[i
         write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 1))))
     for shot in matlab:
         matlab_txy(source, shot)
-    convert(source, tmp_path, private_store, output=output)
+    convert(source, tmp_path, private_store, destination=output)
     return source
 
 
@@ -55,7 +55,7 @@ def convert(source: Path, tmp_path: Path, private_store: str, profile: Any = MAT
             **fields: Any) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     request: dict[str, Any] = {"path": str(source), "profile": profile.to_dict(), "temps": str(tmp_path / "temps"),
-                               "seen": None, "output": "cache", "workers": 1,
+                               "seen": None, "destination": "cache", "workers": 1,
                                "cache": {"directory": store_root(private_store)}}
     request.update(fields)
     convert_folder(str(source), request, events.append)  # type: ignore[arg-type]

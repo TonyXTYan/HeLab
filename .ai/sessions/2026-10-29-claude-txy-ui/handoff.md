@@ -15,7 +15,12 @@ first, through a helper), and Clear folder preferences names the `write_beside` 
 built-ins exist (as JSON files too, A10.3), and a plot's settings show the plate profile the swap
 dates suggest for its folder (shown, never applied, Q6.10).
 
-**Checks** (at `e4f52e3`): `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
+**Checks after merging `dev/v0.0.7` at `e064a53`** (helab-core's fix round; the convert request's
+`output` is now `destination`, which this floor's tests now send): full suite **8106 passed, 669
+skipped, no RERUN**; `mypy --strict` helab and tests and `pyright helab tests` clean on darwin, win32
+and linux.
+
+**Checks before that** (at `e4f52e3`): `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
 **8103 passed, 669 skipped, no RERUN** (the skips are the compiled/MLX backends' tests, as on Ground).
 `mypy --strict` helab and tests and `pyright helab tests` clean for darwin and linux; for win32 /
 Windows only helab-core's known `helab/io_ops/convert.py:344–346` (Keel is fixing them). GUI:
