@@ -1,0 +1,3 @@
+# The numpy backend needs nothing beyond requirements.lock: NumPy (2.5.4 there) is already a
+# HeLab dependency. No package was installed in this floor's venv.
+numpy==2.5.4
