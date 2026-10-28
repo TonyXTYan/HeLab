@@ -23,6 +23,8 @@ import secrets
 import numpy as np
 import numpy.typing as npt
 
+from helab.convert import fastio
+
 Hits = npt.NDArray[np.float64]
 COLUMNS = 3
 _NON_FINITE = {math.inf: "Inf", -math.inf: "-Inf"}
@@ -40,6 +42,14 @@ def format_value(value: float) -> str:
 def format_txy(hits: Hits) -> bytes:
     if hits.ndim != 2 or (hits.size and hits.shape[1] != COLUMNS):
         raise ValueError(f"TXY hits are an (n, {COLUMNS}) array, not {hits.shape}")
+    if not hits.size:
+        return b""
+    return fastio.format_txy(hits)
+
+
+def format_txy_by_value(hits: Hits) -> bytes:
+    """``format_txy`` value by value through ``format_value``: the general path the fast one is
+    tested against."""
     lines = [",".join(format_value(value) for value in row) + "\n" for row in hits.tolist()]
     return "".join(lines).encode("ascii")
 

@@ -117,13 +117,16 @@ def test_mixed_line_endings_skip_the_fast_path() -> None:
 
 
 def test_the_fast_path_and_the_general_reader_agree() -> None:
-    from helab.convert import raw
+    from helab.convert import fastio, raw
     data = b"5,21405148161\r\n5,12672176\r\n0,21405378461\r\n1,21405378456\r\n9,9007199254740993\r\n"
-    fast = raw._parse_strict(data)
+    fast = fastio.parse_strict(data)
+    assert fast is not None
     general = raw._parse_textscan(data)
-    assert rows(fast) == rows(general)
+    assert rows(RawPulses(*fast)) == rows(general) == rows(parse_raw(data))
     lf = data.replace(b"\r\n", b"\n")
-    assert rows(raw._parse_strict(lf)) == rows(raw._parse_textscan(lf)) == rows(fast)
+    fast_lf = fastio.parse_strict(lf)
+    assert fast_lf is not None
+    assert rows(RawPulses(*fast_lf)) == rows(raw._parse_textscan(lf)) == rows(general)
 
 
 def test_pulses_are_float64_arrays_in_file_order(tmp_path: Path) -> None:

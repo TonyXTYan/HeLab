@@ -23,8 +23,9 @@ MATLAB reads with ``textscan(fid, '%f64%f64', 'Delimiter', ',', 'MultipleDelimsA
   give 1, NaN; ``1,3`` of ``1,300`` gives 1, 3);
 - an empty file gives no rows. The file is read as bytes: a UTF-8 BOM stops the read at once.
 
-Raw files as the TDC writes them (``\\d+,\\d+\\r\\n`` lines, or all ``\\n``) take a fast path with the
-same result; a file mixing line endings takes the general reader.
+Raw files as the TDC writes them (``\\d+,\\d+\\r\\n`` lines, or all ``\\n``: ``_STRICT_CRLF`` and
+``_STRICT_LF``) take a fast path with the same result (``fastio.parse_strict``, NumPy); any other
+file, a mix of line endings for one, takes the general reader.
 
 The done-writing checks (unchanged for ``SETTLE_SECONDS``, ending in a newline, the first line on
 the trigger channel) are stage 4's and go at the end of this module; MATLAB reads whatever
@@ -42,9 +43,12 @@ import re
 import numpy as np
 import numpy.typing as npt
 
+from helab.convert import fastio
+
 Floats = npt.NDArray[np.float64]
 
-# A whole file of well-formed TDC lines, all with one line ending.
+# A whole file of well-formed TDC lines, all with one line ending: what fastio.parse_strict reads
+# (its tests check it accepts exactly these).
 _STRICT_CRLF = re.compile(rb"(?:[0-9]+,[0-9]+\r\n)*")
 _STRICT_LF = re.compile(rb"(?:[0-9]+,[0-9]+\n)*")
 # One numeric field as textscan's %f reads it (it backtracks: "1e" reads 1, "-" reads nothing).
@@ -76,16 +80,10 @@ def read_raw(path: str | os.PathLike[str]) -> RawPulses:
 
 
 def parse_raw(data: bytes) -> RawPulses:
-    if _STRICT_CRLF.fullmatch(data) or _STRICT_LF.fullmatch(data):
-        return _parse_strict(data)
+    strict = fastio.parse_strict(data)
+    if strict is not None:
+        return RawPulses(channels=strict[0], times=strict[1])
     return _parse_textscan(data)
-
-
-def _parse_strict(data: bytes) -> RawPulses:
-    fields = data.replace(b"\r\n", b"\n").replace(b"\n", b",").split(b",")[:-1]
-    # int → float64 rounds to nearest like textscan's decimal conversion (exact below 2^53).
-    values = np.array([int(field) for field in fields], dtype=np.float64).reshape(-1, _COLUMNS)
-    return _pulses(values)
 
 
 def _parse_textscan(data: bytes) -> RawPulses:

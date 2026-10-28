@@ -57,7 +57,8 @@ _BACKENDS: dict[str, Backend] = {}
 # Every backend's name and the module that registers it on import, imported on first use. A new
 # backend adds its line here; one registered only from its own module is missing in spawned
 # processes.
-_MODULES = {"reference": "helab.convert.backends.reference"}
+_MODULES = {"reference": "helab.convert.backends.reference",
+            "numpy": "helab.convert.backends.numpy_backend"}
 
 
 def register_backend(backend: Backend) -> None:
