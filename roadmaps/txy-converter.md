@@ -138,7 +138,13 @@ add 0.1–0.7 % hits, on new plates almost none; the default is unchanged.
   checks pass; the cross-checker and the Reviewer have no open findings.
 
 **Stage 2, backends** (one floor per backend, each from stage 1's commit; the cross-checker
-connected to all).
+connected to all). **Done 2026-10-29** (landed `d522691` cython, `32158c2` mlx, `7031bea` rust,
+`aecbe68` numba, `ed35099` numpy with the shared fast I/O and the within-shot split; the final
+serial timings `3bd791c`, [results](../.ai/sessions/2026-10-29-claude-txy-bench/results.md)): all five byte-identical to
+the reference, also with everything built together. End to end per core: numpy 119, numba 171,
+cython 170, rust 178, mlx 72, reference 13 MB/s; numpy on 12 processes 1,049 MB/s. Both targets
+are met by numpy on one core; the next lever is the text I/O, not the backends. Recommendation
+(Q11.2, for Tony): numpy the default, rust (or cython) optional, drop numba and mlx (A9.1).
 - Candidates: NumPy vectorised (plus fast text reading and writing), Numba, Cython or C, Rust
   (PyO3, maturin), Apple GPU (MLX). CUDA (CuPy) is noted for the lab PCs, untested here. Not
   Julia, PyTorch or JAX (packaging).

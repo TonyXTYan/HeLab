@@ -111,6 +111,25 @@ From the `agent/txy-reference` handoffs ([builder](sessions/2026-10-29-claude-tx
   file, so "converted, empty" differs from "not converted yet"; `matlab-2019` writes none only for
   comparisons (A10.5).
 
+## Converter stage 2 (block 11)
+
+From the backend floors and the final timings (sessions/2026-10-29-claude-txy-bench/results.md), 2026-10-29.
+
+- **Q11.1 numba's compiled-code cache goes in HeLab's cache folder** (under `cache_dir()`, so it
+  moves with the cache). Frozen, numba ignores `NUMBA_CACHE_DIR` and writes under
+  `~/Library/Caches/numba/` (Windows `%LOCALAPPDATA%\numba\Cache`), outside HeLab's folders.
+  **Decided by Side overnight, for Tony to confirm**; moot if numba is dropped (Q11.2).
+- **Q11.2 Which converter backends ship once testing ends (A9.1)?** Every backend ships for now
+  (Q9.2). Measured: numpy 119 MB/s per core end to end (meets both targets on one core, ~31 kB),
+  rust 178 (0.47 MB abi3 wheel per OS), cython 170 (257 kB, one binary per Python version and
+  OS), numba 171 (+145 MB, ~0.2-0.6 s start per process), mlx 72 (+240 MB, Apple only).
+  Proposed: numpy the default plus **rust** as the one optional compiled backend; drop numba, mlx
+  and cython. Alternatives: cython instead of rust if stage 4's CI finds C extensions easier; or
+  numpy alone, since it meets both targets here (the compiled ones buy ~1.5x per core). The lab
+  PCs are untimed (M11.1).
+- **Q11.3 Keep `reference` in the build?** Proposed: yes, as the test oracle and the readable
+  specification, never the default; it is small, plain Python.
+
 ## From the audit (block 2)
 
 These come from the [audit](sessions/2026-10-28-claude-v0.0.6-checks/audit.md), whose finding
@@ -230,7 +249,9 @@ Finding numbers refer to the
   as HeLab starts (a roadmap item, not v0.0.7's first step).
 - **Q6.9 Store HeLab's TXY, or only cache it?** Tony: if conversion keeps up with raw files
   arriving at the network transfer limit, HeLab might never store TXY in the archives and keep
-  them only in its local cache. Waits for the Q6.5 benchmark. Tony, 2026-10-28: "real
+  them only in its local cache. Waits for the Q6.5 benchmark (**done 2026-10-29**: on this Mac every
+  backend but the reference converts faster than gigabit delivers raw files, numpy on one core
+  included; the lab PCs are untimed, M11.1). Tony, 2026-10-28: "real
   experiments have one d every ~30s"; the target is converting faster than raw files cross the
   network, so other HeLabs read the raw files and convert them as they read, with no TXY stored.
   On X, TXY is 27–41 % of the raw size (2022 and 2024 folders), so the TXY archive is ~22–29 % of
