@@ -41,7 +41,7 @@ a strict xfail that flips when it arrives (A~1).
 | `helab/views/live_launch.py` (new) | The launch list (`launch_folders`, `starts_at_launch`, `set_starts_at_launch`), `start(window)` and `LaunchFolder` (as `PresetFolder`: loads deliberately once data is known, Live once shown or no shots yet; a folder that can't be listed notifies once, no retry). Never under pytest unless `in_tests=True`; offline it starts nothing and says so. |
 | `helab/views/FolderExplorer.py` | The Live line is a row with the Auto-convert button (`auto_convert_button`, checkable, menu arrow; `_update_auto_convert_button`); Retry shows for a conversion error too. |
 | `helab/views/FolderDetailsPanel.py` | Row "Auto-convert" (same text, tooltip with the details). |
-| `helab/utils/folder_cache.py` | `auto_convert` (folders converting this session), `convert_lists` (last summary per folder, bounded), `convert_profile` (None: the default built-in; for the profile manager), `convert(owner, path)` (builds the payload: profile, temps, cache, output setting, beside flag, the lists), `_remember_convert` (from `convert_summary`). |
+| `helab/utils/folder_cache.py` | `auto_convert` (folders converting this session), `convert_lists` (last summary per folder, bounded), `convert(owner, path)` (builds the payload: profile, backend, temps, cache, `destination` from the output setting, beside flag, the lists), `_remember_convert` (from `convert_summary`), and the module function `convert_choice()` (the built-in `matlab-2019` and `pipeline.APP_BACKEND` until the UI floor's settings land). New methods only: the load path is untouched (the UI floor edits it). |
 | `helab/utils/settings_defaults.py` | Rows `live_launch_folders` (JSON list, "") and `convert_low_hits` (int, 100). |
 | `helab/views/HelabMainWindow.py` | Two lines (CoCo's approval): the import and `QTimer.singleShot(40, lambda: live_launch.start(self))`. |
 | `tests/test_live_convert.py` (new) | 15 tests, 2 of them strict xfails (below). `tests/test_settings_defaults.py`: the two rows listed as read outside a bare window. |
@@ -86,7 +86,7 @@ a strict xfail that flips when it arrives (A~1).
 
 - The convert payload is built in `FolderCache.convert` (output from the setting at each call,
   read with `read_convert_output(app_settings())`; `temps` = `constants.DIR_TEMPS`; the profile
-  `FolderCache.convert_profile` or `builtin_profile()`), so any later caller (the UI floor's
+  and backend from `convert_choice()`), so any later caller (the UI floor's
   manual conversion, say) gets the same lists loop.
 - The output setting goes as `destination` (above).
 - `LaunchFolder` is done before it starts Live: starting Live on a folder with no shots yet shows
@@ -174,9 +174,10 @@ Stage 4 / L4: Live's auto-convert toggle, start at launch and low-count alerts d
   is merged (it drives four ticks after a raw file arrives and expects shot 1 in the tab's data).
   Then a real-app run as below (start at launch, raw files copied in) should show the shots
   converting and joining the data.
-- **A~2** (UI floor or later): `FolderCache.convert_profile` is the profile Live converts with
-  (None: `matlab-2019`); the profile manager sets it. A profile change makes `done`/`kept` stale
-  for the next conversion (checked again; the provenance decides).
+- **A~2** (at integration with the UI floor): `folder_cache.convert_choice()` becomes one line
+  reading the UI floor's settings (`read_convert_profile(settings)`, `read_convert_backend(settings)`
+  in `constants.py`, CoCo's split). A profile change makes `done`/`kept` stale for the next
+  conversion (checked again; the provenance decides).
 - **A~3**: each conversion lists the folder and stats its raw files (a helper process every
   `live_interval` while auto-convert is on). Fine locally; on a share with thousands of raw files
   it may be worth pacing conversions to the Live check's own listing (only after a listing found

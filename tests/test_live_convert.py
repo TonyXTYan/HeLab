@@ -247,7 +247,7 @@ def test_auto_convert_is_remembered_for_the_session_and_shown_only_while_live(
     explorer.close_cleanup()
 
 
-def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService) -> None:
+def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService, monkeypatch: pytest.MonkeyPatch) -> None:
     cache = folder_cache.get_folder_cache(service)
     path = FolderCache.key("/data/run")
     cache._remember_convert(
@@ -258,15 +258,15 @@ def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService) -> N
     payload = next(r for r in service.pending if r.operation == "convert").payload
     assert payload["seen"] == [["d2.txt", 5, 2, "no_final_newline", "…"]] and payload["skip"] == [["d3.txt", 0, 3]]
     assert payload["done"] == [["d1.txt", 10, 1]] and payload["kept"] == [["d4.txt", 9, 4]]
+    assert payload["profile"] == MATLAB_2019.to_dict() and payload["backend"] == "numpy"
     cache.cancel("t")
     # Another profile: its current shots aren't this one's, so they are checked again.
-    cache.convert_profile = MATLAB_2023_LAB_EDIT.to_dict()
+    monkeypatch.setattr(folder_cache, "convert_choice", lambda: (MATLAB_2023_LAB_EDIT, "numpy"))
     assert cache.convert("t", path)
     payload = next(r for r in service.pending if r.operation == "convert").payload
     assert payload["profile"] == MATLAB_2023_LAB_EDIT.to_dict() and "done" not in payload and "kept" not in payload
     assert payload["seen"] and payload["skip"]
     cache.cancel("t")
-    cache.convert_profile = None
 
 
 def test_work_offline_refuses_a_conversion(qtbot: QtBot, service: IOService, tmp_path: Path) -> None:

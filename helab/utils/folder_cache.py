@@ -8,7 +8,7 @@ import logging
 import math
 import os
 import time
-from typing import Any, Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 from uuid import uuid4
 import weakref
 
@@ -29,6 +29,9 @@ from helab.utils.io_service import IORequest, IOService
 from helab.utils.load_clock import LoadClock
 from helab.utils.time_format import clock as clock_text
 from helab.utils.scan_history import ScanHistory, empty_history, parse_history, apply_outcome
+
+if TYPE_CHECKING:
+    from helab.convert.profile import DetectorProfile
 
 
 # Folder checks that list a folder: browse step 1 (names only), browse step 2
@@ -275,11 +278,9 @@ class FolderCache(QObject):
         # Live auto-convert (TXY converter stage 4): the folders whose Live converts new raw shots
         # this session (Q9.6: reset each session, except the folders set to start at launch), and
         # each folder's last conversion's lists (``convert_summary``), sent back with the next one
-        # (``convert``). The detector profile conversions use (``DetectorProfile.to_dict()``; None:
-        # the default built-in), for the profile manager to set.
+        # (``convert``).
         self.auto_convert: set[str] = set()
         self.convert_lists: OrderedDict[str, dict[str, Any]] = OrderedDict()
-        self.convert_profile: dict[str, Any] | None = None
         # Flag saves in flight: job owner → (path, the choice's set_at, who set it).
         self._pref_writes: dict[str, tuple[str, float, str]] = {}
         # Constants (F0b): the lab's (Settings → Lab parameters, set by the main window), and each
@@ -1033,12 +1034,12 @@ class FolderCache(QObject):
         is ``[]`` for its first this session, which only records), so done shots aren't checked
         again and a file is taken as finished only after two conversions saw it unchanged. One
         conversion per folder at a time (a second asker joins it). Whether it was accepted."""
-        from helab.convert.profile import builtin_profile
         from helab.utils import constants
         from helab.utils.settings_store import app_settings
         path = self.key(path)
-        profile = self.convert_profile if self.convert_profile is not None else builtin_profile().to_dict()
-        payload: dict[str, Any] = {"path": path, "profile": profile, "temps": constants.DIR_TEMPS,
+        chosen, backend = convert_choice()
+        profile = chosen.to_dict()
+        payload: dict[str, Any] = {"path": path, "profile": profile, "backend": backend, "temps": constants.DIR_TEMPS,
                                    "cache": store_options(),
                                    # (The setting, cache or temp: ``destination``, since every helper's
                                    # ``output`` is its private folder, set by IOService.)
@@ -3869,6 +3870,15 @@ def dataset_raw_times(base: Dataset | None, metadata: Mapping[str, Any], sent: M
     times.update(file_kinds.raw_times(metadata.get("raw_times")))
     times.update(sent)
     return [[shot, times[shot]] for shot in sorted(prints) if shot in times]
+
+
+def convert_choice() -> tuple[DetectorProfile, str]:
+    """The detector profile and backend HeLab converts with (``FolderCache.convert``): for now the
+    built-in default (``matlab-2019``) and ``pipeline.APP_BACKEND``; the settings the UI floor adds
+    (``read_convert_profile``, ``read_convert_backend``) take this function's place."""
+    from helab.convert.pipeline import APP_BACKEND
+    from helab.convert.profile import builtin_profile
+    return builtin_profile(), APP_BACKEND
 
 
 def get_folder_cache(service: IOService) -> FolderCache:
