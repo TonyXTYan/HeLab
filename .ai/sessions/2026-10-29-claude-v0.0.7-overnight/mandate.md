@@ -200,3 +200,7 @@ Each entry: time, question, decision, why, how to reverse.
   first (it carries the shared I/O), each later worker merging `dev/v0.0.7` first.
 - Note for the recommendation: NumPy alone already meets the ~100 MB/s bulk target on one core
   and needs no build; the compiled backends matter mainly for many processes or slow PCs.
+- 03:33, **Cython landed:** `agent/txy-cython` merged into `dev/v0.0.7` as `d522691` (floor kept).
+  Ground suite: 6089 passed, 153 skipped (the Cython tests skip on Ground: extension not built,
+  by design), no RERUN; types clean. Not pushed (end of stage 2). Next: MLX (cleared by Osprey),
+  then Numba, Rust and NumPy as their reviews clear.
