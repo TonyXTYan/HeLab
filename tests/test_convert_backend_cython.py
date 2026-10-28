@@ -35,7 +35,9 @@ VARIANTS = {"2019": "matlab-2019", "2023": "matlab-2023-lab-edit"}
 THREADS = (1, 2, 3, 8, 64)
 
 WHY_NOT = cython_backend.unavailable(None)
-needs_kernel = pytest.mark.skipif(WHY_NOT is not None, reason=f"cython backend unavailable: {WHY_NOT}")
+# Until stage 4's packaging floor builds the extension in CI (and makes these tests required there).
+needs_kernel = pytest.mark.skipif(WHY_NOT is not None,
+                                  reason=f"cython extension not built (stage 4 packaging): {WHY_NOT}")
 
 
 def case_names() -> list[str]:

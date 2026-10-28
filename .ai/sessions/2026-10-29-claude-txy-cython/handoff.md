@@ -93,6 +93,12 @@ Packages (floor venv only): `Cython==3.3.0`, build time only; `setuptools` was a
   universal2. Windows needs the MSVC Build Tools (VS 2022), never `/fp:fast` or `/fp:contract`;
   Linux needs GCC or clang with the Python headers and `-ffp-contract=off` (notes.md, "Building
   on other platforms").
+- **A~3** (stage 4, packaging floor; Side): build the cython extension in CI on all three OSes
+  and make its tests **required** there. Today every kernel test skips with the reason
+  "cython extension not built (stage 4 packaging): …" (148 of the converter tests when it's
+  missing). Once CI builds it, a missing or stale extension in CI must fail, not skip; for
+  example, CI sets a variable that `needs_kernel` turns from a skip into a failure, shared by
+  every compiled backend. Check the CI log shows them passed, not skipped.
 - **A~2** (stage 2, whichever floor owns fast I/O): reading (`parse_raw`, 71 MB/s) and writing
   (`format_txy`, 153 MB/s) now bound every compiled backend at about 46 MB/s per core, and they
   hold the GIL, so threads don't help. A GIL-free strict-format reader and `%.8g` writer would
