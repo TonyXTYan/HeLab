@@ -177,3 +177,21 @@ fixed). Suggest adding ts4, fuzzeol and fuzzlead to `tests/data/convert/textscan
 effect on TDC files (uniform CRLF, no leading blank lines; the fast path takes them).
 
 Open findings after round 2: **R2-1** only.
+
+## Round 3 (09a0711): no open findings
+
+R2-1 is fixed exactly as proposed (`raw.py:94–98`); `write_atomic` now creates the temporary
+with `os.open(…, O_WRONLY|O_CREAT|O_EXCL|O_BINARY, 0o666)`. Re-run on 09a0711: fuzz 10,000 raw
+files × 2 variants, port vs oracle, 0 differences; cases 78/78; all **1,367** MATLAB-judged
+reader probes (ts 24, ts2 17, ts3 8, ts4 18, fuzzts 400, fuzzeol 500, fuzzlead 400): 0
+mismatches; samples `matlab-2019` all 309 = 303 identical + 6 proved, 0 unexplained;
+`matlab-2023-lab-edit` 152/152 against my MATLAB run; TXY written `0o644`, LF only, `-0` kept,
+overwrite leaves no `.partial`, and 16 concurrent writers to one target leave one writer's whole
+file and nothing else; converter tests 1,597 passed, 2 skipped, no reruns; strict mypy and
+pyright clean on `helab/convert` and `tests/test_convert_*`.
+
+A wording nit, not a finding: `raw.py:11` still opens with "The first non-blank line's ending
+sets…" before the exact rule that follows; "The first line ending (after any `\n` at the very
+start) sets…" would match it.
+
+**Open findings: none.**
