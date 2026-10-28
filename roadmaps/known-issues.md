@@ -92,6 +92,8 @@ How to use it:
   its freshness is unknown. Passed on its retry and in 12 local runs (Cache Only handoff).
   Reran 3× on macOS CI on 2026-10-28 (run 40679555921, job 122786573479, `7b82c9d`; below), so
   it is not a one-off.
+  Again on macOS CI on 2026-10-29: run 40753079487 (`e4a63b5`) and run 40754538456
+  (`agent/txy-helab-core` `6cbe446`), once each, same assertion.
 - [ ] macOS CI on `dev/v0.0.7` (run 40679555921, job 122786573479, `7b82c9d`, 2026-10-28) was
   cancelled at ~20 min (earlier macOS jobs took 5–6 min):
   `test_correlations.py::test_fifty_shots_of_two_thousand_events_take_seconds` reran 5× then
