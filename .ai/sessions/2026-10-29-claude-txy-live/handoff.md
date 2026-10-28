@@ -237,4 +237,8 @@ tests failed only on helab-core's known set (`test_convert_helab.py`: the source
 `--once` tests; `test_typing.py`'s five checks on `convert.py:344–346`), fixed in `e064a53`; all
 15 of `test_live_convert.py` passed or xfailed as meant on Windows. Its one other RERUN:
 `test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such` (already in
-known-issues). The merged branch is pushed for a new run (result to CoCo).
+known-issues).
+
+**Branch CI** run 40759521398 (`6052733`, merged): **green on all three OSes, no RERUN**: macOS 8053
+passed, 669 skipped, 1 xfailed; Ubuntu 8051 passed, 671 skipped, 1 xfailed; Windows 8024 passed, 694
+skipped, 1 xfailed (17:23).
