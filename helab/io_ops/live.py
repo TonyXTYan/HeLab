@@ -125,7 +125,9 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                 # The folder's mtime as of this check's listing (or the last one's), unless racy.
                 "live_listed_mtime": None if racy else folder.st_mtime_ns,
                 "live_identity_root": current_root,
-                "live_helab": {"folders": helab_state, "profile_hash": wanted_hash, "key": helab_key}}
+                "live_helab": {"folders": helab_state, "profile_hash": wanted_hash, "key": helab_key,
+                               "key_asked": bool(txy.get("key_asked")) or (not txy.get("key")
+                                                                           and bool(txy.get("cache_directory")))}}
 
     if since is not None and since == folder.st_mtime_ns and helab_same:
         send({"kind": "live_unchanged", **state(False, 0, True), "total_files": len(held)})
@@ -375,17 +377,17 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     kept_origins = {shot: origin for shot, origin in held_origins.items() if shot not in replaced and shot not in gone}
     data_origins = {**kept_origins, **{shot: origins[shot] for shot, _, _ in fingerprint
                                        if shot in origins and (shot not in held or shot in replaced)}}
-    # The folder's status as a scan computes it: all of its settled MATLAB TXY, whichever TXY the data took
-    # (a MATLAB TXY of a shot held from HeLab's counts too), so the next scan agrees with it.
-    matlab_stats = {item[0]: item for item in fingerprint if item[0] in matlab and item[0] not in data_origins}
-    for shot in sorted(set(matlab) - set(matlab_stats)):
+    # The folder's MATLAB TXY as this data stands for them (``helab_txy.folder_print``): its own MATLAB
+    # shots, plus the settled MATLAB TXY of shots it holds from HeLab's, which a scan counts too.
+    shadowed: dict[int, tuple[int, int, int]] = {}
+    for shot in sorted(set(data_origins) & set(matlab)):
         try:
             info = _stat(matlab[shot], "live: MATLAB's TXY")
         except FileNotFoundError:
             continue
-        matlab_stats[shot] = (shot, info.st_size, info.st_mtime_ns)
-    matlab_print = _settled([matlab_stats[shot] for shot in sorted(matlab_stats)])
-    txy_bytes = sum(item[1] for item in matlab_stats.values())
+        shadowed[shot] = (shot, info.st_size, info.st_mtime_ns)
+    matlab_print = helab_txy.folder_print(fingerprint, data_origins, shadowed)
+    txy_bytes = sum(item[1] for item in matlab_print)
     summary = _summary(path, found, {file_kinds.TXY.name: txy_bytes}, has_dirs, False, matlab_print, listed_at)
     summary["unsettled"] = unsettled
     send({"kind": "scan_summary", "status": summary})
@@ -414,8 +416,8 @@ def _helab_key(path: str, txy: dict[str, Any]) -> str:
     as a load finds it (the store's folder: ``txy["cache_directory"]``), else "" (by path)."""
     key = str(txy.get("key") or "")
     directory = str(txy.get("cache_directory") or "")
-    if key or not directory:
-        return key
+    if key or not directory or txy.get("key_asked"):
+        return key  # (``key_asked``: an earlier check of this session asked the store and found none.)
     from helab.io_ops import stores
     try:
         with stores._cache_store(directory, local_lane=True) as store:

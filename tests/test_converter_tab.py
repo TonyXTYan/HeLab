@@ -305,3 +305,39 @@ def test_deleting_the_profile_in_use_falls_back_at_once(qtbot: QtBot, tmp_path: 
 def test_the_plate_note_says_uncalibrated(qtbot: QtBot) -> None:
     assert plate_note(view_dated("2025-07-01"), "matlab-2019") == (
         "plates-2025 (uncalibrated) suggested for this folder's date (2025-07-01)")
+
+
+def test_reload_of_a_released_plot_on_another_source(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    from types import SimpleNamespace
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_dispatch", lambda: None)
+    cache = FolderCache(service)
+    try:
+        helab = Dataset(RUN, "sig", {1: np.ones((1, 3)), 2: np.ones((1, 3))},
+                        {"fingerprint": [[1, 11, 101], [2, 12, 102]],
+                         "txy": {"source": "helab-only", "origins": {"1": "helab:h", "2": "helab:h"}}}, 0)
+        instance = AnalysisInstance(FallTime().get_metadata(), FallTime(), "Plot", build_view(helab), "1", None,
+                                    cache=cache)
+        ran: list[Any] = []
+        monkeypatch.setattr(instance, "_submit", lambda view, *args, **kwargs: ran.append(view))
+        states: list[str] = []
+        instance.released = SimpleNamespace(set_state=lambda text, busy=False: states.append(text))  # type: ignore[assignment]
+        instance.shown = SimpleNamespace(parameters={}, constant_layers={}, input=instance.view.key,  # type: ignore[assignment]
+                                         job_id="", coverage=SimpleNamespace(shots=(1, 2)))
+        # Shown again (not the user's Reload): its data isn't in RAM, and it doesn't read the folder.
+        instance.reload()
+        assert not [r for r in service.pending if r.operation == "load"]
+        assert "Reload loads it again from the folder" in states[-1]
+        # The user's Reload: its source is loaded, then it draws on exactly its shots.
+        instance._nowhere = False
+        instance.reload(deliberate=True)
+        [request] = [r for r in service.pending if r.operation == "load"]
+        assert request.payload["txy"]["source"] == "helab-only" and states[-1] == "loading its TXY source…"
+        instance._source_owner = ""
+        instance._source_loaded(helab)
+        assert ran[-1].identity.source == "helab-only" and sorted(ran[-1].shots) == [1, 2]
+        instance.released = None
+        instance.close()
+    finally:
+        service.shutdown()

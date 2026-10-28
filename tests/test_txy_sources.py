@@ -561,3 +561,70 @@ def test_a_cache_save_marks_only_the_default_sources_dataset(monkeypatch: pytest
         assert tab.metadata.get("disk_cached") is True and "disk_cached" not in plot.metadata
     finally:
         service.shutdown()
+
+
+# Review round 2 (Egret): Live's and its saves' signature is the data's; the store asked once.
+
+
+def test_a_matlab_only_live_revision_keeps_the_signature_it_had(tmp_path: Path, private_store: str) -> None:
+    import hashlib
+    import json
+    source = tmp_path / "plain"
+    source.mkdir()
+    old = time.time() - 600
+    for shot in (1, 2):
+        os.utime(matlab_txy(source, shot), (old, old))
+    first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store)))
+    os.utime(matlab_txy(source, 3), (old, old))
+    seen = last(live(source, tmp_path, private_store, first["fingerprint"]), "live_unchanged")["live_seen"]
+    os.utime(matlab_txy(source, 4), (old, old))  # First seen at the next check: waiting, not in the data.
+    events = live(source, tmp_path, private_store, first["fingerprint"], seen=seen)
+    result = loaded(events)
+    assert [entry[0] for entry in result["fingerprint"]] == [1, 2, 3]
+    assert [entry[0] for entry in result["live_seen"]] == [4]
+    # As before this floor: the hash of the data's fingerprint (a waiting file isn't claimed).
+    assert result["signature"] == hashlib.sha256(json.dumps(result["fingerprint"]).encode()).hexdigest()
+    assert result["signature"] == summary_signature(events)
+
+
+def test_a_live_save_has_the_folders_signature(tmp_path: Path, private_store: str) -> None:
+    source = make_run(tmp_path, private_store)
+    events = run_load(source, tmp_path, None, options(tmp_path, private_store))
+    first = loaded(events)
+    held_dir = tmp_path / "held"
+    held_dir.mkdir()
+    for shot, array in shots_read(events).items():
+        np.save(held_dir / f"{shot}.npy", array)
+    matlab_txy(source, 3)  # MATLAB's TXY of held HeLab shot 3 arrives.
+    saved: list[dict[str, Any]] = []
+    save_held(str(source), saved.append, {"directory": store_root(private_store)},  # type: ignore[arg-type]
+              first["fingerprint"], [], str(held_dir), txy=options(tmp_path, private_store), held_txy=first["txy"])
+    scan = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.MATLAB_ONLY)))
+    assert loaded(saved)["signature"] == scan["signature"]
+
+
+def test_live_asks_the_store_for_a_key_once_a_session(tmp_path: Path, private_store: str,
+                                                      monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.io_ops import live as live_module
+    source = tmp_path / "unrooted"
+    source.mkdir()
+    matlab_txy(source, 1)
+    first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store)))
+    txy = {**options(tmp_path, private_store), "key": "", "cache_directory": str(tmp_path / "no-store")}
+    events: list[dict[str, Any]] = []
+    output = tmp_path / "out"
+    output.mkdir()
+    live_check(str(source), str(output), events.append, first["fingerprint"], txy=txy)  # type: ignore[arg-type]
+    state = last(events, "live_unchanged")["live_helab"]
+    assert state["key"] == "" and state["key_asked"] is True
+    # Told the store was asked (FolderCache sends ``key_asked``): not opened again.
+    monkeypatch.setattr(stores, "_cache_store", lambda *args, **kwargs: pytest.fail("store opened again"))
+    assert live_module._helab_key(str(source), {**txy, "key_asked": True}) == ""
+    # FolderCache remembers it for the folder.
+    service = service_for_test(monkeypatch)
+    cache = FolderCache(service)
+    try:
+        cache._live_helab[cache.key(str(source))] = state
+        assert cache.with_txy(str(source), {})["txy"]["key_asked"] is True
+    finally:
+        service.shutdown()

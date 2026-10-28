@@ -7,7 +7,7 @@ from typing import Any, TYPE_CHECKING
 
 from helab.io_ops import fingerprints, helab_txy, infra
 from helab.io_ops.events import RawMtimeField
-from helab.io_ops.fingerprints import _clock_ahead, _raw_list, _settled
+from helab.io_ops.fingerprints import _clock_ahead, _fingerprint_signature, _raw_list, _settled
 from helab.io_ops.identity import _folder_identity, _location_identity
 from helab.io_ops.infra import Emit, Heartbeat, Pause, _entry_stat, _is_dir, _read_gate, _scandir, _stat
 from helab.io_ops.loading import _save_failed, _write_dataset
@@ -208,12 +208,14 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
                         **{shot: origins[shot] for shot in replaced if shot in origins}}
         record = helab_txy.record(txy_source, data_origins, helab_found, held_record.get("profiles"), txy,
                                   helab_state)
-        signature = helab_txy.matlab_signature(fingerprint, data_origins)
+        # The folder's MATLAB TXY as this data stands for them (``helab_txy.folder_print``, as Live's): its
+        # summary's and its signature, so the tab finds it matches the folder.
+        matlab_print = helab_txy.folder_print(fingerprint, data_origins,
+                                              {shot: (shot, *matlab_stats[shot]) for shot in matlab_stats})
+        signature = _fingerprint_signature([list(entry) for entry in matlab_print])
         if replaced:
             # A new fingerprint: the folder's summary as of this listing, before ``loaded``, as a Live
             # check sends it (the app adopts it as Live's, so the folder's status matches the data).
-            # The folder's status as a scan computes it: all of its settled MATLAB TXY.
-            matlab_print = _settled([(shot, *matlab_stats[shot]) for shot in sorted(matlab_stats)])
             summary = _summary(path, found, {file_kinds.TXY.name: sum(entry[1] for entry in matlab_print)}, has_dirs,
                                False, matlab_print, listed_at)
             summary["unsettled"] = unsettled

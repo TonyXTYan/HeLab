@@ -322,3 +322,16 @@ def clear_converted(root: str) -> dict[str, int]:
         except OSError:
             pass
     return removed
+
+
+def folder_print(fingerprint: Any, origins: Mapping[int, str],
+                 matlab_stats: Mapping[int, tuple[int, int, int]]) -> list[tuple[int, int, int]]:
+    """The folder's MATLAB TXY as a dataset of it stands for them, for its summary and signature (Live,
+    Live's saves): the data's own MATLAB shots as held or read, plus the settled MATLAB TXY of shots it
+    holds from HeLab's (a scan counts those). MATLAB TXY of shots not in the data (waiting, young) are
+    left out, as a load leaves out young files; a dataset of MATLAB's TXY alone keeps the signature of
+    its fingerprint, as before HeLab's TXY were read."""
+    from helab.io_ops.fingerprints import _settled
+    own = [(int(entry[0]), int(entry[1]), int(entry[2])) for entry in fingerprint if int(entry[0]) not in origins]
+    shadowed = _settled([matlab_stats[shot] for shot in sorted(origins) if shot in matlab_stats])
+    return sorted(own + shadowed)

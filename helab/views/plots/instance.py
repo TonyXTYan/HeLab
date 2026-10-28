@@ -210,6 +210,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.txy_row: Optional[TxySourceRow] = None
         self._source_owner = ""
         self._source_again = False  # Live found new shots while it loaded: load once more after.
+        self._reload_from_source = False  # A deliberate Reload of a released plot waits for that load.
 
     @property
     def view(self) -> DatasetView:
@@ -321,7 +322,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if self._reload_owner:
                 self._reload_values = self.values()
             else:
-                self.reload(self.values())
+                self.reload(self.values(), deliberate=True)
             return
         if self.job_id:
             self._cancel_run()
@@ -894,6 +895,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
             why = str(event.get("message") or "") if kind == "error" else (
                 "too large" if kind == "too_large" else "cancelled")
             self.status_label.setText(f"{txy_sources.LABELS[self.txy_source]}: couldn't load ({why})")
+            if self._reload_from_source:
+                self._reload_from_source = False
+                self._reload_failed(f"its TXY source couldn't be loaded ({why})")
         if self._source_again:
             self._source_again = False
             self._load_source()
@@ -903,6 +907,13 @@ class AnalysisInstance(LinkedAnalysisInstance):
         """The plot's source's dataset: its first (a new input), or a newer one Live asked for (a revision)."""
         if FolderCache.dataset_source(dataset) != self.txy_source:
             return  # Asked for before the source was changed again.
+        if self._reload_from_source:
+            self._reload_from_source = False
+            if self.released is not None and self.shown is not None and not self.job_id:
+                # The user's Reload of a released plot: drawn again on exactly its shots, as from RAM.
+                view = self._shown_view or self.follow.ran
+                self._reload_from(restore(view, dataset, self._reload_shots), "its TXY source")
+                return
         root = self._cache().root_of(dataset.path)
         latest = self.follow.latest
         if latest.identity.source == txy_sources.identity_source(self.txy_source):
@@ -1163,7 +1174,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         view = hollow(drawn)
         self.follow.ran = view if self.follow.ran is drawn else hollow(self.follow.ran)
         self._shown_view = view
-        self.released = ReleasedPlot(picture, self.reload)
+        self.released = ReleasedPlot(picture, lambda: self.reload(deliberate=True))
         self._content = self.released
         self._swap_content(self.released)
         self.status_label.setText("Released to free RAM: Reload or Rerun draws it again")
@@ -1208,12 +1219,14 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return self._given_cache
         return self.budget.cache if self.budget is not None else get_folder_cache(get_io_service())
 
-    def reload(self, values: Optional[Dict[str, Any]] = None) -> None:
+    def reload(self, values: Optional[Dict[str, Any]] = None, *, deliberate: bool = False) -> None:
         """Draw a released plot again: by default with the settings it was drawn with, on exactly
         the shots it drew (``coverage``), by their fingerprints, never a shot it didn't draw; with
         ``values`` (Rerun's new settings), on its view's shots. From the folder's dataset in RAM,
         else from the local disk cache, never from the folder. If neither has them, it says so
-        and keeps its picture; shots changed or missing are left out and named."""
+        and keeps its picture; shots changed or missing are left out and named. A plot on another TXY
+        source than the default (Q6.6: RAM only, not disk cached) is loaded again from its folder, as
+        choosing that source does, but only on the user's Reload or Rerun (``deliberate``)."""
         if self.is_closed or self.released is None or self.shown is None or self.job_id:
             return
         self._reload_values = dict(self.shown.parameters) if values is None else values
@@ -1235,10 +1248,15 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._reload_found = None
         if found is not None:
             self._reload_from(found, "RAM")
+        elif self.txy_source != txy_sources.DEFAULT_SOURCE and deliberate:
+            # Another TXY source's data is RAM only (not disk cached): the user's Reload (or Rerun) loads it
+            # again, from the folder, as choosing the source did; a reload on showing the plot never does.
+            self._reload_from_source = True
+            self.released.set_state("loading its TXY source…", busy=True)
+            self._load_source()
         elif self.txy_source != txy_sources.DEFAULT_SOURCE:
-            # Another TXY source's data is RAM only (not disk cached), and a reload never reads the folder.
             self._reload_failed(f"its TXY source's data ({txy_sources.SHORT[self.txy_source]}) isn't in RAM, and "
-                                "only the default source's is disk cached; choose its TXY source again to load it")
+                                "only the default source's is disk cached; Reload loads it again from the folder")
         else:
             self._reload_failed("its data isn't in RAM or in the disk cache")
 

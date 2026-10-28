@@ -860,6 +860,8 @@ class FolderCache(QObject):
                     "cache_base": os.path.dirname(os.path.abspath(options["directory"])) if options else "",
                     "cache_directory": str(options.get("directory") or ""),
                     "temps": DIR_TEMPS, "key": root_key(root[0], root[1], path) if root else self._helab_key(path)})
+        if not txy["key"] and (self._live_helab.get(self.key(path)) or {}).get("key_asked"):
+            txy["key_asked"] = True  # A Live check asked the store this session and found no root: not again.
         return {**payload, txy_sources.TXY_FIELD: txy}
 
     def _helab_key(self, path: str) -> str:

@@ -120,7 +120,8 @@ class ReleasedPlot(QWidget):
         self.state.setText(line)
         self.state.setToolTip(
             f"{line}\nHeLab released this plot when RAM in use passed 80 % of the RAM budget "
-            "(Settings → Cache). Reload draws it again from RAM or the disk cache, never from its folder.")
+            "(Settings → Cache). Reload draws it again from RAM or the disk cache, never from its folder "
+            "(a plot on another TXY source than the default, whose data isn't disk cached, loads it again).")
         self.reload_button.setEnabled(not busy)
 
     def ram_buffers(self) -> Buffers:
