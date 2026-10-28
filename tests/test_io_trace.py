@@ -108,7 +108,7 @@ def test_off_unless_the_test_seam_names_a_folder(tmp_path: Path) -> None:
         run_environment = dict(environment, **({name: value} if name and value is not None else {}))
         result = subprocess.run([sys.executable, "-c", script], env=run_environment, capture_output=True,
                                 text=True, timeout=60, check=True)
-        file, pid = result.stdout.split()
+        file, pid = result.stdout.rsplit(maxsplit=1)  # (The folder's path may hold spaces.)
         assert file == (os.path.join(str(tmp_path), f"{pid}.jsonl") if traced else "None")
 
 
