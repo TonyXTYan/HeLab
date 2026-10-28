@@ -156,3 +156,38 @@ the pattern."
 Q~1 (for Tony, via CoCo): should HeLab's leftover cleanup in its own `converted-txy/` folder also
 remove record temporaries (`.d_txy_helab_<N>….partial` of the provenance/`folder.json` writes), or
 should only the test widen what it accepts?
+
+## Job 4 (A12.4): JSON leftovers in HeLab's own `converted-txy/` folder
+
+**Cause.** `txy.write_atomic` writes each shot's provenance record (`io_ops/convert.py`, before the TXY)
+and `folder.json` under the same temporary names as a TXY (`.<name>.<16 hex>.partial`). The own-folder
+cleanup (`_remove_own_partials`) matched only TXY temporaries (`partial()`), so a helper killed in a
+record write left `.d_txy_helab_<N>.json.<hex>.partial` / `.folder.json.<hex>.partial` there for good.
+That is also the Ubuntu rerun of `test_a_killed_helpers_workers_exit` (run 40786300323), whose last
+assertion required every leftover `.partial` to match `partial()`. (This answers Q~1 above: CoCo chose
+to widen the cleanup.)
+
+**Fix (2b9435a).** `own_partial()` = `partial_pattern(TXY name | the shot's record name | folder.json)`,
+built from `TXY_PATTERN` (`\.txy` → `\.json`) and `re.escape(FOLDER_RECORD)`:
+`^\.(?:d_txy_helab_(0|[1-9][0-9]*)\.txy|d_txy_helab_(0|[1-9][0-9]*)\.json|folder\.json)\.[0-9a-f]{16}\.partial$`.
+`_remove_own_partials` uses it, rules unchanged: only `folder_for()`'s folder (`places["folder"]`),
+regular files by `stat(follow_symlinks=False)`, unmodified for `PARTIAL_MAX_AGE`, links left alone,
+each sent as `partial_removed`. Source folders keep `partial()` (no JSON is ever written there). The
+killed-helper test accepts exactly `own_partial()`.
+
+**Tests.** A pattern test from `write_atomic`'s real names (TXY, record, folder.json) with look-alikes
+(bad or short hex, upper case, leading zero, Arabic digit, `.bak`, no dot, prefix, `d_txy_forc`, `d1`,
+`.xfolder.json`, `.Folder.json`, `.folder.jsonl`, `.folderxjson`, `.notes.json`), and `partial()` still
+refusing the JSON names. The own-folder test now removes old TXY, record and folder.json leftovers;
+keeps young ones, look-alikes and a link to a file outside; and fails with the old pattern (mutation
+check).
+
+**Proposed doc changes (Coordinator).** AGENTS.md housekeeping bullet: "…and the same leftovers in
+HeLab's own `converted-txy/` folder, its records' (`.d_txy_helab_<N>.json.<16 hex>.partial`,
+`.folder.json.<16 hex>.partial`) too". Close A12.4 and the `test_a_killed_helpers_workers_exit`
+rerun (if listed). The converter architecture file's leftover paragraph should name `own_partial()`.
+
+**Checks (tree at 2b9435a).** `tests/test_convert_helab.py -n 4 --reruns 5` 20×: 20 × 49 passed, no
+reruns. Full suite `-n 4 --reruns 5 --reruns-delay 1`, inside (`.ai/temp/pytest`) and outside the
+checkout: 8040 passed and 669 skipped each, no reruns. mypy --strict helab/ and tests, pyright helab tests,
+mypy --platform win32 --strict (both), pyright --pythonplatform Windows: clean.
