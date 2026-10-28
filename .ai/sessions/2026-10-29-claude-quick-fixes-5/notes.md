@@ -134,3 +134,25 @@ now move convert's clock themselves and wait for the beats."
   as a background job (`bash -c 'pytest … & wait'`, SIGINT ignored: job 2's failing mode).
 - mypy --strict helab/ and tests, pyright helab tests, mypy --platform win32 --strict (both),
   pyright --pythonplatform Windows: clean.
+
+## CI for jobs 2 and 3: run 40786300323 (8b96fe4)
+
+All jobs succeeded. Tests macOS 8039 passed, no reruns; Windows 8010 passed, no reruns; Ubuntu 8037
+passed with **1 rerun**: `tests/test_convert_helab.py::test_a_killed_helpers_workers_exit`,
+`assert False` from `all(...)` at :551 (`assert all(convert.partial().match(name) for name in names
+if name.endswith(".partial"))`). Not one of my tests. Likely cause, from the code and not reproduced:
+`txy.write_atomic` also writes the provenance record (`io_ops/convert.py:550`, before the TXY) and the
+folder record (`:272`) under `.partial` temporary names, but `convert.partial()` matches only TXY
+temporary names. A kill landing in a record write leaves a `.partial` the test doesn't expect. Neither
+the startup sweep nor a later pass then removes it from HeLab's own converted-txy folder (it only
+matches the TXY pattern).
+
+Proposed known-issues line: "`test_a_killed_helpers_workers_exit` reran on Ubuntu CI (run
+40786300323): a kill during a provenance/folder record write leaves a `.partial` that
+`convert.partial()` (TXY names only) doesn't match; such leftovers in HeLab's own folder are never
+removed either. Decide whether leftover cleanup covers record temporaries (Q~1), then fix the test or
+the pattern."
+
+Q~1 (for Tony, via CoCo): should HeLab's leftover cleanup in its own `converted-txy/` folder also
+remove record temporaries (`.d_txy_helab_<N>….partial` of the provenance/`folder.json` writes), or
+should only the test widen what it accepts?
