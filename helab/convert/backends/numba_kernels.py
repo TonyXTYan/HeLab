@@ -131,7 +131,7 @@ def match(channels: Floats, times: Floats, lo: int, hi: int, first: int, offsets
         x1_val = times[i]                                                # L451
         how_many_x = 0
         for dummy in offsets:                                            # L456–457
-            j = i + dummy
+            j: int = i + dummy
             if j < lo or j >= hi:                                        # L459–464
                 continue
             if abs(times[j] - x1_val) > window:                          # L465
@@ -152,7 +152,7 @@ def match(channels: Floats, times: Floats, lo: int, hi: int, first: int, offsets
             continue
         how_many_y = 0
         for dummy2 in offsets:                                           # L505–506
-            j2 = i + dummy2
+            j2: int = i + dummy2
             if j2 < lo or j2 >= hi:                                      # L509–514
                 continue
             if abs(times[j2] - x1_val) > window:                         # L515
@@ -161,7 +161,7 @@ def match(channels: Floats, times: Floats, lo: int, hi: int, first: int, offsets
                 continue
             y1_val = times[j2]
             for dummy3 in offsets:                                       # L529–530
-                j3 = i + dummy3
+                j3: int = i + dummy3
                 if j3 < lo or j3 >= hi:                                  # L532–537
                     continue
                 if abs(times[j3] - x1_val) > window:                     # L538
@@ -264,8 +264,10 @@ def match_parallel(channels: Floats, times: Floats, bounds: Ints, first: int, of
                    counts: Ints, failed: npt.NDArray[np.bool_], fail_x1: Floats, fail_x2: Floats) -> None:
     """``match`` on every piece at once (numba's threads); each piece writes only its own rows."""
     for piece in prange(bounds.shape[0] - 1):
+        lo = int(bounds[piece])
+        hi = int(bounds[piece + 1])
         count, fail, x1_column, x2_column = match(
-            channels, times, bounds[piece], bounds[piece + 1], first, offsets, window, x_limit, y_limit, xy_limit,
+            channels, times, lo, hi, first, offsets, window, x_limit, y_limit, xy_limit,
             time_sum_t_x, time_sum_t_y, centred, corners, bin_time, v_perp_x, v_perp_y, out)
         counts[piece] = count
         failed[piece] = fail
