@@ -21,6 +21,16 @@ so the shot is read as soon as those checks can see it. The seam is a strict xfa
 `tests/test_live_convert.py::test_a_converted_shot_reaches_the_live_data`: it fails (XPASS) once
 both floors are in, and then its mark goes.
 
+**Found by a real-app run (helab-core's, fixed by Keel):** IOService gives every helper its private
+folder as `payload["output"]`, which overwrote `ConvertRequest.output` (cache/temp), so every
+conversion the app asked for failed ("Unknown converter output '/var/folders/…/helab_io_…'").
+helab-core's tests call the helper directly, not through IOService. CoCo's call: Keel renames the
+request field to `destination` (ConvertRequest, `convert_folder`, CLI, tests) with an end-to-end
+test; `FolderCache.convert` already sends `destination`. Until that is merged, Live's conversions
+in the app still fail (auto-convert stops with that message), and
+`test_a_conversion_the_app_asks_for_runs_in_a_helper_process` (a real IOService helper process) is
+a strict xfail that flips when it arrives (A~1).
+
 **Checks:** see "Checks" at the end.
 
 ## What was built
@@ -34,7 +44,7 @@ both floors are in, and then its mark goes.
 | `helab/utils/folder_cache.py` | `auto_convert` (folders converting this session), `convert_lists` (last summary per folder, bounded), `convert_profile` (None: the default built-in; for the profile manager), `convert(owner, path)` (builds the payload: profile, temps, cache, output setting, beside flag, the lists), `_remember_convert` (from `convert_summary`). |
 | `helab/utils/settings_defaults.py` | Rows `live_launch_folders` (JSON list, "") and `convert_low_hits` (int, 100). |
 | `helab/views/HelabMainWindow.py` | Two lines (CoCo's approval): the import and `QTimer.singleShot(40, lambda: live_launch.start(self))`. |
-| `tests/test_live_convert.py` (new) | 15 tests (below). `tests/test_settings_defaults.py`: the two rows listed as read outside a bare window. |
+| `tests/test_live_convert.py` (new) | 15 tests, 2 of them strict xfails (below). `tests/test_settings_defaults.py`: the two rows listed as read outside a bare window. |
 
 ## How it behaves
 
@@ -78,6 +88,13 @@ both floors are in, and then its mark goes.
   read with `read_convert_output(app_settings())`; `temps` = `constants.DIR_TEMPS`; the profile
   `FolderCache.convert_profile` or `builtin_profile()`), so any later caller (the UI floor's
   manual conversion, say) gets the same lists loop.
+- The output setting goes as `destination` (above).
+- `LaunchFolder` is done before it starts Live: starting Live on a folder with no shots yet shows
+  its empty data before the session exists, and that signal re-entered the watcher, which started
+  Live twice (seen in the real-app log). `PresetFolder` (`helab/views/plots/presets.py`) has the
+  same shape; not checked or changed here (A~4).
+- The folder's `write_beside` flag is asked for once a conversion's plan names a data root (asking
+  when auto-convert turned on warned "no data root" for folders without one).
 - `done`/`kept` are sent back only for the same profile dict; `seen`/`skip` always (they are about
   the raw files).
 - The Live check's owner (`<tab>:live`) also owns its conversions (`operation == "convert"`
@@ -151,9 +168,12 @@ Stage 4 / L4: Live's auto-convert toggle, start at launch and low-count alerts d
 - **Q~4** (Tony): the Live line says "waiting for the first shot" next to "auto-convert 3
   converted" until Live's checks read HeLab's TXY (the UI floor). Nothing to do if Q6.6 lands
   with this; otherwise the line could count converted shots as the folder's.
-- **A~1** (Coordinator, after both land): remove the xfail mark from
-  `test_a_converted_shot_reaches_the_live_data` (it XPASSes, failing strict) and run it; it
-  drives four ticks after a raw file arrives and expects shot 1 in the tab's data.
+- **A~1** (Coordinator, after merging): two strict xfails flip (XPASS fails strict) and their marks
+  go: `test_a_conversion_the_app_asks_for_runs_in_a_helper_process` once Keel's `destination`
+  rename is merged; `test_a_converted_shot_reaches_the_live_data` once the UI floor's Q6.6 loading
+  is merged (it drives four ticks after a raw file arrives and expects shot 1 in the tab's data).
+  Then a real-app run as below (start at launch, raw files copied in) should show the shots
+  converting and joining the data.
 - **A~2** (UI floor or later): `FolderCache.convert_profile` is the profile Live converts with
   (None: `matlab-2019`); the profile manager sets it. A profile change makes `done`/`kept` stale
   for the next conversion (checked again; the provenance decides).
@@ -161,6 +181,9 @@ Stage 4 / L4: Live's auto-convert toggle, start at launch and low-count alerts d
   `live_interval` while auto-convert is on). Fine locally; on a share with thousands of raw files
   it may be worth pacing conversions to the Live check's own listing (only after a listing found
   new names), if M~1 shows it costs.
+- **A~4**: check whether `PresetFolder.check` (arrangement presets with Live) starts Live twice on
+  a folder with no shots yet, as `LaunchFolder` did (its `start_live` shows the empty data, which
+  signals the watcher before Live is on); same fix if so.
 - **M~1** (Tony, lab): on the acquisition PC, Live + Auto-convert on a copy of a run folder while
   raw files arrive (or are copied in one by one): each shot converts once written, the Live line
   counts them, a deliberately truncated file waits with its reason, and a near-empty shot notifies
@@ -181,8 +204,27 @@ inside Live: amber line, Retry converts again; an error stops auto-convert, not 
 a low-count shot notifies once, not again for the same shot, never at 0; the launch list setting
 (order, duplicates, unreadable); launch folders open and the first starts Live with auto-convert
 (a real window, `in_tests=True`; plain `start` does nothing under pytest); a missing launch folder
-notifies once and isn't retried; offline nothing starts and it says so; the strict-xfail seam.
+notifies once and isn't retried; offline nothing starts and it says so; Live starts once at launch
+(the log); the two strict-xfail seams (a conversion through a real IOService helper; a converted
+shot reaching the Live data).
+
+## Real-app check (floor settings, synthetic folder under `.ai/temp/live-gui`)
+
+`live_launch_folders` set to an empty folder, HeLab launched with `floor-env.sh`: the folder opened
+in a tab and Live started with auto-convert ("Live at launch", "Live on" in the log; twice before
+the re-entrancy fix). Raw files copied in (500 hits, 30 hits, one without its final newline); the
+first conversion failed on the `output` collision above, and auto-convert stopped with the message
+on the Live line, as designed. The Live line and the Auto-convert button were also checked on a
+grab of the summary (`.ai/temp/visual/`): its label, checked look and menu arrow.
 
 ## Checks
 
-(filled in below)
+At `937c2bd` (base `01776d6`, dev/v0.0.7 not merged yet): `pytest -n 4 --reruns 5 --reruns-delay 1
+--basetemp=.ai/temp/pytest`: 8049 passed, 669 skipped (unbuilt backends, by design), 2 xfailed (the
+two strict seams), **no RERUN**. An earlier run (at `ae44c57`) had 1 failure, my arrival test, in all
+5 reruns: its tick helper waited for a conversion while a check that a converted shot had asked for
+was unanswered (a race in the test, fixed in `46ff46e`; not an app bug). Types: `mypy helab/
+--strict`, `mypy tests --strict`, `pyright helab tests` clean on macOS and with `--platform linux` /
+`--pythonplatform Linux`; with `--platform win32` / `--pythonplatform Windows` only helab-core's
+known errors (`helab/io_ops/convert.py:344–346`, Keel's fix). Branch CI: pushed for a run on all
+three OSes (result to CoCo).
