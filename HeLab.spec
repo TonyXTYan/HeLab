@@ -7,7 +7,6 @@ import importlib.util
 
 from packaging.version import Version
 from PyInstaller.config import CONF
-from PyInstaller.utils.hooks import collect_data_files, collect_dynamic_libs, collect_submodules
 
 ROOT = Path(SPECPATH).resolve()
 sys.path.insert(0, str(ROOT))
@@ -22,9 +21,8 @@ def converter_backends():
     so the analysis sees none of them. A compiled extension or package missing from this Python
     leaves that backend out of the app, unavailable there with the reason (``python
     native/build.py`` builds cython's and rust's; ``native/check_build.py --frozen`` checks the
-    app). Returns (hiddenimports, binaries, datas)."""
+    app). Returns the hiddenimports."""
     hidden = list(_MODULES.values())  # the reference too: nothing else names helab.convert.backends
-    binaries, datas = [], []
     optional = {
         "cython": ["helab.convert.backends.cython._kernel"],
         "rust": ["helab_convert_rs", "helab_convert_rs.helab_convert_rs"],
@@ -41,14 +39,10 @@ def converter_backends():
             print(f"HeLab.spec: the {backend} backend ships without {modules[0]} (not in this Python)")
             continue
         hidden += modules
-    if "mlx" in hidden:
-        hidden += collect_submodules("mlx")
-        binaries += collect_dynamic_libs("mlx")  # libmlx, beside its Metal library (mlx/lib)
-        datas += collect_data_files("mlx", excludes=["include", "share", "lib/cmake"])  # not the C++ headers
-    return hidden, binaries, datas
+    return hidden  # mlx's libraries and Metal kernels: native/pyinstaller-hooks/hook-mlx.py
 
 
-backend_imports, backend_binaries, backend_datas = converter_backends()
+backend_imports = converter_backends()
 
 metadata_path = Path(CONF['workpath']) / BUILD_INFO_FILENAME
 build_info = write_build_info(ROOT, metadata_path)
@@ -62,16 +56,18 @@ BUNDLE_VERSION = '.'.join(str(value) for value in (release + (0, 0))[:3])
 a = Analysis(
     [str(ROOT / 'helab/main.py')],
     pathex=[str(ROOT)],
-    binaries=backend_binaries,
+    binaries=[],
     datas=[(str(ROOT / 'helab/resources/menu-right.svg'), 'helab/resources'),
            # The window's icon, which HelabMainWindow looks for beside the package (R-12).
            (str(ROOT / 'helab/resources/ai-icon.icns'), 'helab/resources'),
-           (str(metadata_path), 'helab')] + backend_datas,
+           (str(metadata_path), 'helab')],
     hiddenimports=["helab.io_helper"] + backend_imports,
-    hookspath=[],
+    hookspath=[str(ROOT / 'native/pyinstaller-hooks')],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    # Cython builds the cython backend's kernel (native/build.py); only optional imports in
+    # pyarrow's conftest, scipy's test utilities and pydantic.v1 would collect it (5.6 MB).
+    excludes=["Cython", "cython", "pyximport"],
     noarchive=False,
     optimize=0,
 )

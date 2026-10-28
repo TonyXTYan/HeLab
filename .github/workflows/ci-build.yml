@@ -40,7 +40,8 @@ jobs:
     name: Build
     if: inputs.enabled
     runs-on: ${{ inputs.os }}-latest
-    timeout-minutes: 15
+    # About 5-10 min with the converter backends' builds and the packaged app's check.
+    timeout-minutes: 25
     continue-on-error: ${{ inputs.experimental }}
     env:
       HELAB_BUILD_REF: ${{ inputs.build-ref }}
@@ -106,6 +107,25 @@ jobs:
           fi
           pip install -e .
 
+      # The converter's compiled backends, built for this Python so PyInstaller collects them
+      # (HeLab.spec), and checked against the reference. A recovery build of a tag from before
+      # native/build.py builds without them, as that tag did.
+      - name: Build and check the converter backends
+        id: backends
+        shell: bash
+        run: |
+          if [ ! -f native/build.py ]; then
+            echo "No native/build.py at this commit: building without the compiled backends."
+            exit 0
+          fi
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
+          else
+            source venv/bin/activate
+          fi
+          python native/build.py --ci
+          echo "built=true" >> "$GITHUB_OUTPUT"
+
       - name: Test the older tagged commit before rebuilding recovery assets
         if: inputs.python-minor == '13' && inputs.build-sha != github.sha
         shell: bash
@@ -128,6 +148,25 @@ jobs:
             source venv/bin/activate
           fi
           pyinstaller HeLab.spec --clean -y
+
+      # What PyInstaller collected: each backend in the packaged app (`HeLab convert --once`)
+      # against this Python's reference, the required ones (as the tests) available.
+      - name: Check every converter backend in the packaged app
+        if: steps.backends.outputs.built == 'true'
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
+          else
+            source venv/bin/activate
+          fi
+          case "$RUNNER_OS" in
+            macOS) app=dist/HeLab.app/Contents/MacOS/HeLab ;;
+            Windows) app=dist/HeLab/HeLab.exe ;;
+            *) app=dist/HeLab/HeLab ;;
+          esac
+          python native/check_build.py --frozen "$app" --require "$HELAB_REQUIRE_BACKENDS"
+          du -sh dist/HeLab
 
       # Ship only HeLab.app on macOS (dist/HeLab is the same app again), zipped here
       # so the Qt framework symlinks survive: upload-artifact would replace each

@@ -95,6 +95,20 @@ jobs:
           fi
           pip install -e .
 
+      # The converter's compiled backends (Q9.2): cython's kernel and rust's module, built for this
+      # Python; then HELAB_REQUIRE_BACKENDS (cython, rust, numba; mlx where Metal exists) makes a
+      # backend that can't load fail the tests instead of skipping them, and each backend's bytes
+      # are checked against the reference on tests/data/convert/.
+      - name: Build and check the converter backends
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
+          else
+            source venv/bin/activate
+          fi
+          python native/build.py --ci
+
       - name: Run Tests
         shell: bash
         run: |

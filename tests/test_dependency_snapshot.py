@@ -43,6 +43,6 @@ def test_the_real_lock_parses_with_every_requirement_direct() -> None:
     text = (ROOT / LOCK).read_text(encoding="utf-8")
     packages = locked(text)
     assert len(packages) == sum(1 for line in text.splitlines() if line[:1].isalnum() and "==" in line)
-    wanted = {line.strip().lower().replace("_", "-") for line in (ROOT / "requirements.txt").read_text().splitlines()
+    wanted = {line.split(";")[0].strip().lower().replace("_", "-") for line in (ROOT / "requirements.txt").read_text().splitlines()
               if line.strip() and not line.startswith("#")}
     assert {name for name, (_, direct) in packages.items() if direct} == wanted
