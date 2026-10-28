@@ -58,6 +58,7 @@ _BACKENDS: dict[str, Backend] = {}
 # backend adds its line here; one registered only from its own module is missing in spawned
 # processes.
 _MODULES = {"reference": "helab.convert.backends.reference",
+            "cython": "helab.convert.backends.cython",
             "numba": "helab.convert.backends.numba_backend"}
 
 
