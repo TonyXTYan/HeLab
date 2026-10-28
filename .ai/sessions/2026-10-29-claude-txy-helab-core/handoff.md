@@ -340,3 +340,6 @@ flag). The write audit also patches `io.open` (pathlib), `os.truncate`, `chmod`,
 | R2-L1: a kept (or beside done) shot is never looked at again after its TXY is deleted | Beside, `done` and `kept` count only while the shot's TXY is in the listing; and a done or kept entry counts as seen at the previous check (its stat was), so a deleted one converts on the next pass. Test: delete both, feed the summary back, both convert. |
 | R2-L2: a lost beside race unlinks a record the other conversion may have written | `_remove_own_record`: the record goes only if its `txy_sha256` is still ours. Test: a rival record stays; without one, ours goes. |
 | Nit: `\d+` in the patterns | `TXY_PATTERN` and `file_kinds.HELAB_TXY` are `(0|[1-9][0-9]*)` with `re.ASCII`, and `partial_pattern` compiles with `re.ASCII`: `d_txy_helab_07.txy`, a Unicode digit and their `.partial` names don't match (tested). |
+
+Checks after round 2: `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: 8036 passed,
+669 skipped, no RERUN; `mypy helab/ --strict`, `mypy tests --strict`, `pyright helab tests`: clean.
