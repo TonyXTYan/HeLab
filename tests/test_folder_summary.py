@@ -7,6 +7,7 @@ from typing import Any, Iterator
 import time
 import os
 import re
+import threading
 
 import numpy as np
 import pytest
@@ -711,10 +712,14 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     assert isinstance(saved, dict)
     assert saved["scanned_at"] == initial["scanned_at"]
     scanned: list[str] = []
-    original_scandir = __import__("os").scandir
+    original_scandir = os.scandir
+    # The patch is process-wide: other threads' calls (a previous test's IOService.release runs
+    # shutil.rmtree, which lists by file descriptor, on a daemon thread) go through untouched.
+    test_thread = threading.get_ident()
 
-    def record_scandir(path: str) -> Any:
-        scanned.append(path)
+    def record_scandir(path: Any) -> Any:
+        if threading.get_ident() == test_thread:
+            scanned.append(path)
         return original_scandir(path)
 
     monkeypatch.setattr("os.scandir", record_scandir)
@@ -731,8 +736,10 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     with stores._cache_store(options["directory"], [str(child)]) as store:
         previous = store.read_record("summaries", str(child)).value
 
-    def unavailable(path: str) -> Any:
-        raise OSError("Volume unavailable")
+    def unavailable(path: Any) -> Any:
+        if threading.get_ident() == test_thread:
+            raise OSError("Volume unavailable")
+        return original_scandir(path)
 
     monkeypatch.setattr("os.scandir", unavailable)
     events.clear()
