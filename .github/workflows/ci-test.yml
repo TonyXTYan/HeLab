@@ -28,7 +28,7 @@ jobs:
   # The converter's backends (Q9.2): cython's kernel and rust's module built for this Python,
   # numba and mlx installed, all of them required (HELAB_REQUIRE_BACKENDS: one that can't load
   # fails, as does a test that skips naming one), checked against the reference, and the
-  # converter's tests run with them. In a job of its own: the main test job runs without them, as
+  # converter's backend tests run with them. In a job of its own: the main test job runs without them, as
   # before the backends shipped, so its time is what it was (their tests skip there).
   backends:
     name: Converter backends
@@ -101,7 +101,12 @@ jobs:
           else
             source venv/bin/activate
           fi
-          pytest tests/test_convert_*.py -n 4 -rR --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
+          # The converter's tests that run a backend (each backend's own, the helper's and the
+          # within-shot split, which go through every available one); the reader, writer,
+          # profile and reference tests use none and run in the main job.
+          pytest tests/test_convert_backend_*.py tests/test_convert_required_backends.py \
+            tests/test_convert_helab.py tests/test_convert_split.py \
+            -n 4 -rR --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
 
   test:
     # Skipped jobs may leave input expressions unevaluated in their names.
