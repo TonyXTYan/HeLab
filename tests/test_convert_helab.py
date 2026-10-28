@@ -548,7 +548,7 @@ def test_a_killed_helpers_workers_exit(source: Path, tmp_path: Path) -> None:
     # TXY under its own name is ever half written.
     expected = convert_raw(raw_bytes(*range(10_000, 10_000 + 40_000 * 20_000, 40_000)), MATLAB_2019, "reference")
     assert all(path.read_bytes() == expected for path in folder.glob("d_txy_helab_*.txy"))
-    assert all(convert.partial().match(name) for name in names if name.endswith(".partial"))
+    assert all(convert.own_partial().match(name) for name in names if name.endswith(".partial"))
 
 
 def test_the_numba_backends_cache_folder_is_under_the_cache(source: Path, tmp_path: Path, private_store: str,
@@ -795,6 +795,37 @@ def test_the_partial_pattern_is_exactly_write_atomics_names(tmp_path: Path) -> N
         assert not pattern.match(name), name
 
 
+
+RECORD_PARTIAL = ".d_txy_helab_1.json.0123456789abcdef.partial"
+FOLDER_PARTIAL = ".folder.json.0123456789abcdef.partial"
+
+
+def test_the_own_folder_pattern_adds_exactly_the_records_temporary_names(tmp_path: Path) -> None:
+    pattern = convert.own_partial()
+    made: list[str] = []
+    real_open = os.open
+
+    def spy(path: Any, *args: Any, **kwargs: Any) -> int:
+        made.append(Path(path).name)
+        return real_open(path, *args, **kwargs)
+    with pytest.MonkeyPatch.context() as patches:
+        patches.setattr(os, "open", spy)
+        for name in ("d_txy_helab_12.txy", provenance.provenance_name(12), convert.FOLDER_RECORD):
+            txy.write_atomic(tmp_path / name, b"")
+    assert sum(bool(pattern.match(name)) for name in made) == 3
+    for name in (PARTIAL_NAME, RECORD_PARTIAL, FOLDER_PARTIAL, ".d_txy_helab_0.json.fedcba9876543210.partial"):
+        assert pattern.match(name), name
+    # Source folders keep the TXY's names only: no JSON is written there.
+    assert not convert.partial().match(RECORD_PARTIAL) and not convert.partial().match(FOLDER_PARTIAL)
+    for name in (".d_txy_helab_1.json.0123456789abcdeg.partial", ".d_txy_helab_1.json.0123456789abcde.partial",
+                 ".d_txy_helab_1.json.0123456789ABCDEF.partial", ".d_txy_helab_07.json.0123456789abcdef.partial",
+                 ".d_txy_helab_\u0661.json.0123456789abcdef.partial", RECORD_PARTIAL + ".bak", RECORD_PARTIAL[1:],
+                 "x" + RECORD_PARTIAL, ".d_txy_forc1.json.0123456789abcdef.partial", ".d1.json.0123456789abcdef.partial",
+                 FOLDER_PARTIAL + ".bak", FOLDER_PARTIAL[1:], ".xfolder.json.0123456789abcdef.partial",
+                 ".Folder.json.0123456789abcdef.partial", ".folder.jsonl.0123456789abcdef.partial",
+                 ".folderxjson.0123456789abcdef.partial", ".notes.json.0123456789abcdef.partial"):
+        assert not pattern.match(name), name
+
 def test_a_beside_conversion_removes_only_its_own_old_leftovers(source: Path, tmp_path: Path) -> None:
     write_raw(source, 1, raw_bytes(10_000))
     old = source / PARTIAL_NAME
@@ -1030,10 +1061,27 @@ def test_a_conversion_removes_old_leftovers_in_helabs_own_folder(source: Path, t
     write_raw(source, 1, raw_bytes(10_000))
     folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
     folder.mkdir(parents=True)
-    old, young = folder / PARTIAL_NAME, folder / ".d_txy_helab_2.txy.fedcba9876543210.partial"
-    for path, seconds in ((old, 2 * 3600), (young, 60)):
+    old = [folder / name for name in (PARTIAL_NAME, RECORD_PARTIAL, FOLDER_PARTIAL)]
+    young = [folder / name for name in (".d_txy_helab_2.txy.fedcba9876543210.partial",
+                                        ".d_txy_helab_2.json.fedcba9876543210.partial",
+                                        ".folder.json.fedcba9876543210.partial")]
+    lookalikes = [folder / name for name in (".d_txy_helab_3.json.0123456789abcdeg.partial", RECORD_PARTIAL + ".bak",
+                                             ".xfolder.json.0123456789abcdef.partial", "notes.partial")]
+    for path, seconds in [(path, 2 * 3600) for path in old + lookalikes] + [(path, 60) for path in young]:
         path.write_bytes(b"half")
         age(path, seconds)
+    elsewhere = tmp_path / "elsewhere.json"
+    elsewhere.write_bytes(b"not HeLab's")
+    age(elsewhere, 2 * 3600)
+    link = folder / ".d_txy_helab_4.json.aaaaaaaaaaaaaaaa.partial"
+    try:
+        link.symlink_to(elsewhere)
+        age(link, 2 * 3600)
+    except (OSError, NotImplementedError):  # (Windows without the privilege to make links.)
+        pass
     events = run(source, request_for(source, tmp_path))
-    assert [(event["folder"], event["file"]) for event in of(events, "partial_removed")] == [(str(folder), PARTIAL_NAME)]
-    assert not old.exists() and young.exists()
+    assert sorted((event["folder"], event["file"]) for event in of(events, "partial_removed")) == sorted(
+        (str(folder), path.name) for path in old)
+    assert not any(path.exists() for path in old) and all(path.exists() for path in young + lookalikes)
+    assert link.is_symlink() or sys.platform == "win32"
+    assert elsewhere.read_bytes() == b"not HeLab's"

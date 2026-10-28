@@ -35,6 +35,8 @@ sent as ``partial_removed``.
 (``root://<uuid>/<relative>``); a folder without one, or with the disk cache off, goes to ``temp``
 (HeLab's temp folder) and ``convert_plan`` says why (``fallback``). HeLab's folder for a source
 folder is ``<base>/converted-txy/<hash of its key>/``, with ``folder.json`` naming the key and path.
+A conversion there removes its leftover temporary files the same way, those of its records too
+(``own_partial()``).
 
 **Processes.** Reads, writes and every source-folder call stay in this process (traced, guarded
 and paused like the other helpers'). With ``workers`` > 1, conversions run across shots in a pool
@@ -177,6 +179,17 @@ def partial() -> re.Pattern[str]:
     from helab.convert.provenance import TXY_PATTERN
     from helab.convert.txy import partial_pattern
     return partial_pattern(TXY_PATTERN.pattern.removeprefix("^").removesuffix("$"))
+
+
+@functools.cache
+def own_partial() -> re.Pattern[str]:
+    """``partial()``, and the temporary names ``write_atomic`` gives the JSON beside the TXY in
+    HeLab's own folder (each shot's provenance record, ``folder.json``), and nothing else."""
+    from helab.convert.provenance import TXY_PATTERN
+    from helab.convert.txy import partial_pattern
+    txy_name = TXY_PATTERN.pattern.removeprefix("^").removesuffix("$")
+    record = txy_name.removesuffix(r"\.txy") + r"\.json"
+    return partial_pattern("|".join((txy_name, record, re.escape(FOLDER_RECORD))))
 
 
 def compute_budget(raw_bytes: int) -> float:
@@ -666,10 +679,10 @@ def _remove_partial(path: str, entry: os.DirEntry[str], send: Emit) -> None:
 
 def _remove_own_partials(path: str, folder: str, send: Emit) -> None:
     """The same in HeLab's own folder for ``path`` (a helper killed mid-write there leaves one too;
-    on Windows that is likely, the flush to disk taking most of a write)."""
+    on Windows that is likely, the flush to disk taking most of a write), records' too (``own_partial()``)."""
     import stat
     try:
-        entries = [entry for entry in os.scandir(folder) if partial().match(entry.name)]
+        entries = [entry for entry in os.scandir(folder) if own_partial().match(entry.name)]
     except OSError:
         return
     for entry in entries:
