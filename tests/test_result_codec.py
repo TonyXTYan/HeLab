@@ -62,6 +62,14 @@ def test_numpy_scalars_become_plain_values() -> None:
     assert back == [1.5, 3, True] and type(back[1]) is int and type(back[2]) is bool
 
 
+def test_arrays_keep_their_shape_a_zero_dimensional_one_too() -> None:
+    """``np.ascontiguousarray`` made a 0-d array (1,), so ``float()`` of a reused result failed
+    (Codex review on PR #9)."""
+    back = round_trip([np.array(3.5), np.zeros((0, 3)), np.ones((2, 3)).T])
+    assert [array.shape for array in back] == [(), (0, 3), (3, 2)]
+    assert float(back[0]) == 3.5 and np.array_equal(back[2], np.ones((3, 2)))
+
+
 def test_undeclared_types_are_refused_both_ways() -> None:
     with pytest.raises(CodecError, match="isn't declared"):
         result_codec.encode(Inner(1.0), ())

@@ -93,7 +93,9 @@ def encode(value: Any, types: Iterable[Declared] = ()) -> tuple[Any, Arrays]:
             if item.dtype.hasobject:
                 raise CodecError("an object array can't be saved without pickle")
             name = f"a{len(arrays)}"
-            arrays[name] = np.ascontiguousarray(item)
+            # ``ascontiguousarray`` gives at least one dimension: a 0-d array would come back as (1,)
+            # (Codex review on PR #9).
+            arrays[name] = np.ascontiguousarray(item).reshape(item.shape)
             return {"$array": name}
         if isinstance(item, np.generic):
             raise CodecError(f"NumPy scalar of type {item.dtype} can't be saved")
