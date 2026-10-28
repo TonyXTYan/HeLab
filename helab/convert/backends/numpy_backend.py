@@ -6,7 +6,10 @@ MATLAB's match is greedy: each x1, in time order, takes the first free x2 in sea
 later x1 can't take them. Marks only ever remove candidates, which gives the split used here:
 
 1. **Optimistic, vectorised.** For every x1 at once, ignoring marks: the candidate rows (in the
-   window, of the right channel), the first x2 and the first y pair in search order.
+   window, of the right channel), the first x2 and the first y pair in search order. Times are
+   sorted, so each x1's window is one run of rows, found exactly; only the offsets some x1 of a
+   block reaches are looked at. Rows with a NaN time (sorted last) fail every test and are left
+   out.
 2. **What marks can change.** With fewer candidates an x1 can't find a match it didn't find
    before; and if the x2 and the y pair it chose are still free when its turn comes, they are
    still the first free ones in search order. So an optimistic failure is final, and a choice
@@ -40,6 +43,7 @@ from helab.convert.reconstruct import Backend, Hits, NoRowsError, register_backe
 Floats = npt.NDArray[np.float64]
 Index = npt.NDArray[np.intp]
 Mask = npt.NDArray[np.bool_]
+Candidates = list[tuple[int, float]]  # (row, time), in search order
 
 NAN = math.nan
 CHUNK = 8192  # x1 rows per vectorised block (bounds the (rows, 36) temporaries)
@@ -107,6 +111,12 @@ def _dead_time_cut(ch: Floats, t: Floats, profile: DetectorProfile) -> Floats:
 
 
 def reconstruct_numpy(pulses: RawPulses, profile: DetectorProfile) -> Hits:
+    # Inf − Inf and the like are NaN, as in MATLAB, and fail their tests: not worth a warning.
+    with np.errstate(invalid="ignore", over="ignore"):
+        return _reconstruct(pulses, profile)
+
+
+def _reconstruct(pulses: RawPulses, profile: DetectorProfile) -> Hits:
     n = len(pulses)
     if n == 0 and profile.subtract_time_zero:
         raise NoRowsError("The raw file has no rows (MATLAB fails at t_zero, L62)")
@@ -117,148 +127,189 @@ def reconstruct_numpy(pulses: RawPulses, profile: DetectorProfile) -> Hits:
     ch = _dead_time_cut(pulses.channels[order], t, profile)
 
     first = 1 if profile.skip_first_sorted_row else 0
-    x1 = np.flatnonzero(ch == profile.channel_x1)
+    # Rows with a NaN time sort last. Every test on them is false (L477, L544), so they can't be
+    # a match or change one: they are left out, and an x1 with a NaN time finds nothing.
+    end = n - int(np.count_nonzero(np.isnan(t)))
+    x1 = np.flatnonzero(ch[:end] == profile.channel_x1)
     x1 = x1[x1 >= first]
     m = x1.shape[0]
     search = np.array(offsets(profile.search_depth), dtype=np.intp)
 
-    outcome = np.zeros(m, dtype=np.int8)
-    x2_row = np.full(m, -1, dtype=np.intp)
-    y1_row = np.full(m, -1, dtype=np.intp)
-    y2_row = np.full(m, -1, dtype=np.intp)
-    # touched[j]: the first x1 (by its position in x1) that has row j as a candidate.
-    touched = np.full(n, m, dtype=np.intp)
+    match = _Match(m, n)
     for begin in range(0, m, CHUNK):
-        _optimistic(begin, x1[begin:begin + CHUNK], t, ch, search, profile, outcome, x2_row, y1_row, y2_row, touched)
+        _optimistic(begin, x1[begin:begin + CHUNK], t, ch, end, search, profile, match)
+    _settle(x1, n, profile, match)
+    return _hits(x1, t, n, profile, match.outcome, match.x2_row, match.y1_row, match.y2_row)
 
-    _settle(x1, t, ch, search, profile, outcome, x2_row, y1_row, y2_row, touched)
-    return _hits(x1, t, n, profile, outcome, x2_row, y1_row, y2_row)
+
+class _Match:
+    """Each x1's outcome and rows (−1: none), which x1s an earlier one could interfere with, and
+    for those their candidates. ``touched[j]``: the first x1 (by position) with row j as a
+    candidate."""
+
+    def __init__(self, m: int, n: int) -> None:
+        self.outcome = np.zeros(m, dtype=np.int8)
+        self.x2_row = np.full(m, -1, dtype=np.intp)
+        self.y1_row = np.full(m, -1, dtype=np.intp)
+        self.y2_row = np.full(m, -1, dtype=np.intp)
+        self.risky = np.zeros(m, dtype=np.bool_)
+        self.touched = np.full(n, m, dtype=np.intp)
+        # (position, x1 time, x2, y1 and y2 candidates) for each risky x1, in x1 order.
+        self.pending: list[tuple[int, float, Candidates, Candidates, Candidates]] = []
 
 
-def _optimistic(begin: int, rows: Index, t: Floats, ch: Floats, search: Index, profile: DetectorProfile,
-                outcome: npt.NDArray[np.int8], x2_row: Index, y1_row: Index, y2_row: Index, touched: Index) -> None:
-    """Step 1 for one block of x1 rows: each one's choice ignoring marks, and the candidates."""
+def _windows(rows: Index, x1_t: Floats, t: Floats, end: int, window: float, left: int,
+             right: int) -> tuple[Index, Index]:
+    """The rows in each x1's window (L465), as [lo, hi), cut to the rows the search reaches.
+    Times are sorted and rounding is monotonic, so ``not |t[j] − x1| > window`` holds on one run
+    of rows around the x1: a search on the times finds it, then each end is moved to the exact
+    test."""
+    floor = np.maximum(rows - left, 0)
+    ceiling = np.minimum(rows + right + 1, end)
+    lo = np.clip(np.searchsorted(t[:end], x1_t - window, side="left"), floor, rows)
+    hi = np.clip(np.searchsorted(t[:end], x1_t + window, side="right"), rows + 1, ceiling)
+    _move(lo, floor, -1, -1, x1_t, t, window, while_inside=True)    # down over rows inside
+    _move(lo, rows, 1, 0, x1_t, t, window, while_inside=False)      # up off rows outside
+    _move(hi, ceiling, 1, 0, x1_t, t, window, while_inside=True)
+    _move(hi, rows + 1, -1, -1, x1_t, t, window, while_inside=False)
+    return lo, hi
+
+
+def _move(ends: Index, limit: Index, step: int, look: int, x1_t: Floats, t: Floats, window: float, *,
+          while_inside: bool) -> None:
+    """Move each end by ``step`` (in place) until it reaches ``limit`` or the row at
+    ``end + look`` stops being inside the window (``while_inside``) or outside it."""
+    while True:
+        more = ends > limit if step < 0 else ends < limit
+        if not bool(more.any()):
+            return
+        outside = np.abs(t[ends[more] + look] - x1_t[more]) > window   # L465
+        more[more] = ~outside if while_inside else outside
+        if not bool(more.any()):
+            return
+        ends[more] += step
+
+
+def _optimistic(begin: int, rows: Index, t: Floats, ch: Floats, end: int, search: Index, profile: DetectorProfile,
+                match: _Match) -> None:
+    """Step 1 for one block of x1 rows: each one's choice ignoring marks, and its candidates."""
     n = t.shape[0]
     count = rows.shape[0]
+    block = slice(begin, begin + count)
     x1_t = t[rows]
-    j = rows[:, None] + search[None, :]                                  # L456–457, one column per offset
-    inside = (j >= 0) & (j < n)                                          # L459–464
+    window = profile.search_window
+    lo, hi = _windows(rows, x1_t, t, end, window, max(0, -int(search.min())), max(0, int(search.max())))
+    # Only the offsets some x1 of the block reaches inside its window (L456–465): the search
+    # order −1, +1, −2, +2, … makes them a prefix.
+    reach = int(max((rows - lo).max(), (hi - 1 - rows).max()))
+    width = int(np.searchsorted(np.abs(search), reach, side="right"))
+    if not width:
+        return
+    j = rows[:, None] + search[None, :width]
+    in_window = (j >= lo[:, None]) & (j < hi[:, None])
     j = np.clip(j, 0, n - 1)
-    tj = t[j]
     cj = ch[j]
-    in_window = inside & ~(np.abs(tj - x1_t[:, None]) > profile.search_window)   # L465
     x_limit = profile.match_time_sum_x + profile.match_tolerance_x       # L440
-    x2_ok = in_window & (cj == profile.channel_x2) & (np.abs(x1_t[:, None] - tj) < x_limit)   # L474–477
-    y1_ok = in_window & (cj == profile.channel_y1)                       # L515–524
-    y2_ok = in_window & (cj == profile.channel_y2)                       # L538–542
+    x2_ok = in_window & (cj == profile.channel_x2) & (np.abs(x1_t[:, None] - t[j]) < x_limit)   # L474–477
+    y1_ok = in_window & (cj == profile.channel_y1)                       # L524
+    y2_ok = in_window & (cj == profile.channel_y2)                       # L542
 
-    candidate = x2_ok | y1_ok | y2_ok
-    who, where = np.nonzero(candidate)
-    np.minimum.at(touched, j[who, where], who + begin)
+    flat = np.flatnonzero((x2_ok | y1_ok | y2_ok).ravel())
+    np.minimum.at(match.touched, j.ravel()[flat], flat // width + begin)
 
     has_x2 = x2_ok.any(axis=1)
-    x2_col = x2_ok.argmax(axis=1)                                        # the first in search order
-    sel = np.flatnonzero(has_x2)
-    block = slice(begin, begin + count)
-    outcome[block] = np.where(has_x2, NO_Y, NONE)
-    x2_row[block] = np.where(has_x2, j[np.arange(count), x2_col], -1)
-    if not sel.shape[0]:
-        return
-    js = j[sel]
-    y1_who, y1_col = np.nonzero(y1_ok[sel])                              # sorted by x1, then search order
-    y2_who, y2_col = np.nonzero(y2_ok[sel])
-    # Every (y1, y2) pair of each x1, in the nested search order (L505–546).
-    y2_count = np.bincount(y2_who, minlength=sel.shape[0])
-    y2_start = np.cumsum(y2_count) - y2_count
+    x2_j = np.where(has_x2, j[np.arange(count), x2_ok.argmax(axis=1)], -1)   # the first in search order
+    match.outcome[block] = np.where(has_x2, NO_Y, NONE)
+    match.x2_row[block] = x2_j
+    # Every (y1, y2) pair of each x1 with an x2, in the nested search order (L505–546).
+    y1_flat = np.flatnonzero((y1_ok & has_x2[:, None]).ravel())          # by x1, then search order
+    y2_flat = np.flatnonzero((y2_ok & has_x2[:, None]).ravel())
+    y1_who, y2_who = y1_flat // width, y2_flat // width
+    y2_count = np.bincount(y2_who, minlength=count)
     per_y1 = y2_count[y1_who]
     total = int(per_y1.sum())
-    if not total:
-        return
-    pair_y1 = np.repeat(np.arange(y1_who.shape[0]), per_y1)
-    pair_who = y1_who[pair_y1]
-    pair_y2 = y2_start[pair_who] + np.arange(total) - np.repeat(np.cumsum(per_y1) - per_y1, per_y1)
-    y1_j = js[pair_who, y1_col[pair_y1]]
-    y2_j = js[pair_who, y2_col[pair_y2]]
-    y1_t, y2_t = t[y1_j], t[y2_j]
-    x1_p = x1_t[sel][pair_who]
-    x2_p = t[x2_row[begin + sel]][pair_who]
-    y_limit = profile.match_time_sum_y + profile.match_tolerance_y       # L441
-    ok = (np.abs(y1_t - y2_t) < y_limit) & (np.abs(x1_p + x2_p - y1_t - y2_t) < profile.xy_sum_tolerance)  # L544
-    good = np.flatnonzero(ok)
-    if not good.shape[0]:
-        return
-    good_who = pair_who[good]
-    firsts = good[np.concatenate(([True], good_who[1:] != good_who[:-1]))]
-    at = begin + sel[pair_who[firsts]]
-    outcome[at] = HIT
-    y1_row[at] = y1_j[firsts]
-    y2_row[at] = y2_j[firsts]
+    if total:
+        pair_y1 = np.repeat(np.arange(y1_who.shape[0]), per_y1)
+        pair_who = y1_who[pair_y1]
+        pair_y2 = (np.cumsum(y2_count) - y2_count)[pair_who] + np.arange(total) - np.repeat(np.cumsum(per_y1) - per_y1,
+                                                                                              per_y1)
+        y1_j = j.ravel()[y1_flat[pair_y1]]
+        y2_j = j.ravel()[y2_flat[pair_y2]]
+        y1_t, y2_t = t[y1_j], t[y2_j]
+        x1_p, x2_p = x1_t[pair_who], t[x2_j[pair_who]]
+        y_limit = profile.match_time_sum_y + profile.match_tolerance_y   # L441
+        ok = (np.abs(y1_t - y2_t) < y_limit) & (np.abs(x1_p + x2_p - y1_t - y2_t) < profile.xy_sum_tolerance)  # L544
+        good = np.flatnonzero(ok)
+        if good.shape[0]:
+            good_who = pair_who[good]
+            firsts = good[np.concatenate(([True], good_who[1:] != good_who[:-1]))]
+            at = begin + pair_who[firsts]
+            match.outcome[at] = HIT
+            match.y1_row[at] = y1_j[firsts]
+            match.y2_row[at] = y2_j[firsts]
 
-
-def _settle(x1: Index, t: Floats, ch: Floats, search: Index, profile: DetectorProfile, outcome: npt.NDArray[np.int8],
-            x2_row: Index, y1_row: Index, y2_row: Index, touched: Index) -> None:
-    """Steps 2 and 3: keep what marks can't change, run the rest in order with the marks."""
-    m = x1.shape[0]
-    position = np.arange(m)
-    found = outcome != NONE
+    # Step 2: every x1 before these is done, so touched is final for their rows.
+    position = np.arange(begin, begin + count)
+    outcome, touched = match.outcome[block], match.touched
     hit = outcome == HIT
-    risky = found & (touched[np.maximum(x2_row, 0)] < position)
-    risky |= hit & ((touched[np.maximum(y1_row, 0)] < position) | (touched[np.maximum(y2_row, 0)] < position))
-    clean_hits = np.flatnonzero(hit & ~risky)
-    used = np.zeros(t.shape[0], dtype=np.bool_)
-    for rows in (x1[clean_hits], x2_row[clean_hits], y1_row[clean_hits], y2_row[clean_hits]):
+    risky = (outcome != NONE) & (touched[np.maximum(x2_j, 0)] < position)
+    risky |= hit & ((touched[np.maximum(match.y1_row[block], 0)] < position)
+                    | (touched[np.maximum(match.y2_row[block], 0)] < position))
+    match.risky[block] = risky
+    local = np.flatnonzero(risky)
+    if not local.shape[0]:
+        return
+    # Their candidates, kept for step 3: rows and times per x1, flat, with each x1's start.
+    flats = []
+    for ok_mask in (x2_ok, y1_ok, y2_ok):
+        where = np.flatnonzero(ok_mask[local].ravel())
+        rows_j = j[local].ravel()[where]
+        starts = np.searchsorted(where // width, np.arange(local.shape[0] + 1))
+        flats.append((rows_j.tolist(), t[rows_j].tolist(), starts.tolist()))
+    for k, (p, x1_v) in enumerate(zip((local + begin).tolist(), x1_t[local].tolist())):
+        x2c, y1c, y2c = (list(zip(r[s[k]:s[k + 1]], v[s[k]:s[k + 1]])) for r, v, s in flats)
+        match.pending.append((p, x1_v, x2c, y1c, y2c))
+
+
+def _settle(x1: Index, n: int, profile: DetectorProfile, match: _Match) -> None:
+    """Step 3: mark the clean hits' pulses, then run the risky x1s in order with the marks."""
+    hit = match.outcome == HIT
+    clean = np.flatnonzero(hit & ~match.risky)
+    used = np.zeros(n, dtype=np.bool_)
+    for rows in (x1[clean], match.x2_row[clean], match.y1_row[clean], match.y2_row[clean]):
         used[rows] = True
-    todo = np.flatnonzero(risky)
-    if not todo.shape[0]:
+    if not match.pending:
         return
     marks = bytearray(used.tobytes())
-    lists: tuple[list[float], list[float], list[int]] | None = None  # made on the first search
-    for p, i, x2, y1, y2, state in zip(todo.tolist(), x1[todo].tolist(), x2_row[todo].tolist(),
-                                       y1_row[todo].tolist(), y2_row[todo].tolist(), outcome[todo].tolist()):
+    y_limit = profile.match_time_sum_y + profile.match_tolerance_y
+    xy_limit = profile.xy_sum_tolerance
+    outcome, x2_row, y1_row, y2_row = match.outcome, match.x2_row, match.y1_row, match.y2_row
+    for p, x1_v, x2c, y1c, y2c in match.pending:
+        x2, y1, y2, state = int(x2_row[p]), int(y1_row[p]), int(y2_row[p]), int(outcome[p])
         if not marks[x2] and (state == NO_Y or (not marks[y1] and not marks[y2])):
             if state == HIT:
-                marks[i] = marks[x2] = marks[y1] = marks[y2] = 1
+                marks[int(x1[p])] = marks[x2] = marks[y1] = marks[y2] = 1
             continue
-        if lists is None:
-            lists = t.tolist(), ch.tolist(), search.tolist()
-        x2, y1, y2 = _search_one(i, *lists, marks, profile)
+        x2, y1, y2 = _search_one(x1_v, x2c, y1c, y2c, marks, y_limit, xy_limit)
         x2_row[p], y1_row[p], y2_row[p] = x2, y1, y2
         outcome[p] = NONE if x2 < 0 else NO_Y if y1 < 0 else HIT
         if y1 >= 0:
-            marks[i] = marks[x2] = marks[y1] = marks[y2] = 1
+            marks[int(x1[p])] = marks[x2] = marks[y1] = marks[y2] = 1
 
 
-def _search_one(i: int, t: list[float], ch: list[float], search: list[int], marks: bytearray,
-                profile: DetectorProfile) -> tuple[int, int, int]:
-    """The reference's search for the x1 at row i (L451–560), a marked row's channel being NaN:
-    its x2 and y rows, −1 where none."""
-    n = len(t)
-    x1 = t[i]
-    window = profile.search_window
-    x_limit = profile.match_time_sum_x + profile.match_tolerance_x
-    y_limit = profile.match_time_sum_y + profile.match_tolerance_y
-    xy_limit = profile.xy_sum_tolerance
-    c_x2, c_y1, c_y2 = profile.channel_x2, profile.channel_y1, profile.channel_y2
-
-    def free(j: int, channel: int) -> bool:
-        return 0 <= j < n and not abs(t[j] - x1) > window and not marks[j] and ch[j] == channel
-
-    x2_index = -1
-    for dummy in search:
-        j = i + dummy
-        if free(j, c_x2) and abs(x1 - t[j]) < x_limit:
-            x2_index = j  # a second candidate only ends the search (how_many_x == ~1)
-            break
-    if x2_index < 0:
+def _search_one(x1: float, x2c: Candidates, y1c: Candidates, y2c: Candidates, marks: bytearray, y_limit: float,
+                xy_limit: float) -> tuple[int, int, int]:
+    """The reference's search for one x1 (L451–560) over its candidates (window, channel and,
+    for x2, the x limit already applied), a marked row's channel being NaN: its x2 and y rows,
+    −1 where none."""
+    x2_index, x2 = next(((j, value) for j, value in x2c if not marks[j]), (-1, 0.0))
+    if x2_index < 0:  # a second free x2 only ends the search (how_many_x == ~1)
         return -1, -1, -1
-    x2 = t[x2_index]
-    for dummy2 in search:
-        j2 = i + dummy2
-        if not free(j2, c_y1):
+    for j2, y1 in y1c:
+        if marks[j2]:
             continue
-        for dummy3 in search:
-            j3 = i + dummy3
-            if free(j3, c_y2) and abs(t[j2] - t[j3]) < y_limit and abs(x1 + x2 - t[j2] - t[j3]) < xy_limit:
+        for j3, y2 in y2c:
+            if not marks[j3] and abs(y1 - y2) < y_limit and abs(x1 + x2 - y1 - y2) < xy_limit:
                 return x2_index, j2, j3
     return x2_index, -1, -1
 
@@ -275,6 +326,9 @@ def _hits(x1: Index, t: Floats, n: int, profile: DetectorProfile, outcome: npt.N
     columns = [(tx + ty) / 2,                                            # L552
                x1_t - tx if centred else x1_t, x2_t - tx if centred else x2_t,
                y1_t - ty if centred else y1_t, y2_t - ty if centred else y2_t]
+    # L580–581: rows with a NaN T are dropped (a hit's T is finite whenever its tests pass, but
+    # the rule is MATLAB's).
+    columns = [column[~np.isnan(columns[0])] for column in columns]
     # The phantom row: after the last hit, an x1 with an x2 but no y writes its x pair into row
     # (hits + 1); past MATLAB's floor(n/4) preallocated rows that row was grown with zeros, so
     # its T is 0 and it survives the NaN filter (L444, L580–581). The last such x1 wins.

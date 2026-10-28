@@ -10,8 +10,11 @@ from concurrent.futures import ProcessPoolExecutor
 import json
 import math
 import multiprocessing
+import os
 from pathlib import Path
 import random
+import subprocess
+import sys
 from typing import Any
 
 import pytest
@@ -193,3 +196,39 @@ def test_random_files_split_equal_the_whole(backend: str) -> None:
         pulses, profile = random_pulses(rng), random_profile(rng)
         split = reconstruct_split(pulses, profile, backend, min_rows=rng.choice([1, 3, 20])) if len(pulses) else None
         assert (None if split is None else format_txy(split)) == converted(pulses, profile, backend), (k, profile)
+
+
+FIRST_USE = """
+import sys, threading
+from pathlib import Path
+from helab.convert.pipeline import convert_raw
+from helab.convert.profile import MATLAB_2019
+from helab.convert.reconstruct import _BACKENDS
+assert "numpy" not in _BACKENDS and "helab.convert.backends.numpy_backend" not in sys.modules
+data = Path(sys.argv[1]).read_bytes()
+barrier = threading.Barrier(32)
+results, errors = [], []
+def run():
+    try:
+        barrier.wait()
+        results.append(convert_raw(data, MATLAB_2019, "numpy"))
+    except BaseException as error:
+        errors.append(repr(error))
+threads = [threading.Thread(target=run) for _ in range(32)]
+for thread in threads:
+    thread.start()
+for thread in threads:
+    thread.join()
+assert not errors, errors
+assert len(results) == 32 and len(set(results)) == 1, len(set(results))
+sys.stdout.buffer.write(results[0])
+"""
+
+
+def test_many_threads_using_the_backend_first_at_once_agree() -> None:
+    # The backend is imported on first use (reconstruct._MODULES); 32 threads racing to it in a
+    # fresh process must all get it, registered once, and the same bytes.
+    done = subprocess.run([sys.executable, "-c", FIRST_USE, str(CASES / "basic" / "d1.txt")], capture_output=True,
+                          timeout=120, env=dict(os.environ), cwd=ROOT)
+    assert done.returncode == 0, done.stderr.decode()
+    assert done.stdout == (CASES / "basic" / "expected-2019.txt").read_bytes()

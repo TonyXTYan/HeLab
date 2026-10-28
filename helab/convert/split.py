@@ -88,8 +88,9 @@ def reconstruct_split(pulses: RawPulses, profile: DetectorProfile, backend: str 
     n = len(pulses)
     if n == 0 and profile.subtract_time_zero:
         raise NoRowsError("The raw file has no rows (MATLAB fails at t_zero, L62)")
-    ch, t = sorted_rows(pulses, profile)
-    cuts = plan_cuts(t, profile, max_pieces, min_rows)
+    with np.errstate(invalid="ignore", over="ignore"):  # Inf − Inf gaps are NaN: no cut there
+        ch, t = sorted_rows(pulses, profile)
+        cuts = plan_cuts(t, profile, max_pieces, min_rows)
     if not cuts:
         return reconstruct(pulses, profile, backend)
     starts = [0] + cuts
