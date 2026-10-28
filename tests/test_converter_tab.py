@@ -22,6 +22,10 @@ from helab.utils.folder_cache import Dataset, store_options
 from helab.views.CacheTab import CacheTab
 from helab.views.ConverterTab import ConverterTab, ProfileEditor
 from helab.views.plots.txy_source import TxySourceRow, folder_day, plate_note
+from helab.utils.folder_cache import FolderCache
+from helab.utils.io_service import IOService
+from helab.views.plots.instance import AnalysisInstance
+from test_constant_layers import FallTime
 from test_folder_flags import admin, frozen
 
 
@@ -231,3 +235,47 @@ def test_the_row_suggests_a_plate_profile_without_applying_it(qtbot: QtBot) -> N
     assert picked == ["helab-only"] and row.source() == "helab-only"
     row.set_source("matlab")  # (Set by the plot: not a choice.)
     assert picked == ["helab-only"]
+
+
+# A plot switching its TXY source (``AnalysisInstance.set_txy_source``).
+
+
+def test_a_plot_loads_its_own_source_and_goes_back_to_the_tabs(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_dispatch", lambda: None)
+    cache = FolderCache(service)
+    try:
+        path = "/data/run"
+        tab_data = Dataset(path, "sig", {1: np.zeros((1, 3))},
+                           {"fingerprint": [[1, 10, 100]], "txy": {"source": "matlab", "origins": {}}}, 0)
+        cache.datasets[cache.dataset_key(tab_data)] = tab_data
+        instance = AnalysisInstance(FallTime().get_metadata(), FallTime(), "Plot", build_view(tab_data), "1", None,
+                                    cache=cache)
+        ran: list[Any] = []
+        monkeypatch.setattr(instance, "_submit", lambda view, *args, **kwargs: ran.append(view))
+        instance.set_txy_source("helab-only")
+        [request] = [r for r in service.pending if r.operation == "load"]
+        assert request.payload["txy"]["source"] == "helab-only" and request.payload["no_cache"] is True
+        assert instance.follow_text() == "TXY: HeLab only (loading…)"
+        helab = Dataset(path, "sig", {1: np.ones((1, 3)), 2: np.ones((1, 3))},
+                        {"fingerprint": [[1, 11, 101], [2, 12, 102]],
+                         "txy": {"source": "helab-only", "origins": {"1": "helab:h", "2": "helab:h"}}}, 0)
+        instance._source_owner = ""  # (The load answered.)
+        instance._source_loaded(helab)
+        assert ran[-1].identity.source == "helab-only" and sorted(ran[-1].shots) == [1, 2]
+        # Live's next: a revision of the plot's own source, offered as it follows.
+        newer = Dataset(path, "sig", {**helab.data, 3: np.ones((1, 3))},
+                        {"fingerprint": [[1, 11, 101], [2, 12, 102], [3, 13, 103]],
+                         "txy": {"source": "helab-only", "origins": {"1": "helab:h", "2": "helab:h", "3": "helab:h"}}},
+                        0)
+        instance.follow.start(ran[-1])
+        instance.follow.end(time.monotonic())
+        instance._source_loaded(newer)
+        assert instance.follow.latest.revision == 2 and instance.follow.latest.added_shots == (3,)
+        # A dataset of another source (asked for before a change) is ignored; back to the tab's data.
+        instance.set_txy_source("matlab")
+        assert ran[-1].identity.source == "" and ran[-1].shots.keys() == {1}
+        instance.close()
+    finally:
+        service.shutdown()

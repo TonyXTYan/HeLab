@@ -910,6 +910,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if view is latest:
                 self.status_label.setText("")
                 return  # Nothing new.
+            if view.revision == 1:
+                self._switch_view(view)  # Not a revision of it (shots gone): new data of its source.
+                return
             if self.follow.offer(view):
                 self._follow_next()
             return
