@@ -62,7 +62,7 @@ stalls). Payload (`io_ops.convert.ConvertRequest`):
 | `profile` | `DetectorProfile.to_dict()` (built-in or user; the helper never looks profiles up) |
 | `temps` | HeLab's temp folder (`constants.DIR_TEMPS`), required |
 | `cache` | `store_options()` ({} or absent: no data-root key, output falls back to temp) |
-| `output` | `cache` (default) or `temp`: the setting (`read_convert_output`) |
+| `destination` | `cache` (default) or `temp`: the setting (`read_convert_output`). Not `output`: `IOService` sets every payload's `output` to the helper's private folder. |
 | `beside` | the app believes the folder's `write_beside` flag is on; the helper checks the store again |
 | `beside_confirmed` | command line only: beside for this run without the flag |
 | `backend` | default `pipeline.APP_BACKEND` (`numpy`); unavailable → the operation errors before any read |
@@ -343,3 +343,13 @@ flag). The write audit also patches `io.open` (pathlib), `os.truncate`, `chmod`,
 
 Checks after round 2: `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: 8036 passed,
 669 skipped, no RERUN; `mypy helab/ --strict`, `mypy tests --strict`, `pyright helab tests`: clean.
+
+## Windows CI and the app's payload (after landing)
+
+| Failure | Cause | Fix |
+|---|---|---|
+| mypy/pyright on Windows: the pool's pipe | `multiprocessing.Pipe()` gives `PipeConnection` on Windows, `Connection` elsewhere; the `_pipe` annotation and the initializer's argument type named only `Connection`, so the `ProcessPoolExecutor` overload failed there | The pipe-end type is chosen by `sys.platform` (under `TYPE_CHECKING`); checked with `mypy --platform win32/linux` and `pyright --pythonplatform Windows/Linux` |
+| `test_the_helper_refuses_a_source_path_that_could_be_real_data` (and its teardown ERROR) | The test looked for `/Volumes/dld_output/run` in the guard's note, which holds the path as sent, `str(Path(...))`: backslashes on Windows; the failed assert skipped the note clean-up, so `no_real_data` failed the teardown | A path refused on each platform (`\\no-such-server\share\run_1` on Windows), compared as sent; notes cleared in a `finally` |
+| `test_a_killed_helpers_workers_exit` (4 RERUNs, then passed) | Not a live worker or a late write: the test asserted no `.partial` in HeLab's folder, but `TerminateProcess` can land inside `write_atomic` and leave its temporary file (on Windows usually, since `os.fsync` → `FlushFileBuffers` takes most of each write; on macOS the kill nearly always landed while waiting for workers). The atomic write guarantees no half TXY under its name, not no temporary | The test checks nothing is written after the kill and every TXY there is whole; a conversion removes such leftovers in HeLab's own folder once over an hour old (`partial_removed` gains `folder`) |
+| `test_convert_once_from_the_command_line` | `helab convert`'s lines used "→"; on Windows stderr to a pipe uses the code page, and Python wrote the arrow as `\u2192` | ASCII in the CLI's own text ("->", "...") |
+| The app's conversions all failed (Lantern) | `IOService._run` sets `payload["output"]` (the helper's private folder) for every request, overwriting the converter's cache/temp | The request field is `destination` (`ConvertRequest`, `convert_folder`, `convert_cli`, tests); event fields keep `output`. New test: a conversion through a real `IOService` and helper |
