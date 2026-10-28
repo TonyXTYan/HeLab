@@ -71,6 +71,7 @@ Packages (floor venv only): `Cython==3.3.0`, build time only; `setuptools` was a
 | CoCo: `PURE` | `"backends.cython"` added to `tests/test_headless_imports.py` (one line, done here instead of proposed). |
 | CoCo (from the MLX review): pyright without the package | Run against Ground's venv (no Cython, no built kernel) with a temporary config in `.ai/temp/pyright-ground/`: 0 errors and 0 warnings in `helab` and `tests` outside the always-excluded `legacy_plotly`. The one warning the missing binary gave (`reportMissingModuleSource` on the `TYPE_CHECKING` import of the stub) is silenced on that line. mypy strict with the binary moved aside: clean. |
 
+After round 1: full suite 6238 passed, 4 skipped, **no RERUN**; the three type checks are clean.
 After the fixes, `check_samples.py --backend cython --positions all` gives 303 identical plus the
 6 proved exceptions. Against the reference on all 309 shots × both profiles × 1, 4 and 64 threads:
 1,854 conversions, 0 differ.
