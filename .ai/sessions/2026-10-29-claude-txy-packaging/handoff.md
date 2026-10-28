@@ -85,7 +85,39 @@ installed.
 
 ## CI
 
-(Filled in after the run: see the end of this file.)
+**Run 40754482305** (on `77fb892`'s parent, before merging dev/v0.0.7): all three builds and the
+macOS and Ubuntu tests passed. Windows tests failed, but only on helab-core's known failures
+(`test_convert_helab.py` ×2, `test_typing.py` ×5 on `io_ops/convert.py:344/346`), which
+dev/v0.0.7 `e064a53` fixes.
+
+| Job | Backends step | Tests / PyInstaller | Frozen check | Job |
+|---|---|---|---|---|
+| macOS tests | 47 s | 10:46 | | 13:14 |
+| Ubuntu tests | 33 s | 10:16 | | 12:07 |
+| Windows tests | 65 s | 25:38 (failed) | | 28:31 |
+| macOS build | 41 s | 3:17 | 21 s | 5:45 |
+| Ubuntu build | 52 s | 2:03 | 15 s | 4:34 |
+| Windows build | 96 s | 4:28 | 22 s | 8:19 |
+
+- In every job, the backends step built cython and rust and found cython, rust and numba identical
+  on all 78. On Windows mlx is "unavailable: MLX needs Apple Silicon (this is win32 AMD64)". On
+  macOS the runner prints `mx.metal.is_available()` (see its log).
+- **The Windows test job took 28:31 against its 30 min limit.** About 1 min of that is the
+  backends step. The rest is mostly the failing tests' 5 reruns with 5 s delays: the five mypy
+  and pyright tests each rerun 5 times. The base commit's failing run took 20:18, and the last
+  green dev/v0.0.7 run 24:05. Once helab-core's fix is merged those reruns go away; the next run's
+  figure is below. If Windows still comes near 30 min, see A~2 (rust cache) and consider
+  `--reruns` not applying to `test_typing.py`.
+- **RERUNs** on Windows besides the known failures (each passed on its retry; neither in my
+  files): `tests/test_convert_helab.py::test_a_killed_helpers_workers_exit` (`assert not
+  any(...)` at line 537: a worker still alive just after its helper was killed: helab-core's
+  test), and `tests/test_test_isolation.py::test_pytest_imports_the_checkout_it_runs_in_before_any_other`
+  (the nested pytest's "ERROR collecting test session" in pathlib's `lstat`; the cause is cut off
+  in the summary). Both go to known-issues.
+
+After merging dev/v0.0.7 (`e064a53`): full suite with every backend required, **8708 passed, 8
+skipped, no RERUN**. `mypy --strict` for helab and tests with `--platform` darwin, win32 and
+linux, and `pyright --pythonplatform` Darwin, Windows and Linux: all clean.
 
 ## Proposed doc changes (for the Coordinator)
 
