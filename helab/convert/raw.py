@@ -11,7 +11,9 @@ MATLAB reads with ``textscan(fid, '%f64%f64', 'Delimiter', ',', 'MultipleDelimsA
 - a comma ends a field. The first non-blank line's ending sets which endings end a line: after
   ``\\r\\n``, all of ``\\r\\n``, ``\\r`` and ``\\n``; after ``\\n``, only ``\\n`` (a later ``\\r`` is
   a character like any other, so it stops the read); after ``\\r``, only ``\\r`` (a later ``\\n``
-  stops it); ``\\r\\r\\n`` counts as ``\\r\\n``, ``\\n\\r`` as ``\\n``. Blank lines before it don't count. An empty field between commas or at a line's
+  stops it); ``\\r\\r\\n`` counts as ``\\r\\n``, ``\\n\\r`` as ``\\n``. Only ``\\n`` at the very start of
+  the file are passed over to find it; the read then starts at the first byte in that mode (so in
+  ``\\r`` mode a leading ``\\n`` stops it at once). An empty field between commas or at a line's
   start reads as NaN; a line ended early is filled with NaN; blank lines and a comma ending a
   full line are ignored;
 - a field followed directly by something that isn't a comma, an end of line or a blank is ended
@@ -49,7 +51,6 @@ _STRICT_LF = re.compile(rb"(?:[0-9]+,[0-9]+\n)*")
 _NUMBER = re.compile(rb"[+-]?(?:(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eEdD][+-]?[0-9]+)?|[iI][nN][fF]|[nN][aA][nN])")
 _BLANK = b" \t\b"
 _EOL = b"\r\n"
-_LEADING = re.compile(rb"[ \t\b\r\n]*")
 _LINE_END = re.compile(rb"\r+\n?|\n")
 _COLUMNS = 2
 
@@ -90,9 +91,10 @@ def _parse_strict(data: bytes) -> RawPulses:
 def _parse_textscan(data: bytes) -> RawPulses:
     rows: list[float] = []
     row: list[float] = []
-    # Blank lines first are skipped whatever their endings; the first line's ending sets the rest.
-    pos, end = _LEADING.match(data).end(), len(data)  # type: ignore[union-attr]
-    first = _LINE_END.search(data, pos)
+    # The mode: the first \r/\n run after any \n at the very start of the file (only \n are
+    # skipped there). Reading starts at byte 0 in that mode (Lens's R2-1, MATLAB R2025b).
+    pos, end = 0, len(data)
+    first = _LINE_END.search(data, len(data) - len(data.lstrip(b"\n")))
     eol = _EOL if first is None or first.group().endswith(b"\r\n") else first.group()[:1]
 
     def finish() -> None:

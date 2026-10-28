@@ -37,9 +37,11 @@ Measured on 36 probe files (all now in `tests/test_convert_raw.py`):
 **Line endings** (Lens's F1, then 10 more probes of mine): the first non-blank line's ending
 sets the mode. `\n` → only `\n` ends lines (a later `\r` is a stray character: the read stops);
 a run of `\r` then `\n` (`\r\n`, `\r\r\n`) → `\r\n`, `\r` and `\n` all end lines; `\r` not followed
-by `\n` → only `\r` (a later `\n` stops the read). `\n\r` counts as `\n`. Leading blank lines
-don't set it (`\n1,10\r\n2,20\r\n` reads 2 rows). All 449 of Lens's probes (`tests/data/convert/textscan/`)
-and my 10 are tests.
+by `\n` → only `\r` (a later `\n` stops the read). `\n\r` counts as `\n`. Only `\n` at the very start of the file are passed
+over to find it (`\n1,10\r\n2,20\r\n` is `\r\n` mode, 2 rows), and reading then starts at byte 0
+in that mode, so in `\r` mode a leading `\n` stops the read at once (Lens's round-2 R2-1:
+`\r0,10\r\n2,20\r\n` is `\r` mode, 1 row; ` \n0,10\r\n…` is `\n` mode). All 1,367 of Lens's
+MATLAB-judged probes (`tests/data/convert/textscan/`) and my 10 are tests.
 
 `raw._parse_textscan` implements exactly this; files of plain `\d+,\d+\r?\n` lines (every sample)
 take `_parse_strict` (all `\r\n` or all `\n`; a mixed file takes the general reader), which gives

@@ -64,6 +64,12 @@ TEXTSCAN = [
     (b"1,10\r \r\n2,20\n3,30\r", [(1, 10)]),
     (b"1,10\r\r2,20\n3,30\r", [(1, 10), (2, 20)]),
     (b"1,10\r\n\n2,20\r3,30\n", [(1, 10), (2, 20), (3, 30)]),
+    # Only \n at the very start are passed over to find the mode; reading starts at byte 0
+    # (Lens's R2-1).
+    (b"\r0,10\r\n2,20\r\n", [(0, 10)]),
+    (b"\n\r0,10\r\n", []),
+    (b" \n0,10\r\n2,20\r\n", [(0, 10)]),
+    (b"\n0,10\r\r3,30\n", []),
 ]
 
 
@@ -91,7 +97,7 @@ def probe_files() -> list[tuple[str, str]]:
 
 
 def test_the_cross_checkers_probes_are_there() -> None:
-    assert len(probe_files()) >= 449
+    assert len(probe_files()) >= 1367
 
 
 @pytest.mark.parametrize(("folder", "line"), probe_files(), ids=lambda value: value.split(" ")[0])

@@ -9,3 +9,6 @@ from this folder with the folder name substituted for `fuzzts/`).
 - `ts2/`, `ts3/`: the end-of-line probes behind finding F1 in `../handoff.md`.
 - `fuzzts/`: 400 random malformed inputs (half one corrupted line in a valid file, half token
   soup). The port's `parse_raw` matched 395; the 5 others are all F1.
+- `ts4/`, `fuzzeol/`, `fuzzlead/` (round 2): 18 targeted leading-blank-line probes, 500 random
+  mixed-line-ending inputs and 400 inputs with leading runs of `\r`, `\n`, spaces and tabs;
+  behind round-2 finding R2-1 in `../handoff.md`.

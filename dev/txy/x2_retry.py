@@ -32,7 +32,7 @@ from helab.convert.samples import load_manifest, read_verified, select_shots  # 
 NAN = math.nan
 
 
-def reconstruct_retry(pulses: RawPulses, profile: DetectorProfile, retry: str) -> np.ndarray:  # type: ignore[type-arg]
+def reconstruct_retry(pulses: RawPulses, profile: DetectorProfile, retry: str) -> np.ndarray:
     raw_channels, raw_times = pulses.channels.tolist(), pulses.times.tolist()
     n = len(raw_times)
     if n == 0 and profile.subtract_time_zero:

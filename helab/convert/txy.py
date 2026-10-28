@@ -6,10 +6,10 @@ with ``\\n``, the last included, on every platform. No rows give an empty file (
 MATLAB R2025b; ``dld_raw_to_txy_counts`` writes no file at all for an empty result, the 2023
 ``dld_raw_to_txy`` an empty one).
 
-``write_txy`` writes to a temporary name in the target's folder, flushes it to disk, gives it the
-mode a plain new file gets (``0o666`` less the umask, as MATLAB's ``fopen`` does; ``mkstemp``'s
-own is owner-only), then renames it into place and syncs the folder, so a reader never sees
-half a file and a crash leaves the old one or the new one.
+``write_txy`` writes to a new temporary name in the target's folder, created with mode ``0o666``
+so the kernel applies the umask, as for any plain new file (MATLAB's ``fopen`` too; ``mkstemp``'s
+own is owner-only), flushes it to disk, then renames it into place and syncs the folder, so a
+reader never sees half a file and a crash leaves the old one or the new one.
 
 Qt-free; standard library and NumPy only.
 """
@@ -18,7 +18,7 @@ from __future__ import annotations
 import math
 import os
 from pathlib import Path
-import tempfile
+import secrets
 
 import numpy as np
 import numpy.typing as npt
@@ -26,10 +26,7 @@ import numpy.typing as npt
 Hits = npt.NDArray[np.float64]
 COLUMNS = 3
 _NON_FINITE = {math.inf: "Inf", -math.inf: "-Inf"}
-# The process's umask, read once (setting it is the only way to read it).
-_UMASK = os.umask(0)
-os.umask(_UMASK)
-FILE_MODE = 0o666 & ~_UMASK
+_CREATE = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
 
 
 def format_value(value: float) -> str:
@@ -53,13 +50,20 @@ def write_txy(path: str | os.PathLike[str], hits: Hits) -> None:
 
 def write_atomic(path: str | os.PathLike[str], data: bytes) -> None:
     target = Path(path)
-    descriptor, temporary = tempfile.mkstemp(prefix=f".{target.name}.", suffix=".partial", dir=target.parent)
+    for _ in range(100):
+        temporary = target.with_name(f".{target.name}.{secrets.token_hex(8)}.partial")
+        try:
+            descriptor = os.open(temporary, _CREATE, 0o666)
+            break
+        except FileExistsError:
+            continue
+    else:
+        raise FileExistsError(f"No free temporary name beside {target}")
     try:
         with os.fdopen(descriptor, "wb") as file:
             file.write(data)
             file.flush()
             os.fsync(file.fileno())
-        os.chmod(temporary, FILE_MODE)
         os.replace(temporary, target)
     except BaseException:
         Path(temporary).unlink(missing_ok=True)

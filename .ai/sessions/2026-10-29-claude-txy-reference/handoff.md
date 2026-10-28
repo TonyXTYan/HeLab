@@ -9,11 +9,11 @@ x2 report: [x2-handling.md](x2-handling.md). The cross-checker's work is in `cro
 
 | Module | What |
 |---|---|
-| `raw` | `parse_raw`/`read_raw` → `RawPulses` (float64 channels and times in file order), as MATLAB's `textscan` reads them: a strict fast path for plain `\d+,\d+` files ending all lines alike (`\r\n` or `\n`), a general reader for everything else (truncated lines, blank lines, garbage, BOM, and the line-ending mode the first non-blank line sets; 46 behaviours of mine and Lens's 449 probes, all measured in MATLAB). A marked place for stage 4's done-writing checks. |
+| `raw` | `parse_raw`/`read_raw` → `RawPulses` (float64 channels and times in file order), as MATLAB's `textscan` reads them: a strict fast path for plain `\d+,\d+` files ending all lines alike (`\r\n` or `\n`), a general reader for everything else (truncated lines, blank lines, garbage, BOM, and the line-ending mode the first non-blank line sets; 46 behaviours of mine and Lens's 1,367 probes, all judged by MATLAB). A marked place for stage 4's done-writing checks. |
 | `profile` | `DetectorProfile` (frozen): bin time, channel map, time-zero and first-row quirks, dead time per corner, search depth and window, match sums and tolerances per axis, the x−y sum tolerance, x2 and y handling (`"matlab"`), T time sums per axis, v⊥ per axis, `position_formula` (2019 centred vs 2023 raw columns), `matlab_overflow_row`, `write_empty_txy`, plus `name`, `version`, `calibrated`, `notes`. Validated (finite numbers, non-negative sums and tolerances, distinct corners). JSON (`schema: 1`; unknown fields refused; a missing field takes its neutral default if it has one, else is refused; `_MIGRATIONS` for later schemas). `content_hash`: SHA-256 of the output-changing fields, leaving out descriptive ones, `UNUSED_BY_OUTPUT` (MCP and trigger channel) and fields at their neutral default (`NEUTRAL`), so a field added later doesn't change existing hashes. Built-ins `matlab-2019` (default) and `matlab-2023-lab-edit`. |
 | `reconstruct` | `reconstruct(pulses, profile, backend="reference")`, the registry (`register_backend`, `get_backend`, `available_backends`, `Backend.unavailable(profile)`, `releases_gil`), `NoRowsError`. |
 | `backends/reference` | The port: MATLAB's loops one for one, with MATLAB line numbers in comments; `MatchStats` for the x2 report. |
-| `txy` | `format_txy` (dlmwrite precision 8: `%.8g`, `NaN`/`Inf`/`-Inf`, `\n` after every row), `write_txy`/`write_atomic` (temporary name, fsync, mode `0o666 & ~umask`, `os.replace`, folder fsync). |
+| `txy` | `format_txy` (dlmwrite precision 8: `%.8g`, `NaN`/`Inf`/`-Inf`, `\n` after every row), `write_txy`/`write_atomic` (a new temporary name created with `os.open(…, 0o666)` so the kernel applies the umask, fsync, `os.replace`, folder fsync). |
 | `pipeline` | `convert_raw(bytes, profile, backend) -> bytes | None` (None: no file, as 2019 for no hits). |
 | `samples` | The manifest reader (SHA-256 checked on read), held-in/held-out positions. |
 | `check` | `check_txy(ours, reference)`: identical, or the first differing line (`(ended)`, `(no final newline)` marked) and both hit counts; `None` = no file. `ReferenceFault` (`cut`, `variant`, `empty`) and `prove_fault`, which checks a fault again from the raw file. |
@@ -26,8 +26,8 @@ list of exceptions, below), `matlab_variant.py` (MATLAB headless on sample copie
 simulation).
 
 Tests: `tests/test_convert_{raw,txy,profile,reference,harness}.py`; data `tests/data/convert/`:
-`cases/` (Lens's 39 cases with MATLAB's output) and `textscan/` (Lens's 449 reader probes with
-MATLAB's rows), `.gitattributes` `* -text`. `tests_sample_data/.gitattributes` `* -text` too
+`cases/` (Lens's 39 cases with MATLAB's output) and `textscan/` (Lens's 1,367 reader probes
+with MATLAB's rows), `.gitattributes` `* -text`. `tests_sample_data/.gitattributes` `* -text` too
 (Heron's blocker: Windows autocrlf turned its LF TXY into CRLF), with a guard test.
 
 ## Results
@@ -69,7 +69,7 @@ the empty ghost d5 (a 0-byte file). Lens ran MATLAB's 2023 variant on all 152 od
 gives 152 of 152.
 
 **Synthetic cases**: 39 × 2 variants identical to MATLAB, outputs and outcomes (file, no file,
-error). **Reader**: Lens's 449 textscan probes and my 46 cases read as MATLAB does; Lens's
+error). **Reader**: Lens's 1,367 textscan probes and my 50 cases read as MATLAB does; Lens's
 10,000-file fuzz against its oracle found no difference. **tests_sample_data**: all 17 raw/TXY
 pairs reproduced (tested).
 
@@ -122,7 +122,7 @@ second y pair occurs for ≤ 0.27 % of hits. The default is unchanged.
 | Item | Fix |
 |---|---|
 | Lens F1: line-ending mode | `raw._parse_textscan` takes the mode from the first non-blank line (`\r+\n` → all three, `\n` → only `\n`, `\r` → only `\r`); 10 more MATLAB probes of mine settled `\r\r\n` and `\n\r`. The fast path only takes uniformly ended files. Lens's probes are tests. |
-| Lens F2 + Heron 3: file mode, durability | `write_atomic`: fsync, `chmod(0o666 & ~umask)`, rename, folder fsync (as `cache_store`); tested. |
+| Lens F2 + Heron 3: file mode, durability | `write_atomic`: the temporary file is created with `os.open(…, O_EXCL, 0o666)`, so the kernel applies the umask (no process-wide umask read, Heron round 2); fsync, rename, folder fsync (as `cache_store`); tested. |
 | Lens F3: retry figure | `dev/txy/x2_retry.py` simulates whole shots; x2-handling.md corrected (+4,255, 0.29 %). |
 | Lens F4: rounding wording | `profile.py`, notes, handoff: the same doubles for integer times. |
 | Lens F5: checker display | `(ended)` and `(no final newline)` markers; an empty side has no lines; tested. |
@@ -132,6 +132,9 @@ second y pair occurs for ≤ 0.27 % of hits. The default is unchanged.
 | Heron 5: silent filter | `check_samples.py` prints checked of selected and exits 1 when none were checked. |
 | Heron 6: spawned workers | `reconstruct.py` says a backend needs its `_MODULES` line. |
 | Heron 7: proofs in the package | `ReferenceFault`/`prove_fault` in `helab/convert/check.py` with a synthetic test per kind; the list stays in `dev/txy/`. |
+| Heron round 2, blocker: `nul.txt` | Windows refuses the reserved name at checkout; both copies renamed `nul_padding.txt`; `tests/test_windows_paths.py` checks every tracked path. |
+| Heron round 2: umask | as F2 above. `mypy dev/txy --strict` is clean too. |
+| Lens R2-1: files starting with line endings | the mode is found after only the leading `\n` (not `\r` or blanks), and reading starts at byte 0 in it (Lens's fix); Lens's new probe sets `ts4`, `fuzzeol`, `fuzzlead` are tests: 1,367 MATLAB-judged inputs, all agree. |
 
 ## Proposed doc changes (for the Coordinator)
 
@@ -183,8 +186,8 @@ second y pair occurs for ≤ 0.27 % of hits. The default is unchanged.
   than 20,000 bins, or apply them before splitting), and one final stable sort by T over all
   pieces; test that a split conversion equals the whole one on the `phantom_*` and
   `dead_time_x1` cases.
-- **A~5** (stage 4, Heron 3): HeLab's TXY writes stay durable and readable by others: fsync, mode
-  `0o666 & ~umask`, rename, folder fsync (`txy.write_atomic`), which matters once they go beside
+- **A~5** (stage 4, Heron 3): HeLab's TXY writes stay durable and readable by others: created
+  with mode `0o666` (the umask applied), fsync, rename, folder fsync (`txy.write_atomic`), which matters once they go beside
   the raw files on a share (Q9.7).
 - **A~4** (stage 4): ship the built-in profiles as JSON files inside the package (Q6.11), each
   tested to load equal to the Python definitions.
