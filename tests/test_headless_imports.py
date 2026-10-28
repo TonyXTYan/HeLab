@@ -25,7 +25,7 @@ PURE = (
     *(f"helab.convert.{name}" for name in (
         "backends.cython", "backends.mlx_gpu", "backends.numba_backend", "backends.numpy_backend", "backends.reference",
         "backends.rust", "check", "fastio", "pipeline", "profile", "provenance", "raw", "reconstruct", "samples",
-        "split", "timing", "txy")),
+        "split", "timing", "txy", "user_profiles")),
     "helab.utils.ram_buffers",
     *(f"helab.analysis.{name}" for name in (
         "bec", "bec_readout", "bootstrap", "budget_core", "constant_layers", "correlations",

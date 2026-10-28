@@ -102,13 +102,16 @@ def main() -> None:
                        identity=str(request.get("identity") or ""), seen=request.get("seen"),
                        check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
                        listed_mtime=request.get("listed_mtime"), seen_names=request.get("seen_names"),
-                       identity_root=request.get("identity_root"), recent=request.get("recent"))
+                       identity_root=request.get("identity_root"), recent=request.get("recent"),
+                       txy=request.get("txy"), memory_origins=request.get("memory_origins"),
+                       helab_since=request.get("helab_since"))
         elif operation == "load" and request.get("save_memory") and request.get("held_dir"):
             save_held(request["path"], emit, request.get("cache"), request.get("held") or [],
                       request.get("held_problematic") or [], request["held_dir"],
                       identity=str(request.get("identity") or ""), identity_root=request.get("identity_root"),
                       no_cache=bool(request.get("no_cache")), recent=request.get("recent"),
-                      output=request.get("output"), raw_times=request.get("held_raw_times"))
+                      output=request.get("output"), raw_times=request.get("held_raw_times"),
+                      txy=request.get("txy"), held_txy=request.get("held_txy"))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),
@@ -117,7 +120,8 @@ def main() -> None:
                  full_check=bool(request.get("full_check")), cache_base=bool(request.get("cache_base")),
                  check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
                  allow_missing=bool(request.get("allow_missing")), memory_check=request.get("memory_check"),
-                 memory_raw_times=request.get("memory_raw_times"))
+                 memory_raw_times=request.get("memory_raw_times"), txy=request.get("txy"),
+                 memory_origins=request.get("memory_origins"))
         elif operation == "convert":
             convert_folder(request["path"], request)
         elif operation == "cached":

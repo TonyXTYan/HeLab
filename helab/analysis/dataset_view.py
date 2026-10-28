@@ -10,8 +10,12 @@ array and the buffers behind it are made read-only too (``read_only``), so NumPy
 both writes and ``setflags(write=True)``. This guards against accidents, not a security
 boundary: scripts are trusted lab code, and ``.base`` still reaches the shared array.
 
-Identity: the source folder, its data-root key when one is known, and the loaded
-dataset's signature (the helper's hash of the TXY fingerprints). ``revision`` starts at 1
+Identity: the source folder, its data-root key when one is known, the loaded
+dataset's signature (the helper's hash of the folder's MATLAB TXY fingerprints) and which TXY
+it is made of (``source``, Q6.6: "" for the default, MATLAB's with HeLab's filling the shots
+MATLAB lacks; ``txy_sources``). Each shot read from HeLab's TXY has its ``origins`` entry
+(``helab:<profile hash>``), and results record those of the shots they cover, so data of one
+source is never taken for another's. ``revision`` starts at 1
 for a loaded dataset and goes up by one each time shots are added to it
 (``with_shots``, for Live); results are bound to identity *and* revision (``ViewKey``).
 ``revise`` makes Live's next dataset of the folder the next revision of its view.
@@ -38,6 +42,7 @@ from urllib.parse import quote
 import numpy as np
 import numpy.typing as npt
 
+from helab.utils import txy_sources
 from helab.utils.file_kinds import raw_times as parse_raw_times
 
 if TYPE_CHECKING:
@@ -62,6 +67,8 @@ class ViewIdentity:
     source_path: str
     root_key: str  # "" when no data root is known
     signature: str  # "" when the dataset has none (e.g. a resumed partial load)
+    # Which TXY (``txy_sources.identity_source``): "" for the default, else the source's name.
+    source: str = ""
 
     @property
     def name(self) -> str:
@@ -104,6 +111,15 @@ class DatasetView:
     dataset_signature: str = ""
     # shot number → its raw d<N>.txt file's mtime (ns), where the helper found one.
     raw_times: Mapping[int, int] = field(default_factory=lambda: MappingProxyType({}))
+    # shot number → its origin, for shots read from HeLab's TXY (``helab:<profile hash>``); MATLAB's aren't listed.
+    origins: Mapping[int, str] = field(default_factory=lambda: MappingProxyType({}))
+    # profile hash → {name, version, calibrated} of the HeLab TXY in it.
+    txy_profiles: Mapping[str, Mapping[str, Any]] = field(default_factory=lambda: MappingProxyType({}))
+
+    def txy_text(self) -> str:
+        """Which TXY this revision is made of, for a plot's record (``txy_sources.describe``)."""
+        source = self.identity.source or txy_sources.DEFAULT_SOURCE
+        return txy_sources.describe(source, self.origins, self.txy_profiles, len(self.shots))
 
     @property
     def key(self) -> ViewKey:
@@ -148,20 +164,26 @@ class DatasetView:
     def with_shots(self, added: Mapping[int, Events],
                    fingerprints: Mapping[int, Fingerprint] | None = None, *,
                    provenance: Provenance | None = None, signature: str = "",
-                   raw_times: Mapping[int, int] | None = None) -> DatasetView:
+                   raw_times: Mapping[int, int] | None = None, origins: Mapping[int, str] | None = None,
+                   txy_profiles: Mapping[str, Mapping[str, Any]] | None = None) -> DatasetView:
         """The next revision: this view plus ``added`` (new or replaced shots), same identity.
         The added arrays become shared, read-only data, as ``build_view``'s are. ``provenance``
         and ``signature``: the newer load's (default: this view's provenance, no signature).
         ``raw_times``: shot times known now; this view's are kept for shots not in ``added`` (a
-        replaced shot has only the time given for it)."""
+        replaced shot has only the time given for it). ``origins``: the added shots' that came from
+        HeLab's TXY (an added shot not in it is MATLAB's)."""
         shots = {**self.shots, **{int(shot): read_only(array) for shot, array in added.items()}}
+        kinds = {**{shot: origin for shot, origin in self.origins.items() if shot not in added},
+                 **{int(shot): origin for shot, origin in (origins or {}).items() if int(shot) in added}}
         prints = {**self.fingerprints, **(fingerprints or {})}
         times = {**{shot: value for shot, value in self.raw_times.items() if shot not in added},
                  **(raw_times or {})}
         return DatasetView(self.identity, self.revision + 1, _frozen(dict(sorted(shots.items()))),
                            MappingProxyType(dict(prints)), provenance or self.provenance, self.data_root,
                            tuple(sorted(int(shot) for shot in added)), dataset_signature=signature,
-                           raw_times=MappingProxyType({shot: times[shot] for shot in shots if shot in times}))
+                           raw_times=MappingProxyType({shot: times[shot] for shot in shots if shot in times}),
+                           origins=MappingProxyType({shot: kinds[shot] for shot in shots if shot in kinds}),
+                           txy_profiles=MappingProxyType({**self.txy_profiles, **(txy_profiles or {})}))
 
 
 def read_only(array: Events) -> Events:
@@ -243,11 +265,15 @@ def build_view(dataset: Dataset, root: tuple[str, str, str] | None = None) -> Da
         folder, identifier, label = root
         data_root = DataRootRef(identifier, label, folder, root_key(folder, identifier, dataset.path))
     shots = {int(shot): read_only(array) for shot, array in sorted(dataset.data.items())}
-    identity = ViewIdentity(dataset.path, data_root.key if data_root else "", dataset.signature)
+    identity = ViewIdentity(dataset.path, data_root.key if data_root else "", dataset.signature,
+                            txy_sources.identity_source(txy_sources.source_of(metadata)))
     times = parse_raw_times(metadata.get("raw_times"))
+    origins = txy_sources.origins_of(metadata)
     return DatasetView(identity, 1, _frozen(shots), MappingProxyType(fingerprints_of(metadata)),
                        _provenance(metadata), data_root,
-                       raw_times=MappingProxyType({shot: times[shot] for shot in shots if shot in times}))
+                       raw_times=MappingProxyType({shot: times[shot] for shot in shots if shot in times}),
+                       origins=MappingProxyType({shot: origins[shot] for shot in shots if shot in origins}),
+                       txy_profiles=MappingProxyType(txy_sources.profiles_of(metadata)))
 
 
 # One view per Dataset object, so repeated runs on the same shown data share one input.
@@ -272,17 +298,22 @@ def revise(view: DatasetView, dataset: Dataset, root: tuple[str, str, str] | Non
     if known is not None:
         return known
     data = {int(shot): array for shot, array in dataset.data.items()}
-    if dataset.path != view.identity.source_path or not set(view.shots) <= set(data):
+    source = txy_sources.identity_source(txy_sources.source_of(dataset.metadata))
+    if dataset.path != view.identity.source_path or not set(view.shots) <= set(data) or source != view.identity.source:
         return view_of(dataset, root)
     prints = fingerprints_of(dataset.metadata)
+    origins = txy_sources.origins_of(dataset.metadata)
+    # A shot now from the other kind of TXY (or another profile's) is replaced too.
     added = {shot: array for shot, array in data.items()
-             if shot not in view.shots or prints.get(shot, view.fingerprints.get(shot)) != view.fingerprints.get(shot)}
+             if shot not in view.shots or prints.get(shot, view.fingerprints.get(shot)) != view.fingerprints.get(shot)
+             or origins.get(shot, "") != view.origins.get(shot, "")}
     times = parse_raw_times(dataset.metadata.get("raw_times"))
     # A check that only found times for shots already shown (an older cache's) is a revision too,
     # so plots following Live stop showing them as fallbacks.
     filled = any(times.get(shot) != view.raw_times.get(shot) for shot in view.shots if shot in times)
     revised = view if not added and not filled else view.with_shots(
         added, {shot: prints[shot] for shot in added if shot in prints},
-        provenance=_provenance(dict(dataset.metadata)), signature=dataset.signature, raw_times=times)
+        provenance=_provenance(dict(dataset.metadata)), signature=dataset.signature, raw_times=times,
+        origins=origins, txy_profiles=txy_sources.profiles_of(dataset.metadata))
     _views[dataset] = revised
     return revised

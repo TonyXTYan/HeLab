@@ -19,10 +19,14 @@ from pytestqt.qtbot import QtBot
 from helab.convert.profile import MATLAB_2019, MATLAB_2023_LAB_EDIT
 from helab.io_ops import convert
 from helab.io_ops.convert import convert_folder
+from helab.io_ops.fingerprints import DEFAULT_CHECK_LEVEL
+from helab.io_ops.live import live_check
 from helab.utils import events, folder_cache, io_service
 from helab.utils.folder_cache import FolderCache, SharedJob
 from helab.utils.io_service import IORequest, IOService
-from helab.utils.settings_defaults import CONVERT_LOW_HITS_SETTING, LIVE_LAUNCH_FOLDERS_SETTING
+from helab.utils.settings_defaults import (
+    CONVERT_BACKEND_SETTING, CONVERT_LOW_HITS_SETTING, LIVE_LAUNCH_FOLDERS_SETTING,
+)
 from helab.utils.settings_store import app_settings
 from helab.views import live_launch
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
@@ -85,6 +89,31 @@ def run_convert(cache: FolderCache, path: str) -> list[dict[str, Any]]:
     return deliver(cache, request, sent)
 
 
+def check(cache: FolderCache, path: str, tmp_path: Path) -> list[dict[str, Any]]:
+    """``test_live.replay`` for the queued Live check, with every field ``io_helper`` passes (HeLab's
+    TXY among them: ``txy``, ``memory_origins``, ``helab_since``); other requests as ``replay``."""
+    request = producer(cache, path, "load")
+    payload = request.payload
+    if not payload.get("live"):
+        return replay(cache, path, tmp_path)
+    output = tmp_path / f"artifacts-{time.monotonic_ns()}"
+    output.mkdir()
+    sent: list[Any] = []
+    try:
+        live_check(path, str(output), sent.append, memory=payload.get("memory"), known=payload.get("known"),
+                   since=payload.get("live_since"), identity=str(payload.get("identity") or ""),
+                   seen=payload.get("seen"), check_level=str(payload.get("check_level") or DEFAULT_CHECK_LEVEL),
+                   listed_mtime=payload.get("listed_mtime"), seen_names=payload.get("seen_names"),
+                   identity_root=payload.get("identity_root"), recent=payload.get("recent"),
+                   txy=payload.get("txy"), memory_origins=payload.get("memory_origins"),
+                   helab_since=payload.get("helab_since"))
+        sent.append({"kind": "done"})
+    except Exception as exc:
+        sent.append({"kind": "error", "message": str(exc)})
+    cache.service.pending.remove(request)
+    return deliver(cache, request, sent)
+
+
 def of(sent: list[dict[str, Any]], kind: str) -> list[dict[str, Any]]:
     return [event for event in sent if event["kind"] == kind]
 
@@ -107,7 +136,7 @@ def watching_raw_folder(qtbot: QtBot, tmp_path: Path, *, auto_convert: bool = Tr
     if auto_convert:
         explorer.live_control.set_auto_convert(True)
     next_request(qtbot, explorer, path)
-    replay(cache, path, tmp_path)
+    check(cache, path, tmp_path)
     return explorer, path
 
 
@@ -119,11 +148,11 @@ def cycle(qtbot: QtBot, explorer: FolderExplorer, path: str, tmp_path: Path) -> 
         qtbot.waitUntil(lambda: ("convert", path) in cache.jobs or job_of(cache, path) is not None)
         if ("convert", path) in cache.jobs:
             break
-        replay(cache, path, tmp_path)
+        check(cache, path, tmp_path)
     request = producer(cache, path, "convert")
     sent = run_convert(cache, path)
     next_request(qtbot, explorer, path)
-    replay(cache, path, tmp_path)
+    check(cache, path, tmp_path)
     return request, sent
 
 
@@ -181,14 +210,14 @@ def test_a_raw_file_arriving_during_live_is_converted_once_written_not_before(
     request, sent = cycle(qtbot, explorer, path, tmp_path)
     assert [event["shot"] for event in of(sent, "shot_converted")] == [2]
     text, tooltip = line(explorer)
-    assert text.endswith("auto-convert 2 converted (last: shot 2)"), text
+    assert "auto-convert 2 converted (last: shot 2)" in text and "waiting" not in text, text
     explorer.stop_live(save=False)
     explorer.close_cleanup()
 
 
 def test_a_converted_shot_asks_for_lives_next_check(qtbot: QtBot, service: IOService, tmp_path: Path) -> None:
-    """After a conversion writes a shot, Live's next check starts at once (it reads the shot, once HeLab
-    loads its own TXY): the check queued with the conversion runs, then the next one without the wait."""
+    """After a conversion writes a shot, Live's next check starts at once (it reads HeLab's TXY): the
+    check queued with the conversion runs, then the next one without the wait."""
     explorer, path = watching_raw_folder(qtbot, tmp_path)
     cache = explorer.model.cache
     session = explorer.live
@@ -201,7 +230,7 @@ def test_a_converted_shot_asks_for_lives_next_check(qtbot: QtBot, service: IOSer
     assert [event["shot"] for event in of(run_convert(cache, path), "shot_converted")] == [1]
     assert session.check_soon
     cache.live_interval = 30.0  # Long: only a requested check comes soon.
-    replay(cache, path, tmp_path)
+    check(cache, path, tmp_path)
     qtbot.waitUntil(lambda: session.request == "check", timeout=2_000)
     assert not session.check_soon and ("convert", path) not in cache.jobs  # (Conversions keep their interval.)
     explorer.stop_live(save=False)
@@ -220,7 +249,7 @@ def test_turning_auto_convert_off_stops_new_conversions(qtbot: QtBot, service: I
     write_raw(Path(path), 1, raw_bytes(10_000))
     for _ in range(3):
         next_request(qtbot, explorer, path)
-        replay(cache, path, tmp_path)
+        check(cache, path, tmp_path)
         assert ("convert", path) not in cache.jobs
     text, _ = line(explorer)
     assert "auto-convert" not in text
@@ -289,7 +318,7 @@ def test_a_launch_tabs_note_goes_once_live_starts_there(qtbot: QtBot, service: I
     explorer.close_cleanup()
 
 
-def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService) -> None:
     cache = folder_cache.get_folder_cache(service)
     path = FolderCache.key("/data/run")
     cache._remember_convert(
@@ -302,11 +331,14 @@ def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService, monk
     assert payload["done"] == [["d1.txt", 10, 1]] and payload["kept"] == [["d4.txt", 9, 4]]
     assert payload["profile"] == MATLAB_2019.to_dict() and payload["backend"] == "numpy"
     cache.cancel("t")
-    # Another profile: its current shots aren't this one's, so they are checked again.
-    monkeypatch.setattr(folder_cache, "convert_choice", lambda: (MATLAB_2023_LAB_EDIT, "numpy"))
+    # Another profile and backend (Settings → TXY converter's Save): the profile's current shots
+    # aren't this one's, so they are checked again.
+    cache.set_convert_profile(MATLAB_2023_LAB_EDIT)
+    app_settings().setValue(CONVERT_BACKEND_SETTING, "reference")
     assert cache.convert("t", path)
     payload = next(r for r in service.pending if r.operation == "convert").payload
     assert payload["profile"] == MATLAB_2023_LAB_EDIT.to_dict() and "done" not in payload and "kept" not in payload
+    assert payload["backend"] == "reference"
     assert payload["seen"] and payload["skip"]
     cache.cancel("t")
 
@@ -351,7 +383,7 @@ def test_a_conversion_refused_offline_stops_auto_convert_and_says_so(
     explorer.resume_live()
     assert not session.convert.error
     if session.request == "check":
-        replay(cache, path, tmp_path)  # (Its next tick asks for both.)
+        check(cache, path, tmp_path)  # (Its next tick asks for both.)
     qtbot.waitUntil(lambda: ("convert", path) in cache.jobs)
     explorer.stop_live(save=False)
     explorer.close_cleanup()
@@ -369,7 +401,7 @@ def test_a_conversion_error_stops_auto_convert_until_retry(qtbot: QtBot, service
     assert session.convert.error == "Backend numpy unavailable" and not session.error
     for _ in range(2):  # Live goes on checking; no conversion meanwhile.
         next_request(qtbot, explorer, path)
-        replay(cache, path, tmp_path)
+        check(cache, path, tmp_path)
         assert ("convert", path) not in cache.jobs
     explorer._retry()
     qtbot.waitUntil(lambda: ("convert", path) in cache.jobs)
@@ -407,8 +439,6 @@ def test_a_low_count_shot_notifies_once(qtbot: QtBot, service: IOService, tmp_pa
     explorer.close_cleanup()
 
 
-@pytest.mark.xfail(strict=True, reason="needs HeLab's TXY read by Live's checks (the UI floor's Q6.6); "
-                                       "remove this mark once both floors land")
 def test_a_converted_shot_reaches_the_live_data(qtbot: QtBot, service: IOService, tmp_path: Path) -> None:
     """The seam between the floors: a raw file converted while Live runs joins the tab's data."""
     explorer, path = watching_raw_folder(qtbot, tmp_path)
