@@ -979,11 +979,12 @@ class ConvertSummaryEvent(TypedDict):
 
 
 class PartialRemovedEvent(TypedDict):
-    """A beside conversion removed a leftover temporary TXY of its own (``.d_txy_helab_<N>.txy.<16
-    hex>.partial``, a regular file over ``io_ops.convert.PARTIAL_MAX_AGE`` old: a write a killed
-    helper left) from the source folder ``path``."""
+    """A conversion of the source folder ``path`` removed a leftover temporary TXY of its own
+    (``.d_txy_helab_<N>.txy.<16 hex>.partial``, a regular file over ``io_ops.convert.PARTIAL_MAX_AGE``
+    old: a write a killed helper left) from ``folder``: ``path`` itself (beside) or HeLab's folder."""
     kind: Literal["partial_removed"]
     path: str
+    folder: str
     file: str
     size: int
     age: float  # seconds since it was last modified

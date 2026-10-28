@@ -479,10 +479,9 @@ class PresetFolder(QObject):
         if explorer.selected_path_globally != self.folder:
             unlisted = explorer.model.nodes.get(self.folder)
             if explorer.model.cache.offline and (unlisted is None or unlisted.report is None):
-                # Working offline, the tab can't open a folder it never listed online (C-29): its
-                # selection stays above it, which isn't another choice of folder.
-                self._notice(f"Preset “{self.name}”: {folder_name(self.folder)} can't be opened while working "
-                             "offline (not listed while online): its plots wait for its data")
+                # Working offline, the tab can't open a folder it never listed online (C-29): a
+                # selection that moved above it (the tab's startup default) isn't another choice.
+                self._unlisted_offline()
             elif self.live:
                 self._notice(f"Preset “{self.name}”: Live not started: another folder was selected")
             self.finish()
@@ -505,6 +504,11 @@ class PresetFolder(QObject):
                     return  # (A load answered at once, and this ran again meanwhile.)
             elif listed:
                 self.load_asked = True  # No TXY files: nothing to load (Live may start before the first shot).
+            elif explorer.model.cache.offline and node is not None and node.offline_unlisted:
+                # Its offline listing answered: never listed online, and nothing cached to show.
+                self._unlisted_offline()
+                self.finish()
+                return
             else:
                 return  # Until the tab's listing answers.
         if self._busy():
@@ -519,6 +523,10 @@ class PresetFolder(QObject):
             why = explorer.load_error.removesuffix(" — Retry") if explorer.load_error else reason
             self._notice(f"Preset “{self.name}”: Live not started: {why or 'it could not start'}")
         self.finish()
+
+    def _unlisted_offline(self) -> None:
+        self._notice(f"Preset “{self.name}”: {folder_name(self.folder)} can't be opened while working "
+                     "offline (not listed while online): its plots wait for its data")
 
     def _shown(self) -> bool:
         explorer = self.explorer

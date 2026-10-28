@@ -66,7 +66,11 @@ from helab.io_ops.infra import Emit, Heartbeat, Pause, _entry_stat, _guard, _sca
 from helab.utils import file_kinds
 
 if TYPE_CHECKING:
-    from multiprocessing.connection import Connection
+    # A pipe's end: Windows' Pipe() gives PipeConnection, the others Connection.
+    if sys.platform == "win32":
+        from multiprocessing.connection import PipeConnection as Connection
+    else:
+        from multiprocessing.connection import Connection
 
     from helab.convert.pipeline import Converted
     from helab.convert.profile import DetectorProfile
@@ -96,7 +100,7 @@ DEFAULT_WORKERS = 1 if getattr(sys, "frozen", False) else max(1, min(4, (os.cpu_
 class ConvertRequest(TypedDict):
     """The ``convert`` operation's payload (``IOService.submit(..., "convert", payload)``).
 
-    ``profile``: ``DetectorProfile.to_dict()`` (a built-in's or the user's). ``output``: the
+    ``profile``: ``DetectorProfile.to_dict()`` (a built-in's or the user's). ``destination``: the
     setting (``cache``, default, or ``temp``). ``beside``: the app believes the folder's
     ``write_beside`` flag is on (checked again in the store here); ``beside_confirmed``: the user
     asked for beside for this run (the command line only). ``temps``: HeLab's temp folder.
@@ -112,7 +116,8 @@ class ConvertRequest(TypedDict):
     temps: str
     seen: list[list[Any]] | None
     backend: NotRequired[str]
-    output: NotRequired[str]
+    # ("destination", not "output": IOService gives every request its private folder as "output".)
+    destination: NotRequired[str]
     beside: NotRequired[bool]
     beside_confirmed: NotRequired[bool]
     cache: NotRequired[dict[str, Any]]
@@ -208,9 +213,9 @@ def _places(path: str, request: ConvertRequest) -> _Places:
     from helab.utils.cache_paths import UnresolvedRemotePath
     from helab.utils.cache_store import StoreError
     from helab.utils.data_roots import NoDataRoot
-    output = str(request.get("output") or "cache")
+    output = str(request.get("destination") or "cache")
     if output not in OUTPUTS:
-        raise ValueError(f"Unknown converter output {output!r} (have {', '.join(OUTPUTS)})")
+        raise ValueError(f"Unknown converter destination {output!r} (have {', '.join(OUTPUTS)})")
     cache_options = request.get("cache") or {}
     key, problem, flag, flag_problem = "", "", False, ""
     if cache_options:
@@ -501,6 +506,7 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     if todo:
         os.makedirs(places["folder"], exist_ok=True)
         _write_folder_record(places["folder"], path, places["key"])
+        _remove_own_partials(path, places["folder"], send)
 
     converted = 0
     handled = 0
@@ -654,7 +660,29 @@ def _remove_partial(path: str, entry: os.DirEntry[str], send: Emit) -> None:
         _traced_error("unlink", entry.path, "convert: leftover", exc)
         return
     _trace("unlink", entry.path, "convert: leftover", age=round(age))
-    send({"kind": "partial_removed", "path": path, "file": entry.name, "size": info.st_size, "age": age})
+    send({"kind": "partial_removed", "path": path, "folder": path, "file": entry.name, "size": info.st_size,
+          "age": age})
+
+
+def _remove_own_partials(path: str, folder: str, send: Emit) -> None:
+    """The same in HeLab's own folder for ``path`` (a helper killed mid-write there leaves one too;
+    on Windows that is likely, the flush to disk taking most of a write)."""
+    import stat
+    try:
+        entries = [entry for entry in os.scandir(folder) if partial().match(entry.name)]
+    except OSError:
+        return
+    for entry in entries:
+        try:
+            info = entry.stat(follow_symlinks=False)
+            age = time.time() - info.st_mtime
+            if not stat.S_ISREG(info.st_mode) or age < PARTIAL_MAX_AGE:
+                continue
+            os.unlink(entry.path)
+        except OSError:
+            continue
+        send({"kind": "partial_removed", "path": path, "folder": folder, "file": entry.name, "size": info.st_size,
+              "age": age})
 
 
 def still_computing(deadlines: Iterable[float], now: float) -> bool:

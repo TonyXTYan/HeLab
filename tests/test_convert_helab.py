@@ -15,6 +15,7 @@ import time
 from typing import Any, Iterator
 
 import pytest
+from pytestqt.qtbot import QtBot
 
 from helab.convert import provenance, raw, txy
 from helab.convert.pipeline import APP_BACKEND, convert_raw, convert_shot
@@ -60,7 +61,7 @@ def request_for(path: Path, tmp_path: Path, private_store: str | None = None, **
     # (seen None: one check, which with no settle age in tests converts at once; the two-check
     # rule has its own tests.)
     request: ConvertRequest = {"path": str(path), "profile": MATLAB_2019.to_dict(), "temps": str(tmp_path / "temps"),
-                               "seen": None, "output": "temp", "workers": 1}
+                               "seen": None, "destination": "temp", "workers": 1}
     if private_store is not None:
         request["cache"] = options(private_store)
     request.update(fields)  # type: ignore[typeddict-item]
@@ -323,7 +324,7 @@ def test_one_large_shot_is_cut_into_pieces_and_stays_byte_identical(source: Path
 
 def test_cache_output_is_keyed_by_the_data_root(source: Path, tmp_path: Path, private_store: str) -> None:
     write_raw(source, 1, raw_bytes(10_000))
-    events = run(source, request_for(source, tmp_path, private_store, output="cache"))
+    events = run(source, request_for(source, tmp_path, private_store, destination="cache"))
     [plan] = of(events, "convert_plan")
     assert plan["output"] == "cache" and plan["fallback"] == ""
     assert plan["key"].startswith("root://") and plan["key"].endswith("/source")
@@ -335,7 +336,7 @@ def test_cache_output_is_keyed_by_the_data_root(source: Path, tmp_path: Path, pr
 def test_a_folder_without_a_data_root_goes_to_the_temp_folder(source: Path, tmp_path: Path,
                                                               private_store: str) -> None:
     write_raw(source, 1, raw_bytes(10_000))
-    events = run(source, request_for(source, tmp_path, private_store, output="cache"))
+    events = run(source, request_for(source, tmp_path, private_store, destination="cache"))
     [plan] = of(events, "convert_plan")
     assert plan["output"] == "temp" and plan["fallback"] == "no .helab-root found here or above"
     assert plan["folder"].startswith(str(tmp_path / "temps")) and plan["key"] == ""
@@ -393,7 +394,7 @@ def flag_beside(private_store: str, source: Path, on: bool = True) -> None:
 
 def test_beside_needs_the_folders_flag(source: Path, tmp_path: Path, private_store: str) -> None:
     write_raw(source, 1, raw_bytes(10_000))
-    events = run(source, request_for(source, tmp_path, private_store, output="cache", beside=True))
+    events = run(source, request_for(source, tmp_path, private_store, destination="cache", beside=True))
     [plan] = of(events, "convert_plan")
     assert plan["output"] == "cache" and plan["fallback"] == "writing beside the raw files is off for this folder"
     assert sorted(path.name for path in source.iterdir()) == ["d1.txt"]
@@ -409,7 +410,7 @@ def test_beside_writes_only_its_txy_into_the_source_folder(source: Path, tmp_pat
     before = {path.name: path.read_bytes() for path in source.iterdir()}
     flag_beside(private_store, source)
     with Writes() as writes:
-        events = run(source, request_for(source, tmp_path, private_store, output="cache", beside=True))
+        events = run(source, request_for(source, tmp_path, private_store, destination="cache", beside=True))
     [plan] = of(events, "convert_plan")
     assert plan["output"] == "beside" and plan["txy_folder"] == str(source) and plan["folder"] != str(source)
     assert sorted(event["shot"] for event in of(events, "shot_converted")) == [1, 2]
@@ -428,7 +429,7 @@ def test_beside_writes_only_its_txy_into_the_source_folder(source: Path, tmp_pat
     assert Path(plan["folder"], "d_txy_helab_1.json").is_file()
     # The second time: current, nothing written there at all.
     with Writes() as writes:
-        again = run(source, request_for(source, tmp_path, private_store, output="cache", beside=True))
+        again = run(source, request_for(source, tmp_path, private_store, destination="cache", beside=True))
     assert of(again, "shot_converted") == [] and writes.inside(source) == []
 
 
@@ -489,7 +490,7 @@ def helper(request: dict[str, Any], *, timeout: float = 60) -> list[dict[str, An
 def test_the_helper_dispatches_convert_and_refuses_it_offline(source: Path, tmp_path: Path,
                                                               private_store: str) -> None:
     write_raw(source, 1, raw_bytes(10_000))
-    request = {"operation": "convert", **request_for(source, tmp_path, private_store, output="cache")}
+    request = {"operation": "convert", **request_for(source, tmp_path, private_store, destination="cache")}
     events = helper(request)
     assert [event["kind"] for event in events][-2:] == ["convert_summary", "done"]
     assert len(of(events, "shot_converted")) == 1
@@ -500,13 +501,20 @@ def test_the_helper_dispatches_convert_and_refuses_it_offline(source: Path, tmp_
     assert "convert" not in IOService.LOCAL_OPERATIONS and "convert" in IOService.LABELS
 
 
+# A path the source guard refuses on each platform (it doesn't exist); its note names it as sent.
+MOUNTED = "\\\\no-such-server\\share\\run_1" if sys.platform == "win32" else "/Volumes/helab-no-such-share/run_1"
+
+
 def test_the_helper_refuses_a_source_path_that_could_be_real_data(tmp_path: Path) -> None:
-    events = helper({"operation": "convert", **request_for(Path("/Volumes/dld_output/run"), tmp_path)})
-    assert events[-1]["kind"] == "error"
     notes = Path(os.environ["HELAB_TEST_SOURCE_GUARD"])
-    assert any("/Volumes/dld_output/run" in note.read_text() for note in notes.glob("*.txt"))
-    for note in notes.glob("*.txt"):
-        note.unlink()
+    try:
+        events = helper({"operation": "convert", **request_for(Path(MOUNTED), tmp_path)})
+        assert events[-1]["kind"] == "error"
+        # (The note holds the path as the request had it: str(Path(...)), backslashes on Windows.)
+        assert any(str(Path(MOUNTED)) in note.read_text() for note in notes.glob("*.txt"))
+    finally:
+        for note in notes.glob("*.txt"):
+            note.unlink()
 
 
 def test_a_killed_helpers_workers_exit(source: Path, tmp_path: Path) -> None:
@@ -533,8 +541,13 @@ def test_a_killed_helpers_workers_exit(source: Path, tmp_path: Path) -> None:
     folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
     names = sorted(path.name for path in folder.iterdir())
     time.sleep(0.5)
-    assert sorted(path.name for path in folder.iterdir()) == names
-    assert not any(name.endswith(".partial") for name in names)
+    assert sorted(path.name for path in folder.iterdir()) == names  # Nothing written after the kill.
+    # The kill may land in a write: its temporary file stays (on Windows, where the flush to disk
+    # takes most of each write, it usually does; a later conversion removes it once old), but no
+    # TXY under its own name is ever half written.
+    expected = convert_raw(raw_bytes(*range(10_000, 10_000 + 40_000 * 20_000, 40_000)), MATLAB_2019, "reference")
+    assert all(path.read_bytes() == expected for path in folder.glob("d_txy_helab_*.txy"))
+    assert all(convert.partial().match(name) for name in names if name.endswith(".partial"))
 
 
 def test_the_numba_backends_cache_folder_is_under_the_cache(source: Path, tmp_path: Path, private_store: str,
@@ -634,7 +647,7 @@ def test_convert_once_from_the_command_line(source: Path, tmp_path: Path) -> Non
     done = cli("--watch", str(source), "--once", "--output", "beside")
     assert done.returncode == 0, done.stderr
     assert (source / "d_txy_helab_1.txy").read_bytes() == convert_raw(data, MATLAB_2019, "reference")
-    assert "d1.txt → d_txy_helab_1.txy: 2 hits" in done.stderr
+    assert "d1.txt -> d_txy_helab_1.txy: 2 hits" in done.stderr
     assert "d2.txt can't be converted" in done.stderr
     assert cli("--watch", str(tmp_path / "missing"), "--once").returncode == 2
     assert cli("--watch", str(source), "--once", "--profile", "no-such-profile").returncode == 2
@@ -870,7 +883,7 @@ def test_a_hung_backend_stops_sending_heartbeats(source: Path, tmp_path: Path, m
 def test_beside_without_a_data_root_says_where_the_records_go(source: Path, tmp_path: Path,
                                                               private_store: str) -> None:
     write_raw(source, 1, raw_bytes(10_000))
-    events = run(source, request_for(source, tmp_path, private_store, output="cache", beside=True,
+    events = run(source, request_for(source, tmp_path, private_store, destination="cache", beside=True,
                                      beside_confirmed=True))
     [plan] = of(events, "convert_plan")
     assert plan["output"] == "beside"
@@ -883,7 +896,7 @@ def test_a_flag_that_cant_be_read_is_said_so(source: Path, tmp_path: Path, priva
     monkeypatch.setattr(CacheStore, "read_convert_prefs",
                         lambda self, paths: {path: Read("error", None, "database is locked") for path in paths})
     write_raw(source, 1, raw_bytes(10_000))
-    events = run(source, request_for(source, tmp_path, private_store, output="cache", beside=True))
+    events = run(source, request_for(source, tmp_path, private_store, destination="cache", beside=True))
     [plan] = of(events, "convert_plan")
     assert plan["output"] == "cache" and plan["fallback"] == "the folder's flag couldn't be read (database is locked)"
 
@@ -941,3 +954,45 @@ def test_a_lost_beside_race_leaves_the_other_conversions_record(source: Path, tm
     monkeypatch.setattr(txy, "write_atomic", raced_txy_only)
     run(source, request)
     assert not record.exists()
+
+
+
+def test_a_conversion_through_the_apps_io_service(qtbot: QtBot, source: Path, tmp_path: Path,
+                                                   private_store: str) -> None:
+    """The app's path end to end: ``IOService.submit`` starts a real helper, which gets the payload
+    plus the service's own fields (its private folder is the request's ``output``, so the converter's
+    is ``destination``)."""
+    from helab.utils.io_service import IOService
+    data = raw_bytes(10_000, 20_000)
+    write_raw(source, 1, data)
+    payload = dict(request_for(source, tmp_path, private_store, destination="cache"))
+    payload.pop("path")
+    service = IOService()
+    events: list[dict[str, Any]] = []
+    service.resultReady.connect(lambda request, event: events.append(event) if request.owner == "convert" else None)
+    try:
+        assert service.submit("convert", 0, str(source), "convert", payload)
+        qtbot.waitUntil(lambda: any(event["kind"] in ("done", "error") for event in events), timeout=60_000)
+        assert [event for event in events if event["kind"] == "error"] == []
+        [plan] = of(events, "convert_plan")
+        assert plan["output"] == "cache" and plan["key"].startswith("root://")
+        [converted] = of(events, "shot_converted")
+        assert Path(converted["txy"]).read_bytes() == convert_raw(data, MATLAB_2019, "reference")
+        qtbot.waitUntil(lambda: not service.active, timeout=30_000)
+    finally:
+        service.shutdown()
+
+
+def test_a_conversion_removes_old_leftovers_in_helabs_own_folder(source: Path, tmp_path: Path) -> None:
+    """A helper killed mid-write in HeLab's own folder (likely on Windows) leaves a temporary file
+    there too: removed by a later conversion once old, a young one kept."""
+    write_raw(source, 1, raw_bytes(10_000))
+    folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
+    folder.mkdir(parents=True)
+    old, young = folder / PARTIAL_NAME, folder / ".d_txy_helab_2.txy.fedcba9876543210.partial"
+    for path, seconds in ((old, 2 * 3600), (young, 60)):
+        path.write_bytes(b"half")
+        age(path, seconds)
+    events = run(source, request_for(source, tmp_path))
+    assert [(event["folder"], event["file"]) for event in of(events, "partial_removed")] == [(str(folder), PARTIAL_NAME)]
+    assert not old.exists() and young.exists()
