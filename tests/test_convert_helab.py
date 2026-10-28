@@ -12,7 +12,8 @@ import signal
 import subprocess
 import sys
 import time
-from typing import Any, Iterator
+from types import SimpleNamespace
+from typing import Any, Callable, Iterator
 
 import pytest
 from pytestqt.qtbot import QtBot
@@ -853,14 +854,35 @@ def test_a_killed_beside_writes_leftover_goes_on_a_later_pass_once_old(source: P
     assert sorted(path.name for path in source.iterdir()) == ["d1.txt", "d_txy_helab_1.txy"]
 
 
+def convert_clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """``io_ops.convert``'s monotonic clock, moved only by the test (the ticker's waits keep real
+    time): a compute budget can't run out while a loaded runner holds the ticker's thread back."""
+    now = [time.monotonic()]
+    monkeypatch.setattr(convert, "time", SimpleNamespace(monotonic=lambda: now[0], perf_counter=time.perf_counter,
+                                                         time=time.time))
+    return now
+
+
+def wait_for(condition: Callable[[], bool], timeout: float = 30) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
 def test_heartbeats_while_computing_stop_after_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     from helab.io_ops.infra import Heartbeat
     monkeypatch.setattr(Heartbeat, "INTERVAL", 0.02)
-    beats: list[float] = []
-    with convert._Ticker(lambda event: beats.append(time.monotonic()), "converting", 0.15):
-        started = time.monotonic()
-        time.sleep(0.5)
-    assert beats and max(beats) - started < 0.25
+    now = convert_clock(monkeypatch)
+    beats: list[dict[str, Any]] = []
+    ticker = convert._Ticker(lambda event: beats.append(dict(event)), "converting", 0.15)
+    with ticker:
+        wait_for(lambda: len(beats) >= 2)
+        now[0] += 0.15
+        # The budget spent, the ticker stops by itself while the shot still computes.
+        ticker.thread.join(30)
+        assert not ticker.thread.is_alive() and not ticker.stop.is_set()
+    assert {(beat["kind"], beat["phase"]) for beat in beats} == {("heartbeat", "converting")}
     assert convert.still_computing([10.0, 20.0], 15.0) and not convert.still_computing([10.0, 12.0], 15.0)
     assert not convert.still_computing([], 0.0)
     assert convert.compute_budget(0) == convert.COMPUTE_SECONDS
@@ -871,20 +893,31 @@ def test_a_hung_backend_stops_sending_heartbeats(source: Path, tmp_path: Path, m
     from helab.convert import pipeline
     from helab.io_ops.infra import Heartbeat
     monkeypatch.setattr(Heartbeat, "INTERVAL", 0.02)
-    monkeypatch.setattr(convert, "COMPUTE_SECONDS", 0.1)
-    original = pipeline.convert_shot
+    now = convert_clock(monkeypatch)
+    tickers: list[convert._Ticker] = []
 
-    def slow(*args: Any, **kwargs: Any) -> Any:
-        time.sleep(0.6)
+    class Ticker(convert._Ticker):
+        def __enter__(self) -> convert._Ticker:
+            tickers.append(self)
+            return super().__enter__()
+    monkeypatch.setattr(convert, "_Ticker", Ticker)
+    events: list[dict[str, Any]] = []
+
+    def beats() -> int:
+        return sum(event["kind"] == "heartbeat" and event["phase"] == "converting" for event in list(events))
+    original = pipeline.convert_shot
+    stopped: list[bool] = []
+
+    def hung(*args: Any, **kwargs: Any) -> Any:
+        wait_for(lambda: beats() > 0)  # Heartbeats while it computes,
+        now[0] += 3600  # until it has computed past its budget: then they stop, though it goes on.
+        tickers[0].thread.join(30)
+        stopped.append(not tickers[0].thread.is_alive() and not tickers[0].stop.is_set())
         return original(*args, **kwargs)
-    monkeypatch.setattr(pipeline, "convert_shot", slow)
+    monkeypatch.setattr(pipeline, "convert_shot", hung)
     write_raw(source, 1, raw_bytes(10_000))
-    stamped: list[tuple[float, dict[str, Any]]] = []
-    convert_folder(str(source), request_for(source, tmp_path),
-                   lambda event: stamped.append((time.monotonic(), dict(event))))
-    beats = [at for at, event in stamped if event["kind"] == "heartbeat" and event["phase"] == "converting"]
-    [converted_at] = [at for at, event in stamped if event["kind"] == "shot_converted"]
-    assert beats and converted_at - max(beats) > 0.3
+    convert_folder(str(source), request_for(source, tmp_path), lambda event: events.append(dict(event)))
+    assert stopped == [True] and len(tickers) == 1 and len(of(events, "shot_converted")) == 1
 
 
 @pytest.mark.no_auto_data_root
