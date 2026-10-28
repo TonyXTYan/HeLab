@@ -1,0 +1,102 @@
+# Handoff: TXY converter stage 2, backend numba (Worker, 2026-10-29)
+
+Branch `agent/txy-numba` from `372f2ac`. Brief: [brief.md](brief.md). Design, proofs and the
+frozen-app findings: [notes.md](notes.md). Measurements: [results.md](results.md). Scripts:
+[`compare_samples.py`](compare_samples.py), [`bench_numba.py`](bench_numba.py). Packages:
+[`requirements-bench.txt`](requirements-bench.txt) (numba 0.68.1, llvmlite 0.50.0; floor venv only).
+
+## Summary
+
+A `numba` backend, **byte-identical to the reference** on the 39 cases × 2 built-ins (against
+MATLAB's own output), the lab pairs, every profile field perturbed, 40 random pulse streams with
+NaN/±Inf/−0/repeated times, and **all 309 sample shots under both built-ins** (checker: 303
+identical + the 6 listed exceptions proved again with numba, 0 differ; numba vs reference: 0
+differences, whole and in 2–64 pieces).
+
+**Speed** (M4 Max at load 10–14, indicative): reconstruction **746 MB/s per core** over all shots
+(1,430 MB/s on the large ones), **63× the reference**, and it holds no GIL (threads scale it about
+linearly). The whole pipeline is then set by stage 1's Python reader (70 MB/s) and writer
+(154 MB/s): **43.5 MB/s serial, 133 MB/s with 4 processes, 187 with 12**; threads don't help the
+pipeline until reading and writing release the GIL. Latency per shot: median 10 ms small, 29 ms
+large. Within one shot: ≤ 1.5× (the sort stays serial). **First call:** 1.5 s compile once per
+machine and build, then 0.1 s cache load + 0.1 s `import numba` per process. **Build size:**
++145 MB on disk, +52 MB zipped (llvmlite's 126 MB LLVM library).
+
+## What was built
+
+| File | What |
+|---|---|
+| `helab/convert/backends/numba_backend.py` | Registers `numba` (`releases_gil=True`); imports numba only when asked (`unavailable` gives the ImportError's text); `reconstruct_numba` (registered), `reconstruct_numba_pieces` (within-shot: serial, threads, prange), `piece_bounds`. Sorts with NumPy's `argsort(kind="stable")`. |
+| `helab/convert/backends/numba_kernels.py` | `@njit(cache=True, nogil=True)` loops (`prepare`, `choose_bounds`, `match`, `finish`, `convert`, `match_parallel` with prange), the reference's loops with MATLAB line numbers. numba via `importlib` and a typed wrapper: mypy/pyright check it as plain typed Python, no stub, with or without numba. Falls back to `cache=False` when numba has no writable cache folder. |
+| `helab/convert/reconstruct.py` | One `_MODULES` entry: `"numba": "helab.convert.backends.numba_backend"` (merging `dev/v0.0.7` later: keep every floor's entry). |
+| `tests/test_convert_backend_numba.py` | 209 tests (see notes.md); skip with the reason when numba can't be imported, except the two that check HeLab without numba. |
+
+Two changes of form from the reference, proved in notes.md and tested: the MATLAB output matrix
+is replaced by hits in order plus the **phantom row rebuilt at the end** (the only row past the
+last hit ever written is the next one, by a failed x pair after it); and the match can run over
+**pieces cut where two consecutive finite times are more than `search_window` apart** (rows
+across such a gap are always skipped by the window test; NaN rows never match or get marked;
+`t_zero`, the sort, the 2023 dead-time cut, the first-row skip, `floor(N/4)` and the final sort
+stay global). Greedy matching can't be split further (an x1's match depends on pulses earlier x1
+rows used).
+
+## Checks
+
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` (numba installed, at load
+  ~10 from the other floors): **6284 passed, 8 skipped, no RERUN** (an earlier full run, before the
+  last two commits: 6282 passed, 8 skipped, no RERUN). The 8 skips: 4 in my file and 2 in
+  `test_convert_profile.py` are the single-value fields `x2_handling`/`y_handling`; 2 predate this floor.
+- `mypy helab/ --strict` (175 files), `mypy tests --strict` (145), `pyright helab tests`: clean.
+- With numba blocked (`sys.modules["numba"] = None`): the converter tests pass and the numba
+  ones skip with "the numba backend can't run here: numba can't be imported (…)".
+- Scratch frozen build (`.ai/temp/pyi-numba/`): runs, identical bytes, cache in the user-wide
+  folder; read-only cache folder → uncached fallback works.
+
+## Proposed doc changes (for the Coordinator)
+
+- **`.ai/architecture/converter.md`**, module table: add `backends/numba_backend` (registers
+  `numba`, lazy numba import, `releases_gil`, pieces) and `backends/numba_kernels` (njit loops,
+  imported only with numba; `cached`). Under **Backends**: "A backend needn't build MATLAB's
+  output matrix: the phantom row is the row after the last hit, written by the last x pair with no
+  y after it, surviving when past `floor(N/4)` (numba's `finish`)." And the **within-shot cut
+  rule** with its proof (notes.md, "Pieces"): cut only between two finite times more than
+  `search_window` apart; NaN rows are inert; Inf rows are skipped by the window.
+- **converter.md** or `release-and-ci.md`: `_MODULES` imports backends by string, so a frozen
+  build needs `hiddenimports` for every backend module in `_MODULES`, `reference` included
+  (nothing in the app imports `helab.convert` yet, so today's build has no converter; my scratch
+  build needed them).
+- **`roadmaps/txy-converter.md`**, Stage 2: numba result line (identical; 746 MB/s/core
+  reconstruction, 63×; pipeline bound by reading and writing; +145 MB / +52 MB zipped; 1.5 s
+  first compile).
+- **`.gitignore`**: add `*.nbi` and `*.nbc` (numba's cache files land in
+  `helab/convert/backends/__pycache__/` in a checkout and show as untracked; `*.pyc` doesn't
+  cover them).
+
+## Provisional items
+
+- **Q~1** (Tony, if numba ships): where numba's compiled-code cache lives in the app. Frozen,
+  numba ignores `NUMBA_CACHE_DIR` and writes `~/Library/Caches/numba/backends_<sha1>/`
+  (Windows `%LOCALAPPDATA%\numba\Cache`), outside HeLab's app folder, never removed with it, and
+  named from the **launch folder** (another launch folder, another compile); launched from inside
+  a HeLab checkout it writes into that checkout. Options: (a) accept numba's folder; (b) HeLab's
+  own `<app folder>/caches/numba`, by giving the kernels an absolute filename there at import
+  (a small, tested shim); (c) no disk cache, 1.1–1.5 s compile per helper process. **Proposed: (b)**
+  (housekeeping and the cache-folder move then cover it).
+- **Q~2** (Tony, stage 2's recommendation): ship numba? It is identical and fast, but adds
+  +145 MB (+52 MB zipped), pins NumPy below 2.6 (numba 0.68.1: `numpy>=1.22,<2.6`; the lock has
+  2.5.4), and its speed is hidden behind reading and writing unless those get faster too.
+  **Proposed:** not the default; an optional fast backend only if the NumPy backend falls short of
+  ~100 MB/s bulk with processes.
+- **A~1** (stage 4 packaging, Side's rule): numba needs no build step (JIT, no AOT; `numba.pycc`
+  is pending deprecation), so CI covers only the without-numba path today: the numba tests skip
+  there with "numba can't be imported (No module named 'numba')". If numba ships: add numba and
+  llvmlite to the lock so CI runs `tests/test_convert_backend_numba.py` on all three OSes (the
+  first x86-64 run of the bit-identity checks), make those skips failures in CI (e.g. an env var
+  listing the backends that must be available), add the backend modules to `hiddenimports`, and
+  warm the cache once in a helper at startup.
+- **A~2**: `tests/test_headless_imports.py` `PURE`: add `backends.numba_backend` (it imports no
+  heavy module; tested in my file meanwhile). `numba_kernels` can't be listed: it needs numba.
+- **A~3**: if the NumPy floor's shared `split.py` lands, `reconstruct_numba_pieces` can take its
+  cut instead of `choose_bounds` (same rule), and `timing`'s `WITHIN_SHOT` can drive it.
+- **M~1** (lab PCs, if numba ships): run the numba backend (or the frozen probe) on the Lab Side
+  and Main PCs (Windows, Sandy Bridge): first-compile time, cache location, identical output.
