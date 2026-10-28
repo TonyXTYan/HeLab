@@ -562,6 +562,10 @@ class ReleaseTimePlot(DatasetAnalysis):
         data = result.data
         return isinstance(data, ReleaseData) and not data.live_skipped
 
+    def rerun_after_live(self, action_name: str, result: AnalysisResult) -> bool:
+        """A Live rerun skipped the bootstrap: once Live stops, one more run does it."""
+        return isinstance(result.data, ReleaseData) and result.data.live_skipped
+
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         values, view = context.parameters, context.view
         shots = select_shots(view, values)

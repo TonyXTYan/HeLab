@@ -910,6 +910,10 @@ class Correlations(DatasetAnalysis):
             return False
         return data.result is None or data.result.complete
 
+    def rerun_after_live(self, action_name: str, result: AnalysisResult) -> bool:
+        """A Live rerun skipped the bootstrap: once Live stops, one more run does it."""
+        return isinstance(result.data, CorrelationData) and result.data.live_skipped
+
     def cache_unpack(self, action_name: str, tree: Any, arrays: Mapping[str, Any]) -> Any:
         """The saved data, with the g² peak model (its functions aren't saved) made again from its spec."""
         data = super().cache_unpack(action_name, tree, arrays)

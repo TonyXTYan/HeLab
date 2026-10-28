@@ -473,6 +473,27 @@ def test_live_reruns_are_marked_so_the_release_time_skips_its_bootstrap(
     assert instance.shown is not None and instance.shown.data.live_skipped
 
 
+@pytest.mark.parametrize("stopped", ["after the Live rerun", "during it"])
+def test_live_stopping_runs_the_skipped_bootstrap_once_on_the_same_shots(
+        window: Window, runner: AnalysisRunner, qtbot: QtBot, stopped: str) -> None:
+    """A Live rerun that skipped its bootstrap is the newest revision, so nothing waits when Live
+    stops; the plot runs once more on it, bootstrap and all (review on PR #9), then stays."""
+    window.view = window.plots.live_feed.publish(revision([1, 2]))
+    instance = plot(window, qtbot, release_time.ReleaseTimePlot())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    set_live(instance, DELAY, 0.0)
+    window.plots.live_feed.publish(revision([1, 2, 3]))
+    if stopped == "after the Live rerun":
+        qtbot.waitUntil(lambda: shown_revision(instance) == 2, timeout=10_000)
+        assert instance.shown is not None and instance.shown.data.live_skipped
+    window.plots.live_feed.stop(PATH)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 2 and instance.shown is not None
+                    and not instance.shown.data.live_skipped, timeout=10_000)
+    final = instance.shown
+    qtbot.wait(100)
+    assert instance.shown is final and not instance.job_id  # Then it stays.
+
+
 def cloud_revision(shots: list[int]) -> Dataset:
     """A cloud released at rest (about 400 events a shot, the same for a shot in every revision)."""
     data = {}

@@ -163,6 +163,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._follow_timer = QTimer(self)
         self._follow_timer.setSingleShot(True)
         self._follow_timer.timeout.connect(self._follow_next)
+        self._reran_after_live = ""  # The shown Live run ``_after_live`` last ran again (its job ID).
         self.runner.finished.connect(self._finished)
         if self.feed is not None:
             self.feed.revised.connect(self._revised)
@@ -835,11 +836,23 @@ class AnalysisInstance(LinkedAnalysisInstance):
 
     @pyqtSlot(str)
     def _live_ended(self, path: str) -> None:
-        """Live stopped for the plot's folder: shots held back run once more, at once."""
+        """Live stopped for the plot's folder: shots held back run once more, at once (and a Live
+        run that left work out runs again: ``_after_live``)."""
         if not self.is_closed and path == self.path and not self._look_again():
             self.follow.live_ended()
             self._follow_timer.stop()
             self._follow_next()
+
+    def _after_live(self) -> Optional[DatasetView]:
+        """Once Live has stopped and no run is in flight, the shots of the plot's last Live run when
+        that run left work out (``rerun_after_live``: a skipped bootstrap), to run once more; else
+        None. Once per shown result, so a failed rerun isn't repeated; never for a released plot
+        (its data may be gone: it runs again when shown)."""
+        shown, view = self.shown, self._shown_view
+        if (not self.follow.final or self.follow.running or self.live() is not None or shown is None
+                or view is None or self.released is not None or shown.job_id == self._reran_after_live):
+            return None
+        return view if self._hook("rerun_after_live", False, shown) else None
 
     @pyqtSlot()
     def _follow_next(self) -> None:
@@ -851,6 +864,11 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if view is not None:
             # While Live watches the folder (not the catch-up once it stops: the feed has dropped it).
             self._submit(view, live=self.live() is not None)
+            return
+        if (view := self._after_live()) is not None:
+            assert self.shown is not None
+            self._reran_after_live = self.shown.job_id
+            self._submit(view)
             return
         if wait > 0:
             self._follow_timer.start(max(1, math.ceil(wait * 1000)))

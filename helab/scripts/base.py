@@ -271,6 +271,12 @@ class DatasetAnalysis(HelabAnalysisScript):
         Default: yes."""
         return True
 
+    def rerun_after_live(self, action_name: str, result: AnalysisResult) -> bool:
+        """Whether a completed run following Live (``AnalysisContext.live``) left out work, such as
+        a shot bootstrap, that one more run on the same shots does once Live stops (GUI thread).
+        Default: no."""
+        return False
+
     def execute_action(self, action_name: str, **kwargs: Any) -> None:
         context = kwargs.get("context")
         if not isinstance(context, AnalysisContext):
