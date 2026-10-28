@@ -35,8 +35,9 @@ compute is postponed until the converter works well (Q6.2).
   0.5 µs, separate tsums) writes 12–14 % fewer hits
   ([findings](../.ai/sessions/2026-10-28-claude-txy-converter-plan/findings.md),
   [legacy notes](../.ai/sessions/2026-10-20-claude-dld-front-panel-review/core-update.md#import-and-reconstruction)).
-  Stages: a reference port cross-checked against MATLAB run headless, a benchmark spike, then one
-  builder per backend (NumPy, Numba, Cython/C, Rust, MLX) (Q6.5). Open: detector profiles and
+  Stages: a reference port cross-checked against MATLAB run headless (**done 2026-10-29**,
+  `d26e196`), a benchmark spike, then one builder per backend (NumPy, Numba, Cython/C, Rust, MLX)
+  (Q6.5). Open: detector profiles and
   calibration (Q6.10, Q6.11), which TXY a folder uses (Q6.6), how other HeLabs get it (Q6.7),
   store or cache only (Q6.9). Building decisions: Q9.1–Q9.9 (MATLAB's converter gets no
   temp-name change, Q9.8); v0.0.7 ships with stages 1, 2 and 4 (Q9.9).

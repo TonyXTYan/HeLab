@@ -67,6 +67,10 @@ How to use it:
 
 ## Tests and CI
 
+- [ ] `test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such` reran once
+  on Windows CI (2026-10-29, run 40713926667, `09a0711` on `agent/txy-reference`): `pytestqt.exceptions.TimeoutError:
+  waitUntil timed out in 30000 milliseconds` (line 82); passed on its retry. The branch doesn't touch
+  the test or the code it exercises; cause not found yet.
 - [ ] A test that closes a real main window leaves the app-wide IOService closed in
   `io_service._service`, its retired requests never forgotten (timer stopped), until the next
   `get_io_service()` replaces it; and a live app-wide service (and its FolderCache) lasts the

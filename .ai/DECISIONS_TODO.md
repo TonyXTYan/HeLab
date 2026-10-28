@@ -92,6 +92,25 @@ Tony's answers in Chat, 2026-10-29, on what building the converter needs (block 
 Confirmed by Tony, 2026-10-29 ("confirm all"), and recorded where each lives (AGENTS.md, the
 setup guide, the roles): Q3.1, Q3.2, Q2.8, Q2.3, Q3.3, Q3.4, Q3.6.3, Q2.2.1, Q2.2.2, Q4.1.
 
+## Converter stage 1 (block 10)
+
+From the `agent/txy-reference` handoffs ([builder](sessions/2026-10-29-claude-txy-reference/handoff.md),
+[cross-checker](sessions/2026-10-29-claude-txy-reference/crosscheck/handoff.md)), 2026-10-29.
+
+- **Q10.1 The third MATLAB variant: a built-in profile?** Two 2022-07 he3he4 shots (d2, d3) were
+  re-converted on 2023-02-08 by `matlab-2019` plus a 2 µs x1 dead time (proved with MATLAB). Who
+  ran it, and why, is unknown. Proposed: no built-in profile; it stays a proved exception in
+  `dev/txy/reference_exceptions.py` (`matlab-2019` with `dead_time_x1 = 2e-6` reproduces it).
+  Decided that way by Side overnight, for Tony to confirm; and does Tony know who ran it?
+- **Q10.2 A raw file with no rows** (0 bytes or blank lines only) makes MATLAB fail. What should
+  HeLab do (stage 4)? Proposed: the settle check refuses it while it may still be written; once
+  settled, it is reported as unconvertible (no TXY, a notification), never skipped silently.
+- **Q10.3 A shot with no hits: no TXY or an empty one?** The pinned 2019 wrapper writes none;
+  the lab's files include 0-byte TXY from 2020, 2022-11 and 2023-02 (other wrappers). **Decided by
+  Side overnight, for Tony to confirm:** HeLab's own output (`d_txy_helab_<N>.txy`) is a 0-byte
+  file, so "converted, empty" differs from "not converted yet"; `matlab-2019` writes none only for
+  comparisons (A10.5).
+
 ## From the audit (block 2)
 
 These come from the [audit](sessions/2026-10-28-claude-v0.0.6-checks/audit.md), whose finding

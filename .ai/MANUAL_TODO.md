@@ -142,6 +142,13 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   opening the floor's settings file, no stale bytecode, the submodule), and teardown removed its
   folders.
 
+## TXY converter (added 2026-10-29)
+
+- [ ] **M10.1 Count MATLAB's half-written reads on X** (Tony or the Assistant: a listing pass on
+  X). Converter stage 1 found one (2019-halos d3667: its TXY is 0.25 s younger than its raw file
+  and lacks the shot's end). Others would show as a TXY modified within a few seconds of its raw
+  file. Worth knowing before stage 5 compares HeLab with MATLAB on every shot.
+
 ## Data roots (v0.0.5a1, added 2026-10-18)
 
 Native checks of the data-roots stages D1–D4 ([plan](sessions/2026-10-16-claude-data-roots/plan.md)).

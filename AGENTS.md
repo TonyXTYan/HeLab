@@ -189,6 +189,11 @@ Each rule names the area file with the detail.
 - The DLD port shows T in ms and X/Y in mm with "," grouping whatever the locale; Basic plots v1
   keeps s and m with SI prefixes. Never rotate XY.
 
+**The converter** ([converter](.ai/architecture/converter.md)): `helab/convert/` is Qt-free
+(`PURE`). Every converter backend gives `reference`'s output byte for byte (the cases in
+`tests/data/convert/`, and `dev/txy/check_samples.py` on the sample set). Fixtures compared byte
+for byte sit under a `.gitattributes` `* -text`, or Windows CI's autocrlf rewrites them.
+
 **UI** ([app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md)): keep Qt's normal
 main-window resize and repaint handling (no `setUpdatesEnabled(False)` on the window).
 Navigation stays available during I/O. No vertical padding around panel blocks; status rows are
@@ -214,6 +219,7 @@ one line, with detail in tooltips.
 | `helab/views/` | main window, `FolderExplorer` and `explorer_live.py` (Live), Folder details, Settings tabs, dialogs | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [live](.ai/architecture/live.md) |
 | `helab/views/plots/` | `PlotWorkspace`, docks, settings panel, presets, arrangements, cached results | [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |
 | `helab/analysis/` | analysis core, mostly Qt-free (`QT` in `tests/test_headless_imports.py` lists the rest): `DatasetView`, runner, parameters, selection, fits and other numerics, presets, result cache | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
+| `helab/convert/` | the TXY converter (Qt-free): `raw`, `profile`, `reconstruct` and `backends/`, `txy`, `pipeline`; harness `samples`, `check`, `timing` (scripts in `dev/txy/`) | [converter](.ai/architecture/converter.md) |
 | `helab/scripts/standard/`, `helab/scripts/dld/` | Basic plots v1; the DLD Front Panel Port | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
 | `helab/utils/settings_store.py`, `settings_defaults.py`, `lab_parameters.py` | settings | [settings](.ai/architecture/settings.md) |
 | `helab/utils/app_log.py`, `gui_watchdog.py`, `events.py`, `dash_server.py` | logging, stall dumps, notifications, the Plotly server | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |

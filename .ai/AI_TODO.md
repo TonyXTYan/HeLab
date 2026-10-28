@@ -130,6 +130,28 @@ Finding numbers refer to the [planning-docs audit](sessions/2026-10-28-claude-do
   converter is tested; once the default and the optional fast ones are settled, drop the rest
   from `requirements.txt`, the lock and `HeLab.spec`, and note the size saved.
 
+## Converter stage 1 (block 10)
+
+From the `agent/txy-reference` handoffs ([builder](sessions/2026-10-29-claude-txy-reference/handoff.md),
+[cross-checker](sessions/2026-10-29-claude-txy-reference/crosscheck/handoff.md)); detail in
+[converter.md](architecture/converter.md).
+
+- **A10.1 Settle checks, with the evidence** (stage 4, `agent/txy-helab-core`): 2019-halos d3667
+  shows MATLAB converting a raw file 0.25 s after its last write and losing the end of the shot.
+  Test the settle check with a synthetic half-written file.
+- **A10.2 Backend constraints** (stage 2, every backend floor): all 39 cases and every sample shot,
+  including the phantom row, `NoRowsError` and stable NaN-last sorts (`kind="stable"`). A split of
+  one shot keeps the global `t_zero`, the first-row skip (first piece only), the whole-file
+  `floor(N/4)` preallocation, the 2023 cuts (only at gaps over 20,000 bins, or before splitting)
+  and one final stable sort by T; test that a split equals the whole on the `phantom_*` and
+  `dead_time_x1` cases.
+- **A10.3 Built-in profiles as JSON files** in the package (stage 4, Q6.11), each tested to load
+  equal to the Python definitions.
+- **A10.4 Durable HeLab TXY writes** (stage 4): use `txy.write_atomic` (new file with mode
+  `0o666` under the umask, fsync, rename, folder fsync) for `d_txy_helab_<N>.txy`, which matters
+  once they go beside raw files on a share (Q9.7).
+- **A10.5 A conversion with no hits writes an empty HeLab TXY** (stage 4; Q10.3, Side overnight).
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

@@ -18,6 +18,7 @@ on `dev/v0.0.6`, which `main` holds only inside the squash `9c477c2`.
 | [app-runtime-and-ui.md](app-runtime-and-ui.md) | logging and old logs, threading, window resizing, `FolderCache` memory and the RAM budget, the folder tree, Folder details and the status bar |
 | [plots-and-scripts.md](plots-and-scripts.md) | scripts and `DatasetAnalysis`, parameters, presets and reopening, results, Transfer fractions, the Settings panel and floating plots, plotting libraries, the Dash server |
 | [dld-analyses.md](dld-analyses.md) | the DLD Front Panel Port: constants, shared numerics, units, hooks, saved results, masks, the plots; the legacy MATLAB references (the converter, the front panel, Momentum_Bells_test) |
+| [converter.md](converter.md) | the TXY converter (`helab/convert/`): raw parsing as `textscan` does, detector profiles (schema, hash), the reference port and its MATLAB quirks, backends, TXY writing, the sample harness and proved reference faults |
 | [settings.md](settings.md) | QSettings, `app_settings()`, `settings_defaults.py`, lab parameters |
 | [testing.md](testing.md) | test isolation, seams and fixtures, reruns, Windows pytest notes |
 | [release-and-ci.md](release-and-ci.md) | versioning, build info, release flow, CI matrices |

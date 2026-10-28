@@ -42,3 +42,4 @@ number.
 | 7 | 2026-10-28 | Side (claude) subagent, Ground | planning-docs audit fixes (`sessions/2026-10-28-claude-docs-audit/planning.md`) | dev/v0.0.7 | A7.1, A7.2 |
 | 8 | 2026-10-28 | Side (claude) + 3 subagents, Ground | docs and Maestri audit (`sessions/2026-10-28-claude-docs-audit/`), Tony's answers in Chat | dev/v0.0.7 | Q8.1–Q8.6, A8.1, M8.1 |
 | 9 | 2026-10-29 | Side (claude), Ground | what building the converter needs (Tony in Chat) | dev/v0.0.7 | Q9.1–Q9.9, A9.1 |
+| 10 | 2026-10-29 | Forge, Lens (claude), floor TXY Reference; merged by CoCo | converter stage 1 (`sessions/2026-10-29-claude-txy-reference/`) | agent/txy-reference | Forge Q~1 + Lens Q~2→Q10.1, Forge Q~2→Q10.2, Lens Q~1→Q10.3; Forge A~2→A10.1, Forge A~3 + Lens A~3→A10.2, A~4→A10.3, A~5→A10.4, Forge A~1→A10.5; M~1→M10.1; Lens A~1, A~2 done on the floor (F1, F2) |

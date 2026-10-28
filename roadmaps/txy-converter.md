@@ -20,8 +20,11 @@ replace the constants MATLAB hard-codes, and a parameter scan tunes them on real
 - **Output:** `d_txy_helab_<N>.txy`, written to a temporary name and renamed. In this build every
   HeLab-made TXY stays in HeLab's temp folder; HeLab still never writes to source folders (Q8.2).
 - **First bar: byte-identical output.** Stages 1–2 reproduce the existing `_txy_forc` files byte
-  for byte. The 2019 MATLAB variant does (two shots checked, 2022 and 2024); the 2023 lab edit
-  doesn't (12–14 % fewer hits).
+  for byte, or prove why a reference differs. Stage 1 measured it: of the 309 sample shots,
+  `matlab-2019` reproduces 303; the other 6 are proved reference faults (a raw file MATLAB read
+  half-written, two shots re-converted on 2023-02-08 by a third variant with a 2 µs x1 dead time,
+  three empty files from wrappers that write them). The 2023 lab edit writes 12–14 % fewer hits
+  and is reproduced on MATLAB's own output of it.
 - **Adaptable:** every constant the MATLAB code hard-codes is a field of a detector profile, so
   later profiles can change them (Q6.10). The ambiguous-x2 handling is measured while building
   (below); changing it is a profile option, never the default.
@@ -59,7 +62,10 @@ read, sort by time, match each x1 to an x2, y1 and y2 within a 36-row search, th
 Constants: 25 ps bins, one time sum of 3200 bins ± 200 for both axes, v⊥ 5.2632e5 m/s on both
 axes, channels 0–3 the corners (4 MCP, 5 trigger). It writes with `dlmwrite`, precision 8. The
 [findings](../.ai/sessions/2026-10-28-claude-txy-converter-plan/findings.md) have the match
-step by step, the 2023 lab edit, the quirks to reproduce, and the git history.
+step by step, the 2023 lab edit, the quirks to reproduce, and the git history. Stage 1 found
+more: the output matrix grows with zeros past its `floor(rows/4)` preallocation, so a lone x pair
+there is a "phantom" hit at T = 0, Y = 0; and a third variant (2019 plus a 2 µs x1 dead time)
+re-converted some 2022-07 shots on 2023-02-08 ([converter.md](../.ai/architecture/converter.md)).
 
 Measured so far (findings): x and y time sums differ by ~100 bins on both plates (harmless, T
 only); with MCP pulses (2022-11) they are x 3367 and y 3294 bins, not 3200; the 3200-bin x
@@ -109,7 +115,12 @@ off by a few percent per axis if v⊥ was never recalibrated.
 - Briefs for stage 1, with this plan.
 
 **Stage 1, the reference and harness** (one floor; a builder and a cross-checker, both Workers;
-the Reviewer reviews at the end).
+the Reviewer reviews at the end). **Done 2026-10-29** (`agent/txy-reference`, landed as
+`d26e196`; [session](../.ai/sessions/2026-10-29-claude-txy-reference/handoff.md)): `helab/convert/`
+and `dev/txy/`; 303 of 309 shots identical and 6 proved reference faults; the 2023 edit identical
+on MATLAB's own output; 39 synthetic cases and 1,367 `textscan` probes judged by MATLAB; the
+reference converts ~11 MB/s per core. x2 handling: on old plates a retry of the other x2 would
+add 0.1–0.7 % hits, on new plates almost none; the default is unchanged.
 - The builder ports the running path to plain Python, quirks included (`how_many_x == ~1`, the
   first sorted row skipped, `t_zero` from the unsorted first row), as `matlab-2019` and
   `matlab-2023-lab-edit`; then the harness: the sample manifest, a checker (byte-identical, and
