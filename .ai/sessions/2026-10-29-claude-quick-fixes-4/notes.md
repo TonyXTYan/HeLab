@@ -156,3 +156,5 @@ At `c81fe6f` (with the extra): the outside run **7986 passed, 669 skipped, no RE
 (0 errors): clean.
 
 Stress loops per job are in each job's Checks above.
+
+CI at `995743f`: run 40748840534, success on macOS, Windows and Ubuntu (py3.13); no RERUN (macOS 7986 passed / 669 skipped in 9:33; Windows 7958 / 693 in 18:39; Ubuntu 7984 / 671 in 8:24).
