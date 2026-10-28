@@ -176,6 +176,27 @@ def test_cuts_are_only_at_gaps_longer_than_the_window() -> None:
     assert cut_points(np.empty(0), 3200.0, 4) == []
 
 
+@needs_kernel
+def test_the_kernels_sort_is_matlabs_stable_nan_last_order() -> None:
+    # prepare carries each row's channel along, so channels 0, 1, 2, … give the order back.
+    # NumPy's stable argsort is the reference's sort_order (NaN last, ties and ±0 in file order).
+    module = cython_backend.kernel()
+    assert module is not None
+    rng = np.random.default_rng(7)
+    for n in (0, 1, 2, 31, 32, 33, 64, 65, 100, 1000, 5000):
+        nearly = np.arange(n, dtype=np.float64) + rng.integers(-40, 40, size=n)
+        if n:
+            nearly[rng.integers(0, n, size=1 + n // 500)] = rng.integers(-10 ** 6, 10 ** 6)  # far outliers
+        ties = rng.integers(0, 5, size=n).astype(np.float64)
+        signed = rng.choice(np.array([0.0, -0.0, 1.0, np.nan, -np.inf, np.inf]), size=n)
+        for times in (nearly, ties, signed, nearly[::-1].copy(), np.sort(nearly)):
+            order = np.arange(n, dtype=np.float64)
+            channels, sorted_ = module.prepare(order, times, False, np.empty(0), np.empty(0))
+            expected = np.argsort(times, kind="stable")
+            assert channels.tolist() == expected.tolist(), n
+            assert sorted_.tobytes() == times[expected].tobytes()
+
+
 # Byte for byte: the cases, the lab pairs, the quirks.
 
 @needs_kernel

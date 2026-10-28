@@ -9,6 +9,7 @@ shared, so the best is the least disturbed). "large" are the three largest shots
 from __future__ import annotations
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor
 import json
 import os
 from pathlib import Path
@@ -111,6 +112,19 @@ def main() -> int:
               + "  ".join(f"{k}: {v:7.1f}" for k, v in row.items())
               + f"  (pieces at {max(args.threads)}: min {min(pieces)})", flush=True)
     result["within_shot_reconstruct_MBps"] = within
+
+    # Across shots in threads, reconstruction alone (pulses parsed beforehand): what releasing the
+    # GIL buys, without the GIL-bound Python reader and writer the harness's threads mode includes.
+    total_mb = sum(s.raw_bytes for s, _ in loaded) / 1e6
+    across: dict[str, float] = {}
+    for threads in args.threads:
+        def run_all(threads: int = threads) -> None:
+            with ThreadPoolExecutor(threads) as pool:
+                list(pool.map(lambda p: reconstruct_cython(p, MATLAB_2019), [p for _, p in loaded]))
+        across[str(threads)] = total_mb / best(args.repeat, run_all)
+    result["across_shots_threads_reconstruct_MBps"] = across
+    print("across shots, threads, reconstruct only, wall MB/s: "
+          + "  ".join(f"{k}: {v:7.1f}" for k, v in across.items()), flush=True)
 
     # The kernel's stages on the large shots.
     totals = {"prepare": 0.0, "match": 0.0, "assemble": 0.0}

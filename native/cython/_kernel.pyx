@@ -33,11 +33,37 @@ cdef inline bint _before(double a, double b) noexcept nogil:
     return a < b
 
 
+cdef inline Py_ssize_t _first_after(const double *key, const Py_ssize_t *idx, Py_ssize_t lo, Py_ssize_t hi,
+                                    double value) noexcept nogil:
+    """The first position in the sorted idx[lo:hi] whose key sorts strictly after ``value``."""
+    cdef Py_ssize_t mid
+    while lo < hi:
+        mid = lo + (hi - lo) // 2
+        if _before(value, key[idx[mid]]):
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo
+
+
+cdef inline Py_ssize_t _first_not_before(const double *key, const Py_ssize_t *idx, Py_ssize_t lo, Py_ssize_t hi,
+                                         double value) noexcept nogil:
+    """The first position in the sorted idx[lo:hi] whose key doesn't sort before ``value``."""
+    cdef Py_ssize_t mid
+    while lo < hi:
+        mid = lo + (hi - lo) // 2
+        if _before(key[idx[mid]], value):
+            lo = mid + 1
+        else:
+            hi = mid
+    return lo
+
+
 cdef int _stable_argsort(const double *key, Py_ssize_t n, Py_ssize_t *order) noexcept nogil:
     """``order`` = MATLAB's ``[~, I] = sort(key)`` (stable, NaN last), 0-based. A merge sort over
     runs of 32 sorted by insertion; an already sorted key costs one pass. Returns -1 when out of
     memory."""
-    cdef Py_ssize_t i, j, k, lo, mid, hi, width, run = 32
+    cdef Py_ssize_t i, j, k, a, b, lo, mid, hi, width, run = 32
     cdef Py_ssize_t *tmp
     cdef Py_ssize_t *swap
     cdef Py_ssize_t item
@@ -72,10 +98,21 @@ cdef int _stable_argsort(const double *key, Py_ssize_t n, Py_ssize_t *order) noe
         while lo < n:
             mid = lo + width if lo + width < n else n
             hi = lo + 2 * width if lo + 2 * width < n else n
-            i = lo
+            # Only the overlap is merged (the TDC's rows are nearly sorted): the left rows not
+            # after the right's first, and the right rows not before the left's last, are
+            # already in place. Equal keys keep their order: left first.
+            if mid >= hi or not _before(key[src[mid]], key[src[mid - 1]]):
+                memcpy(&dst[lo], &src[lo], (hi - lo) * sizeof(Py_ssize_t))
+                lo = hi
+                continue
+            a = _first_after(key, src, lo, mid, key[src[mid]])
+            b = _first_not_before(key, src, mid, hi, key[src[mid - 1]])
+            memcpy(&dst[lo], &src[lo], (a - lo) * sizeof(Py_ssize_t))
+            memcpy(&dst[b], &src[b], (hi - b) * sizeof(Py_ssize_t))
+            i = a
             j = mid
-            k = lo
-            while i < mid and j < hi:
+            k = a
+            while i < mid and j < b:
                 # Take from the right only when strictly before: equal keys keep their order.
                 if _before(key[src[j]], key[src[i]]):
                     dst[k] = src[j]
@@ -88,7 +125,7 @@ cdef int _stable_argsort(const double *key, Py_ssize_t n, Py_ssize_t *order) noe
                 dst[k] = src[i]
                 i += 1
                 k += 1
-            while j < hi:
+            while j < b:
                 dst[k] = src[j]
                 j += 1
                 k += 1
