@@ -31,3 +31,10 @@ blosc
 lz4
 pyqtgraph
 pyopengl
+# The TXY converter's optional backends (Q9.2: every backend ships for now; A9.1 drops the unused
+# ones). HeLab and the tests work without any of them; mlx has wheels only for Apple Silicon.
+numba
+mlx; sys_platform == "darwin" and platform_machine == "arm64"
+# Build tools for the compiled backends (python native/build.py): cython's kernel and rust's module.
+Cython
+maturin

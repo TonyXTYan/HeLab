@@ -8,7 +8,7 @@ import traceback
 import uuid
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, Generator, Iterator
 
 # Run Qt headless (offscreen) by default so tests don't pop up windows.
 # Set HELAB_SHOW_GUI=1 to force a real, visible display (e.g. when a test
@@ -72,6 +72,51 @@ def pytest_configure(config: pytest.Config) -> None:
     if (constants.cache_dir(), constants.DIR_TEMPS, constants.app_folder()) != expected:
         raise pytest.UsageError(f"Tests would use HeLab's real folders ({constants.cache_dir()}, "
                                 f"{constants.DIR_TEMPS}, {constants.app_folder()}), not {expected}")
+    problems = required_backend_problems(REQUIRED_BACKENDS)
+    if problems:
+        raise pytest.UsageError("HELAB_REQUIRE_BACKENDS names converter backends that can't run here:\n  "
+                                + "\n  ".join(problems))
+
+
+# The converter backends this run must have (CI, after native/build.py: e.g.
+# HELAB_REQUIRE_BACKENDS=cython,rust,numba). Each must load, or the run stops before collecting,
+# and a test that skips naming one of them fails instead: a broken build can't pass as skips.
+REQUIRED_BACKENDS = tuple(name.strip() for name in os.environ.get("HELAB_REQUIRE_BACKENDS", "").split(",")
+                          if name.strip())
+
+
+def required_backend_problems(names: tuple[str, ...]) -> list[str]:
+    """Why each of these backends can't run here (none: all can)."""
+    from helab.convert.reconstruct import _MODULES, get_backend
+    problems = []
+    for name in names:
+        if name not in _MODULES:
+            problems.append(f"{name}: no such backend (the backends: {', '.join(_MODULES)})")
+        elif (why := get_backend(name).unavailable(None)) is not None:
+            problems.append(f"{name}: {why}")
+    return problems
+
+
+def required_backend_named(reason: str, names: tuple[str, ...]) -> str | None:
+    """The first of these backends a skip's reason names, as a word (the backend tests' skips say
+    which backend is missing)."""
+    for name in names:
+        if re.search(rf"\b{re.escape(name)}\b", reason, re.IGNORECASE):
+            return name
+    return None
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item: pytest.Item,
+                               call: pytest.CallInfo[None]) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    report = yield
+    if REQUIRED_BACKENDS and report.skipped and not hasattr(report, "wasxfail") and isinstance(report.longrepr, tuple):
+        reason = str(report.longrepr[2])
+        name = required_backend_named(reason, REQUIRED_BACKENDS)
+        if name is not None:
+            report.outcome = "failed"
+            report.longrepr = f"{item.nodeid} skipped, but HELAB_REQUIRE_BACKENDS requires {name}: {reason}"
+    return report
 
 
 _reruns: list[tuple[str, str]] = []  # (test, why it reran), in this process (the controller under xdist)
