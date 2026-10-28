@@ -5,6 +5,7 @@ import math
 import os
 from pathlib import Path
 import stat
+from typing import Any
 
 import numpy as np
 import pytest
@@ -37,7 +38,8 @@ def test_hits_must_be_three_columns() -> None:
 @pytest.mark.parametrize("rows", [0, 1, 255, 256, 3000])
 def test_hits_must_be_float64_at_every_size(rows: int) -> None:
     hits = np.random.default_rng(rows).uniform(-1, 1, (rows, 3))
-    for wrong in (hits.astype(np.float32), (hits * 1000).astype(np.int64), hits.ravel()):
+    wrongs: list[Any] = [hits.astype(np.float32), (hits * 1000).astype(np.int64), hits.ravel()]
+    for wrong in wrongs:
         with pytest.raises(ValueError):
             format_txy(wrong)
     # Any layout of float64 is fine: Fortran order and strided views give the same bytes.
