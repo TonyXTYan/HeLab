@@ -31,8 +31,19 @@ How to use this list:
 
 ## Recently decided
 
-Tony said "proper fix AGENTS.md and Maestri roles setup" on 2026-10-28. These were applied as
-the proposals stood, so each needs his confirmation; say if one should change.
+Tony's answers in Chat, 2026-10-28:
+
+- **Q1.1 yes:** the release gate is the smoke pass (M1.1–M1.8) on a Mac and a lab PC, plus CI
+  green with no RERUN. The other native checks are lab validation after the release. Recorded
+  in the roadmap's Now and in MANUAL_TODO.
+- **Q1.2 yes:** the version is `0.0.6a1` (A1.5).
+- **Q1.3 yes:** the `v0.0.5a1` draft stays unpublished (roadmap).
+- **Q1.4 yes:** release repos as proposed (`roadmaps/app-updates.md`, roadmap).
+  **Q1.4.1 no:** v0.0.6a1 isn't lab-ready, so HeBECANU isn't fast-forwarded yet.
+- **Q1.5 yes:** move `store-v2` to the Trash when upgrading a lab PC (MANUAL_TODO, A1.1).
+
+Applied as proposed on 2026-10-28, after "proper fix AGENTS.md and Maestri roles setup"; each
+needs Tony's confirmation:
 
 - **Q3.2, Q3.1, Q2.8:** AGENTS.md went from 92 KB to 15.5 KB of rules and a map. Its detail moved
   word for word to `.ai/architecture/` (10 area files and an index), so Codex reads all of it.
@@ -50,56 +61,7 @@ the proposals stood, so each needs his confirmation; say if one should change.
 
 ## Before the v0.0.6 release
 
-### Q1.1 Release gate
-What has to pass before `dev/v0.0.6` goes to `main`?
-
-- **Proposed:** the [smoke pass](MANUAL_TODO.md#release-smoke-pass) (M1.1–M1.8), once on a Mac
-  and once on a lab PC (about 45 min each), plus CI green with no RERUN on the release commit.
-  The physics checks, rare edge cases and the long DLD list become lab validation after the
-  release. They stay in MANUAL_TODO and don't block it.
-- The alternative is all of MANUAL_TODO first: about 120 items, so the lab would wait weeks for
-  presets, saved results and Work Offline.
-
-Answer:
-
-### Q1.2 Version number
-`helab/_version.py` is still `0.0.5a1`.
-
-- **Proposed:** `0.0.6a1`. An alpha is a pre-release on GitHub, as `0.0.5a1` was. A plain `0.0.6`
-  would be the first final version, and the lab update check would treat it as stable
-  ([versioning](../roadmaps/app-versioning.md)).
-
-Answer:
-
-### Q1.3 The unpublished v0.0.5a1 draft
-The `v0.0.5a1` draft release was never published (its native checks are part of this list).
-
-- **Proposed:** leave it as a draft and publish v0.0.6a1 instead, since nothing on the lab PCs
-  depends on 0.0.5a1. The other choice is to publish it now, as a record.
-
-Answer:
-
-### Q1.4 Release repos
-This was proposed on 2026-10-13 and never confirmed
-([plan](../roadmaps/app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm)):
-develop and release on `TonyXTYan/HeLab`; fast-forward `HeBECANU/HeLab` `main` only for
-lab-ready versions, which drafts the same release there; stop pushing dev branches to
-`HeBECANU`.
-
-- **Proposed:** confirm. Then the first lab-ready version is the one fast-forwarded to HeBECANU.
-- **Q1.4.1:** is v0.0.6a1 lab-ready (fast-forward HeBECANU now), or wait for a later one?
-
-Answer:
-
-### Q1.5 The old cache on lab PCs
-Each machine that ran v0.0.5 or older keeps `store-v2` next to the new `store-v3`, unused.
-HeLab never deletes it.
-
-- **Proposed:** when upgrading a lab PC, move its `store-v2` to the Trash / Recycle Bin by hand.
-  HeLab works either way; this only frees disk.
-- The alternative is to keep it until v0.0.6 has run a week in the lab.
-
-Answer:
+Q1.1–Q1.5 were answered on 2026-10-28; see Recently decided.
 
 ## From the audit (block 2)
 
@@ -140,6 +102,13 @@ Finding numbers refer to the
   - Q3.6.1: commit subjects in the log's "Area: summary" style?
   - Q3.6.2: do floors need the two large submodules (Momentum_Bells_test, DLD_front_panel)?
     Proposed: no; only `legacy/tdc_autoconverter`.
+
+## Automating the smoke pass (block 5)
+
+- **Q5.1 Which model drives the smoke pass** ([runbook](sessions/2026-10-28-claude-smoke-automation/plan.md))?
+  Proposed: Haiku 5.5. Use Sonnet 5.5 if Haiku misreads the screen in the dry run (A5.1).
+  Also: which computer-use tool runs it on each machine (the Claude desktop app's computer use
+  on the Mac; check a lab PC can run it)?
 
 ## After the release (not blocking)
 

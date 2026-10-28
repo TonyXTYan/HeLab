@@ -34,15 +34,17 @@ still to choose (Tony, with the coordinator's proposal).
   table with `read_setting` (`0f4df65`) landed from `agent/ci-robustness-2` (merge
   `51c0ee2`, 2026-10-22). Left: Restore default and default tooltips, the profiles.
 
-- [ ] Native checks for v0.0.5a1 on macOS and a Windows lab PC: data roots,
-  cache first and remounts on `/Volumes/dld_output`, the packaged app and the
-  release flow ([manual to-do](../.ai/MANUAL_TODO.md)) (2026-10-19). Then
-  publish the `v0.0.5a1` draft release.
+- [ ] Release v0.0.6a1 (Tony, 2026-10-28: Q1.1–Q1.3). The gate is the release smoke pass
+  ([M1.1–M1.8](../.ai/MANUAL_TODO.md#release-smoke-pass)) on a Mac and a lab PC, plus CI green
+  with no RERUN. The other native checks become lab validation after the release. The
+  `v0.0.5a1` draft stays unpublished. Then comes the version bump, the PR to `main` and
+  publishing the draft.
 
 - [ ] Release repos: develop and release on `TonyXTYan/HeLab`; fast-forward
   `HeBECANU/HeLab` `main` only for lab-ready versions, which drafts the same
-  release there; stop pushing dev branches to `HeBECANU`. Proposed, Tony to
-  confirm ([plan](app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm)) (2026-10-13).
+  release there; stop pushing dev branches to `HeBECANU`. Confirmed by Tony
+  2026-10-28 (Q1.4); v0.0.6a1 is not lab-ready, so HeBECANU waits for a later version (Q1.4.1)
+  ([plan](app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm)) (2026-10-13).
 
 - [ ] Build size: exclude unused packages (pyarrow, mypy), replace
   pytablericons/pygame, and decide on QtWebEngine ([plan](build-size.md))

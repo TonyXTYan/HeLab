@@ -125,6 +125,13 @@ Finding numbers refer to the
 - [x] **A3.3 Stopgap for Codex reviewers**: not needed, since AGENTS.md is now 15.5 KB, within
   what Codex reads (#23).
 
+## Automating the smoke pass (block 5)
+
+- **A5.1 Dry run of the computer-use runbook** (Tony's Mac, a larger model watching). Run the
+  [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) once and fix its wording where
+  the screen differs. Then hand it to a small model (Q5.1) on the other machines. Each run
+  writes `sessions/<date>-<tool>-smoke-<machine>/results.md`, which A1.8 carries into the docs.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

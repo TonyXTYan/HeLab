@@ -13,11 +13,11 @@ The v0.0.5a checks below were added on 2026-10-08 and remain pending.
 Decisions only Tony can make are in [DECISIONS_TODO](DECISIONS_TODO.md), and work agents
 may do without asking in [AI_TODO](AI_TODO.md). Items here have `M` IDs ([ID_BLOCKS](ID_BLOCKS.md)): the
 smoke pass is M1.1–M1.8, and older items get IDs as they're touched. Items below the smoke pass that it doesn't
-cover are lab validation, and don't gate a release (proposed, 2026-10-28).
+cover are lab validation, and don't gate a release (Tony, 2026-10-28: Q1.1).
 
 ## Release smoke pass
 
-These checks gate a release (Q1.1, [DECISIONS_TODO](DECISIONS_TODO.md#q11-release-gate)). Run the pass once
+These checks gate a release (Tony, 2026-10-28: Q1.1, [DECISIONS_TODO](DECISIONS_TODO.md#recently-decided)). Run the pass once
 on a Mac and once on a lab PC (Windows), on the release candidate. Steps marked **Lab PC**
 matter most there. Each machine takes about 45 min, and step 3 needs a run acquiring.
 
@@ -27,6 +27,9 @@ what he saw. Results go to a session file per machine
 and each step's result), and problems go to [known-issues](../roadmaps/known-issues.md).
 Afterwards, an agent ticks the items below that the pass covered
 (A1.8, [AI_TODO](AI_TODO.md)).
+
+A small model can drive most of it through computer use, with Tony reviewing the screenshots:
+see the [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) (A5.1, Q5.1).
 
 **Setup:**
 - A checkout of the release candidate, with its venv: `source venv/bin/activate` (Windows
@@ -170,8 +173,8 @@ real experiment data without deciding where its top should be.
   and Settings → Data roots' Review… opens the window (usable while Settings
   stays open); after Same folder they all go.
 - [ ] The TDC converter and the lab MATLAB scripts ignore `.helab-root`.
-- [ ] Before using this build: `store-v3` starts empty; move the old `store-v2`
-  folder to the Trash by hand once you no longer need it.
+- [ ] Before using this build: `store-v3` starts empty. On each lab PC, move the old
+  `store-v2` folder to the Trash when upgrading (Tony, 2026-10-28: Q1.5).
 
 
 - [ ] In the full app on `/Volumes/dld_output`, exercise cache-first display,
