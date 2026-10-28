@@ -21,4 +21,4 @@ big
 nan_inf
 tab
 bom
-nul
+nul_padding
