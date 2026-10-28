@@ -1,0 +1,2 @@
+# Byte-exact probe inputs; never convert line endings.
+* -text

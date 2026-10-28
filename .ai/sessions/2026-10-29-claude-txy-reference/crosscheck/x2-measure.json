@@ -1,0 +1,212 @@
+{
+ "2019-halos-old-plates": {
+  "matlab": {
+   "hits": 259421,
+   "x1_rows": 341157,
+   "x2_none": 76559,
+   "x2_multi": 5878,
+   "y_fail_multi": 728,
+   "y_multi": 595
+  },
+  "retry2": {
+   "hits": 259912,
+   "x1_rows": 341157,
+   "x2_none": 76560,
+   "x2_multi": 5817,
+   "y_fail_multi": 718,
+   "y_multi": 598,
+   "retried_hits": 517
+  },
+  "retry_all": {
+   "hits": 259913,
+   "x1_rows": 341157,
+   "x2_none": 76560,
+   "x2_multi": 5816,
+   "y_fail_multi": 718,
+   "y_multi": 598,
+   "retried_hits": 519
+  }
+ },
+ "2020-halos-weak-trap": {
+  "matlab": {
+   "hits": 123344,
+   "x1_rows": 215296,
+   "x2_none": 90482,
+   "x2_multi": 1046,
+   "y_fail_multi": 279,
+   "y_multi": 127
+  },
+  "retry2": {
+   "hits": 123508,
+   "x1_rows": 215296,
+   "x2_none": 90483,
+   "x2_multi": 1043,
+   "y_fail_multi": 278,
+   "retried_hits": 166,
+   "y_multi": 128
+  },
+  "retry_all": {
+   "hits": 123508,
+   "x1_rows": 215296,
+   "x2_none": 90483,
+   "x2_multi": 1043,
+   "y_fail_multi": 278,
+   "retried_hits": 166,
+   "y_multi": 128
+  }
+ },
+ "2022-07-old-plates-he3he4": {
+  "matlab": {
+   "hits": 287703,
+   "x1_rows": 366586,
+   "x2_none": 55317,
+   "x2_multi": 14728,
+   "y_multi": 738,
+   "y_fail_multi": 3053
+  },
+  "retry2": {
+   "hits": 288895,
+   "x1_rows": 366586,
+   "x2_none": 55387,
+   "x2_multi": 14374,
+   "y_multi": 731,
+   "y_fail_multi": 2899,
+   "retried_hits": 1333
+  },
+  "retry_all": {
+   "hits": 288906,
+   "x1_rows": 366586,
+   "x2_none": 55388,
+   "x2_multi": 14372,
+   "y_multi": 733,
+   "y_fail_multi": 2900,
+   "retried_hits": 1347
+  }
+ },
+ "2022-07-old-plates-large-he3": {
+  "matlab": {
+   "hits": 358269,
+   "x1_rows": 471751,
+   "x2_none": 69707,
+   "x2_multi": 27350,
+   "y_multi": 972,
+   "y_fail_multi": 6027
+  },
+  "retry2": {
+   "hits": 360671,
+   "x1_rows": 471751,
+   "x2_none": 69822,
+   "x2_multi": 26707,
+   "y_multi": 968,
+   "y_fail_multi": 5725,
+   "retried_hits": 2626
+  },
+  "retry_all": {
+   "hits": 360693,
+   "x1_rows": 471751,
+   "x2_none": 69824,
+   "x2_multi": 26698,
+   "y_multi": 966,
+   "y_fail_multi": 5725,
+   "retried_hits": 2656
+  }
+ },
+ "2022-11-ghost-counts-mcp": {
+  "matlab": {
+   "hits": 70461,
+   "x1_rows": 100665,
+   "x2_none": 13496,
+   "x2_multi": 10,
+   "y_fail_multi": 10
+  },
+  "retry2": {
+   "hits": 70463,
+   "x1_rows": 100665,
+   "x2_none": 13496,
+   "x2_multi": 10,
+   "y_fail_multi": 10,
+   "retried_hits": 2
+  },
+  "retry_all": {
+   "hits": 70463,
+   "x1_rows": 100665,
+   "x2_none": 13496,
+   "x2_multi": 10,
+   "y_fail_multi": 10,
+   "retried_hits": 2
+  }
+ },
+ "2023-02-new-plates-he3he4": {
+  "matlab": {
+   "hits": 145422,
+   "x1_rows": 254377,
+   "x2_none": 54769,
+   "x2_multi": 12,
+   "y_fail_multi": 10
+  },
+  "retry2": {
+   "hits": 145425,
+   "x1_rows": 254377,
+   "x2_none": 54769,
+   "x2_multi": 12,
+   "y_fail_multi": 10,
+   "retried_hits": 3
+  },
+  "retry_all": {
+   "hits": 145425,
+   "x1_rows": 254377,
+   "x2_none": 54769,
+   "x2_multi": 12,
+   "y_fail_multi": 10,
+   "retried_hits": 3
+  }
+ },
+ "2023-03-momentum-bells": {
+  "matlab": {
+   "hits": 202801,
+   "x1_rows": 318405,
+   "x2_none": 87380,
+   "x2_multi": 14,
+   "y_fail_multi": 10
+  },
+  "retry2": {
+   "hits": 202802,
+   "x1_rows": 318405,
+   "x2_none": 87380,
+   "x2_multi": 14,
+   "y_fail_multi": 10,
+   "retried_hits": 1
+  },
+  "retry_all": {
+   "hits": 202802,
+   "x1_rows": 318405,
+   "x2_none": 87380,
+   "x2_multi": 14,
+   "y_fail_multi": 10,
+   "retried_hits": 1
+  }
+ },
+ "2024-11-rt-low-occupancy": {
+  "matlab": {
+   "hits": 33270,
+   "x1_rows": 52570,
+   "x2_none": 15213,
+   "x2_multi": 2,
+   "y_fail_multi": 2
+  },
+  "retry2": {
+   "hits": 33270,
+   "x1_rows": 52570,
+   "x2_none": 15213,
+   "x2_multi": 2,
+   "y_fail_multi": 2
+  },
+  "retry_all": {
+   "hits": 33270,
+   "x1_rows": 52570,
+   "x2_none": 15213,
+   "x2_multi": 2,
+   "y_fail_multi": 2
+  }
+ }
+}

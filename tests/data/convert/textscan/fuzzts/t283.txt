@@ -1,0 +1,2 @@
+abcInfNaN0	;1,+;,,0NaN,-3;2E-2+45abc
+,,

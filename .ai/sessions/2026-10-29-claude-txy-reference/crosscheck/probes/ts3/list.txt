@@ -1,0 +1,8 @@
+crlf_first_lone_cr_mid
+crlf_first_lf_mid
+cr_first_crlf_mid
+cr_first_lf_mid
+lf_first_cr_end
+lf_first_crlf_mid
+blank_lf_then_crlf
+blank_crlf_then_lf

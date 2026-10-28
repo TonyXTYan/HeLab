@@ -1,0 +1,24 @@
+crlf 3 5 100 0 200 1 300
+lf 3 5 100 0 200 1 300
+blank_mid 3 5 100 0 200 1 300
+blank_end 3 5 100 0 200 1 300
+no_trailing_nl 3 5 100 0 200 1 300
+trunc_cr 3 5 100 0 200 1 300
+trunc_comma 3 5 100 0 200 1 NaN
+trunc_chan 3 5 100 0 200 1 NaN
+trunc_chan_mid 3 5 100 0 NaN 1 300
+comma_mid 3 5 100 0 NaN 1 300
+empty 0 
+only_nl 0 
+trigger_only 1 5 100
+spaces 3 5 100 0 200 1 300
+garbage_mid 1 5 100
+garbage_time 2 5 100 0 12
+decimal_sci 3 5 100 0 250 1 300.75
+three_cols 4 5 100 7 NaN 0 200 1 300
+neg 3 5 100 0 -200 -1 300
+big 2 5 13656646605557 0 9007199254740992
+nan_inf 3 5 100 0 NaN 1 Inf
+tab 2 5 100 0 200
+bom 0 
+nul_padding 2 5 100 0 200
