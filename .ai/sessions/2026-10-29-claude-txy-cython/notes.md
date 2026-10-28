@@ -52,7 +52,10 @@ already there). Listed in [requirements-bench.txt](requirements-bench.txt).
   These agree for every channel that is exactly a double; `unavailable(profile)` refuses the
   others (|channel| > 2^53 not representable, or beyond float range).
 - Sorts: a stable merge sort with insertion-sorted runs of 32 and the reference's order (ascending,
-  NaN last, NaNs equal, −0.0 equal to 0.0), with a one-pass exit when already sorted.
+  NaN last, NaNs equal, −0.0 equal to 0.0), with a one-pass exit when already sorted. Each merge
+  binary-searches the overlap of its two blocks and merges only that (the TDC's rows are nearly
+  sorted: displacement up to about 40 rows plus a few far outliers), copying the rest; tested
+  against NumPy's stable argsort.
 - The phantom row: `match` reports, per row range, whether an x pair without a y came after its
   last hit and that pair's x columns; the backend adds MATLAB's grown row W + 1 when it lies past
   `floor(rows/4)` and `matlab_overflow_row` is on, as (0, x1′, x2′, 0, 0) through the same
