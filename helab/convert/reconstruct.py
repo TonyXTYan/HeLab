@@ -62,6 +62,7 @@ _MODULES = {
     "numpy": "helab.convert.backends.numpy_backend",
     "cython": "helab.convert.backends.cython",
     "mlx": "helab.convert.backends.mlx_gpu",
+    "numba": "helab.convert.backends.numba_backend",
     "rust": "helab.convert.backends.rust",
 }
 

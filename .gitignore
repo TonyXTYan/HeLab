@@ -66,6 +66,9 @@ CMakeLists.txt.user*
 
 # Python byte code
 *.pyc
+# numba's compiled-code cache (cache=True), beside the module in a checkout
+*.nbi
+*.nbc
 
 # Binaries
 # --------

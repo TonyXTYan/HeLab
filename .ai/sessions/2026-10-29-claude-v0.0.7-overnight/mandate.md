@@ -210,3 +210,7 @@ Each entry: time, question, decision, why, how to reverse.
   and Rust cleared, merging `dev/v0.0.7`; NumPy fixing Merlin's minor items (CoCo's call: the
   shared TXY formatter refuses non-float64 hits with ValueError, since its fast path reinterprets
   bits).
+- 03:46, **Rust landed:** `dev/v0.0.7` fast-forwarded to `7031bea` (the branch already contained
+  Ground; floor kept). Ground suite: 6205 passed, 458 skipped (Cython, MLX GPU and Rust tests skip
+  on Ground: not built or installed), no RERUN reported; mypy strict and pyright clean. Left:
+  Numba (cleared, merging) and NumPy (Merlin's minor items, then a re-check).
