@@ -15,31 +15,30 @@ from helab.build_info import BUILD_INFO_FILENAME, write_build_info
 from helab.convert.reconstruct import _MODULES
 
 
+# The packages of the backends that don't ship (A9.1, Q11.2: numba with llvmlite, mlx, rust's
+# module). Their backend modules ship, so the app names them unavailable with the reason; the
+# packages stay out even when this Python has them (a developer trying one): pandas and scipy import
+# numba optionally, which would pack its 127 MB.
+UNSHIPPED_BACKEND_PACKAGES = ["numba", "llvmlite", "mlx", "helab_convert_rs"]
+
+
 def converter_backends():
-    """The TXY converter's backends (Q9.2: every one ships for now; A9.1 drops the unused ones).
+    """The TXY converter's backends: numpy (the default), cython and the reference ship (Q11.2).
     Each is imported by name (``reconstruct._MODULES``) and imports its package through importlib,
-    so the analysis sees none of them. A compiled extension or package missing from this Python
-    leaves that backend out of the app, unavailable there with the reason (``python
-    native/build.py`` builds cython's and rust's; ``native/check_build.py --frozen`` checks the
-    app). Returns the hiddenimports."""
+    so the analysis sees none of them. Cython's compiled kernel ships when this Python has it
+    (``python native/build.py`` builds it); without it the app has the backend unavailable with the
+    reason (``native/check_build.py --frozen`` checks the app). Returns the hiddenimports."""
     hidden = list(_MODULES.values())  # the reference too: nothing else names helab.convert.backends
-    optional = {
-        "cython": ["helab.convert.backends.cython._kernel"],
-        "rust": ["helab_convert_rs", "helab_convert_rs.helab_convert_rs"],
-        # numba's own hook adds llvmlite and its LLVM library.
-        "numba": ["numba", "numba.core.caching", "helab.convert.backends.numba_kernels"],
-        "mlx": ["mlx", "mlx.core"],
-    }
-    for backend, modules in optional.items():  # modules[0]: the one that may be missing
-        try:
-            found = importlib.util.find_spec(modules[0]) is not None
-        except ImportError:
-            found = False
-        if not found:
-            print(f"HeLab.spec: the {backend} backend ships without {modules[0]} (not in this Python)")
-            continue
-        hidden += modules
-    return hidden  # mlx's libraries and Metal kernels: native/pyinstaller-hooks/hook-mlx.py
+    kernel = "helab.convert.backends.cython._kernel"
+    try:
+        found = importlib.util.find_spec(kernel) is not None
+    except ImportError:
+        found = False
+    if found:
+        hidden.append(kernel)
+    else:
+        print(f"HeLab.spec: the cython backend ships without {kernel} (not built for this Python)")
+    return hidden
 
 
 backend_imports = converter_backends()
@@ -64,12 +63,12 @@ a = Analysis(
            (str(ROOT / 'helab/convert/builtin_profiles/*.json'), 'helab/convert/builtin_profiles'),
            (str(metadata_path), 'helab')],
     hiddenimports=["helab.io_helper"] + backend_imports,
-    hookspath=[str(ROOT / 'native/pyinstaller-hooks')],
+    hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
     # Cython builds the cython backend's kernel (native/build.py); only optional imports in
     # pyarrow's conftest, scipy's test utilities and pydantic.v1 would collect it (5.6 MB).
-    excludes=["Cython", "cython", "pyximport"],
+    excludes=["Cython", "cython", "pyximport", *UNSHIPPED_BACKEND_PACKAGES],
     noarchive=False,
     optimize=0,
 )

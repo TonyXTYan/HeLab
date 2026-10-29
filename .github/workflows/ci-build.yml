@@ -40,7 +40,7 @@ jobs:
     name: Build
     if: inputs.enabled
     runs-on: ${{ inputs.os }}-latest
-    # About 5-10 min with the converter backends' builds and the packaged app's check.
+    # About 5-10 min with the cython backend's build and the packaged app's check.
     timeout-minutes: 25
     continue-on-error: ${{ inputs.experimental }}
     env:
@@ -107,10 +107,10 @@ jobs:
           fi
           pip install -e .
 
-      # The converter's compiled backends, built for this Python so PyInstaller collects them
-      # (HeLab.spec), and checked against the reference. A recovery build of a tag from before
-      # native/build.py builds without them, as that tag did.
-      - name: Build and check the converter backends
+      # The converter's compiled backend that ships (Q11.2: cython's kernel), built for this Python
+      # so PyInstaller collects it (HeLab.spec), and checked against the reference. A recovery build
+      # of a tag from before native/build.py builds without it, as that tag did.
+      - name: Build and check the converter's cython backend
         id: backends
         shell: bash
         run: |
@@ -150,7 +150,8 @@ jobs:
           pyinstaller HeLab.spec --clean -y
 
       # What PyInstaller collected: each backend in the packaged app (`HeLab convert --once`)
-      # against this Python's reference, the required ones (as the tests) available.
+      # against this Python's reference, the required ones (as the tests: cython) available, and
+      # the unshipped ones (numba, mlx, rust) unavailable with the reason.
       - name: Check every converter backend in the packaged app
         if: steps.backends.outputs.built == 'true'
         shell: bash

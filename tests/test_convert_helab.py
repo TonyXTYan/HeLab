@@ -551,8 +551,9 @@ def test_a_killed_helpers_workers_exit(source: Path, tmp_path: Path) -> None:
     assert all(convert.own_partial().match(name) for name in names if name.endswith(".partial"))
 
 
-def test_the_numba_backends_cache_folder_is_under_the_cache(source: Path, tmp_path: Path, private_store: str,
-                                                           monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_numba_backends_cache_folder_is_in_the_temp_folder(source: Path, tmp_path: Path, private_store: str,
+                                                               monkeypatch: pytest.MonkeyPatch) -> None:
+    """Q18.1: in HeLab's temp folder, not the cache's, also when the request has a disk cache."""
     from helab.convert.backends import numba_backend
     folders: list[str] = []
     monkeypatch.setattr(numba_backend, "set_cache_folder", lambda folder: folders.append(str(folder)))
@@ -561,7 +562,7 @@ def test_the_numba_backends_cache_folder_is_under_the_cache(source: Path, tmp_pa
         run(source, request_for(source, tmp_path, private_store, backend="numba"))
     except RuntimeError:
         pass  # (numba not installed here: the backend can't run, after the folder was set.)
-    assert folders == [os.path.join(private_store, "numba")]
+    assert folders == [os.path.join(str(tmp_path / "temps"), "numba")]
 
 
 def test_an_unavailable_backend_fails_the_conversion_before_any_read(source: Path, tmp_path: Path,
