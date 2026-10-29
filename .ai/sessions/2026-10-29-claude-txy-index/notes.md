@@ -58,3 +58,7 @@ Final runs (after 35b50d0):
 - The five type checks: clean (mypy strict helab 191 / tests 159, win32; pyright, Windows).
 - CI run 40866574094 (9691873): attempt 1 crashed one macOS worker (known-issue proposal in the
   handoff); attempt 2 green on every job, no RERUN.
+- CI run 40874212130 (c546394): green, two RERUNs (handoff, last section); the one in this
+  branch's two-writer test is fixed in the next commit (busy retried, `provenance._patient`).
+- After that fix: full suite `8198 passed, 669 skipped, 2 warnings in 139.30s`, no RERUN; the five
+  type checks clean.

@@ -25,7 +25,8 @@ a newer schema sets it aside, with its journal, as ``index-damaged-<UTC>-<8 hex>
 ``index-newer-…``; ``SET_ASIDE_PATTERN``) and starts a new one (on Windows, not while another process
 has it open: the conversion then fails with ``IndexUnavailable`` and is tried again later). Settings ›
 Cache's Clear removes damaged ones; a newer HeLab's index, live or set aside, is never ours to clear. Journal mode DELETE (a rollback journal, SQLite's default): writes are rare and tiny (a
-row per shot), each a short ``BEGIN IMMEDIATE`` transaction with a busy timeout, so the app's
+row per shot), each a short ``BEGIN IMMEDIATE`` transaction with a busy timeout (and tried again
+where SQLite answers busy at once rather than risk a deadlock, ``_patient``), so the app's
 helpers and ``helab convert`` write side by side; WAL's shared memory would gain nothing here and
 leaves ``-wal``/``-shm`` files beside it. The cache folder is never on a network share
 (``cache_location`` refuses one), so the index is on a local disk.
@@ -47,7 +48,7 @@ import re
 import secrets
 import sqlite3
 import time
-from typing import Any, Iterable, Literal, overload
+from typing import Any, Callable, Iterable, Literal, TypeVar, overload
 
 # The tag (``profile.TAG_PATTERN``, or ``u`` and hex digits) and the shot as HeLab writes them: ASCII
 # digits, no leading zeros (``txy_name``). Groups ``tag`` and ``shot``.
@@ -65,8 +66,11 @@ BUSY_SECONDS = 10.0
 SET_ASIDE_PATTERN = re.compile(
     r"^index-(?:damaged|newer)-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\.sqlite(?:-journal|-wal|-shm)?$", re.ASCII)
 _COMPANIONS = ("-journal", "-wal", "-shm")
-# SQLite's primary result codes for a file that isn't a sound database (SQLITE_CORRUPT, SQLITE_NOTADB).
+# SQLite's primary result codes for a file that isn't a sound database (SQLITE_CORRUPT, SQLITE_NOTADB),
+# and for another connection's lock (SQLITE_BUSY, SQLITE_LOCKED).
 _DAMAGED_CODES = (11, 26)
+_BUSY_CODES = (5, 6)
+T = TypeVar("T")
 
 
 def txy_name(tag: str, shot: int) -> str:
@@ -162,6 +166,30 @@ def damaged(error: sqlite3.Error) -> bool:
     return "malformed" in text or "not a database" in text
 
 
+def _busy(error: sqlite3.Error) -> bool:
+    code = getattr(error, "sqlite_errorcode", None)
+    if isinstance(code, int):
+        return code & 0xFF in _BUSY_CODES
+    return "locked" in str(error) or "busy" in str(error)
+
+
+def _patient(action: Callable[[], T]) -> T:
+    """``action`` (one short transaction that rolls itself back when it fails), tried again while
+    another connection's lock is in the way, for up to ``BUSY_SECONDS``. SQLite waits out a lock by
+    itself (the busy timeout) except where waiting could deadlock: then it answers busy at once, and
+    the transaction must be tried again (seen on Windows with two writers creating the index)."""
+    deadline = time.monotonic() + BUSY_SECONDS
+    delay = 0.005
+    while True:
+        try:
+            return action()
+        except sqlite3.OperationalError as error:
+            if not _busy(error) or time.monotonic() + delay > deadline:
+                raise
+        time.sleep(delay)
+        delay = min(2 * delay, 0.1)
+
+
 def set_aside(path: str, reason: str) -> str:
     """Rename the index at ``path`` (and its journal first, so a new index never takes it for its
     own) to ``index-<reason>-<UTC>-<8 hex>.sqlite`` beside it; returns the new name's path."""
@@ -235,7 +263,7 @@ class TxyIndex:
         failure is ``IndexUnavailable``."""
         for attempt in range(2):
             try:
-                return self._transaction(statements)
+                return _patient(lambda: self._transaction(statements))
             except sqlite3.Error as error:
                 if attempt or not damaged(error):
                     raise IndexUnavailable(f"HeLab's TXY index couldn't be written ({error})") from error
@@ -311,6 +339,29 @@ def _connect(path: str, mode: str) -> sqlite3.Connection:
     return sqlite3.connect(f"{uri}?mode={mode}", uri=True, timeout=BUSY_SECONDS, isolation_level=None)
 
 
+def _prepare(conn: sqlite3.Connection) -> int:
+    """The index's schema, its tables made first in a new file (``user_version`` 0)."""
+    version = int(conn.execute("PRAGMA user_version").fetchone()[0])
+    if version == 0:
+        conn.execute("PRAGMA journal_mode = DELETE")
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            if conn.execute("PRAGMA user_version").fetchone()[0] == 0:  # (Not made meanwhile.)
+                for table in _TABLES:
+                    conn.execute(table)
+                conn.execute(f"PRAGMA user_version = {SCHEMA}")
+            conn.execute("COMMIT")
+        except BaseException:
+            if conn.in_transaction:
+                with contextlib.suppress(sqlite3.Error):
+                    conn.execute("ROLLBACK")
+            raise
+        version = SCHEMA
+    if version == SCHEMA:
+        conn.execute("SELECT count(*) FROM folders").fetchone()
+    return version
+
+
 @overload
 def open_index(root: str, *, write: Literal[True]) -> TxyIndex: ...
 
@@ -346,26 +397,12 @@ def open_index(root: str, *, write: bool) -> TxyIndex | None:
         except (OSError, sqlite3.Error) as error:
             raise IndexUnavailable(f"HeLab's TXY index couldn't be opened ({error})") from error
         try:
-            version = conn.execute("PRAGMA user_version").fetchone()[0]
-            if version == 0:
-                conn.execute("PRAGMA journal_mode = DELETE")
-                conn.execute("BEGIN IMMEDIATE")
-                if conn.execute("PRAGMA user_version").fetchone()[0] == 0:  # (Not made meanwhile.)
-                    for table in _TABLES:
-                        conn.execute(table)
-                    conn.execute(f"PRAGMA user_version = {SCHEMA}")
-                conn.execute("COMMIT")
-                version = SCHEMA
+            writer = conn
+            version = _patient(lambda: _prepare(writer))
             if version == SCHEMA:
-                conn.execute("SELECT count(*) FROM folders").fetchone()
                 return TxyIndex(conn, path)
             reason = "newer" if version > SCHEMA else "damaged"
         except sqlite3.Error as error:
-            if conn.in_transaction:
-                try:
-                    conn.execute("ROLLBACK")
-                except sqlite3.Error:
-                    pass
             if not damaged(error):
                 conn.close()
                 raise IndexUnavailable(f"HeLab's TXY index couldn't be opened ({error})") from error

@@ -357,3 +357,23 @@ the index stays, and the row's tooltip says Clear keeps the index (a few kB, cou
 `test_the_helper_measures_and_clears_converted_txy` (clearable before, none after a Clear while bytes
 remain) and `test_the_cache_tab_shows_and_clears_converted_txy` (after a Clear: "0 files · <index
 size>", Clear all enabled, the converted row's Clear disabled; this assertion fails with the old gate).
+
+## CI rerun on c546394: two writers creating the index (fixed)
+
+CI run 40874212130 (c546394) passed every job, with two RERUNs, quoted from "rerun reasons":
+
+- "windows + py3.13 / Tests (2/2)" (job 123448835455):
+  `tests/test_convert_helab.py::test_two_writers_side_by_side_lose_nothing`, one rerun, then passed:
+  `File "D:\a\HeLab\HeLab\helab\convert\provenance.py", line 352, in open_index` /
+  `conn.execute("BEGIN IMMEDIATE")` / `sqlite3.OperationalError: database is locked`. **This branch's
+  code:** SQLite answers busy at once, without waiting out its busy timeout, where waiting could
+  deadlock, and two processes creating the index at the same moment on Windows hit that. Fixed:
+  each index transaction (creating the tables, and every write) is tried again while the answer is
+  busy, for up to `BUSY_SECONDS` (10 s) with a 5 ms to 100 ms back-off (`provenance._patient`);
+  anything else, or busy past then, is raised as before (`IndexUnavailable`). Test:
+  `test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeout`.
+- "windows + py3.13 / Tests (1/2)" (job 123448835517):
+  `tests/test_gui_responsiveness.py::test_timeout_retry_releases_dead_helper_slot_while_artifact_reader_is_blocked[2]`,
+  one rerun, then passed: `pytestqt.exceptions.TimeoutError: waitUntil timed out in 3000
+  milliseconds` at `tests\test_gui_responsiveness.py:292`. Already in `roadmaps/known-issues.md`
+  (line 94); not this branch's.

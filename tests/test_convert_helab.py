@@ -1390,6 +1390,29 @@ def test_an_index_that_cant_be_set_aside_fails_the_conversion_to_be_tried_again(
     assert [name.startswith("index-damaged-") for name in set_aside(tmp_path)] == [True]
 
 
+def test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeout(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """SQLite answers "database is locked" at once, without its busy timeout, where waiting could
+    deadlock (CI run 40874212130, Windows: two writers creating the index): the transaction is tried
+    again for up to ``BUSY_SECONDS``; any other error, or busy past then, is raised."""
+    locked = sqlite3.OperationalError("database is locked")
+    answers: list[BaseException | None] = [locked, locked, None]
+
+    def action() -> str:
+        answer = answers.pop(0)
+        if answer is not None:
+            raise answer
+        return "done"
+    assert provenance._patient(action) == "done" and answers == []
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        provenance._patient(lambda: (_ for _ in ()).throw(sqlite3.OperationalError("no such table: x")))
+    monkeypatch.setattr(provenance, "BUSY_SECONDS", 0.05)
+    started = time.monotonic()
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        provenance._patient(lambda: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
+    assert time.monotonic() - started < 1.0
+
+
 WRITER = """
 import sys, time
 from helab.convert import provenance
