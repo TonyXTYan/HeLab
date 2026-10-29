@@ -262,6 +262,36 @@ def test_files_that_may_still_be_written_wait(source: Path, tmp_path: Path, monk
     assert [event["shot"] for event in of(later, "shot_converted")] == [2]
 
 
+def aged(waiting: list[list[Any]], seconds: float) -> list[list[Any]]:
+    """A summary's waiting entries as if first seen ``seconds`` earlier (their sixth field)."""
+    return [[*entry[:5], entry[5] - seconds] for entry in waiting]
+
+
+def test_a_source_clock_behind_ours_never_makes_a_paused_file_damaged(source: Path, tmp_path: Path) -> None:
+    """Avocet's review: the 20 s also count from when this computer first saw the file with that size and
+    mtime, so a file paused mid-write on a share whose clock is far behind ours (its mtime looks old) waits."""
+    write_raw(source, 1, raw_bytes(10_000, 20_000)[:-5], mtime=time.time() - 100)  # Written just now.
+    request = request_for(source, tmp_path, seen=[])
+    first = run(source, request)
+    [entry] = summary(first)["waiting"]
+    assert len(entry) == 6 and abs(entry[5] - time.time()) < 5  # First seen now, by this clock.
+    request["seen"] = summary(first)["waiting"]
+    second = run(source, request)
+    assert [(event["shot"], event["reason"]) for event in of(second, "shot_waiting")] == [(1, raw.NO_FINAL_NEWLINE)]
+    assert of(second, "shot_unconvertible") == [] and summary(second)["waiting"][0][5] == entry[5]  # (Carried.)
+    # 20 s after it was first seen so, unchanged: damaged.
+    request["seen"] = aged(summary(second)["waiting"], 25)
+    third = run(source, request)
+    assert [(event["shot"], event["reason"]) for event in of(third, "shot_unconvertible")] == [(1, convert.DAMAGED)]
+    # Seen long ago but its mtime recent (a file touched since, our clock): it waits.
+    write_raw(source, 2, raw_bytes(10_000, trigger=0), mtime=time.time() - 8)
+    request["seen"] = [[*entry[:5], time.time() - 300] for entry in summary(run(source, request_for(
+        source, tmp_path, shots=[2], seen=[])))["waiting"]]
+    fourth = run(source, {**request, "shots": [2]})
+    assert of(fourth, "shot_unconvertible") == [] and [e["reason"] for e in of(fourth, "shot_waiting")] == [
+        raw.NOT_TRIGGER_FIRST]
+
+
 def test_a_raw_file_failing_the_checks_for_20_s_is_damaged_and_holds_nothing_up(
         source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Q18.5: unmodified for ``DAMAGED_SECONDS`` and still failing the format checks (no final newline,
@@ -282,9 +312,10 @@ def test_a_raw_file_failing_the_checks_for_20_s_is_damaged_and_holds_nothing_up(
     assert [event["shot"] for event in of(second, "shot_converted")] == [4]
     assert {event["shot"]: event["reason"] for event in of(second, "shot_waiting")} == {
         1: raw.NO_FINAL_NEWLINE, 2: raw.NOT_TRIGGER_FIRST, 3: raw.NO_ROWS}
-    # Unchanged, and now past the damaged age: damaged, without being read again.
+    # Unchanged, and now past the damaged age by their mtime and since first seen: damaged, without being
+    # read again.
     monkeypatch.setattr(convert, "DAMAGED_SECONDS", 5.0)
-    request["seen"], request["done"] = summary(second)["waiting"], summary(second)["current"]
+    request["seen"], request["done"] = aged(summary(second)["waiting"], 30), summary(second)["current"]
     reads: list[int] = []
     original = convert._read_raw
 

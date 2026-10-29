@@ -268,7 +268,8 @@ def test_a_plot_loads_its_own_source_and_goes_back_to_the_tabs(qtbot: QtBot, mon
         path = RUN
         tab_data = Dataset(path, "sig", {1: np.zeros((1, 3))},
                            {"fingerprint": [[1, 10, 100]],
-                            "txy": {"source": "helab-priority", "origins": {}, "profile_tag": "m19v1"}}, 0)
+                            "txy": {"source": "helab-priority", "origins": {}, "profile_tag": "m19v1", "tab": True}},
+                           0)
         cache.datasets[cache.dataset_key(tab_data)] = tab_data
         instance = AnalysisInstance(FallTime().get_metadata(), FallTime(), "Plot", build_view(tab_data), "1", None,
                                     cache=cache)
@@ -305,7 +306,9 @@ def test_a_plot_loads_its_own_source_and_goes_back_to_the_tabs(qtbot: QtBot, mon
         before = len(ran)
         instance._source_loaded(newer)
         assert len(ran) == before
-        # Back to the tab's data.
+        # Back to the tab's data, also after Settings changed the tabs' source (Avocet's review): until the
+        # folder loads again, the data the tab shows is still the tab's.
+        cache.set_tab_source("matlab-priority")
         instance.set_txy_source("")
         assert instance.on_tab_choice() and ran[-1].identity.source == "" and ran[-1].shots.keys() == {1}
         instance.close()

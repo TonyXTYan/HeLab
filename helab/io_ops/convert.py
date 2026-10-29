@@ -22,7 +22,10 @@ unmodified for ``ONCE_SETTLE_SECONDS`` (60 s) instead. A file dated more than
 ``fingerprints.FUTURE_SECONDS`` ahead waits as ``future``, and ``clock_skew`` says so once per
 conversion. A file that still fails the format checks (no final newline, its first line off the
 trigger channel, no rows) once unmodified for ``DAMAGED_SECONDS`` (20 s; a shot arrives about every
-30 s) is **damaged** (Q18.5): unconvertible (``shot_unconvertible``, reason ``damaged``, the check in
+30 s), both by its mtime against this clock and since this computer first saw it with that size and
+mtime (each ``waiting`` entry carries that time, sent back in ``seen``; so a source clock behind ours
+can't make a file paused mid-write look old; ``--once``, one look with no history, goes by the mtime
+alone, as its settle rule does), is **damaged** (Q18.5): unconvertible (``shot_unconvertible``, reason ``damaged``, the check in
 ``problem``), no TXY, skipped from then on while unchanged, so it never holds up later shots. One the
 converter fails on is unconvertible too.
 
@@ -413,8 +416,13 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     # Files the previous conversion read and found unfinished (no final newline, another first
     # channel, no rows yet): their (size, mtime), reason and message.
     unfinished = {str(entry[0]): ((int(entry[1]), int(entry[2])), str(entry[3]), str(entry[4]))
-                  for entry in seen_list or [] if isinstance(entry, (list, tuple)) and len(entry) == 5
+                  for entry in seen_list or [] if isinstance(entry, (list, tuple)) and len(entry) >= 5
                   and entry[3] in (raw.NO_FINAL_NEWLINE, raw.NOT_TRIGGER_FIRST, raw.NO_ROWS)}
+    # When this computer first saw each waiting file with its (size, mtime): this clock's time, carried
+    # in the waiting entries (their sixth field; none from before it was sent).
+    first_seen = {str(entry[0]): ((int(entry[1]), int(entry[2])), float(entry[5]))
+                  for entry in seen_list or [] if isinstance(entry, (list, tuple)) and len(entry) >= 6
+                  and isinstance(entry[5], (int, float)) and not isinstance(entry[5], bool)}
     done, kept_before, skip = _stats(request.get("done")), _stats(request.get("kept")), _stats(request.get("skip"))
     redo = str(request.get("redo") or "stale")
     if seen is not None:
@@ -458,8 +466,13 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
         settle = max(settle, ONCE_SETTLE_SECONDS)  # (One check: the age must stand for the second.)
     skewed = fingerprints._clock_ahead(path, [(shot.shot, shot.size, shot.mtime_ns) for shot in raws], send)
 
+    def seen_since(shot: _Shot) -> float:
+        """When this computer first saw the file with its size and mtime now (this check, if not before)."""
+        found = first_seen.get(shot.name)
+        return found[1] if found is not None and found[0] == (shot.size, shot.mtime_ns) else now
+
     def wait(shot: _Shot, code: str, message: str) -> None:
-        waiting.append([*shot.entry, code, message])
+        waiting.append([*shot.entry, code, message, seen_since(shot)])
         send({"kind": "shot_waiting", "path": path, "shot": shot.shot, "raw_name": shot.name, "raw_size": shot.size,
               "raw_mtime_ns": shot.mtime_ns, "reason": code, "message": message})
 
@@ -473,8 +486,11 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
         send(event)
 
     def unfinished_or_damaged(shot: _Shot, code: str, message: str) -> None:
-        """A file failing the format checks: damaged once unmodified for DAMAGED_SECONDS, else waiting."""
+        """A file failing the format checks: damaged once unmodified for DAMAGED_SECONDS by its mtime and
+        since this computer first saw it so, else waiting."""
         age = now - shot.mtime_ns / 1e9
+        if seen is not None:  # (``--once``: one look, no history; the mtime alone, as its settle rule.)
+            age = min(age, now - seen_since(shot))
         if age >= DAMAGED_SECONDS:
             refuse(shot, DAMAGED, f"Damaged: {message} (unchanged for {age:,.0f} s)", code)
         else:

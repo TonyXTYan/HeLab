@@ -942,9 +942,10 @@ class ShotWaitingEvent(TypedDict):
 
 class ShotUnconvertibleEvent(TypedDict):
     """A settled raw file that can't be converted (``reason``: ``damaged``, Q18.5: unmodified for
-    ``io_ops.convert.DAMAGED_SECONDS`` and still failing the format checks, ``problem`` naming which
-    (``no_final_newline``, ``not_trigger_first``, ``no_rows``); or ``failed``): no TXY. A later conversion
-    skips it while its (size, mtime) stay the same and the app sends them back in ``skip``."""
+    ``io_ops.convert.DAMAGED_SECONDS``, by its mtime and since first seen so, and still failing the
+    format checks, ``problem`` naming which: ``no_final_newline``, ``not_trigger_first``, ``no_rows``;
+    or ``failed``): no TXY. A later conversion skips it while its (size, mtime) stay the same and the
+    app sends them back in ``skip``."""
     kind: Literal["shot_unconvertible"]
     path: str
     shot: int
@@ -980,7 +981,7 @@ class ConvertProgressEvent(TypedDict):
 class ConvertSummaryEvent(TypedDict):
     """The conversion's end (before ``done``). Shot lists are the raw files' ``[name, size,
     mtime_ns]``: ``current`` (a current HeLab TXY: converted now or before), ``waiting`` (with its
-    reason and message after them), ``unconvertible`` and ``kept`` (beside: a TXY there this
+    reason, message and when this computer first saw it with that size and mtime after them), ``unconvertible`` and ``kept`` (beside: a TXY there this
     conversion doesn't stand behind); the next conversion of the folder (Live, ``helab convert
     --watch``) sends them back as ``done``, ``seen``, ``skip`` and ``kept``, so it neither checks
     done or kept shots again, nor takes a file whose size or mtime changed between two checks as

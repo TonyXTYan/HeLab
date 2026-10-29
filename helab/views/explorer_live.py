@@ -872,11 +872,12 @@ class LiveController:
         return sorted(found)
 
     def convert_line(self, session: LiveSession) -> tuple[str, list[str], bool]:
-        """Auto-convert's part of the Live line, its tooltip lines, and whether it stopped on an
-        error ("" and no lines while off)."""
+        """Auto-convert's part of the Live line, its tooltip lines, and whether it is amber: stopped on an
+        error, or shots converted with no hits (A17.1) ("" and no lines while off)."""
         convert = session.convert
         if convert is None:
             return "", [], False
+        empty_text, empty_line = no_hits_text(self.no_hit_shots(session))  # (Once per render.)
         if convert.error:
             text = f"auto-convert stopped: {convert.error}"
         else:
@@ -889,8 +890,8 @@ class LiveController:
                 parts.append(f"{len(stuck):,} waiting")
             if convert.damaged:
                 parts.append(f"{len(convert.damaged):,} damaged")
-            if empty := no_hits_text(self.no_hit_shots(session))[0]:
-                parts.append(empty)
+            if empty_text:
+                parts.append(empty_text)
             if others := len(convert.unconvertible) - len(convert.damaged):
                 parts.append(f"{others:,} unconvertible")
             text = "auto-convert " + (", ".join(parts) if parts else "on")
@@ -910,7 +911,7 @@ class LiveController:
             f"; last: shot {convert.last_shot}, {convert.last_hits:,} hits at "
             f"{datetime.fromtimestamp(convert.last_at).astimezone():%H:%M:%S}" if convert.last_at is not None else "")
             + (f"; notified below {threshold:,} hits: {convert.low:,}" if threshold else "; low-count notifications off"))
-        if empty_line := no_hits_text(self.no_hit_shots(session))[1]:
+        if empty_line:
             lines.append(empty_line)
         settling = len(convert.waiting) - len(convert.stuck())
         if settling:
@@ -933,7 +934,7 @@ class LiveController:
             lines.append("A waiting file is checked again only when it changes.")
         if convert.error:
             lines.append(f"Auto-convert stopped: {convert.error}. Retry converts again.")
-        return text, lines, bool(convert.error)
+        return text, lines, bool(convert.error or empty_text)
 
     def live_line(self, session: LiveSession) -> tuple[str, str, bool]:
         """The summary's third line for a folder Live watches or saves: text, tooltip, amber."""
@@ -953,7 +954,7 @@ class LiveController:
                 parts.append(f"next check in {max(0, math.ceil(session.next_at - time.monotonic()))} s")
         else:
             parts = ["Live updates off"]
-        convert_text, convert_lines, convert_stopped = self.convert_line(session)
+        convert_text, convert_lines, convert_amber = self.convert_line(session)
         if convert_text and session.on and not session.error:
             parts.append(convert_text)
         if reread := self.live_reread_note(session.path):
@@ -991,5 +992,4 @@ class LiveController:
             lines.append(f"Stopped: {session.error}. Retry checks again; turning Live off saves the new shots.")
         lines.extend(convert_lines)
         # Amber: stopped, or shots converted with no hits (A17.1).
-        return " · ".join(parts), "\n".join(lines), bool(session.on and (session.error or convert_stopped)) or bool(
-            session.convert is not None and self.no_hit_shots(session))
+        return " · ".join(parts), "\n".join(lines), bool(session.on and (session.error or convert_amber))

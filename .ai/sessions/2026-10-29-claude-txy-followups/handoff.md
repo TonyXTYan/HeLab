@@ -25,6 +25,34 @@ fixed in the same commit by listing the key as launch-only; Q18.2's first full r
 `test_typing` on one annotation of mine (fixed). Neither is flaky, so nothing goes to known-issues.
 GUI: not launched by hand; the Qt parts are covered offscreen by the tests (M~1, M~2).
 
+## Review round (Avocet: no blocker; small round)
+
+Commit after `ec1338a` (see the log). Full suite `-n 4 --reruns 5 --reruns-delay 1
+--basetemp=.ai/temp/pytest`: **8499 passed, 353 skipped, no RERUN**; mypy --strict (darwin, win32),
+pyright (also Windows) clean.
+
+1. **Damaged needs both clocks**: each `waiting` entry now carries a sixth field, when this computer
+   first saw the file with that (size, mtime) (this clock; carried while unchanged, sent back in
+   `seen`). Damaged needs 20 s by the mtime **and** 20 s since first seen, so a share whose clock is
+   behind ours can't make a file paused mid-write look old (`test_a_source_clock_behind_ours_never_makes_a_paused_file_damaged`).
+   `helab convert --once` (one look, no history) goes by the mtime alone, as its 60 s settle rule
+   does (Q~7). Entries without the field (older app state) count as first seen now.
+2. **Tabs after a Settings change**: chosen "**applies when a folder loads again**" (Settings → TXY
+   converter says so: "Tabs and Live read (when a folder loads again)", and its tooltip). No re-keying
+   any more: a dataset is the tab's because the tab loaded it (`tab` in its `txy` record, set from the
+   request by `FolderCache._with_choice`; `with_txy` marks a load asking for no choice as the tab's),
+   whatever the setting says now, so `current_dataset`/`latest_dataset`/`_base` keep finding the data
+   a tab shows, and a plot "As the folder's tab" reruns on it. A plot's own choice (even the tab's) is
+   its own dataset and job (`load:<choice>`). A tab load asking for another choice than the tab's
+   running load or Live check doesn't join it: it is queued and runs as its own job once that one
+   ends (`test_a_tab_load_of_a_new_choice_waits_for_the_running_one`). Live, while on, keeps each held
+   shot's kind of TXY while it exists (the existing held-kind rule); new shots follow the new choice;
+   every shot's origin stays exact.
+3. `txy_sources` docstring: `DatasetView.txy_choice`.
+4. (Docs, below.)
+5. `convert_line` computes the no-hit shots once per render; its third value is now "amber" (stopped
+   or no-hit shots), which `live_line` uses.
+
 ## What changed, by item
 
 ### Q18.4 / Q18.6 tagged names
@@ -136,6 +164,9 @@ GUI: not launched by hand; the Qt parts are covered offscreen by the tests (M~1,
   still open): a reopened plot starts "As the folder's tab".
 - **Q~5 The Live line turns amber for no-hit shots** (the whole line; it can't colour one part),
   which otherwise means "stopped". Alternative: amber only in Folder details. Proposed: as built.
+- **Q~7 `helab convert --once` and damaged files**: one look has no "first seen", so `--once` goes by
+  the mtime alone (≥ 20 s; its settle rule is 60 s by the mtime alone too). Alternative: `--once`
+  never reports damaged (only waiting). Proposed: as built.
 - **Q~6 Beside TXY from another computer with a colliding `u` tag** would be taken as current (no
   record there). Proposed: accept (≈1e-6), or later write the hash into the name (longer names).
 
@@ -191,6 +222,16 @@ shown later); **At launch**: one folder (`live_launch_folder`; the old list migr
 opened as the only tab; working offline its tab opens without Live; drop the "other launch folders"
 sentence (Q15.2 superseded by Q18.3); Live on collapses the left panel, Live off or an error
 restores it.
+
+**`.ai/architecture/settings.md`** (Converter rows line): drop `live_launch_folders` as a list; add
+`txy_source` (helab-priority; `read_txy_source`; Settings → TXY converter "Tabs and Live read (when a
+folder loads again)") and `live_launch_folder` (one path, `live_launch`); `live_launch_folders` stays
+only as the row read once to move an old list over (its first folder), then removed (A~3).
+
+**converter.md, also (Avocet's item 4)**: MATLAB's `tdc_autoconverter` skips HeLab's beside
+`d_txy_helab_<tag>_<N>.txt` only through its first-line check (the file isn't a raw `channel,time`
+file), not by name; and lab scripts that glob `d*.txt` in a raw folder now also see HeLab's beside
+TXY (they match `d*.txt`), so such scripts should match `d<N>.txt` exactly.
 
 **`.ai/DECISIONS_TODO.md`**: Q15.2 superseded by Q18.3 (built); Q14.3 settled by Q18.2 (profile by
 tag); Q12.7 confirmed as Q18.6 (the patterns now tagged).

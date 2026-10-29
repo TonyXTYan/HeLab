@@ -213,13 +213,15 @@ class ConverterTab(QWidget):
             self.output_combo.addItem(OUTPUT_LABELS[name], name)
         self.output_combo.setToolTip("Folders set to write them beside the raw files do that instead.")
         grid.addWidget(self.output_combo, 2, 1)
-        grid.addWidget(QLabel("Tabs and Live read"), 3, 0)
+        grid.addWidget(QLabel("Tabs and Live read (when a folder loads again)"), 3, 0)
         self.source_combo = QComboBox()
         for name in txy_sources.SOURCES:
             self.source_combo.addItem(txy_sources.LABELS[name], name)
         self.source_combo.setToolTip("Which TXY a folder's tab and Live load (Q18.2): HeLab's are those of the "
-                                     "profile conversions use (its tag in their names). A plot can choose another "
-                                     "source or profile in its settings.")
+                                     "profile conversions use (its tag in their names). A change applies when a "
+                                     "folder loads again (Refresh, or selecting it again): the data a tab shows "
+                                     "now stays until then, and a load already running finishes first. A plot "
+                                     "can choose another source or profile in its settings.")
         grid.addWidget(self.source_combo, 3, 1)
         grid.setColumnStretch(1, 1)
         layout.addLayout(grid)

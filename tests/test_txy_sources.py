@@ -441,6 +441,8 @@ def test_folder_cache_keeps_each_sources_datasets_apart(qtbot: Any, monkeypatch:
     assert cache.tab_choice() == "helab-priority@m19v1"
     tab, plot = dataset({"2": "helab:h"}), dataset({"1": "helab:h"}, source="matlab-priority")
     other = dataset({"1": "helab:h", "2": "helab:h"}, tag="m23v1")  # Another profile's HeLab TXY.
+    # (Loaded by the tab, or by plots: as FolderCache records them, ``_with_choice``.)
+    tab.metadata["txy"]["tab"], plot.metadata["txy"]["tab"], other.metadata["txy"]["tab"] = True, False, False
     for entry in (tab, plot, other):
         cache.datasets[cache.dataset_key(entry)] = entry
     assert cache.dataset_choice(plot) == "matlab-priority@m19v1" and cache.dataset_choice(other) == "helab-priority@m23v1"
@@ -453,11 +455,22 @@ def test_folder_cache_keeps_each_sources_datasets_apart(qtbot: Any, monkeypatch:
     assert cache.is_tab_dataset(Dataset(RUN, "sig", {}, {"fingerprint": []}, 0))
     cache._drop_superseded(dataset({}, signature="newer"))  # (A newer tab dataset: the others stay.)
     assert cache.dataset(path, "sig", "matlab-priority@m19v1") is plot and cache.dataset(path, "sig") is None
-    # The tab's source changed (Settings): the datasets are keyed again, the plot's choice now the tab's.
+    # The tab's source changed (Settings; Avocet's review): it applies when a folder loads again. The data
+    # a tab shows stays the tab's (its record says the tab loaded it), and a plot's stays the plot's.
+    shown, plotted = dataset({"2": "helab:h"}, signature="shown"), dataset({}, "matlab-priority", "shown")
+    shown.metadata["txy"]["tab"], plotted.metadata["txy"]["tab"] = True, False
+    for entry in (shown, plotted):
+        cache.datasets[cache.dataset_key(entry)] = entry
     cache.set_tab_source("matlab-priority")
-    assert cache.dataset(path, "sig") is plot and cache.current_dataset(path) is plot
+    assert cache.tab_choice() == "matlab-priority@m19v1" and cache.is_tab_dataset(shown)
+    assert cache.dataset(path, "shown") is shown and cache.current_dataset(path) is shown
+    assert cache.latest_dataset(path) is shown and cache._base(path) is shown
+    assert cache.dataset(path, "shown", "matlab-priority@m19v1") is plotted and not cache.is_tab_dataset(plotted)
+    # A tab load's options now ask for the new source, marked the tab's; a plot's isn't.
+    assert cache.with_txy(path, {})["txy"]["tab"] is True
+    assert cache.with_txy(path, {"txy": {"source": "helab-only"}})["txy"]["tab"] is False
     cache.set_tab_source("helab")  # (Its name before Q18.2.)
-    assert cache.tab_source() == "helab-priority" and cache.dataset(path, "sig") is None
+    assert cache.tab_source() == "helab-priority" and cache.dataset(path, "shown") is shown
     # The options: the tab's source unless asked, the profile from the settings, the bases.
     sent = cache.with_txy(str(tmp_path), {"memory": []})["txy"]
     assert sent["source"] == "helab-priority" and sent["profile_hash"] == MATLAB_2019.content_hash()
@@ -466,8 +479,34 @@ def test_folder_cache_keeps_each_sources_datasets_apart(qtbot: Any, monkeypatch:
     assert cache.with_txy(str(tmp_path), {"txy": {"source": "helab-only"}})["txy"]["source"] == "helab-only"
     cache.set_convert_profile(MATLAB_2023_LAB_EDIT)
     assert cache.with_txy(str(tmp_path), {})["txy"]["profile_hash"] == MATLAB_2023_LAB_EDIT.content_hash()
-    assert cache.tab_choice() == "helab-priority@m23v1" and cache.dataset(path, "sig") is other
+    assert cache.tab_choice() == "helab-priority@m23v1" and cache.dataset(path, "shown") is shown
     service.shutdown()
+
+
+def test_a_tab_load_of_a_new_choice_waits_for_the_running_one(qtbot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Avocet's review: after Settings changes the tabs' source, a tab's load doesn't join the running load of
+    the old choice (it would answer with that choice's data): it waits for it to end, then runs as its own."""
+    service = service_for_test(monkeypatch)
+    cache = FolderCache(service)
+    try:
+        assert cache.submit("tab-a", 0, RUN, "load", {})
+        old = cache.jobs[("load", RUN)]
+        assert old.payload["txy"]["source"] == "helab-priority"
+        # The same choice joins it.
+        assert cache.submit("tab-b", 0, RUN, "load", {}) and ("tab-b", 0) in old.subscribers
+        cache.set_tab_source("matlab-priority")
+        answers: list[str] = []
+        cache.resultReady.connect(lambda request, event: answers.append(event["kind"])
+                                  if request.owner == "tab-c" else None)
+        assert cache.submit("tab-c", 0, RUN, "load", {})
+        assert ("tab-c", 0) not in old.subscribers and answers == ["queued"]
+        for owner in ("tab-a", "tab-b"):
+            cache.cancel(owner, "load", RUN)
+        qtbot.waitUntil(lambda: (job := cache.jobs.get(("load", RUN))) is not None and job is not old)
+        new = cache.jobs[("load", RUN)]
+        assert new.payload["txy"]["source"] == "matlab-priority" and ("tab-c", 0) in new.subscribers
+    finally:
+        service.shutdown()
 
 
 # Review (Egret) fixes: held HeLab shots are never a mismatch; trust needs the profile; Live's summary is

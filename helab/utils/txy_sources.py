@@ -15,8 +15,8 @@ and its shots' origins (``TXY_FIELD`` in its metadata); views, results and saved
 origins, so data of one kind of TXY is never taken for another's. The two priority modes share the
 identity "" (``identity_source``): they differ only on shots both kinds have, which their origins tell
 apart; so data of MATLAB's TXY alone keeps the identity it had before HeLab converted anything, under
-either default, and existing caches and saved results stay valid. A view still records its mode
-(``DatasetView.txy_source``), so a plot on one mode never takes another mode's data as its own.
+either default, and existing caches and saved results stay valid. A view still records its choice
+(``DatasetView.txy_choice``), so a plot on one choice never takes another's data as its own.
 
 Data saved before Q18.2 says ``matlab`` or ``helab`` (``LEGACY``): read as the priority modes.
 

@@ -323,10 +323,13 @@ def test_a_loaded_folders_empty_helab_shots_are_its_no_hit_shots() -> None:
 
 
 def test_a_damaged_file_is_said_once_and_survives_auto_convert_off_and_on(
-        qtbot: QtBot, service: IOService, tmp_path: Path, notifier: FakeNotifier) -> None:
+        qtbot: QtBot, service: IOService, tmp_path: Path, notifier: FakeNotifier,
+        monkeypatch: pytest.MonkeyPatch) -> None:
     """A raw file unchanged for 20 s that fails the format checks (here: no rows) is damaged (Q18.5), said
     once by the helper (later conversions skip it) and notified once; the Live line and Folder details
     name it, also after auto-convert goes off and on (Heron2's review)."""
+    # (Its checks are milliseconds apart: no wait for 20 s since the file was first seen.)
+    monkeypatch.setattr(convert, "DAMAGED_SECONDS", 0.0)
     explorer, path = watching_raw_folder(qtbot, tmp_path)
     session = explorer.live
     assert session is not None

@@ -856,8 +856,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
         return txy_sources.choice_text(self.txy_source or cache.tab_source(), tag)
 
     def on_tab_choice(self) -> bool:
-        """Whether the plot runs on the folder tab's data (its choice is the tab's)."""
-        return self.txy_choice() == self._cache().tab_choice()
+        """Whether the plot runs on the folder tab's data ("As the folder's tab": whatever choice the tab's
+        data was loaded with; a choice made here, even the tab's, is the plot's own dataset)."""
+        return not self.txy_source and self.txy_profile is None
 
     def txy_label(self) -> str:
         source = self.txy_source or self._cache().tab_source()
@@ -874,11 +875,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         chosen = known_profiles().get(profile) if profile else None
         if source == self.txy_source and chosen == self.txy_profile:
             return
-        before = self.txy_choice()
         self.txy_source, self.txy_profile = source, chosen
-        if self.txy_choice() == before:
-            self._show_follow()
-            return
         cache = self._cache()
         if self._source_owner:
             self._end_source_load(cache)
@@ -953,7 +950,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
 
     def _source_loaded(self, dataset: Dataset) -> None:
         """The plot's source's dataset: its first (a new input), or a newer one Live asked for (a revision)."""
-        if self._cache().dataset_choice(dataset) != self.txy_choice():
+        cache = self._cache()
+        if cache.is_tab_dataset(dataset) or cache.dataset_choice(dataset) != self.txy_choice():
             return  # Asked for before the choice was changed again.
         if self._reload_from_source:
             self._reload_from_source = False
