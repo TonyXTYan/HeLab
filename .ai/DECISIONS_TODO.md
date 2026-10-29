@@ -249,7 +249,8 @@ included).
   yes, counted and shown; Make room may offer it, always asked (no AGENTS.md change).
 - **Q19.3 Disk-cache every TXY source (Q14.5)?** Proposed: yes, as layers (no duplication), stage 1.
 - **Q19.4 Layers in store-v3 (a migrated table) or a fresh store-v4 (lab caches re-read once)?**
-  Proposed: store-v3, migrated.
+  Proposed: store-v3, migrated. **Tony, 2026-10-29: a fresh store-v4, with a compatibility option:
+  keep using store-v3 (read for what v4 lacks), clear it (asked), or ignore it** ([plan](../roadmaps/caching-v2.md#store-v4-q194-a-fresh-store-tony-2026-10-29)).
 - **Q19.5 Does Don't cache this folder also stop HeLab's TXY going to the cache folder?** Proposed:
   yes; such folders convert to temp, like folders without a data root.
 - **Q19.6 Precision of data converted on read:** 8 significant figures like the TXY text (T ≈ 0.4 s
@@ -275,7 +276,9 @@ included).
 - **Q19.10 Which folders cache the raw layer by default?** Every folder with raw files, or only
   where Live, auto-convert or calibration is used? Proposed: every folder with raw files (it
   costs about what TXY caching costs now, and any later profile or calibration then works
-  offline).
+  offline). **Tony, 2026-10-29: wherever HeLab caches a folder today:** loads of the selected
+  folder (Load, or auto-load), Live's saves, loads for presets and reopened plots, auto-convert;
+  not listings, Don't-cache folders, folders without a data root, or offline.
 
 ## From the audit (block 2)
 

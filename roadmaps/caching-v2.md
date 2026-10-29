@@ -30,8 +30,11 @@ Per shot, the raw file parsed into binary arrays and kept in the store, beside t
   (size and mtime, read once settled). A raw file overwritten in place (free-run) is a new key.
 - **Exactness:** converting from the layer must equal converting from the file, byte for byte;
   stage 1's checker proves it on every sample shot and the fuzz set.
-- **Filled** by the helper whenever it reads a raw file (a load, Live, auto-convert, or an
-  explicit "cache raw"). Only helpers open the store (AGENTS.md).
+- **Filled** wherever HeLab caches a folder today (Q19.10, Tony 2026-10-29): a load of the
+  selected folder (Load, or auto-load when it is on), Live's saves (every 10 shots and on stop),
+  loads for presets and reopened plots, and auto-convert. Not for listings or scans (status only),
+  folders marked Don't cache, folders without a data root (RAM only) or while working offline.
+  Only helpers open the store (AGENTS.md).
 - **Uses:** any profile tag can be made from the layer without touching the share (Work Offline
   too); calibration and D11's raw-pulse diagnostics read it directly (MCP pulses, ringing, time
   sums: information a TXY loses).
@@ -54,6 +57,29 @@ Per shot, the raw file parsed into binary arrays and kept in the store, beside t
   rounds to 8 significant figures so it matches its text exactly; newer tags keep full float64
   (Q19.6).
 
+## Store v4 (Q19.4: a fresh store, Tony 2026-10-29)
+
+Caching v2 lives in a new `DIR_CACHES/store-v4`, not a migration of store-v3. Design to write
+before stage 1 (a design note, then this section):
+
+- **Tables:** the record tables carried over from store-v3 (listings, status, subtrees, data
+  roots' records, results, presets' references, flags), plus `raw_layers` (one row per raw file:
+  key, fingerprint, parser version, pulse count, file) and `txy_layers` (one row per folder and
+  source tag, per-shot fingerprints as `datasets` has now). Dataset files per layer, Blosc.
+- **Saved results:** keyed by the layer they ran on (raw fingerprint + tag), so they survive a
+  re-conversion.
+- **Compatibility with store-v3** (Tony: an option to keep using it, clear it or ignore it):
+  shown once, when HeLab first opens a cache folder that has a store-v3 and no store-v4:
+  - *Keep using store-v3 for now:* store-v4 is created and filled as folders load; store-v3 is
+    read (never written) for what store-v4 doesn't have yet: its datasets as MATLAB-TXY layers,
+    its saved results, presets and records.
+  - *Clear store-v3:* after asking, with its size shown; store-v4 starts empty.
+  - *Ignore store-v3:* left on disk, unused; Settings › Cache shows it with a Clear.
+  The choice can be changed later in Settings › Cache. HeLab never deletes store-v3 without
+  asking (AGENTS.md).
+- **Budget:** one budget across store-v4 (and store-v3 while kept); Make room offers TXY layers
+  before raw layers, since they can be rebuilt.
+
 ## Stages (each needs Tony's go)
 
 0. Small fixes from the audit (A19.1 temp-folder TXY shown and cleared; A19.2 Clear vs a running
@@ -70,6 +96,5 @@ Per shot, the raw file parsed into binary arrays and kept in the store, beside t
 
 ## Open decisions
 
-- Q19.1–Q19.9 (block 19), in particular: store-v3 with a migrated table or a fresh store-v4
-  (Q19.4); which folders cache raw by default: every folder with raw files, or only where Live,
-  auto-convert or calibration is used (Q19.10).
+- Q19.1–Q19.3 and Q19.5–Q19.8 (block 19).
+- The store-v4 design note (tables, keys, the store-v3 compatibility read path) before stage 1.
