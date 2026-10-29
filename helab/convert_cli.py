@@ -13,7 +13,10 @@ dispatches it before anything starts Qt widgets, caches or Dash).
 
 ``--output`` defaults to the setting (``converted_txy_output``: cache, else temp). ``beside``
 writes the TXY next to the raw files for this run, the command line standing for the folder's
-flag (Q9.7). It registers as a running HeLab (``cache_locks``), so no cache move runs meanwhile,
+flag (Q9.7); a folder marked Don't cache converts to the temp folder whatever the output asked
+(Q27.4: the store's flag, read by the conversion). Its provenance rows go to the same
+``converted-txy/index.sqlite`` as the app's, safely beside a running HeLab writing it too (SQLite
+transactions, ``helab.convert.provenance``). It registers as a running HeLab (``cache_locks``), so no cache move runs meanwhile,
 and finds the folder's data root (the nearest ``.helab-root`` at or above it) once at the start.
 """
 from __future__ import annotations

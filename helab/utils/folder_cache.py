@@ -2932,6 +2932,10 @@ class FolderCache(QObject):
         if not options or self.service.closed:
             return ""
         owner = uuid4().hex
+        if action in ("inventory", "clear_converted_txy"):
+            # HeLab's converted TXY are measured and cleared in the temp folder too (Q27.5).
+            from helab.utils.constants import DIR_TEMPS
+            params.setdefault("temps", DIR_TEMPS)
         waiting = self.pending_results.get(str(params.get("pending_id") or ""), {}) if action == "adopt_result" else {}
         if waiting.get("store"):
             params["store"] = waiting["store"]  # Make room in the store it waits in, or nothing.

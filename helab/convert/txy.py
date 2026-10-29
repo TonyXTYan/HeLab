@@ -11,7 +11,10 @@ so the kernel applies the umask, as for any plain new file (MATLAB's ``fopen`` t
 own is owner-only), flushes it to disk, then renames it into place and syncs the folder, so a
 reader never sees half a file and a crash leaves the old one or the new one. ``replace=False``
 never replaces a file already at the target (``FileExistsError``; the temporary one is removed):
-HeLab's writes beside raw files never touch an existing TXY.
+HeLab's writes beside raw files never touch an existing TXY. ``before_rename`` is called with the
+temporary file's ``os.stat`` once it is written and closed, before the rename (which keeps its size
+and mtime): HeLab records which file it is writing in its index first; an exception there removes
+the temporary file and is raised.
 
 Qt-free; standard library and NumPy only.
 """
@@ -23,6 +26,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+from typing import Callable
 
 import numpy as np
 import numpy.typing as npt
@@ -78,7 +82,8 @@ def write_txy(path: str | os.PathLike[str], hits: Hits) -> None:
     write_atomic(path, format_txy(hits))
 
 
-def write_atomic(path: str | os.PathLike[str], data: bytes, *, replace: bool = True) -> None:
+def write_atomic(path: str | os.PathLike[str], data: bytes, *, replace: bool = True,
+                 before_rename: Callable[[os.stat_result], None] | None = None) -> None:
     target = Path(path)
     for _ in range(100):
         temporary = target.with_name(partial_name(target.name, secrets.token_hex(_TOKEN_BYTES)))
@@ -94,6 +99,8 @@ def write_atomic(path: str | os.PathLike[str], data: bytes, *, replace: bool = T
             file.write(data)
             file.flush()
             os.fsync(file.fileno())
+        if before_rename is not None:
+            before_rename(os.stat(temporary))
         if replace:
             os.replace(temporary, target)
         else:

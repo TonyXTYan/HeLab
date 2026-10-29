@@ -108,7 +108,8 @@ class AdminResultFields(TypedDict, total=False):
     result_id: str  # an adopted result's saved row (R2)
     folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
     store: str  # the store an adoption answered from (its ``store_id``)
-    converted_txy: dict[str, int]  # HeLab's TXY under the cache folder after a Clear (files, bytes, folders)
+    # HeLab's TXY under the cache and temp folders after a Clear (``helab_txy.converted_summary``).
+    converted_txy: dict[str, Any]
 
 
 # Process and progress
@@ -878,7 +879,7 @@ class ConvertSeconds(TypedDict):
     parse: float
     reconstruct: float
     format: float
-    write: float  # the TXY and its provenance record
+    write: float  # the TXY and its provenance row
 
 
 class ConvertPlanEvent(TypedDict):
@@ -886,8 +887,8 @@ class ConvertPlanEvent(TypedDict):
     ``output`` is where the TXY go (``beside``, ``cache`` or ``temp``): the one asked for, or
     ``temp`` with ``fallback`` saying why (no data root, the disk cache off or unreadable; Q9.3), or
     the setting's output when ``beside`` was asked for a folder whose flag is off.
-    ``folder`` is HeLab's own folder for this source folder (the TXY unless beside, and every
-    provenance record); ``txy_folder`` where the TXY go; ``key`` the data-root key ("" without)."""
+    ``folder`` is HeLab's own folder for this source folder (the TXY unless beside; every provenance
+    row is in its base's ``converted-txy/index.sqlite``); ``txy_folder`` where the TXY go; ``key`` the data-root key ("" without)."""
     kind: Literal["convert_plan"]
     path: str
     output: str
@@ -904,7 +905,7 @@ class ConvertPlanEvent(TypedDict):
 
 class ShotConvertedEvent(TypedDict):
     """A shot converted: its TXY (``txy``, 0 bytes when ``hits`` is 0: "converted, empty", Q10.3) and
-    provenance record (``provenance``) written atomically. A low-count shot is the app's to judge
+    provenance row written first in the base's index (``provenance``: that index's path). A low-count shot is the app's to judge
     from ``hits``."""
     kind: Literal["shot_converted"]
     path: str

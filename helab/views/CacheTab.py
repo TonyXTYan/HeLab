@@ -51,6 +51,17 @@ CLEAR_TEXT = {
 RESULTS_LABEL = "Cached analysis"
 RESULTS_TEXT = ("Plots shown now stay as they are; the next run of each plot computes again. Cached data, "
                 "folder records and exported files are kept.")
+# HeLab's converted TXY (Q27.5): where they are, and what each folder holds (the row's tooltip).
+CONVERTED_TIP = ("TXY files HeLab converted from raw files, in the cache and temp folders' converted-txy folders, "
+                 "with HeLab's index of what made them. They don't count toward the budget, and nothing removes "
+                 "them but this Clear. Those written beside the raw files aren't here (their records are, and stay).")
+CONVERTED_BASES = {"cache": "Cache folder", "temp": "Temp folder"}
+
+
+def converted_used(usage: dict[str, Any]) -> str:
+    """`` · last used 2h ago`` once a conversion or load has used one of the folders, else ""."""
+    last_used = usage.get("last_used")
+    return f" · last used {relative_age(time.time() - float(last_used))}" if last_used else ""
 
 
 def read_result_reuse(settings: QSettings) -> bool:
@@ -217,15 +228,12 @@ class CacheTab(QWidget):
         prefs.addWidget(self.prefs_button)
         layout.addLayout(prefs)
 
-        # HeLab's own TXY under the cache folder (converted-txy/): not in the store, outside the budget,
-        # removed only by this Clear (Q12.3), through a helper.
+        # HeLab's own TXY under the cache and temp folders (converted-txy/, Q27.5): not in the store, outside
+        # the budget, removed only by this Clear (Q12.3), through a helper and each folder's index.
         converted = QHBoxLayout()
         converted.addWidget(QLabel("HeLab's converted TXY"))
         self.converted_label = QLabel("Checking…")
-        self.converted_label.setToolTip(
-            "TXY files HeLab converted from raw files, with their records, in the cache folder's converted-txy "
-            "folder. They don't count toward the budget, and nothing removes them but this Clear. Those written "
-            "beside the raw files aren't here (their records are, and stay).")
+        self.converted_label.setToolTip(CONVERTED_TIP)
         converted.addWidget(self.converted_label, 1)
         self.converted_button = QPushButton("Clear…")
         self.converted_button.clicked.connect(self.clear_converted)
@@ -456,14 +464,15 @@ class CacheTab(QWidget):
         self._run("Clear folder preferences", "clear_prefs")
 
     def clear_converted(self) -> None:
-        """Clear HeLab's converted TXY under the cache folder (asks first)."""
+        """Clear HeLab's converted TXY under the cache and temp folders (asks first)."""
         inventory = self.inventory
         if inventory is None or self.busy:
             return
         converted = inventory.get("converted_txy") or {"files": 0, "bytes": 0}
         if not self.confirm("Clear HeLab's converted TXY?",
                             f"Removes {plural(int(converted['files']), 'TXY file')} HeLab converted, with their "
-                            f"records ({byte_size(int(converted['bytes']))}), from the cache folder. Raw files, "
+                            f"records ({byte_size(int(converted['bytes']))}), from the cache and temp folders. Raw "
+                            "files, "
                             "MATLAB's TXY and HeLab's TXY written beside raw files are kept. Data loaded stays open; "
                             "plots on HeLab's TXY keep what they show, and shots are converted again when converting "
                             "is on.", "Clear"):
@@ -644,9 +653,13 @@ class CacheTab(QWidget):
                                      if prefs["write_beside"] else ""))
         self.prefs_button.setEnabled(writable and bool(prefs["no_cache"] or prefs["no_auto_load"]
                                                        or prefs["write_beside"]))
-        converted = inventory.get("converted_txy") or {"files": 0, "bytes": 0}
+        converted: dict[str, Any] = inventory.get("converted_txy") or {"files": 0, "bytes": 0}
         self.converted_label.setText(f"{plural(int(converted['files']), 'file')} · "
-                                     f"{byte_size(int(converted['bytes']))}")
+                                     f"{byte_size(int(converted['bytes']))}" + converted_used(converted))
+        self.converted_label.setToolTip("\n".join((CONVERTED_TIP, "", *(
+            f"{CONVERTED_BASES.get(name, name)}: {plural(int(base['files']), 'file')} in "
+            f"{plural(int(base['folders']), 'folder')} · {byte_size(int(base['bytes']))}{converted_used(base)}"
+            for name, base in (converted.get("bases") or {}).items()))))
         self.converted_button.setEnabled(writable and bool(converted["files"] or converted["bytes"]))
         checked = f"Checked {datetime.fromtimestamp(inventory['checked_at']):%H:%M}"
         self.checked_label.setText(" · ".join(filter(None, (status or checked, self.message))))
