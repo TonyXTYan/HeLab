@@ -43,6 +43,9 @@ compute is postponed until the converter works well (Q6.2).
   store or cache only (Q6.9). Building decisions: Q9.1–Q9.9 (MATLAB's converter gets no
   temp-name change, Q9.8); v0.0.7 ships with stages 1, 2 and 4 (Q9.9).
   [Plan](txy-converter.md) (2026-10-29; focus 2026-10-28).
+- [ ] Caching v2: the raw d files as the cached source (a raw layer of pulses plus TXY layers per
+  profile tag, with a per-folder policy); planning only, no code until Tony's go
+  ([plan](caching-v2.md), Q19.x, 2026-10-29).
 - [ ] Distributed results compute: one machine computes analysis results and other HeLabs use
   them without repeating the work. It builds on the [headless runner](headless-analysis.md)
   and the [network extension](network-runners-and-web.md#cross-machine-result-sharing).

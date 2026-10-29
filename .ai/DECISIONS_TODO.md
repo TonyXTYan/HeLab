@@ -270,6 +270,12 @@ included).
   robust), or TXY only (archives); any tag can be rebuilt from the raw layer without the share.
   Q19.6 then reads: binary always (text only beside the raw files or on export); `m19v1` rounds
   to 8 significant figures so it matches its text exactly, newer tags keep full float64.
+  **Tony, 2026-10-29: yes, plan to move on to caching the raw d files** (plan:
+  [caching v2](../roadmaps/caching-v2.md); still no cache code until his go).
+- **Q19.10 Which folders cache the raw layer by default?** Every folder with raw files, or only
+  where Live, auto-convert or calibration is used? Proposed: every folder with raw files (it
+  costs about what TXY caching costs now, and any later profile or calibration then works
+  offline).
 
 ## From the audit (block 2)
 
