@@ -7,6 +7,7 @@ console, so the log file in the app folder is where such an error leaves its tra
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import logging
 from logging.handlers import RotatingFileHandler
 import math
@@ -41,6 +42,20 @@ LOG_FORMAT = "%(asctime)s %(levelname)s [%(process)d %(threadName)s] %(name)s: %
 # The same unhandled exception (its type and where it was raised) is logged once in this time, and
 # the repeats are counted in the next one logged: a model's ``data()`` may raise on every repaint.
 REPEAT_SECONDS = 60.0
+# Milestones: one INFO line when a long step ends (a folder loaded, a plot computed, a conversion
+# finished), for a runner (a smoke pass, computer use) to wait on in the log file:
+#     ... INFO [4242 MainThread] helab.milestone: MILESTONE load_done folder="/a b/c" shots=3 seconds=1.250
+# ``milestone`` writes every one and ``parse_milestone`` reads them back, so the form can't drift.
+MILESTONE = "MILESTONE"
+MILESTONE_LOGGER = "helab.milestone"
+_BARE = re.compile(r"[A-Za-z0-9_.:/+-]+")
+_INT = re.compile(r"-?\d+")
+_FLOAT = re.compile(r"-?\d+\.\d+")
+_LITERALS: dict[str, bool | None] = {"true": True, "false": False, "null": None}
+_MILESTONE_LINE = re.compile(rf"\b{MILESTONE} ([a-z][a-z0-9_]*)((?: [a-z][a-z0-9_]*=\S.*)?)$")
+_FIELD = re.compile(r'([a-z][a-z0-9_]*)=("(?:[^"\\]|\\.)*"|\S+)')
+
+MilestoneValue = str | int | float | bool | None
 
 _notice: Callable[[str], None] | None = None
 _seen: dict[tuple[str, str, int], tuple[float, int]] = {}  # (When last logged, repeats since.)
@@ -67,6 +82,51 @@ def start_log_file(folder: str, level: int = logging.INFO) -> RotatingFileHandle
     logging.getLogger().addHandler(handler)
     logging.info(f"Logging to {path}")
     return handler
+
+
+def milestone(event: str, **fields: MilestoneValue) -> str:
+    """Log the milestone ``event`` (``load_done``…) with ``fields`` in the order given, one INFO line
+    on ``helab.milestone``: ``MILESTONE <event> key=value…``. Integers as they are, floats to 3
+    decimals, ``true``/``false``/``null``; a string bare when it is plain (``_BARE``) and can't be
+    read as another type, JSON-quoted otherwise. Memory only, from any thread. The line's message."""
+    message = " ".join([MILESTONE, event, *(f"{key}={_milestone_value(value)}" for key, value in fields.items())])
+    logging.getLogger(MILESTONE_LOGGER).info("%s", message)
+    return message
+
+
+def _milestone_value(value: MilestoneValue) -> str:
+    if value is None or isinstance(value, bool):
+        return {None: "null", True: "true", False: "false"}[value]
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return f"{value:.3f}" if math.isfinite(value) else "null"
+    if _BARE.fullmatch(value) and value not in _LITERALS and not _FLOAT.fullmatch(value) and not _INT.fullmatch(value):
+        return value
+    return json.dumps(value, ensure_ascii=False)
+
+
+def parse_milestone(line: str) -> tuple[str, dict[str, MilestoneValue]] | None:
+    """A log line's milestone (``milestone``'s form) as its event and fields, typed back; None for a
+    line that has none."""
+    match = _MILESTONE_LINE.search(line.rstrip("\r\n"))
+    if match is None:
+        return None
+    fields: dict[str, MilestoneValue] = {}
+    for key, text in _FIELD.findall(match.group(2)):
+        value: MilestoneValue
+        if text.startswith('"'):
+            value = str(json.loads(text))
+        elif text in _LITERALS:
+            value = _LITERALS[text]
+        elif _INT.fullmatch(text):
+            value = int(text)
+        elif _FLOAT.fullmatch(text):
+            value = float(text)
+        else:
+            value = text
+        fields[key] = value
+    return match.group(1), fields
 
 
 @dataclass(frozen=True)

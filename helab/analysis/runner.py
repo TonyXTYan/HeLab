@@ -18,6 +18,7 @@ from helab.analysis.dataset_view import DatasetView
 from helab.analysis.results import AnalysisContext, AnalysisResult, RamResults
 from helab.analysis.runner_core import AnalysisQueue
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.utils import app_log
 
 
 class AnalysisRunner(QObject):
@@ -33,6 +34,10 @@ class AnalysisRunner(QObject):
         self.results = self.core.results
 
     def _finished(self, result: AnalysisResult) -> None:
+        app_log.milestone("plot_done", script=result.analysis.analysis_id, version=result.analysis.version,
+                          action=result.action, plot=result.owner, job=result.job_id,
+                          seconds=result.finished_at - result.started_at,
+                          state={"completed": "ok"}.get(result.state, result.state))
         self.finished.emit(result)
 
     def submit(self, script: DatasetAnalysis, metadata: ScriptMetadata, action: str,

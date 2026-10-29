@@ -19,7 +19,7 @@ from PyQt6.QtGui import QIcon, QPixmap
 
 from helab.analysis.constant_layers import clean_layer, folder_layer
 from helab.utils.ram_buffers import Buffers, dataset_buffers
-from helab.utils import file_kinds, large_folder, txy_sources
+from helab.utils import app_log, file_kinds, large_folder, txy_sources
 from helab.utils.cache_store import APPROVAL_SHARE, KINDS, store_root
 from helab.utils.constants import (
     DEFAULT_CHECK_LEVEL, DEFAULT_DISK_BUDGET, DEFAULT_LIVE_AUTOSAVE, DEFAULT_LIVE_INTERVAL, DEFAULT_RAM_STEPS,
@@ -4039,6 +4039,11 @@ class FolderCache(QObject):
                 event = self._with_choice(job.payload, event)
                 entry = Dataset(job.path, event["signature"], job.data, event, job.epoch)
                 self.datasets[self.dataset_key(entry)] = entry
+                app_log.milestone("load_done", folder=job.path, shots=len(job.data),
+                                  events=sum(len(array) for array in job.data.values()),
+                                  seconds=time.monotonic() - job.created,
+                                  source="cache" if job.operation == "cached" else "folder" if job.clock.total_bytes
+                                  else "check", live=bool(job.payload.get("live")))
                 event = {**event, "dataset": entry}
                 # Subscribers pin the dataset during delivery before eviction.
                 for request in tuple(job.subscribers.values()):
