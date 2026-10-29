@@ -18,7 +18,8 @@ from PyQt6.QtWidgets import QInputDialog, QMenu, QMessageBox
 
 from helab.utils import events
 from helab.utils import folder_cache
-from helab.utils.folder_cache import Dataset
+from helab.utils import txy_sources
+from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest
 from helab.utils.settings_defaults import CONVERT_LOW_HITS_SETTING, read_setting, setting_default
 from helab.utils.settings_store import app_settings
@@ -45,6 +46,21 @@ LIVE_BLOCKED = {
 # re-checked only when the file changes (no final newline, off the trigger channel: Q12.5), or
 # until the clock or the share lets it be read (``future``, ``read_failed``).
 CONVERT_SETTLING = ("settling", "changed")
+# A raw file unmodified for 20 s that still fails the format checks (``io_ops.convert.DAMAGED``, Q18.5):
+# its ``shot_unconvertible`` reason, and how its message starts (as FolderCache keeps it after auto-convert
+# is turned off and on).
+DAMAGED_REASON = "damaged"
+DAMAGED_TEXT = "Damaged: "
+
+
+def no_hits_text(shots: list[int]) -> tuple[str, str]:
+    """Shots whose conversion found no hits (A17.1): the line's part and its tooltip line ("" for none)."""
+    if not shots:
+        return "", ""
+    numbers = ", ".join(str(shot) for shot in shots[:20]) + (" …" if len(shots) > 20 else "")
+    return (plural(len(shots), "shot") + " with no hits",
+            f"No hits ({len(shots):,}): shot{'' if len(shots) == 1 else 's'} {numbers}. HeLab converted "
+            "each to an empty TXY (0 bytes): its raw file holds no matched pulses (check the detector).")
 # What the Live line calls each place HeLab's TXY go (``convert_plan.output``).
 CONVERT_OUTPUTS = {"beside": "beside the raw files", "cache": "HeLab's disk cache folder",
                    "temp": "HeLab's temp folder"}
@@ -67,6 +83,7 @@ class AutoConvert:
     last_hits: int = 0
     last_at: float | None = None  # Wall time.
     low: int = 0  # Low-count shots notified.
+    no_hits: set[int] = field(default_factory=set)  # Shots converted with no hits (A17.1).
     # The last plan: where the TXY go and why not where asked, the profile and backend.
     output: str = ""
     fallback: str = ""
@@ -74,9 +91,11 @@ class AutoConvert:
     profile: dict[str, Any] = field(default_factory=dict)
     backend: str = ""
     # Raw files not converted (by name): waiting (reason, message), from the last conversion;
-    # unconvertible (message), kept while they stay unconvertible; kept beside (shot: reason).
+    # unconvertible (message), kept while they stay unconvertible, the damaged ones among them (Q18.5)
+    # named in ``damaged``; kept beside (shot: reason).
     waiting: dict[str, tuple[str, str]] = field(default_factory=dict)
     unconvertible: dict[str, str] = field(default_factory=dict)
+    damaged: set[str] = field(default_factory=set)
     kept: dict[int, str] = field(default_factory=dict)
     error: str = ""  # Why conversions stopped (Retry, or auto-convert off and on, starts them again).
 
@@ -273,7 +292,6 @@ class LiveController:
         self._set_browsing_enabled(False)
         if not session.request:
             self._live_next(0.0)
-        live_launch.live_started(path)
         logging.info("Live on: %s", path)
         self._live_changed()
         return True
@@ -677,16 +695,18 @@ class LiveController:
                "its .helab-root isn't confirmed yet (Review…)" if cache.pending_root(path) is not None else "")
         action.setEnabled(not why)
         action.setToolTip(f"Not available: {why}" if why else (
-            f"HeLab's TXY (d_txy_helab_<N>.txy) go into {name} itself, beside the raw files, instead of HeLab's "
+            f"HeLab's TXY (d_txy_helab_<tag>_<N>.txt) go into {name} itself, beside the raw files, instead of HeLab's "
             "own folder; HeLab writes nothing else there and never replaces a file. Saved for this folder."))
         action.toggled.connect(lambda on: self._set_write_beside(path, on))
         action = menu.addAction("Start Live and auto-convert here when HeLab launches")
         assert action is not None
         action.setCheckable(True)
         action.setChecked(live_launch.starts_at_launch(path))
-        action.setToolTip("At launch this folder opens in a tab and Live starts with auto-convert. With several "
-                          "such folders each opens in a tab; Live follows the current tab, so it starts in the "
-                          "first one set.")
+        other = live_launch.launch_folder()
+        action.setToolTip("At launch HeLab opens this folder alone, in one tab, and starts Live with auto-convert. "
+                          "One folder only: Live runs in one folder."
+                          + (f" Replaces the folder set now: {other}" if other and other != FolderCache.key(path)
+                             else ""))
         action.toggled.connect(lambda on: self._set_starts_at_launch(path, on))
         threshold = low_hits_threshold()
         action = menu.addAction(f"Notify when a converted shot has fewer than {threshold:,} hits…" if threshold
@@ -700,7 +720,7 @@ class LiveController:
         name = os.path.basename(path.rstrip(os.sep)) or path
         if on and QMessageBox.question(
                 explorer, "Write TXY beside the raw files?",
-                f"HeLab will write its converted TXY files (d_txy_helab_<N>.txy) into {name} itself, beside the raw "
+                f"HeLab will write its converted TXY files (d_txy_helab_<tag>_<N>.txt) into {name} itself, beside the raw "
                 "files, for every shot it converts from now on. It writes nothing else there and never replaces "
                 f"or removes a file there (apart from its own unfinished temporary TXY).\n\n{path}") \
                 != QMessageBox.StandardButton.Yes:
@@ -774,6 +794,9 @@ class LiveController:
             convert.unconvertible[name] = str(event.get("message") or event["reason"])
             logging.warning("Live auto-convert: %s in %s can't be converted: %s", name, session.path,
                             convert.unconvertible[name])
+            if event["reason"] == DAMAGED_REASON:
+                convert.damaged.add(name)
+                self._notify_damaged(session, event)
         elif kind == "shot_kept":
             convert.kept[int(event["shot"])] = str(event["reason"])
         elif kind == "partial_removed":
@@ -785,6 +808,8 @@ class LiveController:
             reasons = self.explorer.model.cache.convert_reasons.get(session.path, {})
             convert.unconvertible = {str(entry[0]): convert.unconvertible.get(str(entry[0])) or reasons.get(
                 str(entry[0]), "can't be converted") for entry in event["unconvertible"]}
+            convert.damaged = {name for name, why in convert.unconvertible.items()
+                               if name in convert.damaged or why.startswith(DAMAGED_TEXT)}
         elif kind in ("done", "error", "cancelled", "offline"):
             if kind == "offline":
                 convert.error = "not while working offline"
@@ -802,12 +827,26 @@ class LiveController:
         self.explorer._update_activity()
         self.explorer.loadStateChanged.emit()
 
+    @staticmethod
+    def _notify_damaged(session: LiveSession, event: dict[str, Any]) -> None:
+        """A damaged raw file (Q18.5): a system notification, once per file (its name, size and mtime)."""
+        name = os.path.basename(session.path.rstrip(os.sep)) or session.path
+        raw_name = str(event["raw_name"])
+        message = str(event.get("message") or "").removeprefix(DAMAGED_TEXT)
+        events.notify(events.DAMAGED_RAW, f"{raw_name} in {name} is damaged: {message}. No TXY is made for it; "
+                      "later shots go on.", title="HeLab: damaged raw file",
+                      key=(events.DAMAGED_RAW, session.path, raw_name, int(event["raw_size"]),
+                           int(event["raw_mtime_ns"])),
+                      desktop=True, path=session.path, shot=int(event["shot"]), source="convert")
+
     def _converted(self, session: LiveSession, convert: AutoConvert, event: dict[str, Any]) -> None:
         """A shot converted: its TXY reaches the data through Live's next check (now, or as soon
         as the running one ends); a low-count one notifies (Q9.4), once per shot."""
         shot, hits = int(event["shot"]), int(event["hits"])
         convert.converted += 1
         convert.last_shot, convert.last_hits, convert.last_at = shot, hits, time.time()
+        if hits == 0:
+            convert.no_hits.add(shot)
         convert.waiting.pop(str(event["raw_name"]), None)
         threshold = low_hits_threshold()
         if threshold and hits < threshold:
@@ -823,12 +862,22 @@ class LiveController:
             else:
                 self._live_next(0.0)
 
+    @staticmethod
+    def no_hit_shots(session: LiveSession) -> list[int]:
+        """Shots whose conversion found no hits: converted so this session, or the data's empty HeLab shots
+        (memory only)."""
+        found = set(txy_sources.empty_helab_shots(session.dataset.metadata, session.dataset.data))
+        if session.convert is not None:
+            found |= session.convert.no_hits
+        return sorted(found)
+
     def convert_line(self, session: LiveSession) -> tuple[str, list[str], bool]:
-        """Auto-convert's part of the Live line, its tooltip lines, and whether it stopped on an
-        error ("" and no lines while off)."""
+        """Auto-convert's part of the Live line, its tooltip lines, and whether it is amber: stopped on an
+        error, or shots converted with no hits (A17.1) ("" and no lines while off)."""
         convert = session.convert
         if convert is None:
             return "", [], False
+        empty_text, empty_line = no_hits_text(self.no_hit_shots(session))  # (Once per render.)
         if convert.error:
             text = f"auto-convert stopped: {convert.error}"
         else:
@@ -839,8 +888,12 @@ class LiveController:
                 parts.append(f"{convert.converted:,} converted (last: shot {convert.last_shot})")
             if stuck := convert.stuck():
                 parts.append(f"{len(stuck):,} waiting")
-            if convert.unconvertible:
-                parts.append(f"{len(convert.unconvertible):,} unconvertible")
+            if convert.damaged:
+                parts.append(f"{len(convert.damaged):,} damaged")
+            if empty_text:
+                parts.append(empty_text)
+            if others := len(convert.unconvertible) - len(convert.damaged):
+                parts.append(f"{others:,} unconvertible")
             text = "auto-convert " + (", ".join(parts) if parts else "on")
         started = datetime.fromtimestamp(convert.started_at).astimezone()
         lines = [f"Auto-convert on since {started:%H:%M:%S} (this session): each check also converts the folder's "
@@ -858,13 +911,20 @@ class LiveController:
             f"; last: shot {convert.last_shot}, {convert.last_hits:,} hits at "
             f"{datetime.fromtimestamp(convert.last_at).astimezone():%H:%M:%S}" if convert.last_at is not None else "")
             + (f"; notified below {threshold:,} hits: {convert.low:,}" if threshold else "; low-count notifications off"))
+        if empty_line:
+            lines.append(empty_line)
         settling = len(convert.waiting) - len(convert.stuck())
         if settling:
             lines.append(f"Being written: {plural(settling, 'raw file')} (converted once written)")
         for title, entries in (("Waiting", [f"{name}: {message or reason}" for name, (reason, message)
                                             in sorted(convert.stuck().items())]),
+                               ("Damaged (unchanged for 20 s and still failing the format checks; no TXY, "
+                                "skipped while unchanged)",
+                                [f"{name}: {why.removeprefix(DAMAGED_TEXT)}" for name, why
+                                 in sorted(convert.unconvertible.items()) if name in convert.damaged]),
                                ("Can't be converted", [f"{name}: {why}" for name, why
-                                                       in sorted(convert.unconvertible.items())]),
+                                                       in sorted(convert.unconvertible.items())
+                                                       if name not in convert.damaged]),
                                ("Kept beside (not HeLab's to replace)", [f"shot {shot}: {why}" for shot, why
                                                                          in sorted(convert.kept.items())])):
             if entries:
@@ -874,7 +934,7 @@ class LiveController:
             lines.append("A waiting file is checked again only when it changes.")
         if convert.error:
             lines.append(f"Auto-convert stopped: {convert.error}. Retry converts again.")
-        return text, lines, bool(convert.error)
+        return text, lines, bool(convert.error or empty_text)
 
     def live_line(self, session: LiveSession) -> tuple[str, str, bool]:
         """The summary's third line for a folder Live watches or saves: text, tooltip, amber."""
@@ -894,7 +954,7 @@ class LiveController:
                 parts.append(f"next check in {max(0, math.ceil(session.next_at - time.monotonic()))} s")
         else:
             parts = ["Live updates off"]
-        convert_text, convert_lines, convert_stopped = self.convert_line(session)
+        convert_text, convert_lines, convert_amber = self.convert_line(session)
         if convert_text and session.on and not session.error:
             parts.append(convert_text)
         if reread := self.live_reread_note(session.path):
@@ -931,4 +991,5 @@ class LiveController:
         if session.error:
             lines.append(f"Stopped: {session.error}. Retry checks again; turning Live off saves the new shots.")
         lines.extend(convert_lines)
-        return " · ".join(parts), "\n".join(lines), bool(session.on and (session.error or convert_stopped))
+        # Amber: stopped, or shots converted with no hits (A17.1).
+        return " · ".join(parts), "\n".join(lines), bool(session.on and (session.error or convert_amber))

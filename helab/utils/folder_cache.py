@@ -340,15 +340,16 @@ class FolderCache(QObject):
         self._presets_unread = ""
         self.service = service
         self.snapshots: OrderedDict[str, FolderSnapshot] = OrderedDict()
-        # (path, signature + its TXY source's suffix, epoch): the default source's key is as it was, so
-        # every lookup by a folder's signature finds the tab's dataset; another source's (a plot's,
-        # Q6.6) is never taken for it (``dataset_key``).
+        # (path, signature + its TXY choice's suffix, epoch): the tab's choice's key is the signature, so
+        # every lookup by a folder's signature finds the tab's dataset; another choice's (a plot's,
+        # Q6.6, Q18.2) is never taken for it (``dataset_key``).
         self.datasets: OrderedDict[tuple[str, str, int], Dataset] = OrderedDict()
         self.pins: dict[str, Dataset] = {}
         # TXY sources (Q6.6): the profile HeLab's TXY must be made with (None until read from the
         # settings, ``convert_profile``), and each folder's HeLab folders as its last Live check
         # found them (sent back as ``helab_since``).
         self._convert_profile: DetectorProfile | None = None
+        self._tab_source: str | None = None  # The ``txy_source`` setting, read when first needed.
         self._live_helab: dict[str, dict[str, Any]] = {}
         # The RAM budget for datasets no tab shows (Settings → Cache; ``set_ram_budget``).
         self.max_data_bytes = DEFAULT_RAM_STEPS * ram_step_bytes()
@@ -816,31 +817,74 @@ class FolderCache(QObject):
             logging.warning("Scan history %s: %s", job.path, self.scan_history_errors[job.path])
             self.scanHistoryChanged.emit(job.path)
 
-    def dataset(self, path: str, signature: str, source: str = txy_sources.DEFAULT_SOURCE) -> Dataset | None:
-        key = (self.key(path), signature + self.source_suffix(source), self._epochs.get(self.key(path), 0))
+    def dataset(self, path: str, signature: str, choice: str | None = None) -> Dataset | None:
+        """The folder's dataset of this signature: the tab's (``choice`` None), else a plot's of that TXY
+        choice (``dataset_choice``)."""
+        key = (self.key(path), signature + self.choice_suffix(choice), self._epochs.get(self.key(path), 0))
         entry = self.datasets.get(key)
         if entry:
             self.datasets.move_to_end(key)
         return entry
 
-    # TXY sources (Q6.6, ``helab.utils.txy_sources``): every load asks for one (the tab's and Live's the
-    # default; a plot may ask for another, RAM only), and FolderCache adds what the helper needs to find
-    # HeLab's TXY (``with_txy``). A dataset of another source is kept apart: its own job and key, never a
-    # base for, or answer to, another source's load.
+    # TXY sources (Q6.6, Q18.2, ``helab.utils.txy_sources``): every load asks for a source and a profile
+    # tag, its **choice** (``txy_sources.choice_text``): tabs and Live the setting's source with the
+    # conversion profile's tag (``tab_choice``); a plot may ask for another, RAM only. FolderCache adds what
+    # the helper needs to find HeLab's TXY (``with_txy``), and marks a load that asked for no choice as the
+    # tab's (``tab`` in its ``txy``, kept in its dataset's record). The tab's datasets are keyed by their
+    # signature, whatever choice they were loaded with, so a change in Settings applies when a folder loads
+    # again: the data a tab shows stays the tab's meanwhile. A plot's dataset is kept apart: its own job and
+    # key (its choice), never a base for, or answer to, the tab's load. A tab load asking for another choice
+    # than the tab's running load waits for it, then runs as its own (``submit``).
+
+    def tab_source(self) -> str:
+        """The TXY source tabs and Live load (the ``txy_source`` setting, Q18.2)."""
+        if self._tab_source is None:
+            from helab.utils.constants import read_txy_source
+            from helab.utils.settings_store import app_settings
+            self._tab_source = read_txy_source(app_settings())
+        return self._tab_source
+
+    def set_tab_source(self, source: str) -> None:
+        """The tabs' and Live's TXY source changed (Settings → TXY converter): new loads use it."""
+        self._tab_source = txy_sources.normal_source(source) or txy_sources.DEFAULT_SOURCE
+
+    def tab_choice(self) -> str:
+        return txy_sources.choice_text(self.tab_source(), self.convert_profile_tag())
 
     @staticmethod
-    def source_suffix(source: str) -> str:
-        return "" if source == txy_sources.DEFAULT_SOURCE else f"|txy={source}"
+    def choice_suffix(choice: str | None) -> str:
+        """A dataset key's suffix: none for the tab's (None), else the plot's choice."""
+        return "" if choice is None else f"|txy={choice}"
 
     @staticmethod
     def dataset_source(dataset: Dataset) -> str:
         return txy_sources.source_of(dataset.metadata)
 
+    def dataset_choice(self, dataset: Dataset) -> str:
+        """A dataset's TXY choice. One that names none (made before Q6.6, or by a test) is MATLAB's alone,
+        which every priority source reads alike: counted as the tab's."""
+        if not isinstance(dataset.metadata.get(txy_sources.TXY_FIELD), Mapping):
+            return self.tab_choice()
+        return txy_sources.choice_text(self.dataset_source(dataset), txy_sources.tag_of(dataset.metadata))
+
+    def is_tab_dataset(self, dataset: Dataset) -> bool:
+        """Loaded for a tab (its record says so), whatever choice the tab had then; a record that doesn't say
+        (made before Q18.2, or by a test) is the tab's when its choice is the tab's now."""
+        record = dataset.metadata.get(txy_sources.TXY_FIELD)
+        if isinstance(record, Mapping) and "tab" in record:
+            return bool(record["tab"])
+        return self.dataset_choice(dataset) == self.tab_choice()
+
     def dataset_key(self, dataset: Dataset) -> tuple[str, str, int]:
-        return dataset.path, dataset.signature + self.source_suffix(self.dataset_source(dataset)), dataset.epoch
+        return dataset.path, dataset.signature + self.choice_suffix(self._key_choice(dataset)), dataset.epoch
+
+    def _key_choice(self, dataset: Dataset) -> str | None:
+        """The choice a dataset is found by: None for the tab's, else its own."""
+        return None if self.is_tab_dataset(dataset) else self.dataset_choice(dataset)
 
     def convert_profile(self) -> DetectorProfile:
-        """The profile HeLab converts with (Settings → TXY converter): HeLab's TXY of another aren't loaded."""
+        """The profile HeLab converts with (Settings → TXY converter): tabs and Live load HeLab's TXY of
+        its tag."""
         if self._convert_profile is None:
             from helab.utils.constants import read_convert_profile
             from helab.utils.settings_store import app_settings
@@ -850,22 +894,35 @@ class FolderCache(QObject):
     def convert_profile_hash(self) -> str:
         return self.convert_profile().content_hash()
 
+    def convert_profile_tag(self) -> str:
+        """The tag in the conversion profile's TXY names (Q18.4, ``profile.file_tag``)."""
+        from helab.convert.profile import file_tag
+        return file_tag(self.convert_profile())
+
     def set_convert_profile(self, profile: DetectorProfile) -> None:
-        """The profile HeLab converts with changed (Settings → TXY converter)."""
+        """The profile HeLab converts with changed (Settings → TXY converter): loads from now on read its TXY
+        (a tab's data shown now stays until its folder loads again)."""
         self._convert_profile = profile
 
     def with_txy(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
-        """A load's payload with its ``txy`` options complete: the source (default unless given), the
-        profile hash, HeLab's folders' bases and the folder's root key (``io_ops.helab_txy``)."""
+        """A load's payload with its ``txy`` options complete: the source (the tab's unless given), the
+        profile (hash, tag, and name, version and calibrated: the conversion profile unless given), HeLab's
+        folders' bases and the folder's root key (``io_ops.helab_txy``)."""
         from helab.analysis.dataset_view import root_key
         from helab.utils.constants import DIR_TEMPS
         given = payload.get(txy_sources.TXY_FIELD)
         txy = dict(given) if isinstance(given, Mapping) else {}
-        source = str(txy.get("source") or txy_sources.DEFAULT_SOURCE)
         options = store_options()
         root = self.root_of(path)
-        txy.update({"source": source if source in txy_sources.SOURCES else txy_sources.DEFAULT_SOURCE,
-                    "profile_hash": str(txy.get("profile_hash") or self.convert_profile_hash()),
+        # Asked for no choice: the tab's (its dataset is the tab's, ``is_tab_dataset``).
+        txy.setdefault("tab", not txy.get("source") and not txy.get("profile_hash"))
+        if not txy.get("profile_hash"):
+            profile = self.convert_profile()
+            txy.update({"profile_hash": profile.content_hash(), "profile_tag": self.convert_profile_tag(),
+                        "profile": {"name": profile.name, "version": profile.version,
+                                    "calibrated": profile.calibrated}})
+        txy.update({"source": txy_sources.normal_source(txy.get("source")) or self.tab_source(),
+                    "profile_hash": str(txy["profile_hash"]), "profile_tag": str(txy.get("profile_tag") or ""),
                     "cache_base": os.path.dirname(os.path.abspath(options["directory"])) if options else "",
                     "cache_directory": str(options.get("directory") or ""),
                     "temps": DIR_TEMPS, "key": root_key(root[0], root[1], path) if root else self._helab_key(path)})
@@ -883,11 +940,37 @@ class FolderCache(QObject):
                 return str(metadata["key"])
         return str((self._live_helab.get(key) or {}).get("key") or "")
 
-    @staticmethod
-    def payload_source(payload: Mapping[str, Any]) -> str:
+    def payload_source(self, payload: Mapping[str, Any]) -> str:
         txy = payload.get(txy_sources.TXY_FIELD)
-        source = txy.get("source") if isinstance(txy, Mapping) else None
-        return source if isinstance(source, str) and source in txy_sources.SOURCES else txy_sources.DEFAULT_SOURCE
+        return txy_sources.normal_source(txy.get("source") if isinstance(txy, Mapping) else None) or self.tab_source()
+
+    def payload_key_choice(self, payload: Mapping[str, Any]) -> str | None:
+        """The choice a load's dataset and job are found by: None for the tab's, else its own."""
+        txy = payload.get(txy_sources.TXY_FIELD)
+        tab = txy.get("tab", True) if isinstance(txy, Mapping) else True
+        return None if tab else self.payload_choice(payload)
+
+    def payload_choice(self, payload: Mapping[str, Any]) -> str:
+        """The TXY choice a load asks for (``with_txy`` completed it; else the tab's)."""
+        txy = payload.get(txy_sources.TXY_FIELD)
+        tag = txy.get("profile_tag") if isinstance(txy, Mapping) else None
+        return txy_sources.choice_text(self.payload_source(payload),
+                                       tag if isinstance(tag, str) and tag else self.convert_profile_tag())
+
+    def _with_choice(self, payload: Mapping[str, Any], event: dict[str, Any]) -> dict[str, Any]:
+        """A ``loaded`` event's ``txy`` record with the source and profile tag its request asked for where it
+        names none (a helper of before Q6.6 or Q18.4, or a test's: MATLAB's alone), so the dataset is of the
+        choice it was loaded for."""
+        given = event.get(txy_sources.TXY_FIELD)
+        record: dict[str, Any] = dict(given) if isinstance(given, Mapping) else {"origins": {}}
+        if txy_sources.normal_source(record.get("source")) is None:
+            record["source"] = self.payload_source(payload)
+        asked = payload.get(txy_sources.TXY_FIELD)
+        asked = asked if isinstance(asked, Mapping) else {}
+        if not record.get("profile_tag"):
+            record["profile_tag"] = str(asked.get("profile_tag") or self.convert_profile_tag())
+        record["tab"] = bool(asked.get("tab", True))  # (Whether the tab asked: ``is_tab_dataset``.)
+        return {**event, txy_sources.TXY_FIELD: record}
 
     def current_dataset(self, path: str) -> Dataset | None:
         path = self.key(path)
@@ -896,26 +979,31 @@ class FolderCache(QObject):
         if snapshot and snapshot.status.get("signature"):
             return self.dataset(path, snapshot.status["signature"])
         return next((entry for key, entry in reversed(self.datasets.items())
-                     if key[0] == path and entry.epoch == self._epochs.get(path, 0)
-                     and self.dataset_source(entry) == txy_sources.DEFAULT_SOURCE), None)
+                     if key[0] == path and entry.epoch == self._epochs.get(path, 0) and self.is_tab_dataset(entry)),
+                    None)
 
-    def latest_dataset(self, path: str, source: str = txy_sources.DEFAULT_SOURCE) -> Dataset | None:
-        """This folder's most recent dataset in memory (of ``source``: the tab's by default), whether or
+    def latest_dataset(self, path: str, choice: str | None = None) -> Dataset | None:
+        """This folder's most recent dataset in memory (the tab's, or a plot's of ``choice``), whether or
         not it matches the folder now."""
         path = self.key(path)
         return next((entry for key, entry in reversed(self.datasets.items())
                      if key[0] == path and entry.epoch == self._epochs.get(path, 0)
-                     and self.dataset_source(entry) == source), None)
+                     and self._key_choice(entry) == choice), None)
 
-    def _base(self, path: str, prefer: str = "", source: str = txy_sources.DEFAULT_SOURCE) -> Dataset | None:
+    def _base(self, path: str, prefer: str = "", choice: str | None = None,
+              exact: str | None = None) -> Dataset | None:
         # A dataset an open tab still shows survives signature changes, so a
         # refresh only needs the shots that are new or changed since then.
         # ``prefer``: the signature of the data the caller shows (Live), if still held.
-        # Only a dataset of the same TXY source (Q6.6).
+        # Only a dataset of the same TXY choice (Q6.6, Q18.2): the tab's or the plot's (``choice``), and,
+        # with ``exact``, loaded with that very choice: a tab's data of the choice it had before Settings
+        # changed it is no base for a load of the new one, whose held kinds of TXY it would carry over
+        # (Avocet's review, round 2).
         floor = self._base_floor.get(path, 0)
         candidates = [entry for entry in (*self.pins.values(), *self.datasets.values())
                       if entry.path == path and entry.epoch >= floor and "fingerprint" in entry.metadata
-                      and self.dataset_source(entry) == source]
+                      and self._key_choice(entry) == choice
+                      and (exact is None or self.dataset_choice(entry) == exact)]
         newest = max((entry.epoch for entry in candidates), default=None)
         preferred = next((entry for entry in candidates if prefer and entry.signature == prefer
                           and entry.epoch == newest), None)
@@ -1038,7 +1126,10 @@ class FolderCache(QObject):
         shows it pins it (``retain``), which makes it the base of the folder's Live checks, so
         the first check lists the folder and every TXY file it finds is new."""
         metadata = {"fingerprint": [], "problematic": [], "files": 0, "rows": 0, "bytes": 0,
-                    "loaded_at": time.time(), "checked_at": time.monotonic(), "verified": True}
+                    "loaded_at": time.time(), "checked_at": time.monotonic(), "verified": True,
+                    # The tab's TXY choice, as its Live checks' data will name it.
+                    txy_sources.TXY_FIELD: {"source": self.tab_source(), "origins": {},
+                                            "profile_tag": self.convert_profile_tag(), "tab": True}}
         return Dataset(path, "", {}, metadata, self._epochs.get(path, 0))
 
     def release(self, owner: str) -> None:
@@ -2036,7 +2127,7 @@ class FolderCache(QObject):
             if payload.get("live") and "helab_since" not in payload:
                 # HeLab's folders as the last Live check found them: unchanged, nothing was converted since.
                 payload["helab_since"] = self._live_helab.get(path)
-        source = self.payload_source(payload)
+        choice = self.payload_key_choice(payload)
         if self.has_request(owner, operation, path):
             return True
         if (self.offline and operation not in IOService.OFFLINE_OPERATIONS
@@ -2065,7 +2156,7 @@ class FolderCache(QObject):
         if operation == "load":
             if ("invalidate", path) in self.jobs:
                 return False
-            entry = self.dataset(path, payload.get("signature", ""), source)
+            entry = self.dataset(path, payload.get("signature", ""), choice)
             if entry and not self.verified(entry):
                 # Cached data not checked against the folder yet: only this
                 # session's own scan of the folder can confirm it.
@@ -2106,9 +2197,26 @@ class FolderCache(QObject):
                 self._deliver(request, {"kind": "resolved", "path": self._defaults[candidates]})
                 return True
         live = operation == "load" and bool(payload.get("live"))
-        job_key = ("live" if live else operation if source == txy_sources.DEFAULT_SOURCE
-                   else f"{operation}:{source}", path)
+        job_key = ("live" if live else operation if choice is None else f"{operation}:{choice}", path)
         job = self.jobs.get(job_key)
+        if job and operation == "load" and choice is None and self.payload_choice(job.payload) != \
+                self.payload_choice(payload):
+            # The tab's load of the choice it had before Settings changed it: this one waits for it to end,
+            # then runs as its own (joining it would answer with the other choice's data).
+            self._deliveries.append(request)
+            self.resultReady.emit(request, {"kind": "queued"})
+
+            def wait_for_job() -> None:
+                if request.cancelled.is_set() or self.service.closed:
+                    return
+                if self.jobs.get(job_key) is job:
+                    QTimer.singleShot(50, wait_for_job)
+                    return
+                if request in self._deliveries:
+                    self._deliveries.remove(request)
+                self.submit(owner, generation, path, operation, payload, priority=priority, timeout=timeout)
+            QTimer.singleShot(0, wait_for_job)
+            return True
         if job:
             if priority and operation != "load":
                 self.service.promote(job.owner)
@@ -2131,9 +2239,15 @@ class FolderCache(QObject):
             if snapshot:
                 snapshot.checked_at = 0
         # The data of a folder that lost shots may be another folder's: never a load's base.
-        base = (self._base(path, str(payload.get("prefer_base") or ""), source) if operation == "load"
-                and path not in self.mismatched and path not in self.allow_missing
-                and not payload.get("allow_missing") else None)
+        can_base = (operation == "load" and path not in self.mismatched and path not in self.allow_missing
+                    and not payload.get("allow_missing"))
+        prefer = str(payload.get("prefer_base") or "")
+        base = self._base(path, prefer, choice, self.payload_choice(payload)) if can_base else None
+        if base is None and live and can_base and self._base(path, prefer, choice) is not None:
+            # Live on the tab's data of the choice before a Settings change: the new choice holds nothing yet,
+            # so the folder is listed and every shot read again, as at a start before the first shot.
+            payload = {**payload, "memory": [], "live_since": None, "listed_mtime": None}
+            logging.info("Live on %s: the TXY choice changed in Settings, every shot read again", path)
         if base:
             payload = {**payload, "memory": [list(entry) for entry in base.metadata["fingerprint"]
                                              if entry[0] in base.data],
@@ -2502,10 +2616,10 @@ class FolderCache(QObject):
         replaces the folder's older datasets no tab shows: they describe files the folder has moved
         past, and each would count its shared arrays again against the RAM budget."""
         shown = {id(dataset) for dataset in self.pins.values()}
-        own, source = self.dataset_key(entry), self.dataset_source(entry)
+        own, choice = self.dataset_key(entry), self._key_choice(entry)
         for key in [key for key, dataset in self.datasets.items()
                     if key[0] == entry.path and key[1] != own[1] and id(dataset) not in shown
-                    and self.dataset_source(dataset) == source]:
+                    and self._key_choice(dataset) == choice]:
             del self.datasets[key]
 
     def _folder_changed(self, path: str) -> None:
@@ -3523,7 +3637,7 @@ class FolderCache(QObject):
             for entry in self.datasets.values():
                 # (Another TXY source's dataset of the folder, RAM only, isn't the one saved.)
                 if (entry.path == path and entry.signature == state.info.get("signature")
-                        and self.dataset_source(entry) == txy_sources.DEFAULT_SOURCE):
+                        and self.is_tab_dataset(entry)):
                     entry.metadata.update(cache_info=state.info, disk_cached=True, disk_cache_pending=False)
             self._set_disk_cached(path, True, notify=True)
         elif valid and kind == "disk_cached":
@@ -3891,7 +4005,7 @@ class FolderCache(QObject):
                 if memory_shots and job.base is None:
                     # A check run beside the cached read: its unchanged shots are that read's.
                     job.base = self.dataset(job.path, str(event.get("base_signature") or ""),
-                                            self.payload_source(job.payload))
+                                            self.payload_key_choice(job.payload))
                     if job.base is None:
                         if ("cached", job.path) in self.jobs:
                             self._awaiting_cached[producer.owner] = [event]
@@ -3922,9 +4036,7 @@ class FolderCache(QObject):
                 if event.get("disk_cache_pending"):
                     self._disk_cache_writers.add(job.owner)
                     self._cache_states.setdefault(job.path, CacheStatus()).error = ""
-                if txy_sources.TXY_FIELD not in event:  # (A helper of before Q6.6, or a test's: MATLAB's alone.)
-                    event = {**event, txy_sources.TXY_FIELD: {"source": self.payload_source(job.payload),
-                                                              "origins": {}}}
+                event = self._with_choice(job.payload, event)
                 entry = Dataset(job.path, event["signature"], job.data, event, job.epoch)
                 self.datasets[self.dataset_key(entry)] = entry
                 event = {**event, "dataset": entry}

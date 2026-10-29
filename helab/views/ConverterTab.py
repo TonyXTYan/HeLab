@@ -24,12 +24,13 @@ from PyQt6.QtWidgets import (
 )
 
 from helab.convert.profile import (BUILTIN_PROFILES, CANDIDATE_HANDLING, DEFAULT_PROFILE, PLATE_SWAPS, POSITION_FORMULAS,
-                                   UNCALIBRATED, DetectorProfile, ProfileError)
+                                   UNCALIBRATED, DetectorProfile, ProfileError, file_tag)
 from helab.convert.user_profiles import ProfileLibrary, Unreadable, check_name, duplicate
+from helab.utils import txy_sources
 from helab.utils.colours import AMBER
 from helab.utils.constants import (
-    CONVERT_BACKEND_SETTING, CONVERT_OUTPUT_SETTING, CONVERT_PROFILE_SETTING, profiles_folder, read_convert_backend,
-    read_convert_output,
+    CONVERT_BACKEND_SETTING, CONVERT_OUTPUT_SETTING, CONVERT_PROFILE_SETTING, TXY_SOURCE_SETTING, profiles_folder,
+    read_convert_backend, read_convert_output, read_txy_source,
 )
 from helab.utils.folder_cache import FolderCache
 from helab.utils.settings_defaults import CONVERT_OUTPUTS, read_setting
@@ -84,6 +85,8 @@ class ProfileEditor(QDialog):
             editor: QWidget
             if field.name == "name":
                 editor = QLabel(profile.name)
+            elif field.name == "tag":
+                editor = QLabel()  # (Set by _check: a user profile is tagged by its hash.)
             elif field.name in CHOICE_FIELDS:
                 combo = QComboBox()
                 combo.addItems(list(CHOICE_FIELDS[field.name]))
@@ -125,7 +128,7 @@ class ProfileEditor(QDialog):
         values: dict[str, Any] = {"name": self.original.name}
         for field in dataclasses.fields(DetectorProfile):
             editor = self.editors[field.name]
-            if field.name == "name":
+            if field.name in ("name", "tag"):
                 continue
             if isinstance(editor, QComboBox):
                 values[field.name] = editor.currentText()
@@ -163,6 +166,9 @@ class ProfileEditor(QDialog):
                 save.setEnabled(False)
             return
         changed = profile.content_hash() != self.original.content_hash()
+        tag = self.editors["tag"]
+        if isinstance(tag, QLabel):
+            tag.setText(f"{file_tag(profile)} (from the content hash: d_txy_helab_{file_tag(profile)}_<N>.txt)")
         self.problem.setText("")
         self.hash_label.setText(f"Content hash: {profile.content_hash()}" + (
             f" (output changed: saved as v{profile.version})" if changed else " (same output)"))
@@ -207,6 +213,16 @@ class ConverterTab(QWidget):
             self.output_combo.addItem(OUTPUT_LABELS[name], name)
         self.output_combo.setToolTip("Folders set to write them beside the raw files do that instead.")
         grid.addWidget(self.output_combo, 2, 1)
+        grid.addWidget(QLabel("Tabs and Live read (when a folder loads again)"), 3, 0)
+        self.source_combo = QComboBox()
+        for name in txy_sources.SOURCES:
+            self.source_combo.addItem(txy_sources.LABELS[name], name)
+        self.source_combo.setToolTip("Which TXY a folder's tab and Live load (Q18.2): HeLab's are those of the "
+                                     "profile conversions use (its tag in their names). A change applies when a "
+                                     "folder loads again (Refresh, or selecting it again): the data a tab shows "
+                                     "now stays until then, and a load already running finishes first. A plot "
+                                     "can choose another source or profile in its settings.")
+        grid.addWidget(self.source_combo, 3, 1)
         grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
         profiles_label = QLabel("Profiles (changes to profiles are saved at once; the choices above with Save)")
@@ -235,6 +251,7 @@ class ConverterTab(QWidget):
         self.refresh(read_setting(settings, CONVERT_PROFILE_SETTING, typed=True) or DEFAULT_PROFILE)
         self.backend_combo.setCurrentIndex(max(0, self.backend_combo.findData(read_convert_backend(settings))))
         self.output_combo.setCurrentIndex(max(0, self.output_combo.findData(read_convert_output(settings))))
+        self.source_combo.setCurrentIndex(max(0, self.source_combo.findData(read_txy_source(settings))))
 
     # The list
 
@@ -293,7 +310,7 @@ class ConverterTab(QWidget):
         file = "" if builtin else f"\nFile: {self.library.file_for(profile.name)}"
         self.details.setText(
             f"{profile.notes}\n" + (f"Plates in since {since}.\n" if since else "")
-            + f"Content hash: {profile.content_hash()}" + file)
+            + f"Content hash: {profile.content_hash()}\nTXY files: d_txy_helab_{file_tag(profile)}_<N>.txt" + file)
 
     # Actions (each writes its file at once; every removal asks first)
 
@@ -421,8 +438,11 @@ class ConverterTab(QWidget):
         settings.setValue(CONVERT_PROFILE_SETTING, name if name in self.profiles() else DEFAULT_PROFILE)
         settings.setValue(CONVERT_BACKEND_SETTING, self.backend_combo.currentData())
         settings.setValue(CONVERT_OUTPUT_SETTING, self.output_combo.currentData())
+        source = str(self.source_combo.currentData() or txy_sources.DEFAULT_SOURCE)
+        settings.setValue(TXY_SOURCE_SETTING, source)
         if self.cache is not None:
             self.cache.set_convert_profile(self.chosen_profile())
+            self.cache.set_tab_source(source)
 
 
 __all__ = ["ConverterTab", "ProfileEditor", "plate_dates", "profile_label"]

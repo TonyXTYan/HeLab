@@ -1,11 +1,15 @@
 """HeLab's own TXY files and the provenance kept beside them.
 
-HeLab writes a shot's TXY as ``d_txy_helab_<N>.txy`` (Q8.2, Q9.7), byte for byte in MATLAB's
-format, so the file carries no header. What made it is a small JSON record per shot,
-``d_txy_helab_<N>.json`` (``Provenance``): the raw file's fingerprint (size, mtime, SHA-256), the
+HeLab writes a shot's TXY as ``d_txy_helab_<tag>_<N>.txt`` (Q18.4: ``<tag>`` the profile's,
+``profile.file_tag``; ``.txt`` like MATLAB's ``d_txy_forc<N>.txt``), byte for byte in MATLAB's format,
+so the file carries no header. What made it is a small JSON record per shot,
+``d_txy_helab_<tag>_<N>.json`` (``Provenance``): the raw file's fingerprint (size, mtime, SHA-256), the
 profile's name, version and content hash, the backend, and the TXY's size, SHA-256 and hit count.
 It is written after the TXY, atomically, always in HeLab's own folder (the cache or the temp
-folder), never in a source folder, even when the TXY goes beside the raw files.
+folder), never in a source folder, even when the TXY goes beside the raw files: there the name's tag
+says which profile made it, and it is current while it is newer than its raw file (``beside_stale``).
+Files of the untagged names of HeLab before Q18.4 (``d_txy_helab_<N>.txy``) are not HeLab's TXY any
+more: ignored, never removed (a folder of them is converted again under the new names).
 
 One record per shot, not a manifest per folder: each is written once by the conversion that made
 its TXY, so two conversions of one folder never rewrite each other's records, and Live adding a
@@ -26,18 +30,38 @@ import re
 from typing import Any
 
 PROVENANCE = "helab-txy-provenance"
-VERSION = 1
+# 2: tagged names (Q18.4) and ``profile_tag``. A version-1 record belongs to an untagged name.
+VERSION = 2
 
-# The shot as HeLab writes it: ASCII digits, no leading zeros (``txy_name``).
-TXY_PATTERN = re.compile(r"^d_txy_helab_(0|[1-9][0-9]*)\.txy$", re.ASCII)
+# The tag (``profile.TAG_PATTERN``, or ``u`` and hex digits) and the shot as HeLab writes them: ASCII
+# digits, no leading zeros (``txy_name``). Groups ``tag`` and ``shot``.
+_NAME = r"d_txy_helab_(?P<tag>[a-z][a-z0-9]{1,15})_(?P<shot>0|[1-9][0-9]*)"
+TXY_PATTERN = re.compile(rf"^{_NAME}\.txt$", re.ASCII)
+# The same name without groups, for patterns that join several (``io_ops.convert.partial``).
+BARE_NAME = r"d_txy_helab_[a-z][a-z0-9]{1,15}_(?:0|[1-9][0-9]*)"
+PROVENANCE_PATTERN = re.compile(rf"^{_NAME}\.json$", re.ASCII)
 
 
-def txy_name(shot: int) -> str:
-    return f"d_txy_helab_{shot}.txy"
+def txy_name(tag: str, shot: int) -> str:
+    return f"d_txy_helab_{tag}_{shot}.txt"
 
 
-def provenance_name(shot: int) -> str:
-    return f"d_txy_helab_{shot}.json"
+def provenance_name(tag: str, shot: int) -> str:
+    return f"d_txy_helab_{tag}_{shot}.json"
+
+
+def parse_txy_name(name: str) -> tuple[str, int] | None:
+    """A HeLab TXY name's tag and shot, or None for any other name."""
+    found = TXY_PATTERN.fullmatch(name)
+    return (found["tag"], int(found["shot"])) if found else None
+
+
+def beside_stale(raw_mtime_ns: int, txy_mtime_ns: int) -> str | None:
+    """Why a TXY beside its raw file is out of date, or None (Q18.4: no record is kept there, so a
+    TXY of the profile's tag is current while it is newer than the raw file)."""
+    if txy_mtime_ns <= raw_mtime_ns:
+        return "the raw file is newer than the TXY"
+    return None
 
 
 # What each field's JSON value may be (a float may be written as an integer).
@@ -61,6 +85,7 @@ class Provenance:
     profile_name: str
     profile_version: int
     profile_hash: str
+    profile_tag: str
     profile_calibrated: bool
     backend: str
     # Where the TXY went: "beside" (next to the raw file), "cache" or "temp"; its file name.

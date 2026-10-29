@@ -26,6 +26,7 @@ from helab.utils.settings_defaults import (
     PLOT_AUTO_RELOAD_SETTING as PLOT_AUTO_RELOAD_SETTING,
     RAM_BUDGET_SETTING as RAM_BUDGET_SETTING,
     SIMULTANEOUS_IO_SETTING as SIMULTANEOUS_IO_SETTING,
+    TXY_SOURCE_SETTING as TXY_SOURCE_SETTING,
     CONVERT_OUTPUTS, LOG_KEEP_SETTING, read_setting, setting_default)
 if TYPE_CHECKING:
     from helab.convert.profile import DetectorProfile
@@ -222,6 +223,13 @@ def read_convert_output(settings: QSettings) -> str:
     reads as the default."""
     value = read_setting(settings, CONVERT_OUTPUT_SETTING, typed=True)
     return value if value in CONVERT_OUTPUTS else str(setting_default(CONVERT_OUTPUT_SETTING))
+
+
+def read_txy_source(settings: QSettings) -> str:
+    """Which TXY tabs and Live load (Q18.2, ``helab.utils.txy_sources``): the setting when it names a
+    source (an old name too), else ``helab-priority``."""
+    from helab.utils.txy_sources import DEFAULT_SOURCE, normal_source
+    return normal_source(read_setting(settings, TXY_SOURCE_SETTING, typed=True)) or DEFAULT_SOURCE
 
 
 def profiles_folder() -> str:

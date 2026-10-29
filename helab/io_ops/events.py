@@ -387,12 +387,13 @@ class TooLargeEvent(TypedDict):
 class TxyRecord(TypedDict):
     """Which TXY a dataset is made of (Q6.6, ``helab_txy.record``): the source asked for
     (``txy_sources.SOURCES``), HeLab's shots' origins (``{shot: "helab:<profile hash>"}``), those
-    profiles' name/version/calibrated by hash, the profile hash asked for ("" any) and HeLab's
+    profiles' name/version/calibrated by hash, the profile hash and tag asked for ("" any) and HeLab's
     folders' ``[[folder, mtime_ns]]`` as the listing found them."""
     source: str
     origins: dict[str, str]
     profiles: dict[str, dict[str, Any]]
     profile_hash: str
+    profile_tag: NotRequired[str]  # (Q18.4; absent in data saved before it.)
     folders: list[list[Any]]
 
 
@@ -868,6 +869,7 @@ class ConvertProfile(TypedDict):
     name: str
     version: int
     hash: str  # ``DetectorProfile.content_hash()``: equal hashes convert every file alike
+    tag: str  # ``profile.file_tag``: the tag in the TXY's names (Q18.4)
     calibrated: bool
 
 
@@ -924,7 +926,8 @@ class ShotConvertedEvent(TypedDict):
 
 class ShotWaitingEvent(TypedDict):
     """A raw file not converted yet: it may still be being written (``reason``: ``settling``,
-    ``changed``, ``no_final_newline``, ``not_trigger_first``), is dated ahead of this computer's
+    ``changed``, ``no_final_newline``, ``not_trigger_first``, ``no_rows``; damaged once unmodified for
+    20 s), is dated ahead of this computer's
     clock (``future``, with ``clock_skew`` for the folder) or couldn't be read now
     (``read_failed``). Nothing was written; it is looked at again by a later conversion."""
     kind: Literal["shot_waiting"]
@@ -938,9 +941,11 @@ class ShotWaitingEvent(TypedDict):
 
 
 class ShotUnconvertibleEvent(TypedDict):
-    """A settled raw file that can't be converted (``reason``: ``no_rows``, Q10.2, or ``failed``):
-    no TXY. A later conversion skips it while its (size, mtime) stay the same and the app sends them
-    back in ``skip``."""
+    """A settled raw file that can't be converted (``reason``: ``damaged``, Q18.5: unmodified for
+    ``io_ops.convert.DAMAGED_SECONDS``, by its mtime and since first seen so, and still failing the
+    format checks, ``problem`` naming which: ``no_final_newline``, ``not_trigger_first``, ``no_rows``;
+    or ``failed``): no TXY. A later conversion skips it while its (size, mtime) stay the same and the
+    app sends them back in ``skip``."""
     kind: Literal["shot_unconvertible"]
     path: str
     shot: int
@@ -949,6 +954,7 @@ class ShotUnconvertibleEvent(TypedDict):
     raw_mtime_ns: int
     reason: str
     message: str
+    problem: NotRequired[str]
 
 
 class ShotKeptEvent(TypedDict):
@@ -975,7 +981,7 @@ class ConvertProgressEvent(TypedDict):
 class ConvertSummaryEvent(TypedDict):
     """The conversion's end (before ``done``). Shot lists are the raw files' ``[name, size,
     mtime_ns]``: ``current`` (a current HeLab TXY: converted now or before), ``waiting`` (with its
-    reason and message after them), ``unconvertible`` and ``kept`` (beside: a TXY there this
+    reason, message and when this computer first saw it with that size and mtime after them), ``unconvertible`` and ``kept`` (beside: a TXY there this
     conversion doesn't stand behind); the next conversion of the folder (Live, ``helab convert
     --watch``) sends them back as ``done``, ``seen``, ``skip`` and ``kept``, so it neither checks
     done or kept shots again, nor takes a file whose size or mtime changed between two checks as
@@ -995,7 +1001,7 @@ class ConvertSummaryEvent(TypedDict):
 
 class PartialRemovedEvent(TypedDict):
     """A conversion of the source folder ``path`` removed a leftover temporary TXY of its own
-    (``.d_txy_helab_<N>.txy.<16 hex>.partial``, a regular file over ``io_ops.convert.PARTIAL_MAX_AGE``
+    (``.d_txy_helab_<tag>_<N>.txt.<16 hex>.partial``, a regular file over ``io_ops.convert.PARTIAL_MAX_AGE``
     old: a write a killed helper left) from ``folder``: ``path`` itself (beside) or HeLab's folder."""
     kind: Literal["partial_removed"]
     path: str

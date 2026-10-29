@@ -32,7 +32,6 @@ from helab.utils.time_format import byte_rate, clock as stopwatch, duration, rel
 from helab.utils.cache_freshness import CacheFreshness, data_as_of, freshness_tooltip, metadata_date
 from helab.utils.scan_history import history_tooltip
 from helab.views.ElidedLabel import ElidedLabel
-from helab.views import live_launch
 from helab.views.explorer_live import LiveController, LiveSession
 from helab.views.explorer_text import large_text, plural
 
@@ -1880,12 +1879,6 @@ class FolderExplorer(QWidget):
         elif reread := self.live_reread_note(path):
             # Live has stopped, and its last save read shots again: said for a minute here too.
             self.folder_freshness_label.setText(f"{self.folder_freshness_label.text()} · {reread}")
-        if live is None and not self.model.cache.offline and (note := live_launch.not_started_here(path)):
-            # Set to start Live at launch, but Live runs in one tab at a time (Q9.6): it started elsewhere.
-            text, tooltip = note
-            self.folder_freshness_label.setText(f"{self.folder_freshness_label.text()} · {text}")
-            self.folder_freshness_label.setToolTip("\n".join(filter(None, (self.folder_freshness_label.toolTip(),
-                                                                          tooltip))))
         style = f"color: {AMBER};" if stopped else ""
         if self.folder_freshness_label.styleSheet() != style:
             self.folder_freshness_label.setStyleSheet(style)

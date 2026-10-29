@@ -12,6 +12,7 @@ from PyQt6.QtGui import QColor, QFont, QHideEvent, QMouseEvent, QPainter, QPaint
 from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QProgressBar, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from helab.models.StatusReport import StatusReport
+from helab.utils import txy_sources
 from helab.utils.folder_cache import analysis_cached_text, data_root_row
 from helab.utils.number_format import fnum
 from helab.utils.io_service import IOService
@@ -21,6 +22,7 @@ from helab.views.FolderExplorer import (
     AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP,
     LOAD_SPINNER, FolderExplorer, load_origin,
 )
+from helab.views.explorer_live import no_hits_text
 from helab.views.explorer_text import large_text
 
 
@@ -218,6 +220,10 @@ class FolderDetailsPanel(QScrollArea):
             style = f"color: {AMBER};"
         if self.values["state"].styleSheet() != style:
             self.values["state"].setStyleSheet(style)
+        # Shots converted with no hits are amber (A17.1).
+        style = f"color: {AMBER};" if "with no hits" in rows.get("convert", ("", ""))[0] else ""
+        if self.values["convert"].styleSheet() != style:
+            self.values["convert"].setStyleSheet(style)
 
     def _folder_rows(self, explorer: FolderExplorer) -> dict[str, tuple[str, str]]:
         path = explorer.selected_path_globally
@@ -300,6 +306,11 @@ class FolderDetailsPanel(QScrollArea):
             # (The row is "Auto-convert": its text doesn't say it again.)
             text = text.removeprefix("auto-convert ")
             rows["convert"] = (text[:1].upper() + text[1:], "\n".join(lines))
+        elif dataset is not None and shown:
+            # A folder loaded later: its data's shots HeLab converted with no hits (A17.1), from RAM.
+            text, line = no_hits_text(txy_sources.empty_helab_shots(dataset.metadata, dataset.data))
+            if text:
+                rows["convert"] = (text[:1].upper() + text[1:], line)
         if dataset is None or not shown:
             return rows
         self._data_rows(explorer, dataset.metadata, rows, loading, opened)

@@ -14,6 +14,13 @@ times are in seconds, as MATLAB writes them (``0.5e-6/bin_time``). A profile is 
 (``to_json``, ``from_json``); ``content_hash`` covers the fields that change the output, for
 provenance beside the name and version.
 
+**Tags** (Q18.4): HeLab's TXY are named ``d_txy_helab_<tag>_<N>.txt``, so files of two profiles never
+share a name and a reader on another computer knows which profile made one from its name alone.
+A built-in's tag is fixed in its definition and JSON and frozen once used (``m19v1``; the letter
+before the number says ``v`` released, ``a``/``b``/``t`` alpha, beta, testing). Any other profile is
+tagged by its content hash (``u`` and ``USER_TAG_DIGITS`` hex digits); ``file_tag`` gives the tag a
+profile writes under.
+
 Extending the schema (so existing profiles keep their hash and their files keep loading):
 
 - a new field gets a **neutral default**, the value that behaves as HeLab did before it existed
@@ -52,7 +59,15 @@ CANDIDATE_HANDLING = ("matlab",)
 POSITION_FORMULAS = ("centred", "raw")
 
 # Fields that describe the profile rather than change its output; left out of content_hash.
-DESCRIPTIVE = ("name", "version", "calibrated", "notes")
+DESCRIPTIVE = ("name", "version", "calibrated", "notes", "tag")
+# A built-in's tag (``file_tag``): a lowercase letter, then 1 to 15 lowercase letters or digits; ``u``
+# starts only the tags made from a hash.
+TAG_PATTERN = re.compile(r"^[a-z][a-z0-9]{1,15}$", re.ASCII)
+USER_TAG_PREFIX = "u"
+# Hex digits of the content hash in a user profile's tag: 32 bits, so two of a lab's few dozen
+# profiles share one with odds of about one in ten million; HeLab's own folders hold the full hash
+# in each shot's provenance, so a shared tag there is found stale and converted again.
+USER_TAG_DIGITS = 8
 # Fields the output path doesn't read yet; left out of content_hash. channel_mcp joins the hash
 # once MCP matching is on; channel_trigger once anything in the output path reads it (today only
 # stage 4's done-writing check will: t_zero is the first raw row, whatever its channel).
@@ -78,6 +93,8 @@ class DetectorProfile:
     version: int
     calibrated: bool
     notes: str
+    # The tag in HeLab's TXY names (``file_tag``): set only on built-ins, "" on every other profile.
+    tag: str = ""
     # TDC: seconds per bin [bin_time].
     bin_time: float
     # Channel map: the four delay-line corners (distinct), the MCP and the trigger. MCP and
@@ -149,6 +166,9 @@ class DetectorProfile:
                 raise ProfileError(f"{field.name} must be finite, not {value!r}")
         if not self.name:
             raise ProfileError("A profile needs a name")
+        if self.tag and (not TAG_PATTERN.fullmatch(self.tag) or self.tag.startswith(USER_TAG_PREFIX)):
+            raise ProfileError(f"tag must be empty, or a lowercase letter (not {USER_TAG_PREFIX!r}) and 1 to 15 "
+                               f"lowercase letters or digits, not {self.tag!r}")
         if not self.bin_time > 0:
             raise ProfileError("bin_time must be positive")
         if self.search_depth < 1:
@@ -200,7 +220,7 @@ class DetectorProfile:
     def content_hash(self) -> str:
         """SHA-256 of the fields that change the output, as canonical JSON: two profiles with one
         hash convert every file alike. Left out: the descriptive fields (name, version,
-        calibrated, notes), those the output doesn't read (UNUSED_BY_OUTPUT) and any at its
+        calibrated, notes, tag), those the output doesn't read (UNUSED_BY_OUTPUT) and any at its
         neutral default, so adding a field doesn't change existing profiles' hashes."""
         data = {k: v for k, v in dataclasses.asdict(self).items()
                 if k not in DESCRIPTIVE and k not in UNUSED_BY_OUTPUT and not (k in NEUTRAL and v == NEUTRAL[k])}
@@ -211,7 +231,7 @@ class DetectorProfile:
         return dataclasses.replace(self, **changes)
 
 
-# Each field's neutral value: its default.
+# Each field's neutral value: its default. (``tag`` is descriptive: its "" says only "not a built-in".)
 NEUTRAL: Mapping[str, Any] = MappingProxyType({
     field.name: field.default for field in dataclasses.fields(DetectorProfile)
     if field.default is not dataclasses.MISSING})
@@ -219,6 +239,7 @@ NEUTRAL: Mapping[str, Any] = MappingProxyType({
 MATLAB_2019 = DetectorProfile(
     name="matlab-2019",
     version=1,
+    tag="m19v1",
     calibrated=False,
     notes="MATLAB tdc_autoconverter's dld_read_5channels_reconst_multi_imp (unchanged since 2017), "
           "flags 1,0,1,0: byte-identical to its _txy_forc files, quirks included.",
@@ -242,6 +263,7 @@ MATLAB_2019 = DetectorProfile(
 
 MATLAB_2023_LAB_EDIT = MATLAB_2019.replace(
     name="matlab-2023-lab-edit",
+    tag="m23v1",
     notes="The front panel's copy synced from the lab on 2023-08-29: an x1 dead time of 0.5 µs "
           "(uniquetol), time sums 3390/3275 in T only, X/Y from the raw corner times.",
     dead_time_x1=0.5e-6,
@@ -256,13 +278,16 @@ _PLATES_NOTES = ("Copy of matlab-2019 until this plate is calibrated (stage 3): 
                  "hash. ")
 PLATES_2017 = MATLAB_2019.replace(
     name="plates-2017",
+    tag="p17v1",
     notes=_PLATES_NOTES + "The MCP plates fitted on 2017-03-17.")
 PLATES_2022 = MATLAB_2019.replace(
     name="plates-2022",
+    tag="p22v1",
     notes=_PLATES_NOTES + "The MCP plates fitted in ~2022 (between 2022-08-22 and 2022-11-03; 2022-11-03 for "
                           "now). Measured with MCP pulses in 2022-11: time sums x 3367, y 3294 bins.")
 PLATES_2025 = MATLAB_2019.replace(
     name="plates-2025",
+    tag="p25t1",
     notes="Uncalibrated: no calibration data for these plates yet (Q6.11). " + _PLATES_NOTES
           + "The MCP plates fitted on 2025-06-18.")
 # Marked uncalibrated in the profile manager: a plate with no calibration data at all (Q6.11,
@@ -285,6 +310,17 @@ PLATE_SWAPS: tuple[tuple[str, str], ...] = (
 # checks each equals its definition here. (The app uses the definitions, so a build that leaves
 # the files out still converts.)
 BUILTIN_FOLDER = "builtin_profiles"
+
+
+def file_tag(profile: DetectorProfile) -> str:
+    """The tag ``profile``'s TXY are named with (``d_txy_helab_<tag>_<N>.txt``): a built-in's own while
+    the profile is that built-in (its name, tag and content hash), else ``u`` and the first
+    ``USER_TAG_DIGITS`` hex digits of its content hash. So an edited copy of a built-in, or a file
+    claiming a built-in's tag, never writes under the built-in's name."""
+    builtin = BUILTIN_PROFILES.get(profile.name)
+    if builtin is not None and profile.tag == builtin.tag and profile.content_hash() == builtin.content_hash():
+        return builtin.tag
+    return USER_TAG_PREFIX + profile.content_hash()[:USER_TAG_DIGITS]
 
 
 def builtin_profile(name: str = DEFAULT_PROFILE) -> DetectorProfile:

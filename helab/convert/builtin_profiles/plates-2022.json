@@ -4,6 +4,7 @@
   "version": 1,
   "calibrated": false,
   "notes": "Copy of matlab-2019 until this plate is calibrated (stage 3): same output, so same content hash. The MCP plates fitted in ~2022 (between 2022-08-22 and 2022-11-03; 2022-11-03 for now). Measured with MCP pulses in 2022-11: time sums x 3367, y 3294 bins.",
+  "tag": "p22v1",
   "bin_time": 2.5e-11,
   "channel_x1": 0,
   "channel_x2": 1,

@@ -152,9 +152,10 @@ CHANGED = "changed"  # its size or mtime differ between two checks, or changed w
 NO_FINAL_NEWLINE = "no_final_newline"  # the writer may be mid-line
 NOT_TRIGGER_FIRST = "not_trigger_first"  # the first line isn't on the profile's trigger channel
 NO_ROWS = "no_rows"  # 0 bytes or blank lines only: MATLAB fails on it (Q10.2)
-# Not yet done: skipped now and looked at again when the file changes. NO_ROWS is final once the
-# file has settled (an unconvertible shot), as are a failed read or conversion.
-WAITING = (SETTLING, FUTURE, CHANGED, NO_FINAL_NEWLINE, NOT_TRIGGER_FIRST)
+# Not yet done: skipped now and looked at again when the file changes. A file still failing the
+# format checks (NO_FINAL_NEWLINE, NOT_TRIGGER_FIRST, NO_ROWS) once unmodified for 20 s is damaged
+# (``io_ops.convert.DAMAGED_SECONDS``, Q18.5): final, as are a failed read or conversion.
+WAITING = (SETTLING, FUTURE, CHANGED, NO_FINAL_NEWLINE, NOT_TRIGGER_FIRST, NO_ROWS)
 
 _FIRST_FIELD = re.compile(rb"[ \t]*([0-9]+)[ \t]*,")
 

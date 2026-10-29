@@ -11,7 +11,7 @@ import pytest
 from PyQt6.QtCore import QSettings
 
 from helab.convert.profile import (BUILTIN_PROFILES, DESCRIPTIVE, MATLAB_2019, PLATE_SWAPS, UNCALIBRATED,
-                                   DetectorProfile, ProfileError, builtin_files, suggested_plates)
+                                   DetectorProfile, ProfileError, builtin_files, file_tag, suggested_plates)
 from helab.convert.user_profiles import ProfileLibrary, check_name, duplicate
 
 
@@ -55,6 +55,11 @@ def test_save_scan_find_and_delete(tmp_path: Path) -> None:
     assert library.scan() == ([], [])
     mine = duplicate(BUILTIN_PROFILES["plates-2022"], "mine").replace(time_sum_t_x=3367.0)
     assert mine.version == 1 and mine.notes.startswith("Copied from plates-2022 v1")
+    # A user profile carries no tag (Q18.4): a copy drops the built-in's, and a saved one never has one.
+    assert mine.tag == "" and file_tag(mine).startswith("u")
+    library.save(mine.replace(name="tagged", tag="p22v1"))
+    assert library.find("tagged") == mine.replace(name="tagged")
+    library.delete("tagged")
     path = library.save(mine)
     assert path == str(tmp_path / "profiles" / "mine.json")
     assert DetectorProfile.from_json(Path(path).read_text()) == mine

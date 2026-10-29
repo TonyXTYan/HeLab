@@ -17,6 +17,7 @@ from helab.analysis.budget_core import restore
 from helab.analysis.dataset_view import build_view, revise
 from helab.analysis.identity import AnalysisIdentity
 from helab.analysis.results import AnalysisContext, AnalysisResult, Coverage
+from helab.convert.pipeline import convert_raw
 from helab.convert.profile import MATLAB_2019, MATLAB_2023_LAB_EDIT
 from helab.io_ops import fingerprints, helab_txy, stores
 from helab.io_ops.convert import convert_folder, folder_for
@@ -66,10 +67,14 @@ def convert(source: Path, tmp_path: Path, private_store: str, profile: Any = MAT
     return events
 
 
+# The built-in tags by hash, as ``FolderCache.with_txy`` sends a profile's (Q18.4); "" any.
+TAGS = {PROFILE: "m19v1", MATLAB_2023_LAB_EDIT.content_hash(): "m23v1", "": ""}
+
+
 def options(tmp_path: Path, private_store: str, source: str = txy_sources.MATLAB,
             profile_hash: str = PROFILE) -> dict[str, Any]:
-    return {"source": source, "profile_hash": profile_hash, "cache_base": private_store,
-            "temps": str(tmp_path / "temps")}
+    return {"source": source, "profile_hash": profile_hash, "profile_tag": TAGS[profile_hash],
+            "cache_base": private_store, "temps": str(tmp_path / "temps")}
 
 
 def run_load(source: Path, tmp_path: Path, private_store: str | None, txy: dict[str, Any] | None,
@@ -107,7 +112,7 @@ def test_the_default_takes_matlabs_and_fills_with_helabs(tmp_path: Path, private
     data = shots_read(events)
     assert sorted(data) == [1, 2, 3, 4]
     assert data[1][0, 0] == 1.5  # MATLAB's (the fixture's values), not HeLab's conversion.
-    assert result["txy"]["source"] == "matlab"
+    assert result["txy"]["source"] == "matlab-priority"  # (Asked as "matlab", its name before Q18.2.)
     assert result["txy"]["origins"] == {"3": f"helab:{PROFILE}", "4": f"helab:{PROFILE}"}
     assert result["txy"]["profiles"] == {PROFILE: {"name": "matlab-2019", "version": 1, "calibrated": False,
                                                    "names": ["matlab-2019 v1"]}}
@@ -130,9 +135,12 @@ def test_each_source_takes_its_txy(tmp_path: Path, private_store: str) -> None:
     assert origins(txy_sources.HELAB) == ([1, 2, 3, 4], helab)
     assert origins(txy_sources.HELAB_ONLY) == ([1, 2, 3, 4], helab)
     assert origins(txy_sources.MATLAB_ONLY) == ([1, 2], {})
+    # The default (Q18.2): HeLab's where they exist, MATLAB's for the rest.
+    assert origins(txy_sources.HELAB_PRIORITY) == ([1, 2, 3, 4], helab)
+    assert origins(txy_sources.MATLAB_PRIORITY) == ([1, 2, 3, 4], {"3": f"helab:{PROFILE}", "4": f"helab:{PROFILE}"})
     # Without the option (a helper of before): the default, but without the app's folders HeLab's aren't found.
     events = run_load(source, tmp_path, None, None)
-    assert sorted(shots_read(events)) == [1, 2] and loaded(events)["txy"]["source"] == "matlab"
+    assert sorted(shots_read(events)) == [1, 2] and loaded(events)["txy"]["source"] == "helab-priority"
     with pytest.raises(ValueError, match="Unknown TXY source"):
         run_load(source, tmp_path, None, {"source": "both"})
 
@@ -163,10 +171,42 @@ def test_helabs_in_the_temp_folder_and_beside_are_found(tmp_path: Path, private_
     beside.mkdir()
     write_raw(beside, 7, raw_bytes(10_000, 20_000))
     convert(beside, tmp_path, private_store, beside=True, beside_confirmed=True)
-    assert (beside / "d_txy_helab_7.txy").is_file()
+    assert (beside / "d_txy_helab_m19v1_7.txt").is_file()
     events = run_load(beside, tmp_path, None, options(tmp_path, private_store))
     assert sorted(shots_read(events)) == [7]
-    assert loaded(events)["names"] == ["d_txy_helab_7.txy"]
+    assert loaded(events)["names"] == ["d_txy_helab_m19v1_7.txt"]
+
+
+def test_a_beside_txy_is_current_by_its_tag_and_date_alone(tmp_path: Path, private_store: str) -> None:
+    """Q18.4: no record beside the raw files, so another computer's TXY of the profile's tag counts while
+    it is newer than its raw file; one older, of another tag, or of HeLab's untagged names doesn't."""
+    source = tmp_path / "beside"
+    source.mkdir()
+    for shot in (1, 2, 3, 4):
+        write_raw(source, shot, raw_bytes(10_000, 20_000))
+    made = convert_raw(raw_bytes(10_000, 20_000), MATLAB_2019, "reference")
+    assert made
+    for name, mtime in (("d_txy_helab_m19v1_1.txt", OLD + 60), ("d_txy_helab_m19v1_2.txt", OLD - 60),
+                        ("d_txy_helab_m23v1_3.txt", OLD + 60), ("d_txy_helab_4.txy", OLD + 60)):
+        (source / name).write_bytes(made)
+        os.utime(source / name, (mtime, mtime))
+    found = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.HELAB_ONLY)))
+    assert found["names"] == ["d_txy_helab_m19v1_1.txt"]
+    assert found["txy"]["origins"] == {"1": txy_sources.helab_origin(PROFILE)}
+    # The other profile's tag, asked for, finds its own.
+    other = options(tmp_path, private_store, txy_sources.HELAB_ONLY, MATLAB_2023_LAB_EDIT.content_hash())
+    assert loaded(run_load(source, tmp_path, None, other))["names"] == ["d_txy_helab_m23v1_3.txt"]
+    # Beside ones need a tag asked for: "any" finds none of them.
+    with pytest.raises(ValueError, match="No current HeLab TXY"):
+        run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.HELAB_ONLY, ""))
+    # A conversion beside takes the current one as it is, keeps the older one, and converts the rest
+    # under the tagged name, leaving the untagged file alone.
+    events = convert(source, tmp_path, private_store, beside=True, beside_confirmed=True)
+    assert [event["shot"] for event in events if event["kind"] == "shot_kept"] == [2]
+    assert sorted(event["shot"] for event in events if event["kind"] == "shot_converted") == [3, 4]
+    assert sorted(path.name for path in source.glob("d_txy_helab_*")) == [
+        "d_txy_helab_4.txy", "d_txy_helab_m19v1_1.txt", "d_txy_helab_m19v1_2.txt", "d_txy_helab_m19v1_3.txt",
+        "d_txy_helab_m19v1_4.txt", "d_txy_helab_m23v1_3.txt"]
 
 
 def test_a_helab_txy_of_no_hits_is_an_empty_shot(tmp_path: Path, private_store: str) -> None:
@@ -240,12 +280,15 @@ def test_folders_are_where_convert_writes(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(("source", "matlab", "helab", "held", "expected"), [
-    ("matlab", True, True, None, "matlab"), ("matlab", False, True, None, "helab"),
-    ("helab", True, True, None, "helab"), ("helab", True, False, None, "matlab"),
+    ("matlab-priority", True, True, None, "matlab"), ("matlab-priority", False, True, None, "helab"),
+    ("helab-priority", True, True, None, "helab"), ("helab-priority", True, False, None, "matlab"),
     ("matlab-only", False, True, None, None), ("helab-only", True, False, None, None),
+    ("matlab-only", True, True, None, "matlab"), ("helab-only", True, True, None, "helab"),
     # Held shots keep their kind while it is there.
-    ("matlab", True, True, "helab:x", "helab"), ("helab", True, True, "", "matlab"),
-    ("matlab", True, False, "helab:x", "matlab"),
+    ("matlab-priority", True, True, "helab:x", "helab"), ("helab-priority", True, True, "", "matlab"),
+    ("matlab-priority", True, False, "helab:x", "matlab"),
+    # The names before Q18.2 read as the priority sources.
+    ("matlab", True, True, None, "matlab"), ("helab", True, True, None, "helab"),
 ])
 def test_choose(source: str, matlab: bool, helab: bool, held: str | None, expected: str | None) -> None:
     assert txy_sources.choose(source, matlab, helab, held) == expected
@@ -337,10 +380,11 @@ def test_live_saves_keep_the_origins(tmp_path: Path, private_store: str) -> None
 # Views, results and their keys.
 
 
-def dataset(origins: dict[str, str], source: str = "matlab", signature: str = "sig") -> Dataset:
+def dataset(origins: dict[str, str], source: str = "helab-priority", signature: str = "sig",
+            tag: str = "m19v1") -> Dataset:
     fingerprint = [[1, 10, 100], [2, 20, 200]]
     data = {1: np.zeros((2, 3)), 2: np.ones((2, 3))}
-    metadata = {"fingerprint": fingerprint, "txy": {"source": source, "origins": origins,
+    metadata = {"fingerprint": fingerprint, "txy": {"source": source, "origins": origins, "profile_tag": tag,
                                                     "profiles": {"h": {"name": "plates-2022", "version": 1}}}}
     return Dataset(RUN, signature, data, metadata, 0)
 
@@ -374,7 +418,14 @@ def test_a_revision_or_reload_never_crosses_sources() -> None:
     assert swapped.revision == 2 and swapped.added_shots == (2,) and dict(swapped.origins) == {2: "helab:h"}
     restored = restore(plain, dataset({"2": "helab:h"}))
     assert restored.kept == (1,) and restored.changed == (2,)
-    assert restore(plain, dataset({}, source="helab")).changed == (1, 2)
+    assert restore(plain, dataset({}, source="matlab-priority")).changed == (1, 2)
+    # The two priority sources share the identity (their origins tell their data apart), but a view of one
+    # is never revised by, or restored from, the other's data (Q18.2), nor another profile's.
+    other = build_view(dataset({}, source="matlab-priority"))
+    assert other.identity == plain.identity and other.txy_choice != plain.txy_choice
+    assert revise(plain, dataset({}, source="matlab-priority")).revision == 1
+    assert revise(plain, dataset({}, tag="m23v1")).revision == 1
+    assert restore(plain, dataset({}, tag="m23v1")).changed == (1, 2)
 
 
 # FolderCache: each source's datasets and jobs apart; the options a load is sent.
@@ -386,23 +437,80 @@ def test_folder_cache_keeps_each_sources_datasets_apart(qtbot: Any, monkeypatch:
     service = service_for_test(monkeypatch)
     cache = FolderCache(service)
     path = RUN
-    tab, plot = dataset({"2": "helab:h"}), dataset({"1": "helab:h", "2": "helab:h"}, source="helab")
-    for entry in (tab, plot):
+    # The tab's choice (Q18.2): the setting's source, helab-priority, with the conversion profile's tag.
+    assert cache.tab_choice() == "helab-priority@m19v1"
+    tab, plot = dataset({"2": "helab:h"}), dataset({"1": "helab:h"}, source="matlab-priority")
+    other = dataset({"1": "helab:h", "2": "helab:h"}, tag="m23v1")  # Another profile's HeLab TXY.
+    # (Loaded by the tab, or by plots: as FolderCache records them, ``_with_choice``.)
+    tab.metadata["txy"]["tab"], plot.metadata["txy"]["tab"], other.metadata["txy"]["tab"] = True, False, False
+    for entry in (tab, plot, other):
         cache.datasets[cache.dataset_key(entry)] = entry
-    assert cache.dataset(path, "sig") is tab and cache.dataset(path, "sig", "helab") is plot
-    assert cache.latest_dataset(path) is tab and cache.latest_dataset(path, "helab") is plot
-    assert cache._base(path) is tab and cache._base(path, "", "helab") is plot
-    assert cache._base(path, "", "helab-only") is None
-    cache._drop_superseded(dataset({}, signature="newer"))  # (A newer tab dataset: the plot's stays.)
-    assert cache.dataset(path, "sig", "helab") is plot and cache.dataset(path, "sig") is None
-    # The options: the default source unless asked, the profile from the settings, the bases.
+    assert cache.dataset_choice(plot) == "matlab-priority@m19v1" and cache.dataset_choice(other) == "helab-priority@m23v1"
+    assert cache.dataset(path, "sig") is tab and cache.dataset(path, "sig", "matlab-priority@m19v1") is plot
+    assert cache.dataset(path, "sig", "helab-priority@m23v1") is other
+    assert cache.latest_dataset(path) is tab and cache.latest_dataset(path, "matlab-priority@m19v1") is plot
+    assert cache._base(path) is tab and cache._base(path, "", "matlab-priority@m19v1") is plot
+    assert cache._base(path, "", "helab-only@m19v1") is None
+    # Data naming no source (before Q6.6: MATLAB's alone) is the tab's, whatever its source.
+    assert cache.is_tab_dataset(Dataset(RUN, "sig", {}, {"fingerprint": []}, 0))
+    cache._drop_superseded(dataset({}, signature="newer"))  # (A newer tab dataset: the others stay.)
+    assert cache.dataset(path, "sig", "matlab-priority@m19v1") is plot and cache.dataset(path, "sig") is None
+    # The tab's source changed (Settings; Avocet's review): it applies when a folder loads again. The data
+    # a tab shows stays the tab's (its record says the tab loaded it), and a plot's stays the plot's.
+    shown, plotted = dataset({"2": "helab:h"}, signature="shown"), dataset({}, "matlab-priority", "shown")
+    shown.metadata["txy"]["tab"], plotted.metadata["txy"]["tab"] = True, False
+    for entry in (shown, plotted):
+        cache.datasets[cache.dataset_key(entry)] = entry
+    cache.set_tab_source("matlab-priority")
+    assert cache.tab_choice() == "matlab-priority@m19v1" and cache.is_tab_dataset(shown)
+    assert cache.dataset(path, "shown") is shown and cache.current_dataset(path) is shown
+    assert cache.latest_dataset(path) is shown and cache._base(path) is shown
+    # ... but it is no base for a load of the new choice (Avocet's review, round 2): its held kinds of TXY
+    # would carry over into the new source's data.
+    assert cache._base(path, "", None, cache.tab_choice()) is None
+    assert cache._base(path, "", None, "helab-priority@m19v1") is shown
+    assert cache.dataset(path, "shown", "matlab-priority@m19v1") is plotted and not cache.is_tab_dataset(plotted)
+    # A tab load's options now ask for the new source, marked the tab's; a plot's isn't.
+    assert cache.with_txy(path, {})["txy"]["tab"] is True
+    assert cache.with_txy(path, {"txy": {"source": "helab-only"}})["txy"]["tab"] is False
+    cache.set_tab_source("helab")  # (Its name before Q18.2.)
+    assert cache.tab_source() == "helab-priority" and cache.dataset(path, "shown") is shown
+    # The options: the tab's source unless asked, the profile from the settings, the bases.
     sent = cache.with_txy(str(tmp_path), {"memory": []})["txy"]
-    assert sent["source"] == "matlab" and sent["profile_hash"] == MATLAB_2019.content_hash()
+    assert sent["source"] == "helab-priority" and sent["profile_hash"] == MATLAB_2019.content_hash()
+    assert sent["profile_tag"] == "m19v1" and sent["profile"]["name"] == "matlab-2019"
     assert sent["temps"] == constants.DIR_TEMPS and sent["cache_base"] == os.path.dirname(store_root(constants.cache_dir()))
     assert cache.with_txy(str(tmp_path), {"txy": {"source": "helab-only"}})["txy"]["source"] == "helab-only"
     cache.set_convert_profile(MATLAB_2023_LAB_EDIT)
     assert cache.with_txy(str(tmp_path), {})["txy"]["profile_hash"] == MATLAB_2023_LAB_EDIT.content_hash()
+    assert cache.tab_choice() == "helab-priority@m23v1" and cache.dataset(path, "shown") is shown
     service.shutdown()
+
+
+def test_a_tab_load_of_a_new_choice_waits_for_the_running_one(qtbot: Any, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Avocet's review: after Settings changes the tabs' source, a tab's load doesn't join the running load of
+    the old choice (it would answer with that choice's data): it waits for it to end, then runs as its own."""
+    service = service_for_test(monkeypatch)
+    cache = FolderCache(service)
+    try:
+        assert cache.submit("tab-a", 0, RUN, "load", {})
+        old = cache.jobs[("load", RUN)]
+        assert old.payload["txy"]["source"] == "helab-priority"
+        # The same choice joins it.
+        assert cache.submit("tab-b", 0, RUN, "load", {}) and ("tab-b", 0) in old.subscribers
+        cache.set_tab_source("matlab-priority")
+        answers: list[str] = []
+        cache.resultReady.connect(lambda request, event: answers.append(event["kind"])
+                                  if request.owner == "tab-c" else None)
+        assert cache.submit("tab-c", 0, RUN, "load", {})
+        assert ("tab-c", 0) not in old.subscribers and answers == ["queued"]
+        for owner in ("tab-a", "tab-b"):
+            cache.cancel(owner, "load", RUN)
+        qtbot.waitUntil(lambda: (job := cache.jobs.get(("load", RUN))) is not None and job is not old)
+        new = cache.jobs[("load", RUN)]
+        assert new.payload["txy"]["source"] == "matlab-priority" and ("tab-c", 0) in new.subscribers
+    finally:
+        service.shutdown()
 
 
 # Review (Egret) fixes: held HeLab shots are never a mismatch; trust needs the profile; Live's summary is
@@ -448,7 +556,7 @@ def test_a_held_shot_converted_again_is_read_again(tmp_path: Path, private_store
     origins = first["txy"]["origins"]
     convert(source, tmp_path, private_store, profile=MATLAB_2023_LAB_EDIT)  # The profile changed.
     other = MATLAB_2023_LAB_EDIT.content_hash()
-    txy = {**options(tmp_path, private_store), "profile_hash": other, "key": _key(source, private_store)}
+    txy = {**options(tmp_path, private_store, profile_hash=other), "key": _key(source, private_store)}
 
     def check(**kwargs: Any) -> list[dict[str, Any]]:
         output = tmp_path / f"live-{time.monotonic_ns()}"
@@ -550,7 +658,7 @@ def test_a_cache_save_marks_only_the_default_sources_dataset(monkeypatch: pytest
     service = service_for_test(monkeypatch)
     cache = FolderCache(service)
     try:
-        tab, plot = dataset({}, signature="sig"), dataset({"1": "helab:h", "2": "helab:h"}, source="helab")
+        tab, plot = dataset({}, signature="sig"), dataset({"1": "helab:h", "2": "helab:h"}, source="helab-only")
         for entry in (tab, plot):
             cache.datasets[cache.dataset_key(entry)] = entry
         cache._finishing["saver"] = RUN
@@ -626,5 +734,66 @@ def test_live_asks_the_store_for_a_key_once_a_session(tmp_path: Path, private_st
     try:
         cache._live_helab[cache.key(str(source))] = state
         assert cache.with_txy(str(source), {})["txy"]["key_asked"] is True
+    finally:
+        service.shutdown()
+
+
+@pytest.mark.parametrize(("before", "after", "expected"), [
+    ("helab-priority", "matlab-priority", {"3", "4"}), ("matlab-priority", "helab-priority", {"1", "2", "3", "4"})])
+def test_after_a_settings_change_live_and_its_save_read_the_new_sources_txy(
+        qtbot: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, private_store: str,
+        before: str, after: str, expected: set[str]) -> None:
+    """Avocet's review, round 2: the tab's data of the source before a Settings change is no base for Live's
+    checks or save under the new one, so no held kind of TXY carries over: with both kinds for shots 1 and 2,
+    the new source's origins come back (both directions), never the old ones saved under the new name."""
+    source = make_run(tmp_path, private_store)  # MATLAB's TXY for 1 and 2, HeLab's for 1-4.
+    path = FolderCache.key(str(source))
+    service = service_for_test(monkeypatch)
+    cache = FolderCache(service)
+    try:
+        cache.set_tab_source(before)
+        first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store, before)))
+        held = shots_read(run_load(source, tmp_path, None, options(tmp_path, private_store, before)))
+        metadata = {**first, "txy": {**first["txy"], "tab": True}}
+        shown = Dataset(path, first["signature"], held, metadata, 0)
+        cache.datasets[cache.dataset_key(shown)] = shown
+        old = set(first["txy"]["origins"])
+        assert old != expected and cache._base(path) is shown
+        cache.set_tab_source(after)
+        helper_txy = {**options(tmp_path, private_store, after), "key": _key(source, private_store)}
+
+        def request_of(owner: str) -> Any:
+            job = next(job for job in cache.jobs.values() if owner in {key[0] for key in job.subscribers})
+            return next(request for request in service.pending if request.owner == job.owner)
+
+        # Live's check: nothing held, the folder listed, every shot read (a check later, once seen).
+        assert cache.submit("live-owner", 0, path, "load", {
+            "live": True, "live_since": first.get("folder_mtime_ns"), "prefer_base": shown.signature, "seen": [],
+            "identity": "", "check_level": "full"})
+        payload = request_of("live-owner").payload
+        assert payload["memory"] == [] and "memory_origins" not in payload and payload["live_since"] is None
+        assert payload["txy"]["source"] == after and payload["txy"]["tab"] is True
+
+        def check(seen: list[Any]) -> list[dict[str, Any]]:
+            output = tmp_path / f"live-{time.monotonic_ns()}"
+            output.mkdir()
+            events: list[dict[str, Any]] = []
+            # (The identity as this test's helpers find it: Live's first listing records it.)
+            live_check(str(source), str(output), events.append, payload["memory"],  # type: ignore[arg-type]
+                       txy=helper_txy, seen=seen, check_level="full")
+            return events
+        looked = check([])
+        read = next(event for event in check(last(looked, "live_unchanged" if any(
+            event["kind"] == "live_unchanged" for event in looked) else "loaded")["live_seen"])
+            if event["kind"] == "loaded")
+        assert set(read["txy"]["origins"]) == expected and read["txy"]["source"] == after
+        # Live's save: no held data of the new source to save as it is, so a load of it.
+        cache.cancel("live-owner", "load", path)
+        assert cache.submit("save-owner", 0, path, "load", {"save_memory": True, "save": True,
+                                                            "prefer_base": shown.signature})
+        payload = request_of("save-owner").payload
+        assert "save_memory" not in payload and "memory_origins" not in payload
+        saved = loaded(run_load(source, tmp_path, None, {**helper_txy, "source": payload["txy"]["source"]}))
+        assert set(saved["txy"]["origins"]) == expected and saved["txy"]["source"] == after
     finally:
         service.shutdown()

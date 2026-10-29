@@ -4,6 +4,7 @@
   "version": 1,
   "calibrated": false,
   "notes": "Uncalibrated: no calibration data for these plates yet (Q6.11). Copy of matlab-2019 until this plate is calibrated (stage 3): same output, so same content hash. The MCP plates fitted on 2025-06-18.",
+  "tag": "p25t1",
   "bin_time": 2.5e-11,
   "channel_x1": 0,
   "channel_x2": 1,

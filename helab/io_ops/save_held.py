@@ -64,10 +64,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         fingerprint = sorted((int(shot), int(size), int(modified)) for shot, size, modified in held)
         known = {shot for shot, _, _ in fingerprint}
         txy = dict(txy or {})
-        txy_source = str(txy.get("source") or txy_sources.DEFAULT_SOURCE)
-        if txy_source not in txy_sources.SOURCES:
-            raise ValueError(f"Unknown TXY source {txy_source!r}")
-        txy["source"] = txy_source
+        txy_source = txy["source"] = txy_sources.requested_source(txy.get("source"))
         held_record = held_txy if isinstance(held_txy, dict) else {}
         held_origins = {shot: origin for shot, origin in helab_txy.origins_from(held_record.get("origins")).items()
                         if shot in known}
@@ -92,7 +89,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
                         matlab[matched[1]] = entry.path
                     elif matched[0] is file_kinds.RAW:
                         raw_entries[matched[1]] = entry
-                    elif matched[0] is file_kinds.HELAB_TXY:
+                    elif matched[0] is file_kinds.HELAB_TXY and helab_txy.beside_wanted(entry.name, txy):
                         beside_entries[matched[1]] = entry
                 elif not has_dirs and _is_dir(entry):
                     has_dirs = True

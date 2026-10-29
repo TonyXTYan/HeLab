@@ -214,7 +214,7 @@ class AnalysisResult:
         return {"analysis_id": self.analysis.analysis_id, "version": self.analysis.version,
                 "file_hash": self.analysis.file_hash, "action": self.action, "root_key": identity.root_key,
                 "signature": identity.signature, "input_signature": self.input_signature,
-                # Which TXY (Q6.6); the default's key is as it was.
+                # Which TXY (Q6.6, Q18.2); the priority sources' key is as it was (their origins differ).
                 **({"txy_source": identity.source} if identity.source else {}),
                 "parameters": {name: value for name, value in self.parameters.items() if name not in self.unused},
                 "coverage": self.coverage.to_json(),
@@ -228,7 +228,7 @@ class AnalysisResult:
         lines = [f"{self.analysis.text()} · {self.action}",
                  f"Input: {identity.source_path} · revision {self.input.revision}",
                  f"Data root: {identity.root_key or 'none known'}",
-                 f"TXY source: {txy_sources.SHORT.get(identity.source or txy_sources.DEFAULT_SOURCE, identity.source)}"
+                 f"TXY source: {txy_sources.SHORT.get(identity.source, 'HeLab or MATLAB priority')}"
                  + (f"; {len(self.coverage.origins):,} shots from HeLab's TXY" if self.coverage.origins else ""),
                  f"Signature: {identity.signature[:16] or 'none'}"
                  + (f" (this revision: {self.input_signature[:16]})"

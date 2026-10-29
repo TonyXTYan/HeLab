@@ -106,7 +106,16 @@ def test_saving_picks_the_profile_backend_and_output(qtbot: QtBot, tmp_path: Pat
         tab.profile_combo.setCurrentIndex(tab.profile_combo.findData("mine"))
         tab.backend_combo.setCurrentIndex(tab.backend_combo.findData("rust"))
         tab.output_combo.setCurrentIndex(tab.output_combo.findData("temp"))
+        # Tabs and Live read helab-priority until set otherwise (Q18.2).
+        assert tab.source_combo.currentData() == "helab-priority" and cache.tab_source() == "helab-priority"
+        tab.source_combo.setCurrentIndex(tab.source_combo.findData("matlab-priority"))
         tab.save(ini)
+        assert constants.read_txy_source(ini) == "matlab-priority" and cache.tab_source() == "matlab-priority"
+        assert cache.with_txy(str(tmp_path), {})["txy"]["source"] == "matlab-priority"
+        ini.setValue(constants.TXY_SOURCE_SETTING, "matlab")  # (A name before Q18.2.)
+        assert constants.read_txy_source(ini) == "matlab-priority"
+        ini.setValue(constants.TXY_SOURCE_SETTING, "both")
+        assert constants.read_txy_source(ini) == "helab-priority"
         assert ini.value(constants.CONVERT_PROFILE_SETTING) == "mine"
         assert ini.value(constants.CONVERT_BACKEND_SETTING) == "rust"
         assert constants.read_convert_output(ini) == "temp"
@@ -165,17 +174,17 @@ def converted_folder(root: str, name: str, files: dict[str, bytes]) -> Path:
 
 def test_the_helper_measures_and_clears_converted_txy(tmp_path: Path) -> None:
     root = str(tmp_path / "converted-txy")
-    one = converted_folder(root, "a" * 24, {"d_txy_helab_1.txy": b"x" * 10, "d_txy_helab_1.json": b"{}",
+    one = converted_folder(root, "a" * 24, {"d_txy_helab_m19v1_1.txt": b"x" * 10, "d_txy_helab_m19v1_1.json": b"{}",
                                              "folder.json": b"{}", "notes.txt": b"theirs"})
-    beside = converted_folder(root, "b" * 24, {"d_txy_helab_2.json": b"{}", "folder.json": b"{}"})
-    gone = converted_folder(root, "c" * 24, {"d_txy_helab_3.txy": b"y" * 5, "d_txy_helab_3.json": b"{}",
+    beside = converted_folder(root, "b" * 24, {"d_txy_helab_m19v1_2.json": b"{}", "folder.json": b"{}"})
+    gone = converted_folder(root, "c" * 24, {"d_txy_helab_m19v1_3.txt": b"y" * 5, "d_txy_helab_m19v1_3.json": b"{}",
                                               "folder.json": b"{}"})
-    os.symlink(one / "d_txy_helab_1.txy", gone / "d_txy_helab_9.txy")
+    os.symlink(one / "d_txy_helab_m19v1_1.txt", gone / "d_txy_helab_m19v1_9.txt")
     assert helab_txy.converted_usage(root) == {"files": 2, "bytes": 10 + 2 + 2 + 2 + 2 + 5 + 2 + 2, "folders": 3}
     assert helab_txy.clear_converted(root) == {"files": 2, "bytes": 10 + 2 + 5 + 2}
     assert sorted(os.listdir(one)) == ["folder.json", "notes.txt"]  # Another's file stays, so its folder too.
-    assert sorted(os.listdir(beside)) == ["d_txy_helab_2.json", "folder.json"]  # A beside TXY's record stays.
-    assert sorted(os.listdir(gone)) == ["d_txy_helab_9.txy", "folder.json"]  # A link is never followed or removed.
+    assert sorted(os.listdir(beside)) == ["d_txy_helab_m19v1_2.json", "folder.json"]  # A beside TXY's record stays.
+    assert sorted(os.listdir(gone)) == ["d_txy_helab_m19v1_9.txt", "folder.json"]  # A link is never followed or removed.
 
 
 def test_the_cache_tab_shows_and_clears_converted_txy(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
@@ -183,7 +192,7 @@ def test_the_cache_tab_shows_and_clears_converted_txy(qtbot: QtBot, monkeypatch:
     service, cache = frozen(monkeypatch)
     try:
         root = helab_txy.converted_root(store_options()["directory"])
-        converted_folder(root, "a" * 24, {"d_txy_helab_1.txy": b"x" * 1500, "d_txy_helab_1.json": b"{}"})
+        converted_folder(root, "a" * 24, {"d_txy_helab_m19v1_1.txt": b"x" * 1500, "d_txy_helab_m19v1_1.json": b"{}"})
         tab = CacheTab(cache, settings(tmp_path))
         qtbot.addWidget(tab)
         asked: list[str] = []
@@ -223,8 +232,8 @@ def view_dated(day: str, origins: dict[str, str] | None = None) -> Any:
 
 
 def test_the_row_suggests_a_plate_profile_without_applying_it(qtbot: QtBot) -> None:
-    picked: list[str] = []
-    row = TxySourceRow("matlab", picked.append)
+    picked: list[tuple[str, str]] = []
+    row = TxySourceRow("", lambda source, profile: picked.append((source, profile)))
     qtbot.addWidget(row)
     view = view_dated("2023-02-04")
     assert folder_day(view) == "2023-02-04"
@@ -234,10 +243,17 @@ def test_the_row_suggests_a_plate_profile_without_applying_it(qtbot: QtBot) -> N
     assert row.note.text() == ("HeLab converts with matlab-2019 · plates-2022 suggested for this folder's date "
                                "(2023-02-04)")
     assert "it is not applied" in row.note.toolTip()
+    assert row.source() == "" and row.combo.currentText() == "As the folder's tab"
     row.combo.setCurrentIndex(row.combo.findData("helab-only"))
-    assert picked == ["helab-only"] and row.source() == "helab-only"
-    row.set_source("matlab")  # (Set by the plot: not a choice.)
-    assert picked == ["helab-only"]
+    assert picked == [("helab-only", "")] and row.source() == "helab-only"
+    # The profile whose HeLab TXY are read, by its tag (Q18.2).
+    assert row.profile_combo.findText("plates-2022 (p22v1)") >= 0
+    row.profile_combo.setCurrentIndex(row.profile_combo.findData("plates-2022"))
+    assert picked[-1] == ("helab-only", "plates-2022") and row.profile() == "plates-2022"
+    row.set_source("matlab-priority", "")  # (Set by the plot: not a choice.)
+    assert len(picked) == 2 and row.profile() == "" and row.profile_combo.isEnabled()
+    row.combo.setCurrentIndex(row.combo.findData("matlab-only"))
+    assert not row.profile_combo.isEnabled()  # (MATLAB's alone: no profile.)
 
 
 # A plot switching its TXY source (``AnalysisInstance.set_txy_source``).
@@ -251,7 +267,9 @@ def test_a_plot_loads_its_own_source_and_goes_back_to_the_tabs(qtbot: QtBot, mon
     try:
         path = RUN
         tab_data = Dataset(path, "sig", {1: np.zeros((1, 3))},
-                           {"fingerprint": [[1, 10, 100]], "txy": {"source": "matlab", "origins": {}}}, 0)
+                           {"fingerprint": [[1, 10, 100]],
+                            "txy": {"source": "helab-priority", "origins": {}, "profile_tag": "m19v1", "tab": True}},
+                           0)
         cache.datasets[cache.dataset_key(tab_data)] = tab_data
         instance = AnalysisInstance(FallTime().get_metadata(), FallTime(), "Plot", build_view(tab_data), "1", None,
                                     cache=cache)
@@ -263,22 +281,36 @@ def test_a_plot_loads_its_own_source_and_goes_back_to_the_tabs(qtbot: QtBot, mon
         assert instance.follow_text() == "TXY: HeLab only (loading…)"
         helab = Dataset(path, "sig", {1: np.ones((1, 3)), 2: np.ones((1, 3))},
                         {"fingerprint": [[1, 11, 101], [2, 12, 102]],
-                         "txy": {"source": "helab-only", "origins": {"1": "helab:h", "2": "helab:h"}}}, 0)
+                         "txy": {"source": "helab-only", "origins": {"1": "helab:h", "2": "helab:h"},
+                                 "profile_tag": "m19v1"}}, 0)
         instance._source_owner = ""  # (The load answered.)
         instance._source_loaded(helab)
         assert ran[-1].identity.source == "helab-only" and sorted(ran[-1].shots) == [1, 2]
         # Live's next: a revision of the plot's own source, offered as it follows.
         newer = Dataset(path, "sig", {**helab.data, 3: np.ones((1, 3))},
                         {"fingerprint": [[1, 11, 101], [2, 12, 102], [3, 13, 103]],
-                         "txy": {"source": "helab-only", "origins": {"1": "helab:h", "2": "helab:h", "3": "helab:h"}}},
+                         "txy": {"source": "helab-only", "origins": {"1": "helab:h", "2": "helab:h", "3": "helab:h"},
+                                 "profile_tag": "m19v1"}},
                         0)
         instance.follow.start(ran[-1])
         instance.follow.end(time.monotonic())
         instance._source_loaded(newer)
         assert instance.follow.latest.revision == 2 and instance.follow.latest.added_shots == (3,)
-        # A dataset of another source (asked for before a change) is ignored; back to the tab's data.
-        instance.set_txy_source("matlab")
-        assert ran[-1].identity.source == "" and ran[-1].shots.keys() == {1}
+        # Another profile's (Q18.2): its own load, by its tag; a dataset of the choice before is ignored.
+        instance.set_txy_source("helab-only", "matlab-2023-lab-edit")
+        request = [r for r in service.pending if r.operation == "load"][-1]
+        assert request.payload["txy"]["profile_tag"] == "m23v1" and instance.txy_choice() == "helab-only@m23v1"
+        assert request.payload["txy"]["profile"]["name"] == "matlab-2023-lab-edit"
+        assert instance.follow_text().startswith("TXY: HeLab only (m23v1) (loading…)")
+        instance._source_owner = ""
+        before = len(ran)
+        instance._source_loaded(newer)
+        assert len(ran) == before
+        # Back to the tab's data, also after Settings changed the tabs' source (Avocet's review): until the
+        # folder loads again, the data the tab shows is still the tab's.
+        cache.set_tab_source("matlab-priority")
+        instance.set_txy_source("")
+        assert instance.on_tab_choice() and ran[-1].identity.source == "" and ran[-1].shots.keys() == {1}
         instance.close()
     finally:
         service.shutdown()
@@ -316,7 +348,8 @@ def test_reload_of_a_released_plot_on_another_source(qtbot: QtBot, monkeypatch: 
     try:
         helab = Dataset(RUN, "sig", {1: np.ones((1, 3)), 2: np.ones((1, 3))},
                         {"fingerprint": [[1, 11, 101], [2, 12, 102]],
-                         "txy": {"source": "helab-only", "origins": {"1": "helab:h", "2": "helab:h"}}}, 0)
+                         "txy": {"source": "helab-only", "origins": {"1": "helab:h", "2": "helab:h"},
+                                 "profile_tag": "m19v1"}}, 0)
         instance = AnalysisInstance(FallTime().get_metadata(), FallTime(), "Plot", build_view(helab), "1", None,
                                     cache=cache)
         ran: list[Any] = []
