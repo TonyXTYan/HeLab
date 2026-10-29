@@ -188,9 +188,12 @@ def test_folder_cache_submits_the_cleanup_once(monkeypatch: pytest.MonkeyPatch) 
         cache.clean_up_cache()
         cache.clean_up_cache()
         requests = [r for r in service.pending if r.operation == "cache_admin"]
-        # The sweep, and the inventory that restores saves still waiting for an answer.
-        assert [r.payload for r in requests] == [{"cache": store_options(), "action": action, "params": {}}
-                                                 for action in ("sweep", "inventory")]
+        # The sweep, and the inventory that restores saves still waiting for an answer (with the temp
+        # folder, whose converted TXY it measures too, Q27.5).
+        from helab.utils.constants import DIR_TEMPS
+        assert [r.payload for r in requests] == [
+            {"cache": store_options(), "action": "sweep", "params": {}},
+            {"cache": store_options(), "action": "inventory", "params": {"temps": DIR_TEMPS}}]
         assert store_options()["directory"].endswith("store-v3")
         assert "cache_admin" in service.LOCAL_OPERATIONS
     finally:
