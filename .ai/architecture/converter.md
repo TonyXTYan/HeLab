@@ -80,6 +80,19 @@ sets it: after `\r\n` (also `\r\r\n`), all of `\r\n`, `\r`, `\n` end lines; afte
 only `\n`; after `\r`, only `\r`; a stray ending of the other kind stops the read. Reading starts at
 byte 0 in that mode. Other rules (empty fields, BOM, garbage, extra fields) are in `raw`'s docstring.
 
+**Raw channels by era** (provisional while X is still being transferred, 2026-10-29;
+[session](../sessions/2026-10-29-claude-txy-2025-plates/)): 0–3 the corners x1, x2, y1, y2; 4 the
+MCP (recorded only in some runs, e.g. the 2022-11 ghost counts); 5 the trigger, with extra rows near
+it. From June 2026, **channel 7** appears (~0.3 Hz in June, 0.003 Hz by September; never in the
+4,335 earlier files checked). It marks the largest of the **bursts**: echo trains of ~23 corner
+pulses within ±1 µs starting at the physical x1 end, at 6–8 Hz in 2026 (0.2–0.6 Hz in 2023–24,
+4.5 Hz in the 2022-11 ghost counts). Bursts make ~0.8 false hits each (~16 % of hits outside the
+atom windows; the (−6.6, −10.3) mm "spot" is one). The converter treats channel 7 like any other
+unmapped channel: its rows only take places in the ±36-row search, as in MATLAB (172 of 172
+post-swap shots identical). A burst veto is proposed (Q25.5); the lab checks are M25.2 and M25.5.
+The corner cables were swapped between 2026-06-27 and 2026-07-21: the image is turned by exactly
+180° (± 0.3°) since, which `plates-2025` is to carry as a dated orientation (Q25.1, stage 3).
+
 ## Profiles: schema and hash
 
 `content_hash` (SHA-256) covers the fields that change the output, for provenance beside the name

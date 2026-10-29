@@ -195,6 +195,11 @@ pulses without the share.
 - A calibration panel proposes a profile; Tony checks it on known physics before saving it.
 - The 2025 plates need a calibration set (a dark run, a large thermal cloud, a halo, ideally
   with the MCP channel recorded); until then `plates-2025` stays uncalibrated.
+- Found on the post-swap data (provisional, [session](../.ai/sessions/2026-10-29-claude-txy-2025-plates/),
+  [converter](../.ai/architecture/converter.md)): a dated orientation for `plates-2025` (exactly
+  180° from the July 2026 cable swap, Q25.1); a burst veto as a profile option (channel 7 and
+  6–8 Hz bursts from the x1 end, Q25.5); provisional `plates-2025` numbers to start from
+  (`profile-plates-2025.provisional.json`).
 
 **Stage 4, in HeLab** (core **done 2026-10-29**, `775fb1d` + Windows fixes `6cbe446`: the helper operation, settle checks,
 events, the file kind, output locations, provenance, `helab convert --watch`; the TXY source choice
