@@ -130,6 +130,13 @@ crashed" on CI with no traceback is usually CI's 120 s timeout, whose stacks
 
 Landed in `dev/v0.0.7`:
 
+- [x] CI's Windows test job hit its 30-min limit at 99% (run 40790912863, `02cda86`): the six
+  `tests/test_typing.py` tests ran last, serially on one xdist worker (a 2-4 min tail on every OS).
+  Fixed by Quick Fixes 6 (merged `977120e`): a conftest collection hook starts them first, one per
+  worker, and each mypy test has its own cache folder, since mypy runs sharing one SQLite cache
+  crash ("database is locked"). Windows' tail went from 174 s to 19 s (run 40797275638); the job
+  still takes ~23-24 of its 30 min (Q16.2: two pytest groups per OS, A17.2).
+
 - [x] Quick Fixes 5 (2026-10-29, merged `931f9f8`; `.ai/sessions/2026-10-29-claude-quick-fixes-5/notes.md`;
   Reviewer Sandpiper reproduced each cause):
   - `test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]`

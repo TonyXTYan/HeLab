@@ -238,6 +238,12 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 - **A17.2 Two pytest groups per OS in CI** (Q16.2 b): split the test job into two shards on
   every OS, keeping the typing-tests-first ordering (Quick Fixes 6); no limit raised.
 
+## Quick Fixes 6 (block 19)
+
+- **A19.1 Correct the slow-first hook's comment** (`tests/conftest.py` ~158-161, and the floor's notes):
+  workers never see the command line's `--dist` (xdist sets `dist = 'no'` on every worker), so the
+  `spread` check is always true under xdist; drop it and fix the comment. Harmless today (Tern).
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:
