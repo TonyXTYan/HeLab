@@ -6,6 +6,11 @@ and out/ch7_x_pulses.csv.
 
 python ch7_x_scan.py
 """
+import os
+
+# The 2026-09-22 BEC run's folder on X.
+SEPT_2026_FOLDER = os.environ.get("CH7_SEPT_2026_FOLDER", "2026-09-22 BEC run")
+
 from __future__ import annotations
 
 import os
@@ -16,7 +21,7 @@ from common import OUT, SAMPLES, SCRATCH, BIN, read_raw, raw_files, shot_number
 
 X = "/Volumes/192.168.137.1-4/dld_output_cheerypicked"
 STEPS = {"20260620_Rabi_trial_weak_intrap": 10, "20260626_Ramsey_weaktrap": 12, "20260627_Ramsey_weaktrap": 15,
-         "20260722-tight-trap-freq-meas": 4, "20260922 - BEC attempts Isaac is too scared to delete": 3}
+         "20260722-tight-trap-freq-meas": 4, SEPT_2026_FOLDER: 3}
 
 
 def x_files(folder: str, step: int) -> list[tuple[str, str]]:

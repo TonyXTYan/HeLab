@@ -255,7 +255,7 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 and A19.2 included"; don't start these without it.
 
 - **A19.1 Settings › Cache shows and clears HeLab's TXY in the temp folder too** (audit I4, I6;
-  on hold): `converted_usage` and `clear_converted` over both places.
+  in Q26.2's floor, Q27.5, Tony 2026-10-29): `converted_usage` and `clear_converted` over both places.
 - **A19.2 Clear converted TXY vs a running conversion** (audit K4; on hold): `clear_converted` takes
   a fence a conversion checks before each write, or the docs say a running conversion may write
   after it.
@@ -302,8 +302,8 @@ and A19.2 included"; don't start these without it.
   "ram")` and `time_format.byte_rate` SI on macOS/Linux, powers of 1024 labelled KiB/MiB/GiB on
   Windows; RAM in GiB everywhere; budget defaults and minimums follow (8 GB / 8 GiB disk, 1 GB /
   1 GiB, RAM 1 GiB); the ~67 calls sorted into disk and RAM; tests for both platforms; AGENTS.md's
-  units rule, `cache-store.md` and `settings.md` updated. Not cache code; a floor when convenient
-  (Tony, 2026-10-29).
+  units rule, `cache-store.md` and `settings.md` updated. Not cache code; a floor now, in v0.0.7
+  (Tony, 2026-10-29: "do now").
 
 ## Not AI work (stays in MANUAL_TODO)
 

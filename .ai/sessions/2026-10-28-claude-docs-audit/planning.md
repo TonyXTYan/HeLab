@@ -209,7 +209,7 @@ AGENTS.md was cut to rules plus a map (Q3.2). These pointers name sections it no
     lane (known-issues:26), the "keep the previous signature" check (MANUAL_TODO:185-188), and
     silent scan skipping on cache failure (`_readme.md:104`).
   - Fix: retire it, or reduce it to the one fact still unique there (the default cache folders
-    moved to `~/Library/Caches/HeLab` / `%LOCALAPPDATA%\HeLab`, which `lab-main-pc-caveats`
+    moved to `~/Library/Caches/HeLab` / `%LOCALAPPDATA%\HeLab`, which the Lab Main PC's notes (now local only, Q29.2)
     already links).
 - **`results/maestri-chat-and-codex.md:1-4`:** the only memory file without `name:` and
   `description:` front matter. Cosmetic.

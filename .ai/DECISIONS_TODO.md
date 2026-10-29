@@ -215,6 +215,27 @@ post-2025 plates (block 25) and versions (block 27):
 - **Q27.1** saved-result reuse off by default for now ("yup turn that off for now"): a new key
   `reuse_saved_results`, default off, so earlier saves of `result_reuse` (on) don't keep it on;
   back on with Q27.2.
+- **Q27.4** build Q19.5 now, in Q26.2's floor (Don't-cache folders convert to temp): "ok".
+- **Q27.5** Q26.2's floor also lists and clears temp-folder TXY in Settings › Cache (A19.1): "ok".
+- **A26.1** (byte units by OS) in v0.0.7: "do now".
+- **Q23.1** tags `m23v1` (matlab-2023-lab-edit) and `p17v1` (plates-2017), frozen once released: "ok".
+- **v0.0.7's version:** a pre-release, `0.0.7a1` ("do a pre-release"), then v0.0.8 development
+  straight away; a final `0.0.7` only if a reason comes up.
+- **Standing OK:** the Assistant commits record-only changes on Ground (these lists, ID_BLOCKS)
+  without asking each time; code and other docs still need Tony's OK (AGENTS.md, Commits).
+- **Q27.3** dev versions ("27.3 ok"): a dev branch carries `X.Y.Z.devN` from its first commit and the
+  PR sets the release version. Starts with `dev/v0.0.8`, cut from `main` after v0.0.7a1's PR is
+  merged (its first commit sets `0.0.8.dev0` and changes AGENTS.md's bump rule and app versioning's
+  workflow), not before.
+- **Privacy pass** (block 29, Tony asked 2026-10-29; both repos are public; the scan's details are
+  kept out of git in `.ai/local/privacy-2026-10-29/`): no secrets or transcripts found. **Q29.1** a
+  lab folder name quoted in the post-2025 plates session removed everywhere; **Q29.6** that
+  session's raw per-file tables moved to `.ai/local/sessions-data/` (summaries and figures kept);
+  **Q29.2** the four lab-machine memory notes moved to gitignored `.ai/local/memory/`, with a stub
+  in MEMORY.md; **Q29.3** tailnet and X-share addresses may stay ("I'm okay with leaving tailscale
+  address up"); **Q29.4** `DEV_POTENTIAL_DATA_PATHS` trimmed to the lab share and the sample data,
+  the stray `cov.syspath.txt` removed, the LM Studio prototype's thesis paths made an argument;
+  **Q29.5** no history rewrite (the tip is fixed before v0.0.7a1's squashed PR).
 - **Q28.2** caching v2 and store-v4 go into **v0.0.8** ("cache store upgrade goes into v0.0.8?"):
   release v0.0.7 first, then build on `dev/v0.0.8` from `main`.
 - **Q27.2** "make versioning more robust during the next store and cache upgrade, so we're better
@@ -269,8 +290,6 @@ From the `agent/txy-followups` handoff (`sessions/2026-10-29-claude-txy-followup
 landed `c718c71`. Q15.2 is superseded by Q18.3 (built), Q14.3 settled by Q18.2 (a profile by its tag),
 Q12.7 confirmed as Q18.6 (the patterns now tagged).
 
-- **Q23.1 Tags for the two built-ins Tony didn't name**: `matlab-2023-lab-edit` → `m23v1`,
-  `plates-2017` → `p17v1` (CoCo agreed for now). Frozen once released: confirm before v0.0.7 ships.
 - **Q23.2 "File explorer panel" = the whole left panel** (tabs, summary, Live line, Folder details),
   collapsed while Live watches. Alternative: collapse only the folder tree, keeping the Live line and
   Folder details visible. Proposed: as built.
@@ -295,19 +314,7 @@ read-only (v0.0.6a1 and v0.0.7 share layout 3, so 0.0.6a1 opens v0.0.7's store w
 beside TXY are byte-identical across versions (frozen tags; another calibration is another tag);
 profiles carry a schema; settings fall back to defaults. Tony: "3. fine, our TXY carry a converter
 tag"; the marker is JSON with unknown fields ignored, so metadata can be added without a version
-bump. Q27.1 and Q27.2 are decided (Recently decided).
-
-- **Q27.3 Dev versions** (docs audit 3, #5). Q27.2's plan proposes that a dev branch carries
-  `X.Y.Z.devN` from its first commit and the PR sets the release version, so a source build never
-  looks like a release. That changes AGENTS.md's "the version bump goes on the PR branch" and
-  [app versioning](../roadmaps/app-versioning.md)'s workflow. Proposed: yes, from v0.0.8's branch.
-- **Q27.4 Build Q19.5 now?** Decided but not built: a Don't-cache folder still converts into
-  `<cache>/converted-txy/` (`FolderCache.convert` always sends `store_options()`; `io_ops/convert.py`
-  `_places` never checks `no_cache`). Converter-side and small. Proposed: in Q26.2's floor (same
-  module), not waiting for the cache go.
-- **Q27.5 A19.1 with Q26.2?** Q26.2's `folders` table, listed in Settings › Cache, is most of
-  A19.1 (show and clear temp-folder TXY too; on hold with the cache go). Proposed: Q26.2's floor
-  lists and clears both folders' converted TXY; A19.2 stays on hold.
+bump. Q27.1–Q27.5 are decided (Recently decided).
 
 ## Caching v2 readiness (block 28; [review](sessions/2026-10-29-claude-caching-v2-readiness/readiness.md))
 

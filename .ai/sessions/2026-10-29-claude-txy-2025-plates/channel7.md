@@ -16,7 +16,7 @@ X is still being transferred, so later folders may change the picture. The raw d
 | 2026-06-25…26 | `20260626_Ramsey_weaktrap` | 154 of 1,840 | every 12th, from X |
 | 2026-06-26…27 | `20260627_Ramsey_weaktrap` | 172 of 2,570 | every 15th, from X |
 | 2026-07-21…22 | `20260722-tight-trap-freq-meas` (4 subfolders) | 118 of 468 | every 4th, from X |
-| 2026-09-21…22 | `20260922 - BEC attempts Isaac is too scared to delete` (new on X) | 90 of 269 | every 3rd, from X |
+| 2026-09-21…22 | `2026-09-22 BEC run` (new on X) | 90 of 269 | every 3rd, from X |
 | Pre-swap | `txy-v1` (2019–2024), `calib-v1` (2019-11, 2022-12, 2023-01), `20250104_off_axis_check_mirror` | 4,335 | local |
 
 - **Gaps:** there is no post-swap raw data from 2025 at all; the only 2025 raw folder on X is
@@ -165,5 +165,5 @@ that end's path.
 | What | Where |
 |---|---|
 | Scripts | `scripts/ch7_x_scan.py` (rate history from X), `ch7_deep.py` (coincidences, time sums, multiplicity, spot), `ch7_bursts.py` (burst profile), `ch7_burst_detail.py` with `ch7_burst_detail_lib.py` (sizes, ghost hits, history), `ch7_burst_eras.py` (older eras), `ch5_compare.py` |
-| Numbers | `out/ch7_x_files.csv`, `ch7_x_pulses.csv`, `ch7_deep.json`, `ch7_bursts.json`, `ch7_burst_detail.json`, `ch7_burst_eras.json`, `ch5_compare.json`, `ch7_trends.json` |
+| Numbers | `out/ch7_x_files.csv`, `ch7_x_pulses.csv` (raw tables, kept out of git, Q29.6), `ch7_deep.json`, `ch7_bursts.json`, `ch7_burst_detail.json`, `ch7_burst_eras.json`, `ch5_compare.json`, `ch7_trends.json` |
 | Figures | `figures/ch7_deep.png` (first pulse per channel after ch7; time-sum test against random times; ±1 µs multiplicity; associated hits), `ch7_burst_profile.png` (the echo train, June against July wiring), `ch7_burst_sizes.png` (size with/without ch7; ghost-hit positions; burst rate and ch7 share by period) |
