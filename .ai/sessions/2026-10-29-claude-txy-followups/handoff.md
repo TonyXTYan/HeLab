@@ -53,6 +53,20 @@ pyright (also Windows) clean.
 5. `convert_line` computes the no-hit shots once per render; its third value is now "amber" (stopped
    or no-hit shots), which `live_line` uses.
 
+## Review round 2 (Avocet: one P2 from round 1)
+
+**Fixed:** after a Settings change, the tab's data of the old source was the base of Live's checks and
+saves under the new one, so `choose`'s held-kind rule kept the old kinds and the mix was saved under
+the new source's name. Now a load's or Live check's base must also have been loaded with the very
+choice it asks for (`FolderCache._base(..., exact=payload_choice)`); the "tab" grouping still decides
+what a tab shows. A Live check with only the old choice's data sends `memory: []`, `live_since` and
+`listed_mtime` None: the folder is listed and every shot read again (a check later, once seen, as at a
+start before the first shot; Live's "new shots" count includes them, once). A Live save with no data
+of the new choice runs as a load of it. Tests: `test_txy_sources.py`'s base assertions, and
+`test_after_a_settings_change_live_and_its_save_read_the_new_sources_txy` (both directions, both
+kinds of TXY for shots 1 and 2: the new source's origins come back). Full suite **8501 passed, 353
+skipped, no RERUN**; mypy --strict (darwin, win32), pyright (also Windows) clean.
+
 ## What changed, by item
 
 ### Q18.4 / Q18.6 tagged names

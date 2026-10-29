@@ -990,15 +990,20 @@ class FolderCache(QObject):
                      if key[0] == path and entry.epoch == self._epochs.get(path, 0)
                      and self._key_choice(entry) == choice), None)
 
-    def _base(self, path: str, prefer: str = "", choice: str | None = None) -> Dataset | None:
+    def _base(self, path: str, prefer: str = "", choice: str | None = None,
+              exact: str | None = None) -> Dataset | None:
         # A dataset an open tab still shows survives signature changes, so a
         # refresh only needs the shots that are new or changed since then.
         # ``prefer``: the signature of the data the caller shows (Live), if still held.
-        # Only a dataset of the same TXY choice (Q6.6, Q18.2).
+        # Only a dataset of the same TXY choice (Q6.6, Q18.2): the tab's or the plot's (``choice``), and,
+        # with ``exact``, loaded with that very choice: a tab's data of the choice it had before Settings
+        # changed it is no base for a load of the new one, whose held kinds of TXY it would carry over
+        # (Avocet's review, round 2).
         floor = self._base_floor.get(path, 0)
         candidates = [entry for entry in (*self.pins.values(), *self.datasets.values())
                       if entry.path == path and entry.epoch >= floor and "fingerprint" in entry.metadata
-                      and self._key_choice(entry) == choice]
+                      and self._key_choice(entry) == choice
+                      and (exact is None or self.dataset_choice(entry) == exact)]
         newest = max((entry.epoch for entry in candidates), default=None)
         preferred = next((entry for entry in candidates if prefer and entry.signature == prefer
                           and entry.epoch == newest), None)
@@ -2234,9 +2239,15 @@ class FolderCache(QObject):
             if snapshot:
                 snapshot.checked_at = 0
         # The data of a folder that lost shots may be another folder's: never a load's base.
-        base = (self._base(path, str(payload.get("prefer_base") or ""), choice) if operation == "load"
-                and path not in self.mismatched and path not in self.allow_missing
-                and not payload.get("allow_missing") else None)
+        can_base = (operation == "load" and path not in self.mismatched and path not in self.allow_missing
+                    and not payload.get("allow_missing"))
+        prefer = str(payload.get("prefer_base") or "")
+        base = self._base(path, prefer, choice, self.payload_choice(payload)) if can_base else None
+        if base is None and live and can_base and self._base(path, prefer, choice) is not None:
+            # Live on the tab's data of the choice before a Settings change: the new choice holds nothing yet,
+            # so the folder is listed and every shot read again, as at a start before the first shot.
+            payload = {**payload, "memory": [], "live_since": None, "listed_mtime": None}
+            logging.info("Live on %s: the TXY choice changed in Settings, every shot read again", path)
         if base:
             payload = {**payload, "memory": [list(entry) for entry in base.metadata["fingerprint"]
                                              if entry[0] in base.data],

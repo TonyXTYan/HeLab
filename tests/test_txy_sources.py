@@ -465,6 +465,10 @@ def test_folder_cache_keeps_each_sources_datasets_apart(qtbot: Any, monkeypatch:
     assert cache.tab_choice() == "matlab-priority@m19v1" and cache.is_tab_dataset(shown)
     assert cache.dataset(path, "shown") is shown and cache.current_dataset(path) is shown
     assert cache.latest_dataset(path) is shown and cache._base(path) is shown
+    # ... but it is no base for a load of the new choice (Avocet's review, round 2): its held kinds of TXY
+    # would carry over into the new source's data.
+    assert cache._base(path, "", None, cache.tab_choice()) is None
+    assert cache._base(path, "", None, "helab-priority@m19v1") is shown
     assert cache.dataset(path, "shown", "matlab-priority@m19v1") is plotted and not cache.is_tab_dataset(plotted)
     # A tab load's options now ask for the new source, marked the tab's; a plot's isn't.
     assert cache.with_txy(path, {})["txy"]["tab"] is True
@@ -730,5 +734,66 @@ def test_live_asks_the_store_for_a_key_once_a_session(tmp_path: Path, private_st
     try:
         cache._live_helab[cache.key(str(source))] = state
         assert cache.with_txy(str(source), {})["txy"]["key_asked"] is True
+    finally:
+        service.shutdown()
+
+
+@pytest.mark.parametrize(("before", "after", "expected"), [
+    ("helab-priority", "matlab-priority", {"3", "4"}), ("matlab-priority", "helab-priority", {"1", "2", "3", "4"})])
+def test_after_a_settings_change_live_and_its_save_read_the_new_sources_txy(
+        qtbot: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, private_store: str,
+        before: str, after: str, expected: set[str]) -> None:
+    """Avocet's review, round 2: the tab's data of the source before a Settings change is no base for Live's
+    checks or save under the new one, so no held kind of TXY carries over: with both kinds for shots 1 and 2,
+    the new source's origins come back (both directions), never the old ones saved under the new name."""
+    source = make_run(tmp_path, private_store)  # MATLAB's TXY for 1 and 2, HeLab's for 1-4.
+    path = FolderCache.key(str(source))
+    service = service_for_test(monkeypatch)
+    cache = FolderCache(service)
+    try:
+        cache.set_tab_source(before)
+        first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store, before)))
+        held = shots_read(run_load(source, tmp_path, None, options(tmp_path, private_store, before)))
+        metadata = {**first, "txy": {**first["txy"], "tab": True}}
+        shown = Dataset(path, first["signature"], held, metadata, 0)
+        cache.datasets[cache.dataset_key(shown)] = shown
+        old = set(first["txy"]["origins"])
+        assert old != expected and cache._base(path) is shown
+        cache.set_tab_source(after)
+        helper_txy = {**options(tmp_path, private_store, after), "key": _key(source, private_store)}
+
+        def request_of(owner: str) -> Any:
+            job = next(job for job in cache.jobs.values() if owner in {key[0] for key in job.subscribers})
+            return next(request for request in service.pending if request.owner == job.owner)
+
+        # Live's check: nothing held, the folder listed, every shot read (a check later, once seen).
+        assert cache.submit("live-owner", 0, path, "load", {
+            "live": True, "live_since": first.get("folder_mtime_ns"), "prefer_base": shown.signature, "seen": [],
+            "identity": "", "check_level": "full"})
+        payload = request_of("live-owner").payload
+        assert payload["memory"] == [] and "memory_origins" not in payload and payload["live_since"] is None
+        assert payload["txy"]["source"] == after and payload["txy"]["tab"] is True
+
+        def check(seen: list[Any]) -> list[dict[str, Any]]:
+            output = tmp_path / f"live-{time.monotonic_ns()}"
+            output.mkdir()
+            events: list[dict[str, Any]] = []
+            # (The identity as this test's helpers find it: Live's first listing records it.)
+            live_check(str(source), str(output), events.append, payload["memory"],  # type: ignore[arg-type]
+                       txy=helper_txy, seen=seen, check_level="full")
+            return events
+        looked = check([])
+        read = next(event for event in check(last(looked, "live_unchanged" if any(
+            event["kind"] == "live_unchanged" for event in looked) else "loaded")["live_seen"])
+            if event["kind"] == "loaded")
+        assert set(read["txy"]["origins"]) == expected and read["txy"]["source"] == after
+        # Live's save: no held data of the new source to save as it is, so a load of it.
+        cache.cancel("live-owner", "load", path)
+        assert cache.submit("save-owner", 0, path, "load", {"save_memory": True, "save": True,
+                                                            "prefer_base": shown.signature})
+        payload = request_of("save-owner").payload
+        assert "save_memory" not in payload and "memory_origins" not in payload
+        saved = loaded(run_load(source, tmp_path, None, {**helper_txy, "source": payload["txy"]["source"]}))
+        assert set(saved["txy"]["origins"]) == expected and saved["txy"]["source"] == after
     finally:
         service.shutdown()
