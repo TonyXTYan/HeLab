@@ -167,8 +167,7 @@ class HelabMainWindow(QMainWindow):
         self.tab_widget.currentChanged.connect(self.on_current_tab_changed)
 
         # Delay the execution of add_new_folder_explorer_tab until the GUI is loaded
-        QTimer.singleShot(10, self.add_new_folder_explorer_tab)
-        QTimer.singleShot(40, lambda: live_launch.start(self))  # Folders set to start Live at launch.
+        QTimer.singleShot(10, self._open_first_tab)
         QTimer.singleShot(30, self.plot_reopen.restore)
         QTimer.singleShot(50, self.update_tool_enabled_state)
         # QTimer.singleShot(20, self.on_folder_explorer_selection_changed)
@@ -803,6 +802,7 @@ class HelabMainWindow(QMainWindow):
         # Left panel
         self.left_panel = QWidget()
         self.left_panel_width = 700  # Store the width of the left panel
+        self._live_collapsed_panel = False  # Live collapsed it (``_live_panel``): Live off restores it.
         left_layout = QVBoxLayout(self.left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
         # Create a splitter to hold the tab_widget and folder_details
@@ -1495,6 +1495,30 @@ class HelabMainWindow(QMainWindow):
             self.action_tab_folder_up.setEnabled(False)
         else:
             self.set_tools_and_tabs_enable()
+        session = explorer.live if explorer is not None else None
+        self._live_panel(session is not None and not session.error)
+
+    def _open_first_tab(self) -> None:
+        """The usual first tab, or, when a folder is set to start Live at launch, that folder's tab alone
+        (Q18.3: such an instance opens no other folder tab; ``live_launch``)."""
+        if live_launch.opens_at_launch():
+            live_launch.start(self)
+        else:
+            self.add_new_folder_explorer_tab()
+
+    def _live_panel(self, watching: bool) -> None:
+        """Turning Live on collapses the file explorer panel (the left panel), giving its room to the plots;
+        Live off restores it (Q18.3), as does an error stopping its checks (the Live line has Retry). A panel
+        the user had collapsed stays so; one the user opened again while Live is on stays open."""
+        collapsed = self.splitter.sizes()[0] == 0
+        if watching:
+            if not self._live_collapsed_panel and not collapsed:
+                self._live_collapsed_panel = True
+                self.toggle_left_panel(False)
+        elif self._live_collapsed_panel:
+            self._live_collapsed_panel = False
+            if collapsed:
+                self.toggle_left_panel(True)
 
     def set_load_mode(self, mode: str) -> None:
         app_settings().setValue(LOAD_MODE_SETTING, mode)

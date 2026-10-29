@@ -25,7 +25,7 @@ from helab.utils import events, folder_cache, io_service
 from helab.utils.folder_cache import FolderCache, SharedJob
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.settings_defaults import (
-    CONVERT_BACKEND_SETTING, CONVERT_LOW_HITS_SETTING, LIVE_LAUNCH_FOLDERS_SETTING,
+    CONVERT_BACKEND_SETTING, CONVERT_LOW_HITS_SETTING, LIVE_LAUNCH_FOLDER_SETTING, LIVE_LAUNCH_FOLDERS_SETTING,
 )
 from helab.utils.settings_store import app_settings
 from helab.views import live_launch
@@ -301,23 +301,6 @@ def test_an_unconvertible_files_reason_survives_auto_convert_off_and_on(
     explorer.close_cleanup()
 
 
-def test_a_launch_tabs_note_goes_once_live_starts_there(qtbot: QtBot, service: IOService, tmp_path: Path) -> None:
-    explorer, path = watching_raw_folder(qtbot, tmp_path, auto_convert=False)
-    explorer.stop_live(save=False)
-    live_launch._elsewhere[FolderCache.key(path)] = str(tmp_path / "first")
-    try:
-        text, tooltip = line(explorer)
-        assert text.endswith("set to start at launch; Live started in first's tab")
-        assert "Live runs in one tab at a time" in tooltip
-        assert explorer.start_live()
-        explorer.stop_live(save=False)
-        text, _ = line(explorer)
-        assert "set to start at launch" not in text and FolderCache.key(path) not in live_launch._elsewhere
-    finally:
-        live_launch._elsewhere.clear()
-    explorer.close_cleanup()
-
-
 def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService) -> None:
     cache = folder_cache.get_folder_cache(service)
     path = FolderCache.key("/data/run")
@@ -480,22 +463,33 @@ def test_a_conversion_the_app_asks_for_runs_in_a_helper_process(qtbot: QtBot, tm
         real.shutdown()
 
 
-# Start at launch (Q9.6)
+# Start at launch (Q9.6; one folder, Q18.3)
 
 
-def test_the_launch_list_is_a_setting(qtbot: QtBot, tmp_path: Path) -> None:
+def test_the_launch_folder_is_a_setting_of_one_folder(qtbot: QtBot, tmp_path: Path) -> None:
     first, second = str(tmp_path / "a"), str(tmp_path / "b")
-    assert live_launch.launch_folders() == []
+    settings = app_settings()
+    assert live_launch.launch_folder() == "" and not live_launch.starts_at_launch(first)
     live_launch.set_starts_at_launch(first, True)
-    live_launch.set_starts_at_launch(second, True)
-    live_launch.set_starts_at_launch(first + os.sep, True)  # (The same folder: moved to the end.)
-    assert live_launch.launch_folders() == [second, first] and live_launch.starts_at_launch(first)
+    live_launch.set_starts_at_launch(second + os.sep, True)  # (Another: it replaces the first.)
+    assert live_launch.launch_folder() == second and not live_launch.starts_at_launch(first)
+    live_launch.set_starts_at_launch(first, False)  # (Not the launch folder: nothing changes.)
+    assert live_launch.starts_at_launch(second)
     live_launch.set_starts_at_launch(second, False)
-    live_launch.set_starts_at_launch(first, False)
-    assert live_launch.launch_folders() == [] and not app_settings().contains(LIVE_LAUNCH_FOLDERS_SETTING)
-    app_settings().setValue(LIVE_LAUNCH_FOLDERS_SETTING, "not json")
-    assert live_launch.launch_folders() == []
-    app_settings().remove(LIVE_LAUNCH_FOLDERS_SETTING)
+    assert live_launch.launch_folder() == "" and not settings.contains(LIVE_LAUNCH_FOLDER_SETTING)
+    # A list saved before Q18.3: its first folder kept, the list removed.
+    settings.setValue(LIVE_LAUNCH_FOLDERS_SETTING, json.dumps([second, first]))
+    assert live_launch.launch_folder() == second and not settings.contains(LIVE_LAUNCH_FOLDERS_SETTING)
+    assert settings.value(LIVE_LAUNCH_FOLDER_SETTING) == second
+    settings.remove(LIVE_LAUNCH_FOLDER_SETTING)
+    settings.setValue(LIVE_LAUNCH_FOLDERS_SETTING, "not json")
+    assert live_launch.launch_folder() == "" and not settings.contains(LIVE_LAUNCH_FOLDERS_SETTING)
+    # The new folder wins over an old list (an older HeLab may have saved one since).
+    settings.setValue(LIVE_LAUNCH_FOLDER_SETTING, first)
+    settings.setValue(LIVE_LAUNCH_FOLDERS_SETTING, json.dumps([second]))
+    assert live_launch.launch_folder() == first
+    settings.remove(LIVE_LAUNCH_FOLDER_SETTING)
+    settings.remove(LIVE_LAUNCH_FOLDERS_SETTING)
 
 
 def window(qtbot: QtBot) -> Any:
@@ -506,88 +500,92 @@ def window(qtbot: QtBot) -> Any:
     return created
 
 
-def test_launch_folders_open_and_the_first_starts_live_with_auto_convert(
-        qtbot: QtBot, tmp_path: Path, notifier: FakeNotifier, caplog: pytest.LogCaptureFixture) -> None:
+@pytest.fixture
+def at_launch(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """The main window opens the launch folder as it would outside pytest."""
+    monkeypatch.setattr(live_launch, "opens_at_launch", lambda in_tests=False: live_launch.launch_folder())
+    yield
+    app_settings().remove(LIVE_LAUNCH_FOLDER_SETTING)
+    folder_cache.get_folder_cache(io_service.get_io_service()).auto_convert.clear()
+
+
+def test_the_launch_folder_opens_alone_and_starts_live_with_auto_convert(
+        qtbot: QtBot, tmp_path: Path, notifier: FakeNotifier, caplog: pytest.LogCaptureFixture, at_launch: None) -> None:
     caplog.set_level(logging.INFO)
     from test_presets_window import quit_window
-    first, second = tmp_path / "first", tmp_path / "second"
-    for folder in (first, second):
-        folder.mkdir()
-    write_shot(second, 1)
-    app_settings().setValue(LIVE_LAUNCH_FOLDERS_SETTING, json.dumps([str(first), str(second)]))
-    try:
-        main = window(qtbot)
-        assert live_launch.start(main) == []  # Never under pytest unless the test asks.
-        tabs = main.tab_widget.count()
-        watchers = live_launch.start(main, in_tests=True)
-        assert len(watchers) == 1 and main.tab_widget.count() == tabs + 2
-        explorer = main.tab_widget.currentWidget()
-        assert isinstance(explorer, FolderExplorer) and explorer.selected_path_globally == str(first)
-        qtbot.waitUntil(lambda: explorer.live is not None, timeout=30_000)
-        assert explorer.live is not None and explorer.live.path == str(first) and explorer.live.convert is not None
-        qtbot.wait(100)
-        assert [record.getMessage() for record in caplog.records if record.getMessage().startswith("Live on:")] == [
-            f"Live on: {first}"]  # Once: starting shows its data, which signals the watcher again.
-        assert explorer.live_control.auto_converting() and main.action_tab_live.isChecked()
-        other = main.tab_widget.widget(main.tab_widget.currentIndex() - 1)
-        assert isinstance(other, FolderExplorer) and other.selected_path_globally == str(second)
-        # Live runs in one tab at a time (switching tabs turns it off): the other launch tab says so.
-        assert other.live is None and "Live runs in one tab at a time" in main.tab_widget.tabToolTip(
-            main.tab_widget.currentIndex() - 1)
-        other._update_activity()
-        assert other.folder_freshness_label.text().endswith("set to start at launch; Live started in first's tab")
-        assert "Turn Live on here to watch this folder instead" in other.folder_freshness_label.toolTip()
-        explorer._update_activity()
-        assert "set to start at launch" not in explorer.folder_freshness_label.text()
-        cache = explorer.model.cache
-        assert {str(first), str(second)} <= cache.auto_convert
-        assert notifier.sent == []
-        quit_window(qtbot, main)
-    finally:
-        app_settings().remove(LIVE_LAUNCH_FOLDERS_SETTING)
-        folder_cache.get_folder_cache(io_service.get_io_service()).auto_convert.clear()
-        live_launch._elsewhere.clear()
+    folder = tmp_path / "run"
+    folder.mkdir()
+    write_shot(folder, 1)
+    assert live_launch.start(window(qtbot)) is None  # Never under pytest unless the test asks (or patched).
+    app_settings().setValue(LIVE_LAUNCH_FOLDER_SETTING, str(folder))
+    main = window(qtbot)
+    # The launch folder's tab is the only one (Q18.3): no usual first tab beside it.
+    assert main.tab_widget.count() == 1
+    explorer = main.tab_widget.currentWidget()
+    assert isinstance(explorer, FolderExplorer) and explorer.selected_path_globally == str(folder)
+    qtbot.waitUntil(lambda: explorer.live is not None, timeout=30_000)
+    assert explorer.live is not None and explorer.live.path == str(folder) and explorer.live.convert is not None
+    qtbot.wait(100)
+    assert [record.getMessage() for record in caplog.records if record.getMessage().startswith("Live on:")] == [
+        f"Live on: {folder}"]  # Once: starting shows its data, which signals the watcher again.
+    assert explorer.live_control.auto_converting() and main.action_tab_live.isChecked()
+    assert str(folder) in explorer.model.cache.auto_convert and notifier.sent == []
+    # Live on collapses the file explorer panel; an error stopping its checks (Retry is there) and Live
+    # off restore it.
+    assert main.splitter.sizes()[0] == 0
+    explorer.live.error = "test"
+    explorer.liveChanged.emit()
+    assert main.splitter.sizes()[0] > 0
+    explorer.live.error = ""
+    explorer.liveChanged.emit()
+    assert main.splitter.sizes()[0] == 0
+    explorer.stop_live(save=False)
+    assert main.splitter.sizes()[0] > 0 and not main._live_collapsed_panel
+    # A panel the user collapsed stays so after Live.
+    main.toggle_left_panel(False)
+    assert explorer.start_live()
+    explorer.stop_live(save=False)
+    assert main.splitter.sizes()[0] == 0
+    main.toggle_left_panel(True)
+    quit_window(qtbot, main)
 
 
 def test_a_launch_folder_that_cant_be_opened_notifies_once_and_isnt_retried(
-        qtbot: QtBot, tmp_path: Path, notifier: FakeNotifier) -> None:
+        qtbot: QtBot, tmp_path: Path, notifier: FakeNotifier, at_launch: None) -> None:
     from test_presets_window import quit_window
     missing = tmp_path / "gone"
-    app_settings().setValue(LIVE_LAUNCH_FOLDERS_SETTING, json.dumps([str(missing)]))
-    try:
-        main = window(qtbot)
-        watchers = live_launch.start(main, in_tests=True)
-        assert len(watchers) == 1
-        qtbot.waitUntil(lambda: watchers[0].done, timeout=60_000)
-        explorer = main.tab_widget.currentWidget()
-        assert isinstance(explorer, FolderExplorer) and explorer.live is None
-        assert len(notifier.sent) == 1 and notifier.sent[0][0] == "HeLab: Live at launch"
-        assert "not started for gone: it can't be opened now" in notifier.sent[0][1], notifier.sent
-        time.sleep(0.2)
-        qtbot.wait(100)
-        assert len(notifier.sent) == 1 and explorer.live is None
-        quit_window(qtbot, main)
-    finally:
-        app_settings().remove(LIVE_LAUNCH_FOLDERS_SETTING)
+    app_settings().setValue(LIVE_LAUNCH_FOLDER_SETTING, str(missing))
+    main = window(qtbot)
+    explorer = main.tab_widget.currentWidget()
+    assert isinstance(explorer, FolderExplorer) and main.tab_widget.count() == 1
+    qtbot.waitUntil(lambda: len(notifier.sent) == 1, timeout=60_000)
+    assert explorer.live is None and notifier.sent[0][0] == "HeLab: Live at launch"
+    assert "not started for gone: it can't be opened now" in notifier.sent[0][1], notifier.sent
+    time.sleep(0.2)
+    qtbot.wait(100)
+    assert len(notifier.sent) == 1 and explorer.live is None
+    quit_window(qtbot, main)
 
 
-def test_working_offline_nothing_starts_at_launch_and_it_says_so(
+def test_working_offline_the_launch_folder_opens_without_live_and_it_says_so(
         qtbot: QtBot, tmp_path: Path, notifier: FakeNotifier) -> None:
     from test_presets_window import quit_window
     folder = tmp_path / "run"
     folder.mkdir()
-    app_settings().setValue(LIVE_LAUNCH_FOLDERS_SETTING, json.dumps([str(folder)]))
+    app_settings().setValue(LIVE_LAUNCH_FOLDER_SETTING, str(folder))
     try:
         main = window(qtbot)
         tabs = main.tab_widget.count()
         main.set_work_offline(True)
         try:
-            assert live_launch.start(main, in_tests=True) == []
-            assert main.tab_widget.count() == tabs
+            assert live_launch.start(main, in_tests=True) is None
+            assert main.tab_widget.count() == tabs + 1
+            explorer = main.tab_widget.currentWidget()
+            assert isinstance(explorer, FolderExplorer) and explorer.live is None
             assert len(notifier.sent) == 1 and "Working offline: Live and auto-convert not started for run" in \
                 notifier.sent[0][1]
         finally:
             main.set_work_offline(False)
         quit_window(qtbot, main)
     finally:
-        app_settings().remove(LIVE_LAUNCH_FOLDERS_SETTING)
+        app_settings().remove(LIVE_LAUNCH_FOLDER_SETTING)

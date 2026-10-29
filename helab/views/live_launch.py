@@ -1,17 +1,18 @@
-"""Folders that start Live and auto-convert when HeLab launches (TXY converter stage 4, Q9.6).
+"""The folder that starts Live and auto-convert when HeLab launches (TXY converter stage 4, Q9.6, Q18.3).
 
-The user sets a folder from the Live line's Auto-convert menu ("Start Live and auto-convert here
-when HeLab launches"); the list is a setting (``live_launch_folders``, a JSON list of paths), so it
-is known before any folder is listed and works for folders without a ``.helab-root``.
+The user sets it from the Live line's Auto-convert menu ("Start Live and auto-convert here when HeLab
+launches"); one folder only (Q18.3: Live runs in one folder, so there is one launch folder): setting
+another replaces it. It is a setting (``live_launch_folder``, a path), so it is known before any folder
+is listed and works for folders without a ``.helab-root``. A list saved before Q18.3
+(``live_launch_folders``) is read once: its first folder becomes the launch folder, and the list goes.
 
-At launch (``start``, from the main window once its first tab is open) each folder opens in a tab
-of its own and is set to auto-convert this session (``FolderCache.auto_convert``). Live follows
-the current tab, so it starts in one only: the first folder's tab, opened last so it is current;
-the others' tab tooltips say so. That folder loads as a deliberate selection (cache first) when it
-holds data, and Live turns on once its data shows, or once its listing finds no shots yet, under
-the normal rules (``FolderExplorer.start_live``), never forced (``LaunchFolder``). A folder that is
-missing or can't be listed now raises one system notification (``events.notify``) and is left as
-it is: no retry. Working offline nothing starts, and a notification says so.
+At launch (``start``, from the main window in place of its usual first tab: an instance set to launch
+Live opens no other folder tab) the folder opens in a tab of its own and is set to auto-convert this
+session (``FolderCache.auto_convert``). It loads as a deliberate selection (cache first) when it holds
+data, and Live turns on once its data shows, or once its listing finds no shots yet, under the normal
+rules (``FolderExplorer.start_live``), never forced (``LaunchFolder``). A folder that is missing or can't
+be listed now raises one system notification (``events.notify``) and is left as it is: no retry. Working
+offline its tab opens but Live doesn't start, and a notification says so.
 
 Never under pytest unless a test asks (``start(..., in_tests=True)``): tests own their settings."""
 from __future__ import annotations
@@ -27,66 +28,55 @@ from PyQt6.QtCore import QObject
 from helab.utils import events
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import get_io_service
-from helab.utils.settings_defaults import LIVE_LAUNCH_FOLDERS_SETTING, read_setting
+from helab.utils.settings_defaults import LIVE_LAUNCH_FOLDER_SETTING, LIVE_LAUNCH_FOLDERS_SETTING, read_setting
 from helab.utils.settings_store import app_settings
 
 if TYPE_CHECKING:
     from helab.views.FolderExplorer import FolderExplorer
     from helab.views.HelabMainWindow import HelabMainWindow
 
-LIVE_LAUNCH = "live_launch"  # The events' ``source``: a folder set to start Live at launch.
-# This session's launch: each launch folder that opened without Live, and the folder Live started in.
-_elsewhere: dict[str, str] = {}
-# Why Live starts in one launch folder only: switching tabs turns Live off (Tony, 2026-10-19).
-ONE_TAB = ("Live runs in one tab at a time (switching tabs turns it off), so of the folders set to start "
-           "at launch it started in the first one only")
+LIVE_LAUNCH = "live_launch"  # The events' ``source``: the folder set to start Live at launch.
 
 
-def launch_folders() -> list[str]:
-    """The folders set to start Live and auto-convert at launch, in the order they were set."""
-    saved = read_setting(app_settings(), LIVE_LAUNCH_FOLDERS_SETTING)
-    try:
-        value = json.loads(saved) if isinstance(saved, str) and saved else []
-    except ValueError:
-        logging.warning("The folders to start Live at launch couldn't be read (%r): none started", saved)
-        return []
-    folders: list[str] = []
-    for path in value if isinstance(value, list) else ():
-        if isinstance(path, str) and path.strip() and FolderCache.key(path) not in folders:
-            folders.append(FolderCache.key(path))
-    return folders
+def launch_folder() -> str:
+    """The folder set to start Live and auto-convert at launch ("": none). A list saved before Q18.3 is
+    moved over first: its first folder kept."""
+    settings = app_settings()
+    if not settings.contains(LIVE_LAUNCH_FOLDER_SETTING) and settings.contains(LIVE_LAUNCH_FOLDERS_SETTING):
+        saved = read_setting(settings, LIVE_LAUNCH_FOLDERS_SETTING)
+        try:
+            value = json.loads(saved) if isinstance(saved, str) and saved else []
+        except ValueError:
+            value = []
+        first = next((path for path in value if isinstance(path, str) and path.strip()), "") \
+            if isinstance(value, list) else ""
+        if first:
+            settings.setValue(LIVE_LAUNCH_FOLDER_SETTING, FolderCache.key(first))
+        settings.remove(LIVE_LAUNCH_FOLDERS_SETTING)
+        logging.info("Live at launch: one folder now (Q18.3): %s, from the list %r", first or "none", saved)
+    saved = read_setting(settings, LIVE_LAUNCH_FOLDER_SETTING, typed=True)
+    return FolderCache.key(saved) if isinstance(saved, str) and saved.strip() else ""
 
 
 def starts_at_launch(path: str) -> bool:
-    return FolderCache.key(path) in launch_folders()
+    return bool(path) and launch_folder() == FolderCache.key(path)
 
 
 def set_starts_at_launch(path: str, on: bool) -> None:
-    """Add a folder to the launch list (at its end), or take it off."""
-    folders = [folder for folder in launch_folders() if folder != FolderCache.key(path)]
-    if on:
-        folders.append(FolderCache.key(path))
+    """Make ``path`` the launch folder (replacing any other), or, if it is the launch folder, none."""
     settings = app_settings()
-    if folders:
-        settings.setValue(LIVE_LAUNCH_FOLDERS_SETTING, json.dumps(folders))
-    else:
-        settings.remove(LIVE_LAUNCH_FOLDERS_SETTING)
+    if on:
+        settings.setValue(LIVE_LAUNCH_FOLDER_SETTING, FolderCache.key(path))
+    elif starts_at_launch(path):
+        settings.remove(LIVE_LAUNCH_FOLDER_SETTING)
     logging.info("Start Live and auto-convert at launch %s: %s", "on" if on else "off", path)
 
 
-def not_started_here(path: str) -> tuple[str, str] | None:
-    """For a launch folder opened at launch without Live: the Live line's note and its tooltip line."""
-    first = _elsewhere.get(FolderCache.key(path))
-    if first is None:
-        return None
-    return (f"set to start at launch; Live started in {_name(first)}'s tab",
-            f"{ONE_TAB} ({first}). Turn Live on here to watch this folder instead (with auto-convert); the "
-            "other tab's Live then stops.")
-
-
-def live_started(path: str) -> None:
-    """Live started in ``path``'s tab: its launch note ("Live started in … 's tab") no longer applies."""
-    _elsewhere.pop(FolderCache.key(path), None)
+def opens_at_launch(*, in_tests: bool = False) -> str:
+    """The folder ``start`` opens in place of the usual first tab ("": none)."""
+    if "PYTEST_CURRENT_TEST" in os.environ and not in_tests:
+        return ""
+    return launch_folder()
 
 
 def _name(path: str) -> str:
@@ -99,39 +89,27 @@ def _notify(message: str, folder: str) -> None:
                   desktop=True, path=folder, source=LIVE_LAUNCH)
 
 
-def start(window: HelabMainWindow, *, in_tests: bool = False) -> list[LaunchFolder]:
-    """Open the launch folders (a tab each) and start Live with auto-convert in the first; what
-    watches that folder until Live is on (empty when nothing starts)."""
-    if "PYTEST_CURRENT_TEST" in os.environ and not in_tests:
-        return []
-    folders = launch_folders()
-    if not folders or window._closing:
-        return []
+def start(window: HelabMainWindow, *, in_tests: bool = False) -> LaunchFolder | None:
+    """Open the launch folder (its tab the only one) and start Live with auto-convert there; what watches
+    it until Live is on (None when nothing starts)."""
+    folder = opens_at_launch(in_tests=in_tests)
+    if not folder or window._closing:
+        return None
     cache = get_folder_cache(get_io_service())
+    window.add_new_folder_explorer_tab(target_path=folder)
     if cache.offline:
-        names = ", ".join(_name(folder) for folder in folders)
-        message = (f"Working offline: Live and auto-convert not started for {names} (set to start when HeLab "
-                   "launches). Turn off File › Work Offline, then turn Live on in its tab.")
+        message = (f"Working offline: Live and auto-convert not started for {_name(folder)} (set to start when "
+                   "HeLab launches). Turn off File › Work Offline, then turn Live on in its tab.")
         events.notify(events.LIVE_ERROR, message, title="HeLab: Live at launch", desktop=True, source=LIVE_LAUNCH)
         window.show_status_notice(message)
-        return []
-    cache.auto_convert.update(folders)
-    first = folders[0]
-    _elsewhere.clear()
-    _elsewhere.update(dict.fromkeys(folders[1:], first))
-    for folder in (*folders[1:], first):
-        window.add_new_folder_explorer_tab(target_path=folder)
-        index = window.tab_widget.currentIndex()
-        if folder != first:
-            window.tab_widget.setTabToolTip(index, (
-                f"{folder}\nSet to start Live and auto-convert when HeLab launches. {ONE_TAB}: {_name(first)}. "
-                "Turn Live on here to watch this folder instead."))
+        return None
+    cache.auto_convert.add(folder)
     from helab.views.FolderExplorer import FolderExplorer
     explorer = window.tab_widget.currentWidget()
     if not isinstance(explorer, FolderExplorer):
-        return []
-    logging.info("Live at launch: %s%s", first, f" (also opened: {', '.join(folders[1:])})" if folders[1:] else "")
-    return [LaunchFolder(explorer, first, window.show_status_notice)]
+        return None
+    logging.info("Live at launch: %s", folder)
+    return LaunchFolder(explorer, folder, window.show_status_notice)
 
 
 class LaunchFolder(QObject):

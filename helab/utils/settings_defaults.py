@@ -48,9 +48,10 @@ CONVERT_OUTPUTS = ("cache", "temp")
 # profile is a built-in's name or a user profile's (``helab.convert.user_profiles``).
 CONVERT_PROFILE_SETTING = "convert_profile"
 CONVERT_BACKEND_SETTING = "convert_backend"
-# Live auto-convert (TXY converter stage 4): the folders that start Live and auto-convert when HeLab
-# launches (Q9.6; helab/views/live_launch.py), and the hits below which a converted shot notifies (Q9.4).
-LIVE_LAUNCH_FOLDERS_SETTING = "live_launch_folders"
+# Live auto-convert (TXY converter stage 4): the folder that starts Live and auto-convert when HeLab
+# launches (Q9.6, Q18.3: one; helab/views/live_launch.py), and the hits below which a converted shot notifies (Q9.4).
+LIVE_LAUNCH_FOLDER_SETTING = "live_launch_folder"
+LIVE_LAUNCH_FOLDERS_SETTING = "live_launch_folders"  # (Before Q18.3: a list; its first becomes the folder.)
 CONVERT_LOW_HITS_SETTING = "convert_low_hits"
 TXY_SOURCE_SETTING = "txy_source"
 # The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).
@@ -110,10 +111,12 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(CONVERT_BACKEND_SETTING, str, "numpy",
             "The converter backend HeLab's conversions use (Settings → TXY converter): numpy (always there), or an "
             "optional compiled one; a conversion with a backend that can't run says why."),
+    Setting(LIVE_LAUNCH_FOLDER_SETTING, str, "",
+            "The folder that opens, alone, and starts Live with auto-convert when HeLab launches (the Live line's "
+            "Auto-convert menu; one folder, Q18.3): its path. Unset: none, and HeLab opens its usual first tab."),
     Setting(LIVE_LAUNCH_FOLDERS_SETTING, str, "",
-            "Folders that open in a tab each and start Live with auto-convert when HeLab launches (the Live "
-            "line's Auto-convert menu): a JSON list of paths. Live follows the current tab, so it starts in the "
-            "first one only. Unset: none."),
+            "Before Q18.3: the launch folders as a JSON list of paths. Read once when the single folder isn't set: "
+            "its first becomes that folder, and this key is removed."),
     Setting(TXY_SOURCE_SETTING, str, "helab-priority",
             "Which TXY tabs and Live load (Settings → TXY converter, Q18.2): helab-priority (HeLab's of the "
             "conversion profile where they exist, MATLAB's for the rest), matlab-priority, helab-only or "

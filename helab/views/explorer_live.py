@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import QInputDialog, QMenu, QMessageBox
 
 from helab.utils import events
 from helab.utils import folder_cache
-from helab.utils.folder_cache import Dataset
+from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest
 from helab.utils.settings_defaults import CONVERT_LOW_HITS_SETTING, read_setting, setting_default
 from helab.utils.settings_store import app_settings
@@ -273,7 +273,6 @@ class LiveController:
         self._set_browsing_enabled(False)
         if not session.request:
             self._live_next(0.0)
-        live_launch.live_started(path)
         logging.info("Live on: %s", path)
         self._live_changed()
         return True
@@ -684,9 +683,11 @@ class LiveController:
         assert action is not None
         action.setCheckable(True)
         action.setChecked(live_launch.starts_at_launch(path))
-        action.setToolTip("At launch this folder opens in a tab and Live starts with auto-convert. With several "
-                          "such folders each opens in a tab; Live follows the current tab, so it starts in the "
-                          "first one set.")
+        other = live_launch.launch_folder()
+        action.setToolTip("At launch HeLab opens this folder alone, in one tab, and starts Live with auto-convert. "
+                          "One folder only: Live runs in one folder."
+                          + (f" Replaces the folder set now: {other}" if other and other != FolderCache.key(path)
+                             else ""))
         action.toggled.connect(lambda on: self._set_starts_at_launch(path, on))
         threshold = low_hits_threshold()
         action = menu.addAction(f"Notify when a converted shot has fewer than {threshold:,} hits…" if threshold
