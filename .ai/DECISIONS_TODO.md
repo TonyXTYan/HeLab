@@ -310,12 +310,25 @@ rotated, and the x1 ringing excess moved from channel 0 to channel 1; Side re-ch
   orientation, a rotation in the x–y plane.** So profiles gain an orientation (rotation) field,
   date-split for `plates-2025` (180° from July 2026); a rotation by a multiple of 90° is applied as
   exact sign flips and axis swaps (a 180° rotation through cos/sin would leave ~1e-16 cross terms,
-  so the output would no longer equal the channel-swapped conversion bit for bit).
+  so the output would no longer equal the channel-swapped conversion bit for bit). Measured
+  (`orientation.md`): **180.0 ± 0.3°**, the only peak of a full 0–360° scan with and without a
+  mirror; with the reflection delays moving between channels, a pure cable swap, so the July+
+  orientation is an exact 180°.
 - **Q25.2 Channel 7:** random (~1.3 per shot, Poisson), absent 2019 – Jan 2025, with corner pulses
   within 10 ns 95 % of the time; likely a high-threshold transient (an MCP/HV micro-discharge or
   whatever is on input 7). Conversion is unaffected (byte-identical without it). Proposed: ignore
   it in every profile; find out what is on input 7 (M25.2). Tony asked to investigate further
-  (`channel7.md` in the investigation folder, in progress).
+  (`channel7.md`): every channel-7 pulse starts a stereotyped **burst** (~23 corner pulses within
+  ±1 µs, an echo train ringing from the physical x1 end); channel 7 catches only the largest
+  bursts, and its share fell (June 4 %, July 1.7 %, September 0 %) while the bursts stayed at 6–8 Hz
+  in every period (2023–24 runs: 0.2–0.6 Hz; 2022-11 ghost-count runs: 4.5 Hz). Most likely input 7
+  is wired to a line that sees these events (an MCP/HV monitor or pick-off, a spare amplifier
+  output, an unterminated cable) with a drifting threshold. The (−6.6, −10.3) mm "spot" is an
+  artefact of the burst's fixed timing.
+- **Q25.5 The bursts make fake hits:** ~0.8 per burst, ~16 % of all hits outside the atom windows
+  (several of the weak "hotspots" are these; the strong spot at (15.8, 1.2) mm is not). Proposed:
+  find the source in the lab (M25.5); and, for stage 3, a profile option that vetoes hits inside a
+  detected burst (off in `matlab-2019`), measured on these runs before it's used.
 - **Q25.3 Another converter on the TDC PC:** some July `d_txy_forc` were written by the 2023 lab
   edit (7–29 % fewer hits), and `20260722-tight-trap-1000Hzsampling/d_txy_forc183.txt` is corrupted
   by two writers. Proposed: find and stop the second writer (M25.3); HeLab's checker flags such

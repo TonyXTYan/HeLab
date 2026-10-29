@@ -1,0 +1,90 @@
+{
+ "0625": {
+  "bursts": 14194,
+  "with_ch7": 578,
+  "size_1us_median_with7": 23.0,
+  "size_1us_median_without7": 18.0,
+  "size_3us_median_with7": 26.0,
+  "size_3us_median_without7": 19.0,
+  "first_channel_share": {
+   "0": 0.564,
+   "1": 0.143,
+   "2": 0.158,
+   "3": 0.135
+  },
+  "share_with_ch7_by_size_3us": {
+   "15-20": [
+    7806,
+    0.0
+   ],
+   "20-25": [
+    5059,
+    0.038
+   ],
+   "25-30": [
+    1111,
+    0.308
+   ],
+   "30-40": [
+    214,
+    0.196
+   ],
+   "40-1000": [
+    4,
+    0.25
+   ]
+  },
+  "ghost_hits": 11640,
+  "ghost_hits_per_burst": 0.82,
+  "ghost_X_mm_median": -5.888205,
+  "ghost_Y_mm_median": -1.230273,
+  "ghost_hits_share_of_quiet_hits": 0.1625
+ },
+ "history": {
+  "20260620_Rabi_trial_weak_intrap": {
+   "files": 41,
+   "quiet_s": 158.6,
+   "bursts": 1217,
+   "burst_rate_hz": 7.67,
+   "bursts_with_ch7": 53,
+   "share_with_ch7": 0.0435,
+   "ch7": 58
+  },
+  "20260626_Ramsey_weaktrap": {
+   "files": 31,
+   "quiet_s": 102.9,
+   "bursts": 855,
+   "burst_rate_hz": 8.31,
+   "bursts_with_ch7": 27,
+   "share_with_ch7": 0.0316,
+   "ch7": 32
+  },
+  "20260627_Ramsey_weaktrap": {
+   "files": 33,
+   "quiet_s": 105.5,
+   "bursts": 890,
+   "burst_rate_hz": 8.44,
+   "bursts_with_ch7": 32,
+   "share_with_ch7": 0.036,
+   "ch7": 37
+  },
+  "20260722-tight-trap-freq-meas": {
+   "files": 39,
+   "quiet_s": 119.6,
+   "bursts": 946,
+   "burst_rate_hz": 7.91,
+   "bursts_with_ch7": 16,
+   "share_with_ch7": 0.0169,
+   "ch7": 21
+  },
+  "20260922 - BEC attempts Isaac is too scared to delete": {
+   "files": 45,
+   "quiet_s": 236.8,
+   "bursts": 1450,
+   "burst_rate_hz": 6.12,
+   "bursts_with_ch7": 0,
+   "share_with_ch7": 0.0,
+   "ch7": 1
+  }
+ }
+}

@@ -1,0 +1,22 @@
+{
+ "2026-06-25 (Jun wiring)": {
+  "shots": 519,
+  "quiet_time_s": 1777.8,
+  "bursts_in_quiet_windows": 14216,
+  "burst_rate_hz": 7.9962,
+  "bursts_with_ch7": 578,
+  "share_with_ch7": 0.041,
+  "ch7_total": 681,
+  "ch7_with_>=15_corner_pulses_within_1us": 582
+ },
+ "2026-07 tight trap (swapped wiring)": {
+  "shots": 24,
+  "quiet_time_s": 68.9,
+  "bursts_in_quiet_windows": 572,
+  "burst_rate_hz": 8.3073,
+  "bursts_with_ch7": 7,
+  "share_with_ch7": 0.012,
+  "ch7_total": 7,
+  "ch7_with_>=15_corner_pulses_within_1us": 7
+ }
+}

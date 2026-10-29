@@ -6,6 +6,11 @@
 
 **PROVISIONAL. Nothing here is a calibration Tony has approved, and nothing was applied to HeLab.**
 
+**Follow-ups (same day):** [channel7.md](channel7.md) covers what channel 7 is. Its pulses mark the
+largest of ~7 Hz detector "bursts", which also make ~16% of background hits as ghosts, including
+some of the weak hot spots below. [orientation.md](orientation.md) finds the July change is
+180.0 ± 0.3°, a pure cable swap.
+
 Claude, 2026-10-29, at Tony's request: "investigate more about channel 7 and calibration of 2025
 plate and anything else at your discretion". This is analysis only. No HeLab source, tests,
 profiles or docs were changed, and nothing was written to X. My earlier notes are in

@@ -1,0 +1,98 @@
+{
+ "20260620_Rabi_trial_weak_intrap": {
+  "files": 162,
+  "first": "2026-06-19 13:12",
+  "last": "2026-06-20 03:41",
+  "rate_by_time_quarter_hz": [
+   0.291,
+   0.327,
+   0.315,
+   0.36
+  ],
+  "spearman_rho": 0.124,
+  "p": 0.117
+ },
+ "20260625_Ramsey_weak_trap (local, all)": {
+  "files": 519,
+  "first": "2026-06-25 11:03",
+  "last": "2026-06-25 15:41",
+  "rate_by_time_quarter_hz": [
+   0.265,
+   0.299,
+   0.254,
+   0.284
+  ],
+  "spearman_rho": -0.014,
+  "p": 0.744
+ },
+ "20260626_Ramsey_weaktrap": {
+  "files": 154,
+  "first": "2026-06-25 15:51",
+  "last": "2026-06-26 07:46",
+  "rate_by_time_quarter_hz": [
+   0.201,
+   0.282,
+   0.425,
+   0.372
+  ],
+  "spearman_rho": 0.198,
+  "p": 0.014
+ },
+ "20260627_Ramsey_weaktrap": {
+  "files": 172,
+  "first": "2026-06-26 19:20",
+  "last": "2026-06-27 17:27",
+  "rate_by_time_quarter_hz": [
+   0.292,
+   0.301,
+   0.355,
+   0.302
+  ],
+  "spearman_rho": 0.056,
+  "p": 0.468
+ },
+ "20260722-tight-trap-freq-meas": {
+  "files": 118,
+  "first": "2026-07-21 12:24",
+  "last": "2026-07-22 13:48",
+  "rate_by_time_quarter_hz": [
+   0.137,
+   0.157,
+   0.085,
+   0.123
+  ],
+  "spearman_rho": -0.07,
+  "p": 0.449
+ },
+ "20260922 - BEC attempts Isaac is too scared to delete": {
+  "files": 90,
+  "first": "2026-09-21 15:36",
+  "last": "2026-09-22 11:11",
+  "rate_by_time_quarter_hz": [
+   0.0,
+   0.0,
+   0.0,
+   0.01
+  ],
+  "spearman_rho": 0.104,
+  "p": 0.329
+ },
+ "june_by_hour_of_day": {
+  "[0, 6)": {
+   "files": 146,
+   "rate_hz": 0.341
+  },
+  "[6, 12)": {
+   "files": 166,
+   "rate_hz": 0.293
+  },
+  "[12, 18)": {
+   "files": 537,
+   "rate_hz": 0.281
+  },
+  "[18, 24)": {
+   "files": 158,
+   "rate_hz": 0.302
+  }
+ }
+}

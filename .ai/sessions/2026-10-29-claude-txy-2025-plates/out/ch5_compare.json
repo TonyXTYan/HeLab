@@ -1,0 +1,106 @@
+{
+ "2026-06-25 (2025 plates)": {
+  "files": 60,
+  "extra_rows": {
+   "+54..56 us": 50,
+   "3.9..4.2 s (end of window)": 35,
+   "before the trigger": 27,
+   "other": 192
+  },
+  "group_size_median": 8.0,
+  "spacing_ns_median": 61.787499999999994,
+  "corner_pulses_within_1us_median": 0.0,
+  "corner_pulses_within_1us_mean": 0.0
+ },
+ "2026-07 tight trap (2025 plates)": {
+  "files": 24,
+  "extra_rows": {
+   "+54..56 us": 25,
+   "3.9..4.2 s (end of window)": 65,
+   "before the trigger": 0,
+   "other": 24
+  },
+  "group_size_median": 8.0,
+  "spacing_ns_median": 50.6125,
+  "corner_pulses_within_1us_median": 0.0,
+  "corner_pulses_within_1us_mean": 0.0
+ },
+ "2025-01 (2022 plates)": {
+  "files": 6,
+  "extra_rows": {
+   "+54..56 us": 12,
+   "3.9..4.2 s (end of window)": 23,
+   "before the trigger": 0,
+   "other": 0
+  },
+  "group_size_median": 12.0,
+  "spacing_ns_median": 52.7875,
+  "corner_pulses_within_1us_median": 0.0,
+  "corner_pulses_within_1us_mean": 0.0
+ },
+ "2024-11 (2022 plates)": {
+  "files": 43,
+  "extra_rows": {
+   "+54..56 us": 25,
+   "3.9..4.2 s (end of window)": 140,
+   "before the trigger": 0,
+   "other": 97
+  },
+  "group_size_median": 11.5,
+  "spacing_ns_median": 59.125,
+  "corner_pulses_within_1us_median": 0.0,
+  "corner_pulses_within_1us_mean": 0.0
+ },
+ "2023-03 (2022 plates)": {
+  "files": 43,
+  "extra_rows": {
+   "+54..56 us": 65,
+   "3.9..4.2 s (end of window)": 0,
+   "before the trigger": 441,
+   "other": 0
+  },
+  "group_size_median": 13.0,
+  "spacing_ns_median": 61.2625,
+  "corner_pulses_within_1us_median": 0.0,
+  "corner_pulses_within_1us_mean": 0.0
+ },
+ "2022-11 MCP (2022 plates)": {
+  "files": 10,
+  "extra_rows": {
+   "+54..56 us": 0,
+   "3.9..4.2 s (end of window)": 61,
+   "before the trigger": 28,
+   "other": 35
+  },
+  "group_size_median": 12.5,
+  "spacing_ns_median": 56.8125,
+  "corner_pulses_within_1us_median": 0.0,
+  "corner_pulses_within_1us_mean": 0.0
+ },
+ "2022-07 (2017 plates)": {
+  "files": 43,
+  "extra_rows": {
+   "+54..56 us": 72,
+   "3.9..4.2 s (end of window)": 29,
+   "before the trigger": 29,
+   "other": 475
+  },
+  "group_size_median": 15.0,
+  "spacing_ns_median": 62.675,
+  "corner_pulses_within_1us_median": 0.0,
+  "corner_pulses_within_1us_mean": 0.19047619047619047
+ },
+ "2019 (2017 plates)": {
+  "files": 43,
+  "extra_rows": {
+   "+54..56 us": 42,
+   "3.9..4.2 s (end of window)": 484,
+   "before the trigger": 11,
+   "other": 22
+  },
+  "group_size_median": 13.0,
+  "spacing_ns_median": 59.6375,
+  "corner_pulses_within_1us_median": 0.0,
+  "corner_pulses_within_1us_mean": 4.773584905660377
+ }
+}

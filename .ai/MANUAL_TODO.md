@@ -153,6 +153,9 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   move there in 2025 (Q25.2)?
 - [x] **M25.3 The second converter** (Tony: not an issue at the moment). Was: which program on the TDC PC writes `d_txy_forc` besides
   AutoConvert (the front panel?) (Q25.3).
+- [ ] **M25.5 The bursts (Q25.5):** a scope on input 7 and the x1-end amplifier together; a ~10 min
+  run with the MCP HV off (bursts gone: the detector or its HV; still there: outside pickup), then
+  a few HV settings; inspect the x1 end's feedthrough, cable and amplifier.
 - [ ] **M25.4 A calibration run for the 2025 plates:** a free-space halo with ≥100 halo atoms per
   shot, raw files kept, ideally with the MCP pick-off on channel 4 (absolute time sums).
 
