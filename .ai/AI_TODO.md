@@ -296,6 +296,15 @@ and A19.2 included"; don't start these without it.
   `backends.numba_kernels` as optional only, so a converter module that imports Qt or
   `helab.utils.constants` fails CI; then `converter.md` and AGENTS.md can say it is enforced.
 
+## Byte units by OS (block 26)
+
+- **A26.1 OS-aware byte units** (Q26.1, decided): `number_format.byte_size(n, kind="disk" |
+  "ram")` and `time_format.byte_rate` SI on macOS/Linux, powers of 1024 labelled KiB/MiB/GiB on
+  Windows; RAM in GiB everywhere; budget defaults and minimums follow (8 GB / 8 GiB disk, 1 GB /
+  1 GiB, RAM 1 GiB); the ~67 calls sorted into disk and RAM; tests for both platforms; AGENTS.md's
+  units rule, `cache-store.md` and `settings.md` updated. Not cache code; a floor when convenient
+  (Tony, 2026-10-29).
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

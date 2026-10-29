@@ -186,7 +186,8 @@ Each rule names the area file with the detail.
 
   Any other removal is the user's choice, asked first, and sends `removed` (Q3.3).
 - Read the cache folder with `cache_dir()`, never `DIR_CACHES`: it can move while HeLab runs.
-- Every byte size shown is SI (kB/MB/GB, powers of 1000) (Tony, 2026-10-26).
+- Every byte size shown is SI (kB/MB/GB, powers of 1000) (Tony, 2026-10-26); Q26.1 changes this
+  by OS (A26.1).
 
 **Settings** ([settings](.ai/architecture/settings.md)): open QSettings only through
 `app_settings()` (helpers: `cache_setting.open_settings`). Every key HeLab reads is a row in

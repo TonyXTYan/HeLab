@@ -9,8 +9,8 @@ metadata:
 ---
 Planned with Tony in Maestri Chat on 2026-10-29, after the converter landed (Q14.5 asked to
 rethink caching). Plan: `roadmaps/caching-v2.md`; evidence: the caching audit and the store-v4
-design note in `.ai/sessions/2026-10-29-claude-caching-audit/`. Open questions: Q19.1–Q19.3,
-Q19.5–Q19.8 and Q22.7 in `.ai/DECISIONS_TODO.md`.
+design note in `.ai/sessions/2026-10-29-claude-caching-audit/`. Open questions: Q19.1 (to
+confirm as written) in `.ai/DECISIONS_TODO.md`.
 
 ## The rule for now
 
@@ -42,12 +42,22 @@ Q19.5–Q19.8 and Q22.7 in `.ai/DECISIONS_TODO.md`.
 - As proposed (Q22.6, Q22.8–Q22.10): raw layers whose file is gone or from an older parser are kept
   and labelled (Make room lists them last); offline, HeLab may make a HeLab layer from the raw
   layer; no "clear this tag" action for now; full-precision tags written as `%.17g` text.
+- **Budget** (Q22.7): keep 8 GB; raw codec zstd 9 + byte shuffle on int64 deltas. Units by OS
+  (Q26.1): SI on macOS/Linux, KiB/MiB/GiB on Windows, RAM in GiB everywhere.
+- **Every TXY source a plot uses is cached as its own layer** (Q19.3, "should be rare anyways").
+  Don't cache also keeps HeLab's TXY out of the cache folder (Q19.5). Binary always; `m19v1` at 8
+  significant figures, newer tags full float64 (Q19.6).
+- **HeLab's own TXY files:** "default no" once loads convert on read, but keep options open: beside
+  writing for a bridging time, and the cache and temp outputs (Q19.1, to confirm as written; Q19.7:
+  temp kept "for future analysis scratch dumps and temp storage for new features").
+- **converted-txy/** (Q19.8, Q26.2): no JSON per TXY; one `converted-txy/index.sqlite` (folders:
+  hash → source; shots: provenance), before v0.0.7's release; cleared only by the user.
 
 ## Sizes (measured on the 309-shot sample set)
 
 - Raw text 217.5 MB; today's store keeps 16.2 MB (MATLAB's TXY); an `m19v1` TXY layer is 15.5 MB at
   today's settings (zstd 9, no shuffle).
 - Raw layer (int8 channels, int64 time deltas, byte shuffle): 29.5 MB at zstd 5, 27.5 MB at zstd 9
-  (2.0 B/pulse, the floor for generic compression; proposed in Q22.7). So a raw layer is ≈ 1.8× a
+  (2.0 B/pulse, the floor for generic compression; the codec chosen in Q22.7). So a raw layer is ≈ 1.8× a
   TXY layer (1.9× at zstd 5), and raw + one tag ≈ 2.7× today's store (2.8×). The audit's first
-  "about the same" compared different settings. Whether to raise the 8 GB budget is Q22.7.
+  "about the same" compared different settings. The budget stays 8 GB (Q22.7).

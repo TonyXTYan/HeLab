@@ -21,7 +21,7 @@ from helab.io_ops.results import result_find, result_save
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService
 from test_result_cache_plots import (Costly, cache, close, folder_view, make_window, open_plot, results_saved,  # noqa: F401
-                                     saved, settled, stop_runners, WAIT)
+                                     reuse_on, saved, settled, stop_runners, WAIT)
 
 
 def held_events(cache: FolderCache, monkeypatch: pytest.MonkeyPatch, kind: str

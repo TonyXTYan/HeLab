@@ -21,7 +21,7 @@ from helab.utils.io_service import IORequest, IOService
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from test_folder_flags import frozen, make_explorer, select
 from test_result_cache_plots import (WAIT, Costly, cache, close, folder_view, make_window,  # noqa: F401
-                                     open_plot, saved, stop_runners)
+                                     open_plot, reuse_on, saved, stop_runners)
 from test_result_cache_store import find, options, packed, save_through_helper
 
 

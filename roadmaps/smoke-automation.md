@@ -5,7 +5,7 @@ Added 2026-10-28. Tony approved these in Chat the same day (Q5.2), after the fir
 [results](../.ai/sessions/2026-10-28-claude-smoke-mac/results.md) and
 [computer-use notes](../.ai/sessions/2026-10-28-claude-smoke-mac/computer-use-notes.md).
 
-**Goal:** a model drives the whole release smoke pass (M1.1–M1.8) in the background, without
+**Goal:** a model drives the whole release smoke pass (M1.1–M1.10) in the background, without
 taking the user's cursor or full-screen control, and saves its own screenshots.
 
 ## Approved (Tony, 2026-10-28)

@@ -9,6 +9,16 @@ Q18.4 code is on `agent/txy-followups` (`26a2ade`, `dda90fd`), not yet landed, a
 Numbers marked *measured* come from read-only scripts on `~/HeLab-samples/txy-v1` (309 shots, 217.5
 MB raw), kept in the session scratchpad. Proposals carry provisional IDs (`Q~n`).
 
+> **Amended 2026-10-29 (Side, after docs audit 3 and the readiness review):** `Q~1`–`Q~10` are
+> Q22.1–Q22.10, all decided ([DECISIONS_TODO](../../DECISIONS_TODO.md), Recently decided); the
+> raw codec is **zstd 9** with byte shuffle (Q22.7; 27.5 MB, below), not level 5; the Q18.2 and
+> Q18.4 code landed in `c718c71`. Later answers change parts of this note: Q19.3 (every source a
+> plot uses gets a layer), Q19.7 and Q19.1 (temp and cache outputs stay as options), Q12.3 (its
+> own budget for converted text TXY), Q26.2 (`converted-txy/index.sqlite`), Q27.2 (versioning:
+> the plan's [Versioning](../../../roadmaps/caching-v2.md#versioning)), and block 28's open
+> questions ([readiness](../2026-10-29-claude-caching-v2-readiness/readiness.md)). Where they
+> differ, the plan and DECISIONS_TODO win.
+
 ## Summary
 
 - `store-v4/` beside `store-v3/` in `cache_dir()`: the same SQLite record tables, minus `datasets`,
@@ -142,7 +152,7 @@ validates dtypes and shapes as `unpack_dataset` does (`cache_store.py:468-477`).
   every channel is in 0–127, and every |time| < 2^53. Then the int64 → float64 conversion is exact
   and equals what `parse_raw` gives; *measured:* the largest time is 5.2e13. Arrays: `channel`
   int8 [n]; `time` int64 [n] as row 0's time, then deltas along the stored order (row 1's delta is
-  taken from row 0). Blosc zstd level 5 with byte shuffle (typesize 1 / 8). *Measured:* 29.5 MB,
+  taken from row 0). Blosc zstd level 5 with byte shuffle (typesize 1 / 8; **level 9 chosen**, Q22.7: 27.5 MB). *Measured:* 29.5 MB,
   encode ~430 MB/s and decode (with the cumulative sum) ~2.9 GB/s of raw-text equivalent. zstd-9
   saves only 7 % at 16× the encode time.
 - **Fallback `f64-1`**: `channels` and `times` float64 exactly as `parse_raw` returns them (NaN, Inf,
@@ -419,7 +429,8 @@ since tests never touch real data):
    segments for Live's autosave.
 3. **Stage 3, convert on read:** loads and Live convert from the raw layer; TXY text only beside
    the raw files and on export; `converted-txy/` read while present, cleared by the user; the temp
-   output setting goes (Q19.1, Q19.7).
+   output setting goes (Q19.1, Q19.7). *Amended by Tony's answers, 2026-10-29: the cache and temp
+   outputs stay as options (Q19.1, Q19.7); see the plan.*
 4. **Stage 4, the policy UI:** per folder (right-click, beside Don't cache) and global (Settings →
    Cache); Make room's dialog naming the only-copy raw layers; the Clear rows by kind and layer.
 

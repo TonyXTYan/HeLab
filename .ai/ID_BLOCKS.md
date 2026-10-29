@@ -37,7 +37,7 @@ number.
 
 | Block | Date | Agent (tool) | Task, session | Branch | Provisional → final |
 |---|---|---|---|---|---|
-| 1 | 2026-10-28 | Side (claude), Ground | v0.0.6 release: decisions, smoke pass, AI tasks (`sessions/2026-10-28-claude-v0.0.6-checks/`) | dev/v0.0.6 | first use, old letters A–I → Q1.1–Q1.9 (first D1.x, renamed to Q the same day), numbers 1–8 → A1.1–A1.8; the smoke pass's steps → M1.1–M1.8 |
+| 1 | 2026-10-28 | Side (claude), Ground | v0.0.6 release: decisions, smoke pass, AI tasks (`sessions/2026-10-28-claude-v0.0.6-checks/`) | dev/v0.0.6 | first use, old letters A–I → Q1.1–Q1.9 (first D1.x, renamed to Q the same day), numbers 1–8 → A1.1–A1.8; the smoke pass's steps → M1.1–M1.8 (M1.9 numbered later by block 24, M1.10 by block 27) |
 | 2 | 2026-10-28 | Side (claude) + 3 subagents, Ground | audit of agents, roles, docs and logs (`…/audit.md`) | dev/v0.0.6 | old letters J–Q → Q2.1–Q2.8, 9–13 → A2.1–A2.5 |
 | 3 | 2026-10-28 | Side (claude) + subagent, Ground | instructions audit (`…/instructions-audit.md`) | dev/v0.0.6 | old letters R–W → Q3.1–Q3.6, 14–16 → A3.1–A3.3 |
 | 4 | 2026-10-28 | Side (claude), Ground | the ID scheme itself (Tony in Chat) | dev/v0.0.6 | Q4.1 |
@@ -60,5 +60,8 @@ number.
 | 21 | 2026-10-29 | Bale (claude), floor TXY ship; merged by CoCo | ship numpy + cython, two test groups (`sessions/2026-10-29-claude-txy-ship/`) | agent/txy-ship | A~1→A21.1, A~2→known-issues, A~3 closes A16.1/A16.2, A~4→A21.2; A16.3, A9.1 done |
 | 22 | 2026-10-29 | Side (claude) subagent, Ground | store-v4 design note (`sessions/2026-10-29-claude-caching-audit/store-v4-design.md`) | dev/v0.0.7 | design note Q~1–Q~10→Q22.1–Q22.10; Q22.11 and A22.1 from Tony's answers in Chat, not the note |
 | 23 | 2026-10-29 | Quill (claude), floor TXY followups; merged by CoCo | converter follow-ups Q18.2-Q18.6, A17.1 (`sessions/2026-10-29-claude-txy-followups/`) | agent/txy-followups | Q~1→Q23.1, Q~2→Q23.2, Q~3→Q23.3, Q~4→Q23.4, Q~5→Q23.5, Q~6→Q23.6, Q~7→Q23.7; A~1→A23.1, A~2→A23.2, A~3→A23.3; M~1→M23.1, M~2→M23.2, M~3→M23.3 |
-| 24 | 2026-10-29 | Side (claude) subagent, Ground | planning-docs audit 2 fixes and the overnight process lessons (`sessions/2026-10-29-claude-docs-audit-2/planning.md`, the [mandate](sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md)) | dev/v0.0.7 | Q24.1–Q24.4, A24.1 |
+| 24 | 2026-10-29 | Side (claude) subagent, Ground | planning-docs audit 2 fixes and the overnight process lessons (`sessions/2026-10-29-claude-docs-audit-2/planning.md`, the [mandate](sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md)) | dev/v0.0.7 | Q24.1–Q24.4, A24.1, M1.9 (in block 1's smoke pass) |
 | 25 | 2026-10-29 | Side (claude) subagent, Ground | post-2025 plate investigation (`sessions/2026-10-29-claude-txy-2025-plates/investigation.md`) | dev/v0.0.7 | Q25.1–Q25.5, M25.1–M25.5 |
+| 26 | 2026-10-29 | Side (claude), Ground | byte units by OS, converted-TXY index (Tony in Chat, with Q22.7 and Q19.8) | dev/v0.0.7 | Q26.1, Q26.2, A26.1 |
+| 27 | 2026-10-29 | Side (claude), Ground | version robustness across machines (Tony in Chat) | dev/v0.0.7 | Q27.1–Q27.2, M1.10 (in block 1's smoke pass); Q27.3–Q27.5 from docs audit 3 (`sessions/2026-10-29-claude-docs-audit-3/findings.md`) |
+| 28 | 2026-10-29 | Side (claude) subagent, Ground | caching v2 readiness for an unattended run (`sessions/2026-10-29-claude-caching-v2-readiness/readiness.md`) | dev/v0.0.7 | Q28.1–Q28.6 |

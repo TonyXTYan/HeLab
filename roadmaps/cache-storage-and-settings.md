@@ -620,7 +620,7 @@ The result cache's own rules are in [result caching](result-caching.md); what it
   Discard) and `gen_results` in `meta`; data in `results/<uuid>.npz` (NumPy arrays and a JSON
   tree, never a pickle). Older `store-v3` stores gain them on a writable open (`_migrate`).
 - **Settings → Cache:** a Cached analysis row (count, size, Clear…, purge by `last_used`) and
-  **Reuse saved analysis results** (`result_reuse`, on by default). Clear all leaves results.
+  **Reuse saved analysis results** (`result_reuse`, on by default; since Q27.1 `reuse_saved_results`, off by default). Clear all leaves results.
 - **Settings → Data roots:** Clear cached analysis… per root (button and menu), beside Clear
   cached data…, which leaves results.
 - **Budget:** results count toward the one disk budget; one that doesn't fit asks Make room

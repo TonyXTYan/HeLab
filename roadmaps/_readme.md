@@ -40,16 +40,20 @@ compute is postponed until the converter works well (Q6.2).
   Cython optional, the reference kept; numba, MLX and Rust left the build (Q11.2, `134e2ec`).
   Stage 4, in HeLab: **done 2026-10-29** (`02cda86`; Tony's follow-ups: tagged names, four source
   modes, one launch folder, damaged raw files, `c718c71`). Stage 3 (calibration) and stage 5
-  (replacing MATLAB) **not started**, after v0.0.7 (Q9.9). Open: Q6.7, Q6.9–Q6.11, Q12.x, Q14.2,
-  Q14.4, Q15.3, Q23.x ([plan](txy-converter.md#open-decisions)). [Plan](txy-converter.md)
+  (replacing MATLAB) **not started**, after v0.0.7 (Q9.9); the post-2025 plate findings feed stage 3
+  (a 180° orientation from July 2026, Q25.1; an opt-in burst veto, Q25.5). Open: Q6.7, Q6.9–Q6.11,
+  Q12.6, Q14.2, Q14.4, Q15.3, Q23.x, Q25.2, Q25.4 ([plan](txy-converter.md#open-decisions)). [Plan](txy-converter.md)
   (2026-10-29; focus 2026-10-28).
 - [ ] Release v0.0.7 (Q9.9: stages 1, 2 and 4 plus the smoke pass). Left: the smoke pass on a Mac
-  and a lab PC, with a converter step (which checks: Q24.3); Q23.1, the tags frozen once released;
+  and a lab PC (M1.1–M1.10; the converter step is M1.9, Q24.3); `converted-txy/index.sqlite`
+  replacing the per-shot JSON (Q26.2, a small floor); saved results off by default (Q27.1, done on
+  Ground); Q23.1, the tags frozen once released;
   the version bump on the PR branch (`helab/_version.py` is still `0.0.6a1`); the PR to `main`; the
   release tidy-up (Q8.3) (2026-10-29).
 - [ ] Caching v2: the raw d files as the cached source (a raw layer of pulses plus TXY layers per
-  profile, with a per-folder policy) in a fresh store-v4. v0.0.7 covers its planning only;
-  building follows Tony's explicit go ([plan](caching-v2.md), Q19.x, Q22.x, 2026-10-29).
+  profile, with a per-folder policy) in a fresh store-v4, with versioning (Q27.2). v0.0.7 covers its
+  planning only; it is built in **v0.0.8** (Q28.2), stage by stage after Tony's go (block 28;
+  [plan](caching-v2.md), Q19.x, Q22.x, 2026-10-29).
 - [ ] Distributed results compute: one machine computes analysis results and other HeLabs use
   them without repeating the work. It builds on the [headless runner](headless-analysis.md)
   and the [network extension](network-runners-and-web.md#cross-machine-result-sharing).
@@ -78,7 +82,7 @@ compute is postponed until the converter works well (Q6.2).
 
 - [ ] Unsupervised smoke runs: menu-bar actions, an in-app save-screenshot command,
   accessibility labels, a debug/smoke menu, then a `--smoke` control channel (design first),
-  so a model drives M1.1–M1.8 without taking the cursor. Approved by Tony 2026-10-28 (Q5.2)
+  so a model drives the smoke pass (M1.1–M1.10) without taking the cursor. Approved by Tony 2026-10-28 (Q5.2)
   ([plan](smoke-automation.md)) (2026-10-28).
 
 - [ ] Release repos: develop and release on `TonyXTYan/HeLab`; fast-forward
@@ -198,6 +202,9 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   still open.
 - [ ] Compare folders or experimental runs using consistent settings
   ([plan](run-comparison-and-batch.md#run-comparison)) (2026-10-08).
+- [ ] Version drift across lab PCs: show which HeLab version and PC converted a folder or saved a
+  result, and note when the acquisition PC runs an older release than this one (Tony,
+  2026-10-29; with caching v2's [versioning](caching-v2.md#versioning) and the self-update below).
 - [ ] Self-update button for source checkouts (git + uv) and frozen builds
   (verified download, separate updater, rollback), then a lab self-check
   ([plan](app-updates.md#stage-2-self-update-button)) (2026-10-13).

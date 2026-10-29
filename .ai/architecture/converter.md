@@ -89,7 +89,7 @@ pulses within ±1 µs starting at the physical x1 end, at 6–8 Hz in 2026 (0.2�
 4.5 Hz in the 2022-11 ghost counts). Bursts make ~0.8 false hits each (~16 % of hits outside the
 atom windows; the (−6.6, −10.3) mm "spot" is one). The converter treats channel 7 like any other
 unmapped channel: its rows only take places in the ±36-row search, as in MATLAB (172 of 172
-post-swap shots identical). A burst veto is proposed (Q25.5); the lab checks are M25.2 and M25.5.
+post-swap shots identical). A burst veto is agreed for stage 3 (Q25.5, Tony 2026-10-29: opt-in, its own tag, after the lab check); the lab checks are M25.2 and M25.5.
 The corner cables were swapped between 2026-06-27 and 2026-07-21: the image is turned by exactly
 180° (± 0.3°) since, which `plates-2025` is to carry as a dated orientation (Q25.1, stage 3).
 
@@ -255,6 +255,15 @@ table summarises them.
 the converter's kinds); `convert_prefs` is matched by `FolderCache`.
 
 #### Where files go
+
+**Changing before v0.0.7's release (Q26.2, Tony 2026-10-29):** one SQLite file per base,
+`converted-txy/index.sqlite`, replaces `folder.json` and the per-shot `.json` records: a `folders`
+table (hash → key, source path, bytes, last used; Settings › Cache lists it) and a `shots` table
+(the provenance rows). SQLite's transactions keep the helper and `helab convert` safe side by
+side; a missing or damaged index only means shots convert again. Caching v2 later moves the
+provenance into the store's `txy_layers`. This section and the next change with that floor.
+**Q19.5 (decided, not built, Q27.4):** a Don't-cache folder still converts into the cache folder;
+it is to convert to temp.
 
 `<base>/converted-txy/<sha256(identity)[:24]>/` (`io_ops.convert.folder_for(base, identity)`),
 `base` = the cache folder (`dirname(cache["directory"])`, i.e. `cache_dir()`) for `cache`, else

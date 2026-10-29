@@ -18,7 +18,7 @@ from helab.utils.folder_cache import PRESETS_SAVING, FolderCache, store_options
 from helab.utils.io_service import IORequest, IOService
 from helab.views.QuitSaveDialog import QuitSaveDialog
 from test_result_cache_plots import (WAIT, Costly, cache, close, folder_view, make_window,  # noqa: F401
-                                     open_plot, results_saved, saved, settled, stop_runners)
+                                     open_plot, results_saved, reuse_on, saved, settled, stop_runners)
 
 RUN = FolderCache.key("/data/root/run")
 

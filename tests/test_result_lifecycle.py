@@ -28,7 +28,7 @@ from helab.utils.folder_cache import FolderCache
 from helab.utils.io_service import IORequest
 from helab.views.plots.instance import AnalysisInstance
 from test_result_cache_plots import (WAIT, Costly, Window, cache, close, folder_view, make_window,  # noqa: F401
-                                     open_plot, results_saved, saved, settled, stop_runners)
+                                     open_plot, results_saved, reuse_on, saved, settled, stop_runners)
 
 
 class Noisy(Costly):

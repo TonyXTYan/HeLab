@@ -1,7 +1,7 @@
 # TXY converter port
 
 Horizon: v0.0.7's focus (Q6.12). Added: 2026-10-28, planned with Tony in Chat; decisions are
-Q6.x, Q8.x, Q9.x and Q10.x–Q18.x in [DECISIONS_TODO](../.ai/DECISIONS_TODO.md) (decided ones under
+Q6.x, Q8.x, Q9.x, Q10.x–Q18.x, Q23.x, Q25.x and Q26.2 in [DECISIONS_TODO](../.ai/DECISIONS_TODO.md) (decided ones under
 Recently decided), with Tony's wording in the
 [converter memory](../.ai/memory/results/txy-converter.md); evidence is in the
 [findings](../.ai/sessions/2026-10-28-claude-txy-converter-plan/findings.md); how it works is
@@ -28,8 +28,8 @@ replace the constants MATLAB hard-codes, and a parameter scan tunes them on real
   killed write's own `.partial` files. A shot with no hits gives a 0-byte TXY (Q10.3), and the GUI
   warns about it.
 - **Where it goes** (Q9.3, Q9.7, Q18.4): a setting, `cache` (the default) or `temp`; a folder
-  without a data root converts to temp (Q12.1, to confirm). Writing beside the raw files is a
-  per-folder option (or `helab convert --output beside` for one run, Q12.4, to confirm); nothing
+  without a data root converts to temp (Q12.1, Tony 2026-10-29). Writing beside the raw files is a
+  per-folder option (or `helab convert --output beside` for one run, Q12.4: a typed command overrides the folder's setting); nothing
   else goes beside them (no metadata: per-shot provenance stays in HeLab's folders).
 - **First bar: byte-identical output.** Stages 1–2 reproduce the existing `_txy_forc` files byte
   for byte, or prove why a reference differs. Stage 1 measured it: of the 309 sample shots,
@@ -199,7 +199,11 @@ pulses without the share.
   [converter](../.ai/architecture/converter.md)): a dated orientation for `plates-2025` (exactly
   180° from the July 2026 cable swap, Q25.1); a burst veto as a profile option (channel 7 and
   6–8 Hz bursts from the x1 end, Q25.5); provisional `plates-2025` numbers to start from
-  (`profile-plates-2025.provisional.json`).
+  (`profile-plates-2025.provisional.json`). Tony agreed the veto (Q25.5, 2026-10-29): the lab check
+  M25.5 first; then an opt-in profile option with its own tag and hash, vetoed bursts and hits in
+  each shot's record, bursts found by the ~180 ns echo pattern and the x1-end start, tested on
+  dense-cloud runs; and a burst-rate-per-shot plot for Live. The orientation is an exact 180°
+  rotation applied as sign flips (Q25.1).
 
 **Stage 4, in HeLab** (core **done 2026-10-29**, `775fb1d` + Windows fixes `6cbe446`: the helper operation, settle checks,
 events, the file kind, output locations, provenance, `helab convert --watch`; the TXY source choice
@@ -234,9 +238,9 @@ In [DECISIONS_TODO](../.ai/DECISIONS_TODO.md):
 - Q6.7: how other HeLabs get the acquisition PC's TXY (postponed with Q6.2).
 - Q6.9: store HeLab's TXY, or only cache them (proposed: answered by caching v2, Q19.1 to decide).
 - Q6.10: the exact 2022 plate swap date. Q6.11: a calibration set, and whether 2025 has MCP pulses.
-- Q12.1 (no data root converts to temp), Q12.3 (= Q19.2, HeLab's TXY and the budget), Q12.4
-  (`--output beside` without the flag), Q12.6 (Convert anyway): built as Side decided overnight,
-  not yet confirmed.
+- Q12.6 (Convert anyway: an idea, not built). Decided 2026-10-29: Q12.1, Q12.3 (= Q19.2, their own
+  budget), Q12.4.
+- Q25.2: channel 7 (proposed: ignored in every profile). Q25.4: the logs' posixtime.
 - Q14.2 (= Q23.4): save a plot's source and profile with presets and arrangements.
 - Q14.4: count HeLab's TXY in a folder's status. Q15.3: the low-count threshold (later).
 - Q23.1 (tags `m23v1`, `p17v1`, frozen once released: before v0.0.7 ships), Q23.2, Q23.3, Q23.5,

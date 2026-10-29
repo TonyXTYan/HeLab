@@ -24,7 +24,7 @@ from helab.views.plots import cached_results
 from helab.views.plots.cached_results import UNCHECKED_NOTE, VERIFY_NOTE
 from helab.views.plots.instance import AnalysisInstance
 from test_result_cache_plots import (WAIT, Costly, cache, close, folder_view, make_window,  # noqa: F401
-                                     open_plot, results_saved, saved, settled, stop_runners)
+                                     open_plot, results_saved, reuse_on, saved, settled, stop_runners)
 
 REFUSED = {"kind": "error", "message": "its drive isn't verified yet this session", "unverified": True}
 

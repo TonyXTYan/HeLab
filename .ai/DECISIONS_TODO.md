@@ -126,7 +126,7 @@ Settled design: [converter memory](memory/results/txy-converter.md); mechanics:
 - **Q11.3** `reference` stays in the build, and every backend's code stays in the repo.
 - **Q12.2, Q12.5, Q12.7** were settled as Q18.4, Q18.5 and Q18.6.
 - **Q14.1, Q14.3** were settled by Q18.2 (four source modes, a profile chosen by its tag).
-  **Q14.5** became the caching rethink (block 19; Q19.3 is still open).
+  **Q14.5** became the caching rethink (block 19; Q19.3 decided: yes, as layers).
 - **Q15.1** became a check in the running app (M18.1, merged into M23.2); the list it asked about
   became one `live_launch_folder` (Q18.3). **Q15.2** was superseded by Q18.3.
 - **Q16.1** no `setup.py` extra for the fast backends (`native/build.py` serves developers and CI).
@@ -152,7 +152,7 @@ settled design: [caching memory](memory/results/caching-v2.md).
 - **Q19.9 Cache the raw pulses** ("plan to move on to caching the raw d files"): a raw layer per
   raw file and TXY layers per tag. Its premise, that a raw layer costs about what TXY caching costs
   now, was corrected by the [design note](sessions/2026-10-29-claude-caching-audit/store-v4-design.md):
-  a raw layer is ≈ 1.8× an `m19v1` TXY layer with Q22.7's proposed codec (1.9× at zstd 5), and
+  a raw layer is ≈ 1.8× an `m19v1` TXY layer with Q22.7's codec (decided) (1.9× at zstd 5), and
   raw plus one tag ≈ 2.7× today's store (2.8×); the plan's "Size" gives the settings.
 - **Q19.10** the raw layer is filled wherever HeLab caches a folder today (loads of the selected
   folder, Live's saves, presets and reopened plots, auto-convert).
@@ -166,52 +166,67 @@ settled design: [caching memory](memory/results/caching-v2.md).
   (A22.1).
 - **Q22.11 Cache policy:** the raw layer and the selected TXY versions together; a global default
   to cache raw files; a per-folder source priority whose TXY layer is cached too.
+- **Q22.7** keep the 8 GB disk budget and the raw codec (zstd 9 + byte shuffle on int64 deltas);
+  "but let's be OS aware" (Q26.1).
+- **Q19.2** = Q12.3: HeLab's converted TXY in the cache get their own budget, separate from the 8 GB
+  dataset budget; beside TXY unlimited; its size and Make room come with caching v2.
+- **Q19.3** yes: each TXY source a plot uses is cached as its own layer, as it is used ("which
+  should be rare anyways"); identical profiles share one layer.
+- **Q19.5** yes: Don't cache this folder also keeps HeLab's TXY out of the cache folder (they go to
+  temp, like folders without a data root). Not built yet: Q27.4.
+- **Q19.6** as proposed: binary always (text only beside the raw files or on export); `m19v1`
+  rounds to 8 significant figures, newer tags keep full float64.
+- **Q19.7** no: keep the temp folder and the temp output ("for future analysis scratch dumps and
+  temp storage for new features").
+- **Q19.8** no JSON per TXY file; "an index to store the hash table from temp dir to real dir is
+  fine" (Q26.2). Cleanup stays the user's (Settings › Cache's Clear, asked first).
+- **Q26.1 Byte units by OS**, with GiB labels ("use GiB labels for binary so it's clear"): disk
+  sizes and rates SI on macOS and Linux, powers of 1024 labelled KiB/MiB/GiB on Windows; RAM in GiB
+  on every OS; defaults follow (8 GB / 8 GiB disk budget, minimums 1 GB / 1 GiB, RAM minimum
+  1 GiB); one helper `byte_size(n, kind)`. AGENTS.md's units rule and `cache-store.md` change with
+  the code. A26.1, to a floor when convenient ("ask one of the floors to do it when convenient").
+- **Q26.2** ("26.2 ok"): one `converted-txy/index.sqlite` (folders and shots tables) replaces
+  `folder.json` and the per-shot `.json` records, before v0.0.7's release; a small floor. The design
+  is in [converter](architecture/converter.md#where-files-go).
 
-## Process lessons and v0.0.7's gate (block 24)
+Tony in Chat, 2026-10-29, on the overnight lessons (block 24), the converter core (block 12), the
+post-2025 plates (block 25) and versions (block 27):
 
-From the overnight build ([mandate](sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md)) and
-the [planning-docs audit 2](sessions/2026-10-29-claude-docs-audit-2/planning.md), 2026-10-29.
-
-- **Q24.1 Codex Reviewers can't run unattended on floors.** **Tony, 2026-10-29: OK** (Claude
-  Reviewers for unattended runs, Codex when he is present). At ~01:50 the Codex Reviewer stalled
-  on its first approval prompt and CoCo replaced it with a Claude Reviewer. Codex asks approval
-  even for `maestri list`; floors are untrusted in `~/.codex/config.toml`; and the compound
-  `cd … && …` commands agents run don't match its allow rules. Options: (a) configure Codex for
-  floors (trust the floors folder, allow rules that match); (b) Claude Reviewers for unattended
-  runs, Codex when Tony is present. Proposed: (b).
-- **Q24.2 "Supervised runs" as a documented mode?** On 2026-10-29 Tony delegated approvals to
-  Side within a written mandate (what Side may approve, what is never done, a decision log).
-  Proposed: yes, written into the workflow guide and modelled on that
-  [mandate](sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md). **Tony, 2026-10-29: yes, and only Tony starts it** ("ask me to start the mandate mode"); written up in the setup guide, roles later.
-- **Q24.3 Which converter checks join v0.0.7's smoke pass?** **Tony, 2026-10-29: "live convert
-  and plot update"** (M1.9). The pass (M1.1–M1.8) has no converter
-  step, and MANUAL_TODO's converter items don't gate a release. Proposed: an M1.9 "Converter" step
-  on the Mac and a lab PC: Live auto-convert on a sample folder (M15.1's core), `helab convert
-  --watch --once` on a sample, a plot of the converted data, and the TXY source choice (M23.1,
-  M14.1). The rest (M12.1, M15.1 in full at the acquisition PC, M16.1 on the Sandy Bridge PC) stay
-  lab validation. What else v0.0.7 needs before its PR is the roadmap's
-  [Release v0.0.7](../roadmaps/_readme.md#now-v007) item.
-- **Q24.4 Land a floor only when its branch's latest CI is green on all three OSes?** Decided
-  overnight (mandate, 06:20) after helab-core landed with Windows failing. Today's docs fixes
-  write it as a landing condition (AGENTS.md's Landing line, the workflow guide, setup §6), so it
-  needs Tony's confirmation. Proposed: yes (every job, checked by run ID). **Tony, 2026-10-29: OK.**
+- **Q24.1** Claude Reviewers for unattended runs, Codex only while Tony is at the screen.
+- **Q24.2** supervised runs (mandate mode) are a documented mode, and only Tony starts one ("ask me
+  to start the mandate mode"; [setup](maestri-setup.md#supervised-runs-mandate-mode)).
+- **Q24.3** the smoke pass gains "live convert and plot update" (M1.9).
+- **Q24.4** a floor lands only when its branch's latest CI is green on all three OSes (every job,
+  checked by run ID).
+- **Q12.1** a folder with no data root, asked for `cache`, converts to the temp folder.
+- **Q12.3** converted TXY in the cache get their own budget, separate from the 8 GB dataset budget;
+  TXY written beside the raw files have no limit (data in the source folder; HeLab never removes
+  them). Its default size and Make room come with caching v2.
+- **Q12.4** a typed command overrides the folder's setting (`helab convert --output beside`).
+- **Q25.1** the July 2026 cable swap is the detector's orientation: profiles gain an orientation
+  field, date-split for `plates-2025` (180° from July 2026, measured 180.0 ± 0.3°), applied as exact
+  sign flips and axis swaps for multiples of 90° (stage 3).
+- **Q25.3** another converter on the TDC PC: "not an issue at the moment".
+- **Q25.5** the burst veto, agreed in this order: find the source in the lab (M25.5); in stage 3 an
+  opt-in profile option (its own tag and hash; vetoed bursts and hits in each shot's record) that
+  recognises bursts by the ~180 ns echo pattern and the x1-end start rather than density alone,
+  tested on dense-cloud runs (atom counts and peak shapes unchanged); a burst-rate-per-shot plot
+  for Live.
+- **Q27.1** saved-result reuse off by default for now ("yup turn that off for now"): a new key
+  `reuse_saved_results`, default off, so earlier saves of `result_reuse` (on) don't keep it on;
+  back on with Q27.2.
+- **Q28.2** caching v2 and store-v4 go into **v0.0.8** ("cache store upgrade goes into v0.0.8?"):
+  release v0.0.7 first, then build on `dev/v0.0.8` from `main`.
+- **Q27.2** "make versioning more robust during the next store and cache upgrade, so we're better
+  prepared for the distributed analysis too": a direction, settled with the design (the plan's
+  [Versioning](../roadmaps/caching-v2.md#versioning)).
 
 ## Converter stage 4, HeLab core (block 12)
 
-From the `agent/txy-helab-core` handoff (`sessions/2026-10-29-claude-txy-helab-core/handoff.md`),
-2026-10-29. These were **decided by Side overnight, for Tony to confirm, and built that way**. Tony
-hasn't answered them yet (2026-10-29), so they stay open. (Q12.2, Q12.5 and Q12.7 were settled as
-Q18.4–Q18.6, above.)
+From the `agent/txy-helab-core` handoff (`sessions/2026-10-29-claude-txy-helab-core/handoff.md`).
+Tony answered Q12.1, Q12.3 and Q12.4 on 2026-10-29 (Recently decided); Q12.2, Q12.5 and Q12.7 were
+settled as Q18.4–Q18.6.
 
-- **Q12.1** A folder with no data root, asked for `cache`, converts to the temp folder (follows "no
-  data root, no disk cache"; `convert_plan.fallback` says why). Built. **Tony, 2026-10-29: yes.**
-- **Q12.3** HeLab's TXY in the cache folder are outside the 8 GB budget and no housekeeping removes
-  them. The same question as Q19.2: answer it there. **Tony, 2026-10-29: no; converted TXY in the
-  cache get their own budget, separate from the 8 GB dataset budget; TXY written beside the raw
-  files have no limit** (they are data in the source folder; HeLab never removes them). Its default
-  size and Make room behaviour come with the caching work (no cache code until Tony's go).
-- **Q12.4** `helab convert --output beside` writes beside for that run without the folder's flag and
-  saves no flag. AGENTS.md's write rule already says so, so a rule rests on this answer. **Tony, 2026-10-29: OK, a typed command overrides the app's settings.**
 - **Q12.6** (an idea, not built) A manual **Convert anyway** for a file stuck waiting: the user's
   choice to convert it as it is (never one modified within the settle age), recorded in the
   provenance; a request field (e.g. `force_shots`) is the seam.
@@ -234,41 +249,19 @@ From the `agent/txy-ui` and `agent/txy-live` handoffs (`sessions/2026-10-29-clau
 
 ## Caching after the converter (block 19; [audit](sessions/2026-10-29-claude-caching-audit/audit.md))
 
-Tony asked (Q14.5) to rethink caching now that HeLab converts raw files; Q19.4, Q19.9 and Q19.10
-are decided (above), and the plan is [caching v2](../roadmaps/caching-v2.md). **Tony, 2026-10-29:
-keep planning; no cache code until he gives an explicit go** (A19.1 and A19.2 included).
+Tony asked (Q14.5) to rethink caching now that HeLab converts raw files; the plan is
+[caching v2](../roadmaps/caching-v2.md), and the rest of blocks 19 and 22 is decided (Recently
+decided). **Tony, 2026-10-29: keep planning; no cache code until he gives an explicit go** (A19.1
+and A19.2 included).
 
 - **Q19.1 Keep HeLab's own TXY files once loads convert on read?** (a) no: only beside and export;
   (b) yes, as a cache in the budget; (c) yes, as now. Proposed: (a), at stage 2.
-- **Q19.2 Until then, does `<cache>/converted-txy` count toward the 8 GB budget?** (Also Q12.3.)
-  **Answered by Tony under Q12.3, 2026-10-29: a separate budget; beside TXY unlimited.**
-  Today it is outside the budget and no housekeeping removes it; Settings → Cache shows its size
-  with a Clear (asked first). Proposed: yes, counted and shown; Make room may offer it, always
-  asked (no AGENTS.md change).
-- **Q19.3 Disk-cache every TXY source (Q14.5)?** Proposed: yes, as layers (no duplication), stage 1.
-- **Q19.5 Does Don't cache this folder also stop HeLab's TXY going to the cache folder?** Proposed:
-  yes; such folders convert to temp, like folders without a data root.
-- **Q19.6 Precision of data converted on read:** 8 significant figures like the TXY text (T ≈ 0.4 s
-  → 10 ns), or full float64? Proposed (as Q19.9's proposal and Q22.10 imply): binary always (text
-  only beside the raw files or on export); `m19v1` rounds to 8 significant figures so it matches
-  its text exactly; newer tags keep full float64. The plan marks this proposed.
-- **Q19.7 Drop the temp output setting after stage 2?** Proposed: yes.
-- **Q19.8 Temp-folder TXY of folders without a data root:** cleared by the user only (proposed),
-  or deleted after N days at startup (a new housekeeping line)?
-
-## Store-v4 design (block 22; [design note](sessions/2026-10-29-claude-caching-audit/store-v4-design.md))
-
-Planning only (no cache code until Tony's go). Tony answered the rest of the block (above).
-
-- **Q22.7 The disk budget:** keep 8 GB (proposed; Settings shows the split) or raise the default
-  (e.g. 20 GB)? Tony asked first to look harder at raw compression. Measured on the 309-shot
-  sample set (13.7 M pulses, raw text 15.8 B/pulse): int64 time deltas + int8 channels, Blosc zstd
-  level 9 with byte shuffle, **27.5 MB (2.0 B/pulse, 7.9×)**, the best of ten variants (zstd 5:
-  29.5; bitshuffle, 32-bit deltas or per-channel streams: no better, 29–38; lz4hc: 38.4 MB but
-  4.9 GB/s decoding vs ~1.9). An estimate for independent deltas is ~2.2 B/pulse, so generic
-  compression is at its floor. The only big gain left would be a lossless codec that knows hit
-  structure (corner pulses of a hit are correlated), which ties the raw layer to the converter:
-  not proposed. Proposed: zstd 9 + byte shuffle on int64 deltas; raw layer ≈ 1.8× a TXY layer.
+  **Tony, 2026-10-29: "default no, but … we need to keep options open"**: for a bridging time
+  HeLab writes TXY beside the raw files (the per-folder option stays), and raw files may be local
+  or on remote servers, "so we might still want txy caching?" Reply sent in Chat: the store's TXY
+  layers are that cache (binary, local, in the budget, made once per profile), so remote raw
+  files load from the layer without the share; the text output to HeLab's folders stays as a
+  non-default option until he drops it. To confirm.
 
 ## Converter follow-ups as built (block 23)
 
@@ -293,27 +286,58 @@ Q12.7 confirmed as Q18.6 (the patterns now tagged).
   by the mtime alone (≥ 20 s; its settle rule is 60 s by the mtime alone too). Alternative: `--once`
   never reports damaged. Proposed: as built.
 
+## Versions across machines (block 27)
+
+Tony asked (2026-10-29) how robust HeLab is when the acquisition PC runs an older frozen build, his
+laptop a source build and other PCs other versions. Checked: build info (version, commit,
+modified) in About, `--version` and every log; an older HeLab opens a store of a **newer layout**
+read-only (v0.0.6a1 and v0.0.7 share layout 3, so 0.0.6a1 opens v0.0.7's store writable: M1.10);
+beside TXY are byte-identical across versions (frozen tags; another calibration is another tag);
+profiles carry a schema; settings fall back to defaults. Tony: "3. fine, our TXY carry a converter
+tag"; the marker is JSON with unknown fields ignored, so metadata can be added without a version
+bump. Q27.1 and Q27.2 are decided (Recently decided).
+
+- **Q27.3 Dev versions** (docs audit 3, #5). Q27.2's plan proposes that a dev branch carries
+  `X.Y.Z.devN` from its first commit and the PR sets the release version, so a source build never
+  looks like a release. That changes AGENTS.md's "the version bump goes on the PR branch" and
+  [app versioning](../roadmaps/app-versioning.md)'s workflow. Proposed: yes, from v0.0.8's branch.
+- **Q27.4 Build Q19.5 now?** Decided but not built: a Don't-cache folder still converts into
+  `<cache>/converted-txy/` (`FolderCache.convert` always sends `store_options()`; `io_ops/convert.py`
+  `_places` never checks `no_cache`). Converter-side and small. Proposed: in Q26.2's floor (same
+  module), not waiting for the cache go.
+- **Q27.5 A19.1 with Q26.2?** Q26.2's `folders` table, listed in Settings › Cache, is most of
+  A19.1 (show and clear temp-folder TXY too; on hold with the cache go). Proposed: Q26.2's floor
+  lists and clears both folders' converted TXY; A19.2 stays on hold.
+
+## Caching v2 readiness (block 28; [review](sessions/2026-10-29-claude-caching-v2-readiness/readiness.md))
+
+Tony asked (2026-10-29) whether caching v2 / store-v4 can be built unattended (mandate mode). The
+review: ready for stages 0–1 after these answers and a few design fixes; stage 2 in a later run.
+
+- **Q28.1 The go:** which stages? Proposed: stage 0 (A19.1, A19.2 with Q26.2's floor) and stage 1
+  (the raw layer, store-v4's core, the read-only store-v3 reader, the user-state import) only.
+
+- **Q28.3 Behind a switch:** store-v4 drops `datasets`, and the TXY layers replacing it come only in
+  stage 2, so stage 1 as the live store would stop disk caching of folders. Proposed: build
+  store-v4 behind a switch that stays off until stage 2 and Tony's go.
+- **Q28.4 Provenance in stage 1's schema** (Q27.2): every row records a `made_by` (HeLab version,
+  commit, modified, machine, Python/NumPy/SciPy); a machine is a random id in the app folder plus
+  the hostname. Proposed: yes.
+- **Q28.5 Make room and store-v3:** MATLAB's TXY layers and layers cached without raw files are not
+  rebuildable, so Make room treats them like data; under Keep, a large store-v3 counts in the
+  budget and Make room can't free it. Proposed: Make room offers "Clear store-v3…" (asked first).
+- **Q28.6 The "big warning"** for an overwritten raw file (Q22.5). Proposed: a system notification
+  once per shot per session, plus a Folder details line and a log line.
+
 ## Post-2025 plates (block 25; [investigation](sessions/2026-10-29-claude-txy-2025-plates/investigation.md))
 
-Provisional analysis, nothing applied to HeLab. **Tony, 2026-10-29: X is still being transferred
+Provisional analysis, nothing applied to HeLab; Q25.1, Q25.3 and Q25.5 are decided (Recently decided). **Tony, 2026-10-29: X is still being transferred
 (more folders to come), so every finding here is provisional** and is re-checked when the
 transfer completes. **The corner cables were swapped between
 2026-06-27 and 2026-07-21** (x1↔x2, y1↔y2): every image since July is rotated 180° against June
 and all earlier data (reflection delays per delay-line end, background images r = 0.984 only when
 rotated, and the x1 ringing excess moved from channel 0 to channel 1; Side re-checked the last).
 
-- **Q25.1 How should HeLab handle the swap?** Options: (a) a `plates-2025` profile pair split by
-  date (June: today's channel map; from July: x1↔x2, y1↔y2 swapped), so HeLab's own TXY come out
-  unrotated; plus a per-folder "rotated 180°" note for MATLAB's July+ TXY; (b) swap the cables
-  back in the lab and treat July–October as rotated. Proposed: (a) now, and (b) if the swap was
-  accidental (M25.1). **Tony, 2026-10-29: it was the cable swap; treat it as the detector's
-  orientation, a rotation in the x–y plane.** So profiles gain an orientation (rotation) field,
-  date-split for `plates-2025` (180° from July 2026); a rotation by a multiple of 90° is applied as
-  exact sign flips and axis swaps (a 180° rotation through cos/sin would leave ~1e-16 cross terms,
-  so the output would no longer equal the channel-swapped conversion bit for bit). Measured
-  (`orientation.md`): **180.0 ± 0.3°**, the only peak of a full 0–360° scan with and without a
-  mirror; with the reflection delays moving between channels, a pure cable swap, so the July+
-  orientation is an exact 180°.
 - **Q25.2 Channel 7:** random (~1.3 per shot, Poisson), absent 2019 – Jan 2025, with corner pulses
   within 10 ns 95 % of the time; likely a high-threshold transient (an MCP/HV micro-discharge or
   whatever is on input 7). Conversion is unaffected (byte-identical without it). Proposed: ignore
@@ -325,15 +349,6 @@ rotated, and the x1 ringing excess moved from channel 0 to channel 1; Side re-ch
   is wired to a line that sees these events (an MCP/HV monitor or pick-off, a spare amplifier
   output, an unterminated cable) with a drifting threshold. The (−6.6, −10.3) mm "spot" is an
   artefact of the burst's fixed timing.
-- **Q25.5 The bursts make fake hits:** ~0.8 per burst, ~16 % of all hits outside the atom windows
-  (several of the weak "hotspots" are these; the strong spot at (15.8, 1.2) mm is not). Proposed:
-  find the source in the lab (M25.5); and, for stage 3, a profile option that vetoes hits inside a
-  detected burst (off in `matlab-2019`), measured on these runs before it's used.
-- **Q25.3 Another converter on the TDC PC:** some July `d_txy_forc` were written by the 2023 lab
-  edit (7–29 % fewer hits), and `20260722-tight-trap-1000Hzsampling/d_txy_forc183.txt` is corrupted
-  by two writers. Proposed: find and stop the second writer (M25.3); HeLab's checker flags such
-  files; HeLab's own conversion avoids both problems. **Tony, 2026-10-29: not an issue at the
-  moment.**
 - **Q25.4 The per-shot logs' "posixtime" is local time stored as UTC** (10 h ahead). Proposed: HeLab
   reads it as local time when it uses these logs, and the lab fixes the logger.
 
@@ -478,7 +493,7 @@ that block it become Q items here, as the converter's did (Q6.6–Q6.11).
 - [App updates](../roadmaps/app-updates.md#open-decisions): 3.
 - In prose: [quality control and repair](../roadmaps/quality-control-and-repair.md#acceptance-and-open-decisions),
   [reproducible workflows](../roadmaps/reproducible-workflows.md#dependencies-and-open-decisions).
-- [TXY converter](../roadmaps/txy-converter.md#open-decisions): Q items (Q6.7, Q6.9–Q6.11, block
-  12, Q14.2, Q14.4, Q15.3, block 23), plus one smaller question there.
-- [Caching v2](../roadmaps/caching-v2.md#open-decisions): Q items (Q19.1–Q19.3, Q19.5–Q19.8,
-  Q22.7); its design is in the store-v4 design note.
+- [TXY converter](../roadmaps/txy-converter.md#open-decisions): Q items (Q6.7, Q6.9–Q6.11, Q12.6,
+  Q14.2, Q14.4, Q15.3, block 23, Q25.2, Q25.4), plus one smaller question there.
+- [Caching v2](../roadmaps/caching-v2.md#open-decisions): Q items (Q19.1 to confirm, Q27.3, block
+  28); its design is in the store-v4 design note.

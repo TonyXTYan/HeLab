@@ -55,7 +55,7 @@ session reviewed by Codex until clean.
 - One that doesn't fit asks **Make room** / **Discard** (not refused). Make room removes only the
   least recently shown other saved results, never datasets, never a newer copy waiting or being
   saved; no extra skip for results used this session or on screen.
-- Settings → Cache › Reuse saved analysis results, on by default; folder-row badge REPORT.
+- Settings → Cache › Reuse saved analysis results, off by default since 2026-10-29 (Q27.1: until the plots are polished and store-v4's versioning; key `reuse_saved_results`); folder-row badge REPORT.
 - Store identity (presets and results, `FolderCache.store_answer`): the cache folder decides which
   store is in use, never a clock or a counter (Tony: refine rather than fail closed). Answers from
   another store wait for one identity probe; writes are held meanwhile and name their store; a

@@ -1,7 +1,8 @@
 # Caching v2: raw files as the cached source
 
-Horizon: after v0.0.7's converter. Added: 2026-10-29, planned with Tony in Chat. **Planning
-only: no cache code until Tony's explicit go** (block 19). Evidence and options:
+Horizon: v0.0.8 (Q28.2, Tony 2026-10-29), after v0.0.7's converter. Added: 2026-10-29, planned with Tony in Chat. **Planning
+only: no cache code until Tony's explicit go** (block 19; Q26.2's converted-TXY index has its go
+for v0.0.7; readiness for an unattended build: block 28). Evidence and options:
 [caching audit](../.ai/sessions/2026-10-29-claude-caching-audit/audit.md); the design:
 [store-v4 design note](../.ai/sessions/2026-10-29-claude-caching-audit/store-v4-design.md);
 decisions Q19.x and Q22.x in [DECISIONS_TODO](../.ai/DECISIONS_TODO.md), with Tony's answers so far
@@ -31,8 +32,8 @@ Per shot, the raw file parsed into binary arrays and kept in the store, beside t
     (8 significant figures), 17.0 MB at full float64; today's store keeps 16.2 MB (MATLAB's TXY);
   - the raw layer (int8 channels, int64 time deltas, byte shuffle): 29.5 MB at zstd 5 (the design
     note's codec), 27.5 MB at zstd 9 (2.0 B/pulse, 7.9× smaller than the text; the best of ten
-    variants and at the floor for generic compression; proposed in Q22.7);
-  - so **the raw layer is ≈ 1.8× an `m19v1` TXY layer** with the proposed zstd 9 (1.9× at zstd
+    variants and at the floor for generic compression; chosen in Q22.7);
+  - so **the raw layer is ≈ 1.8× an `m19v1` TXY layer** with zstd 9 (Q22.7) (1.9× at zstd
     5), and raw plus one tag ≈ 2.7× today's store per folder (2.8× at zstd 5). An earlier "about
     the same" compared TXY at other settings.
 - **Key:** the data root key and relative path (as datasets), plus the raw file's fingerprint
@@ -57,7 +58,8 @@ Per shot, the raw file parsed into binary arrays and kept in the store, beside t
 ## TXY layers and the policy
 
 - **TXY layers:** per folder, one `matlab` layer (MATLAB's TXY) and one HeLab layer per **profile
-  hash** (`helab:<hash>`), with the tags (`m19v1`, `p22v1`, …) kept as its names (Q22.2): the
+  hash** (`helab:<hash>`), with the tags (`m19v1`, `p22v1`, …) kept as its names (Q22.2), each
+  cached as a plot uses it (Q19.3): the
   uncalibrated plate profiles have `matlab-2019`'s hash, so `m19v1` and `p22v1` hold identical
   data and are stored once. A HeLab layer can always be rebuilt from the raw layer, so it is a
   speed-up, not the only copy.
@@ -69,10 +71,13 @@ Per shot, the raw file parsed into binary arrays and kept in the store, beside t
   tag* (fast loads; the default once the converter is robust); *TXY only* (archives without raw
   files, or where raw isn't wanted). Switching policy needs no migration.
 - **Budget:** both layers count in the one disk budget; nothing is removed without asking, as
-  today (Make room offers TXY layers first, since they can be rebuilt).
+  today (Make room offers TXY layers first, since they can be rebuilt; MATLAB's TXY layers and
+  layers cached without raw files are not rebuildable, Q28.5).
+- **HeLab's text TXY in `converted-txy/`** (while the cache output is used) have their own budget,
+  separate from the dataset budget; beside TXY have none (Q12.3 = Q19.2, Tony 2026-10-29).
 - **Identity:** HeLab shots are identified by the raw file's fingerprint + the profile hash, so a
   re-conversion is the same data and saved results stay valid.
-- **Precision (proposed, Q19.6 open):** binary always; text TXY only beside the raw files and on
+- **Precision (Q19.6, Tony 2026-10-29):** binary always; text TXY only beside the raw files and on
   export. `m19v1` rounds to 8 significant figures so it matches its text exactly; newer tags keep
   full float64, written as `%.17g` text so a beside or exported TXY equals its layer (Q22.10,
   decided).
@@ -107,6 +112,30 @@ schema, keys, read and write paths, budget, tests and build order; in short:
 - **Budget:** one budget across store-v4 (and store-v3 while kept); Make room offers TXY layers
   before raw layers, since they can be rebuilt.
 
+## Versioning
+
+Tony (2026-10-29, Q27.2): make versioning more robust with this store and cache upgrade, ready for
+distributed analysis (results computed on other machines, other versions). To settle in the
+design:
+
+- **Dev builds say so** (proposed, Q27.3): the dev branch carries `X.Y.Z.devN` from its first
+  commit (PEP 440) and the PR sets the release version, so a source build never looks like a
+  released one. This changes AGENTS.md's bump rule and [app versioning](app-versioning.md)'s
+  workflow.
+- **Everything stored says who made it:** each raw layer, TXY layer and saved result records
+  HeLab's version, commit and modified flag, the machine, and the environment (Python, NumPy,
+  SciPy), so a result from another machine or version can be traced and judged.
+- **Saved results:** reuse needs the same release, or for a source build the same clean commit; a
+  modified checkout neither reuses nor saves (or keeps its results apart). `reuse_saved_results` turns
+  back on with this (Q27.1).
+- **Formats:** every file format and record HeLab writes (store, `.hlb`, the converted-TXY index,
+  markers, profiles, exported results) carries a format version, with one rule: an additive change
+  keeps the version (older HeLab ignores unknown fields); only a breaking change bumps it, and an
+  older HeLab then reads read-only or ignores, never rewrites. A compatibility test reads fixtures
+  written by each older format.
+- **Distributed analysis:** a result made elsewhere is accepted only with this provenance, and
+  shown with it.
+
 ## Stages (each needs Tony's go)
 
 0. Small fixes from the audit (A19.1 temp-folder TXY shown and cleared; A19.2 Clear vs a running
@@ -115,8 +144,9 @@ schema, keys, read and write paths, budget, tests and build order; in short:
 2. TXY layers per profile hash and the loading order above; identity by raw fingerprint +
    profile hash; every source mode disk cached.
 3. Convert on read: loads and Live convert from the raw layer; HeLab writes TXY text only beside
-   the raw files or on export; `converted-txy/` becomes legacy (read while present, cleared by
-   the user) and the temp output setting goes (Q19.1, Q19.7).
+   the raw files or on export by default; `converted-txy/` and the cache and temp outputs stay as
+   options (Q19.1: "default no", keep options open; Q19.7: temp kept for scratch and new
+   features).
 4. The policy UI (per folder and global) and Make room's order.
 5. After MATLAB is retired (converter stage 5): raw files drive status, counts and signatures
    (Q14.4).
@@ -125,10 +155,11 @@ schema, keys, read and write paths, budget, tests and build order; in short:
 
 In [DECISIONS_TODO](../.ai/DECISIONS_TODO.md):
 
-- Q19.1 (keep HeLab's own TXY files once loads convert on read), Q19.2 (= Q12.3, does
-  `converted-txy` count toward the budget), Q19.3 (disk-cache every TXY source), Q19.5 (Don't
-  cache and HeLab's TXY), Q19.6 (precision, above), Q19.7 (drop the temp output setting), Q19.8
-  (temp-folder TXY without a data root).
-- Q22.7: the disk budget (keep 8 GB, or raise it) and the raw codec.
+- Q19.1 (keep HeLab's own TXY files once loads convert on read: Tony "default no", keeping
+  beside writing and the options open; to confirm as written).
+- Q27.3 (dev versions), and block 28: what an unattended build of stages 0–1 needs (the go, the
+  branch, a switch, provenance fields, Make room and store-v3, the overwrite warning).
 
-Decided: Q19.4, Q19.9, Q19.10, Q22.1–Q22.6 and Q22.8–Q22.11 (above, and Recently decided).
+Decided: Q19.2 (under Q12.3), Q19.3–Q19.10, Q22.1–Q22.11 (Q22.7: keep 8 GB and zstd 9 + byte
+shuffle), Q26.1 (byte units by OS), Q26.2 (one `converted-txy/index.sqlite` instead of a JSON
+per TXY, before v0.0.7's release) (above, and Recently decided).

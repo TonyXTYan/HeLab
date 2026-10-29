@@ -49,8 +49,7 @@ his settings and cache, the packaged release, or each other.
   integrated one at a time, with the full suite after each. Today a Codex
   reviewer stalls unattended on approval prompts, even for `maestri`, so it
   reviews only while Tony is at the screen; unattended, a fresh Claude
-  reviewer does it (2026-10-29; Tony's question Q24.1 in
-  [DECISIONS_TODO](../.ai/DECISIONS_TODO.md)).
+  reviewer does it (Q24.1, Tony 2026-10-29).
 - **Supervised runs** (Tony away, the Assistant approving for him under a written
   mandate; only Tony starts one): [setup guide](../.ai/maestri-setup.md#supervised-runs-mandate-mode)
   (Q24.2, 2026-10-29).

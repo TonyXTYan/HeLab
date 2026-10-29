@@ -12,7 +12,7 @@ The v0.0.5a checks below were added on 2026-10-08 and remain pending.
 
 Decisions only Tony can make are in [DECISIONS_TODO](DECISIONS_TODO.md), and work agents
 may do without asking in [AI_TODO](AI_TODO.md). Items here have `M` IDs ([ID_BLOCKS](ID_BLOCKS.md)): the
-smoke pass is M1.1–M1.9 (M1.9 added 2026-10-29, Q24.3), and older items get IDs as they're touched. Items below the smoke pass that it doesn't
+smoke pass is M1.1–M1.10 (M1.9 added 2026-10-29, Q24.3; M1.10 the same day, block 27), and older items get IDs as they're touched. Items below the smoke pass that it doesn't
 cover are lab validation, and don't gate a release (Tony, 2026-10-28: Q1.1).
 
 ## Release smoke pass
@@ -22,8 +22,8 @@ cover are lab validation, and don't gate a release (Tony, 2026-10-28: Q1.1).
 no run acquiring) and M1.7's plots, which need Tony's look. Tony released on it and on his own
 use (Q6.1). The lab PC pass and M1.3 Live are the first checks of v0.0.7.
 
-**v0.0.7:** the pass has no converter step yet; which converter checks below join it is Q24.3
-([DECISIONS_TODO](DECISIONS_TODO.md)).
+**v0.0.7:** the converter step is M1.9 (Q24.3, "live convert and plot update"); M1.10 checks two
+versions on one Mac (block 27).
 
 These checks gate a release (Tony, 2026-10-28: Q1.1; amended for v0.0.6a1 by Q6.1, above). Run the pass once
 on a Mac and once on a lab PC (Windows), on the release candidate. Steps marked **Lab PC**
@@ -91,7 +91,8 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   running at once if it's cached). The startup tab's own selection is unchanged.
 
 ### M1.5 Saved analysis results
-- **Do:** on a folder below a `.helab-root`, open a DLD port Correlations plot (radial), or
+- **Do:** turn on Settings → Cache › Reuse saved analysis results (off by default since Q27.1); on a
+  folder below a `.helab-root`, open a DLD port Correlations plot (radial), or
   Release time. Wait for it to draw, and look at the source line's tooltip.
 - **Expect:** the record ends "saved in the disk cache". The folder's row gets the grey
   REPORT badge, and Folder details says "Cached analysis: 1 result, <size>".
@@ -143,6 +144,15 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   warning for these shots), the plots update with every new shot, and the data's source reads
   HeLab (`m19v1`). Turning Live on collapses the left panel. Nothing is written into the folder
   unless Write beside is on.
+
+### M1.10 Two versions on one Mac (Tony 2026-10-29, block 27)
+- **Do:** with the released 0.0.6a1 build and a source build of v0.0.7 on one Mac (one settings
+  store, one cache folder), open a cached folder in v0.0.7, quit, open it in 0.0.6a1, quit, and
+  open it in v0.0.7 again; change a setting in each.
+- **Expect:** neither version loses or rewrites the other's cache (both use store-v3's layout 3,
+  so 0.0.6a1 opens it writable: check it leaves v0.0.7's `convert_prefs` rows and HeLab's
+  `converted-txy/` alone; only a higher layout opens read-only), settings each version doesn't know are left alone, and nothing
+  asks to clear the cache or replace a `.helab-root`.
 
 ## Post-2025 plates, in the lab (added 2026-10-29, block 25)
 
@@ -680,7 +690,7 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
   ([build size step 1](../roadmaps/build-size.md#steps-cheapest-first)).
 - [x] Record the required Python 3.13 suite/type-check and build results for the
   release commit. This is validation evidence, not a new testing feature. Done for v0.0.6a1
-  by A1.5 ([AI_TODO](AI_TODO.md)).
+  by A1.5 (dropped from AI_TODO at the v0.0.6a1 tidy-up, `125d4b3`).
 - [ ] Observe hover-menu tests in CI: real timers have approximately 200 ms of
   slack and may flake on slow machines. If a failure is reproducible, add a
   concrete test-reliability item to `roadmaps/known-issues.md` with logs (A1.6).

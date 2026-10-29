@@ -103,9 +103,8 @@ register note which machine owns which task.
    and waited there unattended, until it was replaced by a Claude one. Two
    likely causes: the floors folder isn't trusted, and the roles' commands
    all start with `cd … && source …`, which Codex's `prefix_rule(["maestri"])`
-   doesn't match. Until Tony decides (trust the floors folder, keep Codex for
-   attended reviews only, or drop it: Q24.1 in
-   `.ai/DECISIONS_TODO.md`), a Codex recruit needs someone at the screen.
+   doesn't match. Tony decided (Q24.1, 2026-10-29): Claude Reviewers for
+   unattended runs, Codex only while he is at the screen.
 2. **GitHub CLI**: `gh auth status` should show the account that can push to
    `TonyXTYan/HeLab`. Floors use `gh` for pull requests; without it Maestri
    opens the PR page in the browser.
@@ -242,7 +241,7 @@ register note which machine owns which task.
    Codex Reviewer stalls unattended on approval prompts, even for
    `maestri` (section 1, step 1), so it reviews only while Tony is at the
    screen. Unattended, recruit a Claude Reviewer: a fresh terminal, never
-   the author. Tony's question on Codex is Q24.1 in `.ai/DECISIONS_TODO.md`.
+   the author (Q24.1, Tony 2026-10-29).
 
    **Quick Fixer** (small, well-scoped jobs one at a time: flaky or crashing tests, CI
    failures, small bugs; a brief can hold several jobs):
@@ -541,8 +540,8 @@ excluded by default. Worth adding: `htmlcov`, `.ai/temp`, `.pytest_cache`. Check
    paths and paths not to touch, checks, handoff). For review, recruit the
    other model on the same floor (`--preset "Codex" --role "Reviewer"`),
    but only while Tony is at the screen: a Codex Reviewer stalls unattended
-   on approval prompts, even for `maestri` (section 1, step 1; Q24.1 in
-   `.ai/DECISIONS_TODO.md`). Unattended, recruit a Claude
+   on approval prompts, even for `maestri` (section 1, step 1; Q24.1, Tony
+   2026-10-29). Unattended, recruit a Claude
    Reviewer (`--preset "Claude Code" --role "Reviewer"`): a fresh terminal,
    never the author.
 

@@ -11,8 +11,8 @@ Decided with Tony in Maestri Chat, 2026-10-28 and 2026-10-29 (Q6.x, Q8.x, Q9.x, 
 `.ai/DECISIONS_TODO.md`, decided ones under Recently decided). Plan and stages:
 `roadmaps/txy-converter.md`; how it works: `.ai/architecture/converter.md`; built overnight on
 2026-10-29 (`.ai/sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md`), follow-ups landed
-`c718c71`. Open questions stay in DECISIONS_TODO (Q12.1, Q12.3/Q19.2, Q12.4, Q12.6, Q14.2, Q14.4,
-Q15.3, Q23.x).
+`c718c71`. Open questions stay in DECISIONS_TODO (Q12.6, Q14.2, Q14.4, Q15.3, Q23.x, Q25.2,
+Q25.4).
 
 ## Goal and bar
 
@@ -29,6 +29,10 @@ Q15.3, Q23.x).
 
 ## Output
 
+- **Where** (Tony, 2026-10-29): Q12.1 a folder without a data root converts to temp; Q12.4 a
+  typed `--output beside` overrides the folder's setting; Q12.3 converted TXY in the cache get
+  their own budget, beside TXY none; Q19.7 the temp output stays; Q26.2 one
+  `converted-txy/index.sqlite` replaces the per-shot JSON before v0.0.7's release.
 - **Name** (Q18.4, 2026-10-29, "agree with your suggestions"): `d_txy_helab_<tag>_<N>.txt` (`.txt`
   like MATLAB's `d_txy_forc<N>.txt`). Short fixed tags, frozen once used: `m19v1` matlab-2019,
   `p22v1` plates-2022 v1, `p25t1` plates-2025 testing (prefixes `a`/`b`/`t` for alpha, beta,
@@ -85,6 +89,10 @@ Q15.3, Q23.x).
 
 ## Detector profiles and calibration
 
+- **Post-2025 plates** (Q25.1, Q25.5, Tony 2026-10-29): the July 2026 cable swap is the
+  detector's orientation, so `plates-2025` gets a dated 180° rotation, applied as exact sign flips;
+  a burst veto, opt-in in stage 3 after the lab check, tested on dense clouds. Findings provisional
+  while X is transferred (`.ai/sessions/2026-10-29-claude-txy-2025-plates/`).
 - **Profiles** (Q6.11, 2026-10-28): JSON files; the 2017, 2022 and 2025 plates' profiles are built
   into the app, which can import, export and tweak them; the 2025 profile is marked uncalibrated.
   The MCP diameter hasn't changed; no mask or grid.

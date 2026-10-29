@@ -36,7 +36,8 @@ RAM_BUDGET_SETTING = "ram_budget_steps"
 LIVE_INTERVAL_SETTING = "live_check_interval_seconds"
 LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
-RESULT_REUSE_SETTING = "result_reuse"
+# A new key off by default (Q27.1): saves of the old ``result_reuse`` (on) no longer turn it on.
+RESULT_REUSE_SETTING = "reuse_saved_results"
 # File › Work Offline (cache-only browsing): remembered across restarts (Tony, 2026-10-26: D2).
 WORK_OFFLINE_SETTING = "work_offline"
 LOG_KEEP_SETTING = "log_files_keep"
@@ -89,10 +90,11 @@ SETTINGS: tuple[Setting, ...] = (
             "(Settings → Cache)."),
     Setting(PLOT_AUTO_RELOAD_SETTING, bool, True,
             "A plot released to free RAM reloads when it is shown again (Settings → Cache)."),
-    Setting(RESULT_REUSE_SETTING, bool, True,
+    Setting(RESULT_REUSE_SETTING, bool, False,
             "Plots that support it (Correlations, Release time) show their result saved in the disk cache "
             "for the same data, script and settings instead of computing it again, and save new ones; off: "
-            "neither (Settings → Cache)."),
+            "neither (Settings → Cache). Off by default until the plots are polished and saved results "
+            "carry store-v4's versioning (Q27.1)."),
     Setting(WORK_OFFLINE_SETTING, bool, False,
             "File › Work Offline: browse and analyse cached data only, reading no source folder and no "
             "server, until turned off (also at the next start)."),
