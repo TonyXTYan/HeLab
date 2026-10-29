@@ -635,7 +635,7 @@ slow drives, Windows, tests):
 
 You land floors (or approve the Coordinator doing it from Ground).
 
-**Landing conditions** (Q24.4, to confirm). A floor lands only when all of these hold (from the
+**Landing conditions** (Tony, Q24.4, 2026-10-29). A floor lands only when all of these hold (from the
 2026-10-29 overnight run, where helab-core landed with its own branch CI red
 on Windows and turned the dev branch red):
 
@@ -700,8 +700,30 @@ After landing, the Coordinator applies the worker's proposed doc changes
 reserved in `.ai/ID_BLOCKS.md` ("Work on Ground"), and asks you before
 committing them.
 
-Unattended runs, where an agent approves for Tony under a written mandate,
-are not a standing mode yet (proposed, see Q24.2 in `.ai/DECISIONS_TODO.md`).
+### Supervised runs (mandate mode)
+
+Tony may hand his approvals to the Assistant while he is away (Q24.2, 2026-10-29), as on the
+night of 2026-10-29 ([mandate](sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md)).
+**Only Tony starts it**: an agent may suggest a supervised run, never begin one. Then:
+
+1. The Assistant writes the mandate in `.ai/sessions/<date>-claude-<task>-supervised/mandate.md`
+   before any floor starts: the scope (which plan stages); what it approves for Tony (floors and
+   recruits on default models, landings into the dev branch under the landing conditions above,
+   pushes at checkpoints, reversible choices the plan leaves open); what never happens without
+   him (a PR to `main`, a version bump, a release or tag, deleting branches, data, caches or
+   settings, writing to lab shares or sample copies, machine-wide installs, answering any agent's
+   permission prompt); and a decisions log.
+2. The Coordinator reports to the Assistant, not Tony's Chat, and asks it what the plan doesn't
+   answer. The Assistant logs each decision it makes for Tony as "for Tony to confirm", keeps its
+   log out of Ground's tree until a checkpoint commit, and runs a heartbeat (every ~30 min) that
+   checks the floors and CI.
+3. Anything outside the mandate, or a test that keeps failing after a cause hunt, stops that
+   piece and waits for Tony.
+4. The mode ends when Tony says so, or comes back: the Assistant sends a report (stages, every
+   decision for him to confirm, RERUNs, what waits for him), the decisions go to
+   `.ai/DECISIONS_TODO.md`, and the Coordinator's note drops the mandate lines.
+
+The roles will say this once Tony updates them (until then, the mandate itself says it).
 
 ## 7. Clean-up
 

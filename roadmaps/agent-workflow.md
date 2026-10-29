@@ -51,8 +51,9 @@ his settings and cache, the packaged release, or each other.
   reviews only while Tony is at the screen; unattended, a fresh Claude
   reviewer does it (2026-10-29; Tony's question Q24.1 in
   [DECISIONS_TODO](../.ai/DECISIONS_TODO.md)).
-- **Supervised runs** (Tony away, an agent approving for him under a written
-  mandate): proposed, see Q24.2 in [DECISIONS_TODO](../.ai/DECISIONS_TODO.md).
+- **Supervised runs** (Tony away, the Assistant approving for him under a written
+  mandate; only Tony starts one): [setup guide](../.ai/maestri-setup.md#supervised-runs-mandate-mode)
+  (Q24.2, 2026-10-29).
 - **Models** (decided 2026-10-19): Claude agents (coordinator, assistant,
   workers, reviewers) run **Opus 5.5** by default, at the effort the
   coordinator judges the task needs. **Fable** (any Fable model) runs only

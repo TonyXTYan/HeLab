@@ -38,7 +38,7 @@ mechanics go in its architecture file.
   `.ai/MANUAL_TODO.md`, `.ai/DECISIONS_TODO.md`, `.ai/AI_TODO.md` or `.ai/memory/`. They write
   only their own `.ai/sessions/<date>-<tool>-<task>/` and propose doc changes in its handoff,
   which the Coordinator applies when landing.
-- **Landing** (Coordinator, 2026-10-29; Q24.4, to confirm): a floor lands only when its reviewer has no open
+- **Landing** (Coordinator, 2026-10-29; Tony, Q24.4): a floor lands only when its reviewer has no open
   findings, the branch's latest CI run is green on all three OSes (every job, checked by run ID),
   the full suite and type checks pass with their output kept whole, every RERUN is explained or
   in known-issues, and Ground has nothing uncommitted before the merge
@@ -139,7 +139,7 @@ Each rule names the area file with the detail.
   process. The GUI has no worker pools besides the one analysis worker thread (`AnalysisRunner`,
   no source I/O) and the short startup log tidy.
 - HeLab writes nothing into source folders except the user's `.helab-root` markers and, where
-  the user turns it on per folder or asks for it on the command line (Q12.4, to confirm), converted
+  the user turns it on per folder or asks for it on the command line (Q12.4: a typed command overrides the folder's setting), converted
   `d_txy_helab_<tag>_<N>.txt` (`<tag>` the profile's, Q18.4; temporary name, then rename; Q9.7,
   Q18.6). Never modify raw `d*.txt` or an existing TXY.
 - Rendering never reads disk or submits I/O: models, badges, tooltips and summaries read memory

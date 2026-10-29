@@ -182,7 +182,7 @@ the [planning-docs audit 2](sessions/2026-10-29-claude-docs-audit-2/planning.md)
 - **Q24.2 "Supervised runs" as a documented mode?** On 2026-10-29 Tony delegated approvals to
   Side within a written mandate (what Side may approve, what is never done, a decision log).
   Proposed: yes, written into the workflow guide and modelled on that
-  [mandate](sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md).
+  [mandate](sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md). **Tony, 2026-10-29: yes, and only Tony starts it** ("ask me to start the mandate mode"); written up in the setup guide, roles later.
 - **Q24.3 Which converter checks join v0.0.7's smoke pass?** **Tony, 2026-10-29: "live convert
   and plot update"** (M1.9). The pass (M1.1–M1.8) has no converter
   step, and MANUAL_TODO's converter items don't gate a release. Proposed: an M1.9 "Converter" step
@@ -194,7 +194,7 @@ the [planning-docs audit 2](sessions/2026-10-29-claude-docs-audit-2/planning.md)
 - **Q24.4 Land a floor only when its branch's latest CI is green on all three OSes?** Decided
   overnight (mandate, 06:20) after helab-core landed with Windows failing. Today's docs fixes
   write it as a landing condition (AGENTS.md's Landing line, the workflow guide, setup §6), so it
-  needs Tony's confirmation. Proposed: yes (every job, checked by run ID).
+  needs Tony's confirmation. Proposed: yes (every job, checked by run ID). **Tony, 2026-10-29: OK.**
 
 ## Converter stage 4, HeLab core (block 12)
 
@@ -211,7 +211,7 @@ Q18.4–Q18.6, above.)
   files have no limit** (they are data in the source folder; HeLab never removes them). Its default
   size and Make room behaviour come with the caching work (no cache code until Tony's go).
 - **Q12.4** `helab convert --output beside` writes beside for that run without the folder's flag and
-  saves no flag. AGENTS.md's write rule already says so, so a rule rests on this answer.
+  saves no flag. AGENTS.md's write rule already says so, so a rule rests on this answer. **Tony, 2026-10-29: OK, a typed command overrides the app's settings.**
 - **Q12.6** (an idea, not built) A manual **Convert anyway** for a file stuck waiting: the user's
   choice to convert it as it is (never one modified within the settle age), recorded in the
   provenance; a request field (e.g. `force_shots`) is the seam.
