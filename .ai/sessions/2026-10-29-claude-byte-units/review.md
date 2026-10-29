@@ -180,3 +180,55 @@ clipping existed before this change: the text was already clipped at 23 characte
 | 123409446839 | ubuntu Converter backends | 662 passed, 516 skipped |
 | 123409447505 / 123409447339 / 123409447151 | Build windows / macos / ubuntu | success |
 | 123409333830 | Detect branch and version bump | success |
+
+## Re-check after the fixes (`9ebea5f..28dc03c`, 2026-10-29)
+
+**All five findings are closed. No open findings.**
+
+| # | Finding | Outcome |
+|---|---|---|
+| 1 | Minor: after a step from an off-grid budget, the box shows one value and saves another | **Closed.** `CacheTab._snap_disk_budget` (`CacheTab.py:670-674`) runs on `valueChanged` and snaps the box to the half-unit grid when it leaves the shown value. `show_disk_budget` sets the shown value to -1 first, so showing a stored off-grid budget doesn't snap. There is no loop, because a snapped value is on the grid. Tested in `test_cache_tab.py:454-465` (Windows, 20 GB stored, `stepBy(1)` gives 19.0 = 19 GiB, then `stepBy(-3)` gives 17.5, and showing it again gives 18.6 = 20 GB). My offscreen probe typed into the Windows box: "25" gives 25 GiB, "7.5" gives 7.5 GiB, "18.7" snaps to 18.5 (saves 18.5 GiB), and "18.6" keeps the stored 20 GB. Shown and saved agree in every case. |
+| 2 | Minor: a stored 1 GB on Windows is rewritten to 1 GiB by any Settings Save | **Closed as (a).** The handoff is corrected ("For the Reviewer" and the `cache-store.md` proposal), and the behaviour goes to Tony as Q~1 with (a) proposed. It is tested in a fresh interpreter: with win32, a stored 10^9 is saved as 2^30; on macOS/Linux it stays 10^9. |
+| 3 | Minor: no CI job runs Windows' import-time values | **Closed.** `test_number_format.py::test_units_set_at_import_follow_the_platform[win32/darwin/None]` runs a fresh interpreter. It checks `MIN_DISK_BUDGET`, `DEFAULT_DISK_BUDGET`, the table row, `MIN_RAM_BUDGET`, `read_disk_budget` of a stored 1 GB, the box's minimum, suffix and value, apply and Save, and `app_log.MB`/`MB_UNIT`. The `None` case uses `sys.platform`, so on Windows CI it runs with Windows' units. It passed in Windows Tests (2/2) (`[win32]`, `[darwin]`) and Tests (1/2) (`[None]`, i.e. real win32). It follows the existing `sys.executable -c` subprocess pattern (`test_cache_store.py`). |
+| 4 | Nit: where the override is documented | **Closed.** The `testing.md` proposal now goes into the list of environment seams, with the Mac preview and helper inheritance. |
+| 5 | Nit: `byte_rate` goes up to TB/s | **Closed.** Noted in the handoff. |
+
+**Checks (floor venv, `floor-env.sh`, macOS).**
+- Touched tests (`test_number_format`, `test_cache_tab`, `test_settings_defaults`, `test_load_clock`,
+  `test_settingsDialog`): 101 passed.
+- Full suite `-n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **8204 passed, 669
+  skipped, 2 warnings, no RERUN** (116 s).
+- mypy `--strict` on helab (191 files) and tests (159), both again with `--platform win32`: no issues.
+  pyright and `--pythonplatform Windows`: 0 errors.
+
+### CI run 40865344851 (head `28dc03c`)
+
+**Conclusion `success`. All 13 non-skipped jobs passed. One RERUN, a known Windows flake.** I read
+each job log with `gh api .../actions/jobs/<id>/logs`.
+
+| Job ID | Job | Result |
+|---|---|---|
+| 123418722310 | windows Tests (1/2) | 4074 passed, 333 skipped |
+| 123418722344 | windows Tests (2/2) | 4101 passed, 361 skipped, **1 rerun** |
+| 123418722322 | windows Converter backends | 661 passed, 517 skipped |
+| 123418722151 | macos Tests (1/2) | 4087 passed, 322 skipped |
+| 123418722319 | macos Tests (2/2) | 4117 passed, 347 skipped |
+| 123418722129 | macos Converter backends | 662 passed, 516 skipped |
+| 123418722183 | ubuntu Tests (1/2) | 4084 passed, 324 skipped |
+| 123418722109 | ubuntu Tests (2/2) | 4117 passed, 347 skipped |
+| 123418722060 | ubuntu Converter backends | 662 passed, 516 skipped |
+| 123418722276 / 123418722119 / 123418722152 | Build windows / macos / ubuntu | success |
+| 123418586000 | Detect branch and version bump | success |
+
+**The RERUN (job 123418722344, windows Tests (2/2)):**
+`tests/test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`.
+The rerun reason reads: "worker 'gw3' crashed while running
+'tests/test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]'"
+("[gw3] node down: Not properly terminated"). The log has no traceback and no faulthandler dump.
+The test passed on retry.
+
+This is the same test and the same symptom as the existing `roadmaps/known-issues.md` entry
+(lines 98-100, Windows CI run 40803552596). It is unrelated to this branch: a Plotly/QtWebEngine
+drawing test, with no byte units involved. gw3 had run the new subprocess test about 3 % earlier,
+but that test runs in its own process and passed. The Coordinator should add run 40865344851 to
+that known-issues entry when landing.
