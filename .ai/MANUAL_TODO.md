@@ -193,6 +193,14 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
 - [ ] **M16.2 macOS signing and Gatekeeper** accept the new `.so`/`.dylib` files in a release
   `HeLab.app` (`helab_convert_rs.abi3.so`, the cython `_kernel`, libmlx, libllvmlite).
 
+- [ ] **M23.1 TXY sources and profiles in the app**: Settings → TXY converter shows "Tabs and Live
+  read"; a plot's TXY row has the source and profile combos; HeLab only + plates-2022 loads its own
+  data and the source line says `TXY: HeLab only (p22v1)`.
+- [ ] **M23.2 The launch folder**: set one, restart: only its tab opens, Live and auto-convert start,
+  the left panel collapses; Live off brings it back.
+- [ ] **M23.3 Damaged raw files on the acquisition PC**: a deliberately truncated raw file is reported
+  damaged after ~20 s with one notification; later shots convert.
+
 ## Data roots (v0.0.5a1, added 2026-10-18)
 
 Native checks of the data-roots stages D1–D4 ([plan](sessions/2026-10-16-claude-data-roots/plan.md)).

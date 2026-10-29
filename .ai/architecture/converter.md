@@ -160,7 +160,7 @@ that runs every available backend outside `test_convert_backend_*`, `test_conver
 
 `write_txy` creates a temporary name in the target folder with `os.open(…, O_CREAT|O_EXCL, 0o666)`
 (so the kernel applies the umask), writes, fsyncs, renames into place and fsyncs the folder (not on
-Windows): a reader never sees half a file. HeLab's own output name is `d_txy_helab_<N>.txy`
+Windows): a reader never sees half a file. HeLab's own output name is `d_txy_helab_<tag>_<N>.txt`
 (stage 4).
 
 ## In HeLab (stage 4)
@@ -204,8 +204,12 @@ apart first and needs no read. With `seen` None (`--once` only) the age must be 
 more than `fingerprints.FUTURE_SECONDS` ahead waits as `future`, and `clock_skew` (the existing
 kind, `fingerprints._clock_ahead`; the app tells the user once per location) is sent once per
 conversion. Content: ends with `\n`, first line on `profile.channel_trigger`. Unfinished files are
-not read again while unchanged (their `seen` entry carries the reason). No rows once settled:
-`shot_unconvertible` `no_rows` (Q10.2). Heartbeats while a shot computes stop after its budget
+not read again while unchanged (their `seen` entry carries the reason). **Damaged** (Q18.5, `agent/txy-followups`, landed `c718c71`): a raw file unmodified for 20 s
+(`DAMAGED_SECONDS`) both by its mtime and since HeLab first saw that (size, mtime) (a sixth field of
+the `seen` entries; `--once` goes by the mtime alone, Q23.7) that still fails a content check (no final
+newline, off the trigger channel, or no rows, which now waits like the others, Q23.3) is
+`shot_unconvertible` `damaged` with its `problem`: no TXY, one notification per file, skipped while
+unchanged, never holding up later shots. Heartbeats while a shot computes stop after its budget
 (`compute_budget`: 60 s plus 1 s per MB), so a hung backend times out (Gannet L4).
 
 #### Events (`helab/io_ops/events.py`)
@@ -231,20 +235,20 @@ the converter's kinds); `convert_prefs` is matched by `FolderCache`.
 `<base>/converted-txy/<sha256(identity)[:24]>/` (`io_ops.convert.folder_for(base, identity)`),
 `base` = the cache folder (`dirname(cache["directory"])`, i.e. `cache_dir()`) for `cache`, else
 `temps`; `identity` = the folder's `root://<uuid>/<relative>` key, else `path:<absolute path>`. It
-holds `d_txy_helab_<N>.txy` (unless beside), `d_txy_helab_<N>.json` (always) and `folder.json`
+holds `d_txy_helab_<tag>_<N>.txt` (unless beside), `d_txy_helab_<tag>_<N>.json` (always) and `folder.json`
 (`{"helab": "converted-txy-folder", "version": 1, "key", "source", "updated_at"}`). Beside: only
-`d_txy_helab_<N>.txy` in the source folder (temporary `.d_txy_helab_<N>.txy.<16 hex>.partial`, then
+`d_txy_helab_<tag>_<N>.txt` in the source folder (temporary `.d_txy_helab_<tag>_<N>.txt.<16 hex>.partial`, then
 a no-replace rename); never a raw file, an existing TXY, or the provenance, which is written
 **before** the beside TXY (a conversion stopped between them leaves a stale record: the shot is
 converted again, never kept for good; Gannet L2; in the cache or temp the TXY goes first, so an old
 record no longer matches it). **Leftovers** (Gannet M1, Q12.7): a beside conversion removes its own
 leftover temporary files in that folder: only names matching exactly the pattern `write_atomic`
-makes (`txy.partial_pattern`; `convert.partial()`: `^\.d_txy_helab_(?:0|[1-9][0-9]*)\.txy\.[0-9a-f]{16}\.partial$`, ASCII),
+makes (`txy.partial_pattern`; `convert.partial()`: `^\.d_txy_helab_[a-z][a-z0-9]{1,15}_(?:0|[1-9][0-9]*)\.txt\.[0-9a-f]{16}\.partial$`, ASCII, from `BARE_NAME`),
 regular files by `lstat` (a link is left alone, never followed), unmodified for `PARTIAL_MAX_AGE`
 (1 h), only in a folder it is writing beside (the flag on, or `--output beside`); each is sent as
 `partial_removed` (and traced). The same rules remove its own leftovers in HeLab's `converted-txy/`
 folder, where a kill on Windows often lands inside `write_atomic`: through `own_partial()`, the TXY's,
-the records' (`.d_txy_helab_<N>.json.<16 hex>.partial`) and `folder.json`'s temporaries.
+the records' (`.d_txy_helab_<tag>_<N>.json.<16 hex>.partial`) and `folder.json`'s temporaries.
 
 #### Provenance (`helab.convert.provenance`)
 
@@ -257,11 +261,33 @@ file or TXY changed, another profile hash); backend and profile name/version don
 the conversion that made its TXY, atomically, so two conversions never rewrite each other's, and
 Live writes one small file per shot instead of the folder's whole list each time.
 
-#### TXY sources (Q6.6; `agent/txy-ui`, landed `475c6a6`)
+#### Tags in HeLab's TXY names (Q18.4)
 
-Four sources (`helab/utils/txy_sources.py`): `matlab` (the default for tabs and Live: MATLAB's
-`d_txy_forc`, HeLab's current TXY filling shots MATLAB lacks), `helab` (HeLab's wherever current),
-and, for comparing, `matlab-only` and `helab-only`. `io_ops.helab_txy` finds HeLab's TXY in its
+HeLab's TXY are `d_txy_helab_<tag>_<N>.txt` (`.txt`, like MATLAB's `d_txy_forc<N>.txt`), beside the raw
+files and in HeLab's folders (records `d_txy_helab_<tag>_<N>.json`). Built-in tags are frozen once used
+and pinned by a test: `m19v1` (matlab-2019), `m23v1` (matlab-2023-lab-edit), `p17v1` (plates-2017),
+`p22v1` (plates-2022), `p25t1` (plates-2025, testing; prefixes `a`/`b`/`t` for alpha, beta, testing;
+Q23.1); other profiles are tagged `u` + 8 hex digits of their content hash (`file_tag`: a built-in's tag
+only while its name, tag and hash are the built-in's). No metadata goes beside the raw files: a beside
+TXY is current while newer than its raw file (`provenance.beside_stale`). Untagged
+`d_txy_helab_<N>.txy` from before are ignored and never removed (converted again under the new names).
+MATLAB's `tdc_autoconverter` skips HeLab's beside TXY only through its first-line check, not by name,
+and lab scripts that glob `d*.txt` in a raw folder now also see them: such scripts should match
+`d<N>.txt` exactly.
+
+#### TXY sources (Q6.6, Q18.2; `agent/txy-ui` `475c6a6`, `agent/txy-followups` `c718c71`)
+
+Four modes (`helab/utils/txy_sources.py`): `helab-priority` (the default for tabs and Live: HeLab's
+current TXY of the chosen profile where they exist, MATLAB's `d_txy_forc` for the rest),
+`matlab-priority` (MATLAB's, HeLab's filling shots MATLAB lacks), `helab-only` and `matlab-only`
+(the setting `txy_source`, Settings → TXY converter "Tabs and Live read", which applies when a
+folder loads again; old `matlab`/`helab` values read as the priority modes). A choice is a mode plus
+a profile tag (`DatasetView.txy_choice`, `source@tag`); both priority modes share the identity `""`
+(per-shot origins tell them apart where the data differs), so data of MATLAB's TXY alone keeps its
+identity and saved results. FolderCache keys datasets and jobs by choice; a load's or Live check's
+base must be of the very choice asked for (`_base(exact=…)`), so a Settings change never carries
+held shots of the other mode over. A plot's TXY row picks "As the folder's tab" or a mode and a
+profile. `io_ops.helab_txy` finds HeLab's TXY in its
 folders (`folders()`: the cache base by root key, temps by root key, temps by path) and beside the raw
 files, current only by provenance for the conversion profile's hash (`could_take` limits which records
 are read). `load`, `live_check` and `save_held` take `txy` (FolderCache adds it to every load,

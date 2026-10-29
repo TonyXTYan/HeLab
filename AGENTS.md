@@ -129,8 +129,9 @@ Each rule names the area file with the detail.
   started by `IOService` (`helab/utils/io_service.py`). The GUI has no worker pools besides the
   one analysis worker thread (`AnalysisRunner`, no source I/O) and the short startup log tidy.
 - HeLab writes nothing into source folders except the user's `.helab-root` markers and, where
-  the user turns it on per folder or asks for it on the command line (Q12.4), converted `d_txy_helab_<N>.txy` (temporary name, then rename;
-  Q9.7). Never modify raw `d*.txt` or an existing TXY.
+  the user turns it on per folder or asks for it on the command line (Q12.4), converted
+  `d_txy_helab_<tag>_<N>.txt` (`<tag>` the profile's, Q18.4; temporary name, then rename; Q9.7,
+  Q18.6). Never modify raw `d*.txt` or an existing TXY.
 - Rendering never reads disk or submits I/O: models, badges, tooltips and summaries read memory
   only (`SnapshotFileSystemModel`).
 - Never let the GUI thread wait on cancellation, deadlines or a helper. Queues and concurrency
@@ -168,10 +169,10 @@ Each rule names the area file with the detail.
   - session-only lists drop their oldest entries;
   - the RAM budget evicts datasets and releases plots (never closes them);
   - a beside conversion deletes its own leftover temporary TXY in that source folder
-    (`.d_txy_helab_<N>.txy.<16 hex>.partial`, exactly that pattern, regular files over an hour old,
+    (`.d_txy_helab_<tag>_<N>.txt.<16 hex>.partial`, exactly that pattern, regular files over an hour old,
     never through a link), and the same leftovers in HeLab's own `converted-txy/` folder, its
-    records' (`.d_txy_helab_<N>.json.<16 hex>.partial`, `.folder.json.<16 hex>.partial`) too
-    (Q12.7, to confirm).
+    records' (`.d_txy_helab_<tag>_<N>.json.<16 hex>.partial`, `.folder.json.<16 hex>.partial`) too
+    (Q12.7, Q18.6).
 
   Any other removal is the user's choice, asked first, and sends `removed` (Q3.3).
 - Read the cache folder with `cache_dir()`, never `DIR_CACHES`: it can move while HeLab runs.
@@ -221,9 +222,9 @@ one line, with detail in tooltips.
 | `helab/utils/io_service.py` | `IOService`: lanes, slots, pausing, offline gate | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
 | `helab/utils/folder_cache.py` | `FolderCache`: session memory, jobs, RAM budget, presets and results state, store identity | [cache-store](.ai/architecture/cache-store.md) |
 | `helab/utils/cache_store.py`, `cache_paths.py`, `data_roots.py`, `cache_move.py` | the store, location keys, markers, cache-folder move | [cache-store](.ai/architecture/cache-store.md), [data-roots](.ai/architecture/data-roots.md) |
-| `helab/utils/file_kinds.py` | `FILE_KINDS`: raw `d<N>.txt`, TXY `d_txy_forc<N>.txt` (a new format is a new entry) | [cache-store](.ai/architecture/cache-store.md) |
+| `helab/utils/file_kinds.py` | `FILE_KINDS`: raw `d<N>.txt`, TXY `d_txy_forc<N>.txt`, HeLab's `d_txy_helab_<tag>_<N>.txt` (a new format is a new entry) | [cache-store](.ai/architecture/cache-store.md) |
 | `helab/models/SnapshotFileSystemModel.py` | the tree model (memory only) | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md) |
-| `helab/views/` | main window, `FolderExplorer` and `explorer_live.py` (Live, auto-convert), `live_launch.py`, Folder details, Settings tabs (`ConverterTab.py`: TXY converter), dialogs | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [live](.ai/architecture/live.md) |
+| `helab/views/` | main window, `FolderExplorer` and `explorer_live.py` (Live, auto-convert), `live_launch.py` (one launch folder), Folder details, Settings tabs (`ConverterTab.py`: TXY converter), dialogs | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [live](.ai/architecture/live.md) |
 | `helab/views/plots/` | `PlotWorkspace`, docks, settings panel, presets, arrangements, cached results | [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |
 | `helab/analysis/` | analysis core, mostly Qt-free (`QT` in `tests/test_headless_imports.py` lists the rest): `DatasetView`, runner, parameters, selection, fits and other numerics, presets, result cache | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
 | `helab/convert/`, `native/` | the TXY converter (Qt-free): `raw`, `profile`, `reconstruct` and `backends/` (reference, numpy, cython, rust, numba, mlx), `txy`, `fastio`, `split`, `pipeline`, `provenance`, `user_profiles`, built-in profiles as JSON; harness `samples`, `check`, `timing` (scripts in `dev/txy/`); compiled backends' sources in `native/` | [converter](.ai/architecture/converter.md) |

@@ -82,6 +82,9 @@ How to use it:
 
 ## Tests and CI
 
+- [ ] `test_live_plots.py::test_each_plot_keeps_its_scripts_minimum_size[Scatter3D]` reran once on
+  Windows CI (run 40808815122, `agent/txy-followups` `ec1338a`, group 1/2), no reason in the log (a
+  worker crash?); passed on retry.
 - [ ] `test_gui_responsiveness.py::test_timeout_retry_releases_dead_helper_slot_while_artifact_reader_is_blocked[2]`:
   `waitUntil timed out in 3000 milliseconds` at line 292 (the `finally`'s wait for the killed fake
   helpers to exit after `service.shutdown()`), on Windows CI run 40803552596 (`agent/txy-ship`) and

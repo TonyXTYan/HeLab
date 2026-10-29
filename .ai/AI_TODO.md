@@ -268,6 +268,12 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
   Shot trends already plots against shot number or shot time (`shot_trends.py` `X_AXIS`); add a
   "shot index" (consecutive, gaps removed) and offer the same three axes in every per-shot plot.
 
+## Converter follow-ups (block 23)
+
+- **A23.1 Count HeLab's TXY of the tab's tag in folder status** (A18.1, waits for Tony).
+- **A23.2 Colour only the no-hit part of the Live line** if `ElidedLabel` learns rich text (Q23.5).
+- **A23.3 Remove the `live_launch_folders` row and its migration** a release or two after v0.0.7.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

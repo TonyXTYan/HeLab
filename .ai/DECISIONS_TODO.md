@@ -319,6 +319,29 @@ Q22.1–Q22.4, Q22.6 and Q22.8–Q22.10; Q22.5 explained and asked; Q22.7 compre
 - **Q22.10 Text for full-precision tags:** `%.17g` text so a beside or exported TXY equals its layer
   (about twice the size), or text for export only, never loaded as data? Proposed: `%.17g`.
 
+## Converter follow-ups as built (block 23)
+
+From the `agent/txy-followups` handoff (`sessions/2026-10-29-claude-txy-followups/handoff.md`),
+landed `c718c71`. Q15.2 is superseded by Q18.3 (built), Q14.3 settled by Q18.2 (a profile by its tag),
+Q12.7 confirmed as Q18.6 (the patterns now tagged).
+
+- **Q23.1 Tags for the two built-ins Tony didn't name**: `matlab-2023-lab-edit` → `m23v1`,
+  `plates-2017` → `p17v1` (CoCo agreed for now). Frozen once released: confirm before v0.0.7 ships.
+- **Q23.2 "File explorer panel" = the whole left panel** (tabs, summary, Live line, Folder details),
+  collapsed while Live watches. Alternative: collapse only the folder tree, keeping the Live line and
+  Folder details visible. Proposed: as built.
+- **Q23.3 No rows waits 20 s** before it is damaged (was: unconvertible once settled, Q10.2).
+  Proposed: keep (one rule for all three checks).
+- **Q23.4 A plot's profile choice isn't saved** with presets, arrangements or reopened plots (Q14.2
+  still open): a reopened plot starts "As the folder's tab".
+- **Q23.5 The Live line turns amber for no-hit shots** (the whole line, which otherwise means
+  "stopped"). Alternative: amber only in Folder details. Proposed: as built.
+- **Q23.6 A beside TXY from another computer with a colliding `u` tag** would be taken as current (no
+  record there). Proposed: accept (≈1e-6), or later write the hash into the name.
+- **Q23.7 `helab convert --once` and damaged files**: one look has no "first seen", so `--once` goes
+  by the mtime alone (≥ 20 s; its settle rule is 60 s by the mtime alone too). Alternative: `--once`
+  never reports damaged. Proposed: as built.
+
 ## From the audit (block 2)
 
 These come from the [audit](sessions/2026-10-28-claude-v0.0.6-checks/audit.md), whose finding
