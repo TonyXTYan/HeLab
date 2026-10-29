@@ -108,10 +108,10 @@ uv venv --seed --python 3.13 venv
 source venv/bin/activate       # macOS / Linux
 venv\Scripts\activate          # Windows (cmd or PowerShell)
 uv pip install -r requirements.lock -e .
-python native/build.py          # optional: the converter's compiled backends (needs a C compiler and Rust; HeLab works without them)
+python native/build.py          # optional: the converter's compiled backend, cython (needs a C compiler; HeLab works without it)
 ```
 
-A release build (`pyinstaller HeLab.spec`) ships the compiled converter backends only if `native/build.py` ran first.
+A release build (`pyinstaller HeLab.spec`) ships cython's kernel only if `native/build.py` ran first; numba, mlx and rust never ship (their code stays for developers: install the package, or maturin and Rust for `native/build.py --only rust`).
 
 `requirements.lock` pins every package to the versions CI tests (Python 3.13, macOS, Windows and Linux); `requirements.txt` lists only the direct dependencies, unpinned.
 

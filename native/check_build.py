@@ -1,6 +1,6 @@
 """Check that every converter backend gives the reference's bytes on ``tests/data/convert/``.
 
-    python native/check_build.py [--require cython,rust,numba]
+    python native/check_build.py [--require cython]
     python native/check_build.py --frozen dist/HeLab/HeLab [--require …]
 
 Every case of ``tests/data/convert/cases/`` under both built-in profiles, each backend against
@@ -13,8 +13,9 @@ other reason). Exit 0 when every backend that runs matches, 1 otherwise.
 
 ``--frozen APP`` runs a packaged HeLab instead (``APP convert --watch … --once --output temp``,
 one run per backend and profile, in a scratch folder with its own app, cache, temp folders and
-settings file), so the check covers what PyInstaller collected: the backend modules, the compiled
-extensions, numba and mlx. The expected bytes still come from this Python's reference.
+settings file), so the check covers what PyInstaller collected: the backend modules and cython's
+compiled kernel (numba, mlx and rust's module don't ship, A9.1: unavailable there, with the reason).
+The expected bytes still come from this Python's reference.
 
 Run it from the checkout (it reads the cases there). It sets HeLab's folder overrides to a scratch
 folder before importing helab, as any script outside pytest must.
@@ -36,7 +37,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 CASES = ROOT / "tests" / "data" / "convert" / "cases"
 PROFILES = ("matlab-2019", "matlab-2023-lab-edit")
-FROZEN_TIMEOUT = 600.0  # seconds per packaged run (a first numba compile is a few)
+FROZEN_TIMEOUT = 600.0  # seconds per packaged run
 
 FOLDERS = (("HELAB_APP_DIR_OVERRIDE", "app"), ("HELAB_DIR_CACHES_OVERRIDE", "caches"),
            ("HELAB_DIR_TEMPS_OVERRIDE", "temps"))
@@ -77,14 +78,6 @@ def outcome(data: bytes, profile: str, backend: str) -> bytes | str:
 def required(option: str | None) -> list[str]:
     text = os.environ.get("HELAB_REQUIRE_BACKENDS", "") if option is None else option
     return [name.strip() for name in text.split(",") if name.strip()]
-
-
-def metal_line() -> str:
-    try:
-        import mlx.core as mx  # pyright: ignore[reportMissingImports]
-    except Exception as error:
-        return f"mlx: not importable ({type(error).__name__}: {error})"
-    return f"mlx: mx.metal.is_available() = {mx.metal.is_available()}"
 
 
 def check_here(all_cases: list[Case]) -> dict[str, str | None]:
@@ -188,7 +181,6 @@ def main() -> int:
     where = f"packaged {args.frozen}" if args.frozen else sys.executable
     print(f"{len(all_cases)} cases x {len(PROFILES)} profiles, each backend against reference ({where}; "
           f"scratch {scratch})")
-    print(metal_line())
     try:
         results = check_frozen(args.frozen, all_cases, scratch) if args.frozen else check_here(all_cases)
     finally:

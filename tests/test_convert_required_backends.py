@@ -1,8 +1,8 @@
 """The converter backends a run must have: ``HELAB_REQUIRE_BACKENDS`` (``tests/conftest.py``) and
 ``native/check_build.py``, which CI runs after building the compiled backends (``native/build.py``).
 
-CI requires cython, rust and numba on every OS (and mlx where Metal exists), so a backend whose
-build broke fails the run instead of passing as skipped tests."""
+CI requires cython, the compiled backend that ships (Q11.2), on every OS, so a kernel whose build
+broke fails the run instead of passing as skipped tests."""
 from __future__ import annotations
 
 import importlib.util

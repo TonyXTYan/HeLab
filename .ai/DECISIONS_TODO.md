@@ -234,6 +234,43 @@ partial"), as proposed below except the timeout:
 - **Q14.5:** Tony: with the converter built in, rethink how caching works; an audit with
   suggestions goes in a session note (`.ai/sessions/2026-10-29-claude-caching-audit/`).
 
+## Caching after the converter (block 19; [audit](sessions/2026-10-29-claude-caching-audit/audit.md))
+
+Tony asked (Q14.5) to rethink caching now that HeLab converts raw files. The audit's staged path:
+stage 0 small fixes (A19.1, A19.2) and the Q18.4 tags first; stage 1 identify HeLab shots by raw
+file + tag and store every source as a layer; stage 2 convert on read, HeLab writing TXY only
+beside the raw files or on export; stage 3 (after MATLAB is retired) raw files drive status.
+**Tony, 2026-10-29: keep planning; no cache coding until he gives an explicit go** (A19.1 and A19.2
+included).
+
+- **Q19.1 Keep HeLab's own TXY files once loads convert on read?** (a) no: only beside and export;
+  (b) yes, as a cache in the budget; (c) yes, as now. Proposed: (a), at stage 2.
+- **Q19.2 Until then, does `<cache>/converted-txy` count toward the 8 GB budget (Q12.3)?** Proposed:
+  yes, counted and shown; Make room may offer it, always asked (no AGENTS.md change).
+- **Q19.3 Disk-cache every TXY source (Q14.5)?** Proposed: yes, as layers (no duplication), stage 1.
+- **Q19.4 Layers in store-v3 (a migrated table) or a fresh store-v4 (lab caches re-read once)?**
+  Proposed: store-v3, migrated.
+- **Q19.5 Does Don't cache this folder also stop HeLab's TXY going to the cache folder?** Proposed:
+  yes; such folders convert to temp, like folders without a data root.
+- **Q19.6 Precision of data converted on read:** 8 significant figures like the TXY text (T ≈ 0.4 s
+  → 10 ns), or full float64? Proposed: 8 figures, one rule for every path; full precision later
+  as a profile option.
+- **Q19.7 Drop the temp output setting after stage 2?** Proposed: yes.
+- **Q19.8 Temp-folder TXY of folders without a data root:** cleared by the user only (proposed),
+  or deleted after N days at startup (a new housekeeping line)?
+- **Q19.9 Cache the raw pulses too?** (Tony: each plot may prefer a different converter, and a
+  calibration script needs raw pulses; keep both options open, and once the converter is robust
+  go back to caching a selected tag.) Measured on the 309-shot sample set (Blosc zstd 5, read-only
+  script): raw text 217.5 MB, TXY text 50.4 MB; raw pulses as binary (int8 channel + int64 time,
+  stably sorted, time delta-encoded) compress to **29.5 MB**, about the same as the TXY as
+  compressed float64 (30.7 MB), so caching raw costs about what caching TXY costs now. Proposed:
+  the store keeps a raw-pulse layer (keyed by the raw file's fingerprint, with the trigger time
+  and first-line check data) and TXY layers per tag; a per-folder (or global) policy chooses raw
+  only (convert on load), raw + a selected tag (fast loads; the default once the converter is
+  robust), or TXY only (archives); any tag can be rebuilt from the raw layer without the share.
+  Q19.6 then reads: binary always (text only beside the raw files or on export); `m19v1` rounds
+  to 8 significant figures so it matches its text exactly, newer tags keep full float64.
+
 ## From the audit (block 2)
 
 These come from the [audit](sessions/2026-10-28-claude-v0.0.6-checks/audit.md), whose finding

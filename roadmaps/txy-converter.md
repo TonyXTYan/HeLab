@@ -181,7 +181,8 @@ events, the file kind, output locations, provenance, `helab convert --watch`; th
 and the profile manager `475c6a6`; Live auto-convert, start at launch and low-count alerts `6454b4a`;
 packaging `7cb168e`: every backend in the lock and the build, compiled ones built and required in
 CI on three OSes, macOS app sizes mlx +234 MB, numba+llvmlite +127, rust +0.48, cython +0.27.
-**Stage 4 done 2026-10-29**; split into floors in the
+**Stage 4 done 2026-10-29**; after Tony's answers, the build ships numpy, cython and the reference
+(`134e2ec`, A9.1); split into floors in the
 [overnight mandate](../.ai/sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md)). Every backend
 in the build (Q9.2; NumPy alone always works). The helper operation (raw files read only once settled: unchanged for
 5 s, size stable between checks, ending in a newline, starting with the trigger channel), the

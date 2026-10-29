@@ -62,8 +62,6 @@ kiwisolver==1.5.1
     # via matplotlib
 librt==0.16.0 ; platform_python_implementation != 'PyPy'
     # via mypy
-llvmlite==0.50.0
-    # via numba
 lz4==4.4.5
     # via -r requirements.txt
 macholib==1.16.4 ; sys_platform == 'darwin'
@@ -75,12 +73,6 @@ markupsafe==3.0.4
     #   werkzeug
 matplotlib==3.11.2
     # via -r requirements.txt
-maturin==1.15.0
-    # via -r requirements.txt
-mlx==0.32.4 ; platform_machine == 'arm64' and sys_platform == 'darwin'
-    # via -r requirements.txt
-mlx-metal==0.32.4 ; platform_machine == 'arm64' and sys_platform == 'darwin'
-    # via mlx
 mypy==2.4.0
     # via -r requirements.txt
 mypy-extensions==1.1.0
@@ -91,14 +83,11 @@ nest-asyncio==1.6.0
     # via dash
 nodeenv==1.11.0
     # via pyright
-numba==0.68.1
-    # via -r requirements.txt
 numpy==2.5.4
     # via
     #   -r requirements.txt
     #   contourpy
     #   matplotlib
-    #   numba
     #   pandas
     #   pyqtgraph
     #   scipy

@@ -85,7 +85,7 @@ helab                          # or: python -m helab   (macOS venv/bin/helab, Wi
 pytest -n 12 --reruns 5 --reruns-delay 1   # full suite; at most the machine's cores (CI: -n 4)
 pytest tests/test_foo.py       # one file
 mypy helab/ --strict && mypy tests --strict && pyright helab tests
-python native/build.py                    # optional: compiled converter backends (C compiler, Rust)
+python native/build.py                    # optional: the cython converter backend (C compiler)
 pyinstaller HeLab.spec --clean -y          # HeLab.app on macOS (bundle ID au.edu.anu.he-bec-lab)
 ```
 
