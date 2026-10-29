@@ -296,7 +296,9 @@ Q22.1–Q22.4, Q22.6 and Q22.8–Q22.10; Q22.5 explained and asked; Q22.7 compre
   constants, presets, data-root answers, mount hints, the budget)? Proposed: yes.
 - **Q22.5 A raw file that changes after it was read:** is free-run a real mode? Proposed: read it
   again, re-convert its HeLab shots, replace its layer row; never stop Live; MATLAB TXY keep the
-  mismatch rule.
+  mismatch rule. **Tony, 2026-10-29:** the TDC overwriting an existing raw file only happens when
+  it is misconfigured: HeLab handles it as proposed **and shows a big warning**. The TDC may also
+  skip numbers on pause/resume, so per-shot plots offer a time axis or a short-index axis (A22.1).
 - **Q22.6 Raw layers whose raw file is gone (the only copy) or from an older parser:** proposed:
   kept and used, labelled; Make room lists them last and names them; never removed automatically.
 - **Q22.7 The disk budget:** keep 8 GB (proposed; Settings shows the split) or raise the default
@@ -308,6 +310,9 @@ Q22.1–Q22.4, Q22.6 and Q22.8–Q22.10; Q22.5 explained and asked; Q22.7 compre
   compression is at its floor. The only big gain left would be a lossless codec that knows hit
   structure (corner pulses of a hit are correlated), which ties the raw layer to the converter:
   not proposed. Proposed: zstd 9 + byte shuffle on int64 deltas; raw layer ≈ 1.8× a TXY layer.
+- **Q22.11 Cache policy** (Tony, 2026-10-29): cache the raw layer and the selected TXY versions at
+  the same time; a global default to cache raw files; a per-folder override choosing the source
+  priority (MATLAB's TXY, or any HeLab profile tag), whose TXY layer is then cached too.
 - **Q22.8 Offline, may HeLab make and save a HeLab layer from the raw layer?** Proposed: yes (local
   work only).
 - **Q22.9 A "clear this tag's data and its saved results" action?** Proposed: not now.

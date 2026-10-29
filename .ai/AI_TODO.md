@@ -262,6 +262,12 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
   exclude them, tests run where installed); `uv pip sync requirements.lock` then `uv pip install -e .`
   gives the shipped set. Say so in the README's "updating dependencies" if worth it.
 
+## Store-v4 planning (block 22)
+
+- **A22.1 Shot axes when numbers skip** (Q22.5): the TDC may skip shot numbers on pause/resume.
+  Shot trends already plots against shot number or shot time (`shot_trends.py` `X_AXIS`); add a
+  "shot index" (consecutive, gaps removed) and offer the same three axes in every per-shot plot.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

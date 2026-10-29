@@ -30,7 +30,9 @@ Per shot, the raw file parsed into binary arrays and kept in the store, beside t
   Best raw codec of ten measured: int64 time deltas + int8 channels, zstd 9 with byte shuffle,
   27.5 MB (2.0 B/pulse, 7.9× the text), at the floor for generic compression (Q22.7).
 - **Key:** the data root key and relative path (as datasets), plus the raw file's fingerprint
-  (size and mtime, read once settled). A raw file overwritten in place (free-run) is a new key.
+  (size and mtime, read once settled). A raw file overwritten in place is a new version: read
+  again, re-converted, and **a big warning** shown, since it only happens when the TDC is
+  misconfigured (Q22.5).
 - **Exactness:** converting from the layer must equal converting from the file, byte for byte;
   stage 1's checker proves it on every sample shot and the fuzz set.
 - **Filled** wherever HeLab caches a folder today (Q19.10, Tony 2026-10-29): a load of the
@@ -49,7 +51,9 @@ Per shot, the raw file parsed into binary arrays and kept in the store, beside t
   is a speed-up, not the only copy.
 - **Loading a (folder, tag):** its TXY layer if present; else convert from the raw layer (no text
   parsing: ~280 MB/s NumPy, ~1 GB/s Cython per core); else read the share.
-- **Policy** (per folder, with a global default): *raw only* (convert on load); *raw + a selected
+- **Policy (Tony, 2026-10-29, Q22.11):** cache the raw layer and the selected TXY versions at the
+  same time; a global default caches raw files; a per-folder override picks the source priority
+  (MATLAB's TXY or a HeLab profile tag), whose TXY layer is cached as well. Variants: *raw only* (convert on load); *raw + a selected
   tag* (fast loads; the default once the converter is robust); *TXY only* (archives without raw
   files, or where raw isn't wanted). Switching policy needs no migration.
 - **Budget:** both layers count in the one disk budget; nothing is removed without asking, as
