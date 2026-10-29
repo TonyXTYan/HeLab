@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import QInputDialog, QMenu, QMessageBox
 
 from helab.utils import events
 from helab.utils import folder_cache
+from helab.utils import txy_sources
 from helab.utils.folder_cache import Dataset, FolderCache
 from helab.utils.io_service import IORequest
 from helab.utils.settings_defaults import CONVERT_LOW_HITS_SETTING, read_setting, setting_default
@@ -50,6 +51,16 @@ CONVERT_SETTLING = ("settling", "changed")
 # is turned off and on).
 DAMAGED_REASON = "damaged"
 DAMAGED_TEXT = "Damaged: "
+
+
+def no_hits_text(shots: list[int]) -> tuple[str, str]:
+    """Shots whose conversion found no hits (A17.1): the line's part and its tooltip line ("" for none)."""
+    if not shots:
+        return "", ""
+    numbers = ", ".join(str(shot) for shot in shots[:20]) + (" …" if len(shots) > 20 else "")
+    return (plural(len(shots), "shot") + " with no hits",
+            f"No hits ({len(shots):,}): shot{'' if len(shots) == 1 else 's'} {numbers}. HeLab converted "
+            "each to an empty TXY (0 bytes): its raw file holds no matched pulses (check the detector).")
 # What the Live line calls each place HeLab's TXY go (``convert_plan.output``).
 CONVERT_OUTPUTS = {"beside": "beside the raw files", "cache": "HeLab's disk cache folder",
                    "temp": "HeLab's temp folder"}
@@ -72,6 +83,7 @@ class AutoConvert:
     last_hits: int = 0
     last_at: float | None = None  # Wall time.
     low: int = 0  # Low-count shots notified.
+    no_hits: set[int] = field(default_factory=set)  # Shots converted with no hits (A17.1).
     # The last plan: where the TXY go and why not where asked, the profile and backend.
     output: str = ""
     fallback: str = ""
@@ -833,6 +845,8 @@ class LiveController:
         shot, hits = int(event["shot"]), int(event["hits"])
         convert.converted += 1
         convert.last_shot, convert.last_hits, convert.last_at = shot, hits, time.time()
+        if hits == 0:
+            convert.no_hits.add(shot)
         convert.waiting.pop(str(event["raw_name"]), None)
         threshold = low_hits_threshold()
         if threshold and hits < threshold:
@@ -847,6 +861,15 @@ class LiveController:
                 session.check_soon = True
             else:
                 self._live_next(0.0)
+
+    @staticmethod
+    def no_hit_shots(session: LiveSession) -> list[int]:
+        """Shots whose conversion found no hits: converted so this session, or the data's empty HeLab shots
+        (memory only)."""
+        found = set(txy_sources.empty_helab_shots(session.dataset.metadata, session.dataset.data))
+        if session.convert is not None:
+            found |= session.convert.no_hits
+        return sorted(found)
 
     def convert_line(self, session: LiveSession) -> tuple[str, list[str], bool]:
         """Auto-convert's part of the Live line, its tooltip lines, and whether it stopped on an
@@ -866,6 +889,8 @@ class LiveController:
                 parts.append(f"{len(stuck):,} waiting")
             if convert.damaged:
                 parts.append(f"{len(convert.damaged):,} damaged")
+            if empty := no_hits_text(self.no_hit_shots(session))[0]:
+                parts.append(empty)
             if others := len(convert.unconvertible) - len(convert.damaged):
                 parts.append(f"{others:,} unconvertible")
             text = "auto-convert " + (", ".join(parts) if parts else "on")
@@ -885,6 +910,8 @@ class LiveController:
             f"; last: shot {convert.last_shot}, {convert.last_hits:,} hits at "
             f"{datetime.fromtimestamp(convert.last_at).astimezone():%H:%M:%S}" if convert.last_at is not None else "")
             + (f"; notified below {threshold:,} hits: {convert.low:,}" if threshold else "; low-count notifications off"))
+        if empty_line := no_hits_text(self.no_hit_shots(session))[1]:
+            lines.append(empty_line)
         settling = len(convert.waiting) - len(convert.stuck())
         if settling:
             lines.append(f"Being written: {plural(settling, 'raw file')} (converted once written)")
@@ -963,4 +990,6 @@ class LiveController:
         if session.error:
             lines.append(f"Stopped: {session.error}. Retry checks again; turning Live off saves the new shots.")
         lines.extend(convert_lines)
-        return " · ".join(parts), "\n".join(lines), bool(session.on and (session.error or convert_stopped))
+        # Amber: stopped, or shots converted with no hits (A17.1).
+        return " · ".join(parts), "\n".join(lines), bool(session.on and (session.error or convert_stopped)) or bool(
+            session.convert is not None and self.no_hit_shots(session))

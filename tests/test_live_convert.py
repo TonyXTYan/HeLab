@@ -31,6 +31,7 @@ from helab.utils.settings_store import app_settings
 from helab.views import live_launch
 from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.FolderExplorer import FolderExplorer
+from helab.views.explorer_live import no_hits_text as live_no_hits
 from test_convert_helab import raw_bytes
 from test_live import age_folder, deliver, job_of, next_request, producer, replay, service, write_shot  # noqa: F401
 
@@ -275,6 +276,50 @@ def test_auto_convert_is_remembered_for_the_session_and_shown_only_while_live(
     assert explorer.auto_convert_button.isChecked()
     explorer.stop_live(save=False)
     explorer.close_cleanup()
+
+
+def test_shots_converted_with_no_hits_are_named_in_amber(qtbot: QtBot, service: IOService, tmp_path: Path) -> None:
+    """A17.1: a raw file that converts to no hits (a 0-byte TXY) is named on the Live line and in Folder
+    details' Auto-convert row, amber, its shot number in the tooltip; a folder loaded later shows the same
+    from its data's empty HeLab shots (memory only)."""
+    explorer, path = watching_raw_folder(qtbot, tmp_path)
+    session = explorer.live
+    assert session is not None and session.convert is not None
+    cycle(qtbot, explorer, path, tmp_path)
+    write_raw(Path(path), 3, b"5,1000\r\n")  # The trigger alone: no hits.
+    write_raw(Path(path), 4, raw_bytes(10_000, 20_000))
+    cycle(qtbot, explorer, path, tmp_path)
+    _, sent = cycle(qtbot, explorer, path, tmp_path)
+    assert {event["shot"]: event["hits"] for event in of(sent, "shot_converted")} == {3: 0, 4: 2}
+    assert session.convert.no_hits == {3}
+    text, tooltip = line(explorer)
+    assert "1 shot with no hits" in text and "No hits (1): shot 3." in tooltip
+    assert "color" in explorer.folder_freshness_label.styleSheet()
+    panel = FolderDetailsPanel()
+    qtbot.addWidget(panel)
+    panel.show_explorer(explorer, None)
+    assert "1 shot with no hits" in panel.text("convert") and "shot 3" in panel.values["convert"].toolTip()
+    assert "color" in panel.values["convert"].styleSheet()
+    # Live off: the data shown still names it, from its empty HeLab shot.
+    cycle(qtbot, explorer, path, tmp_path)
+    shown = explorer.displayed_dataset
+    assert shown is not None and 3 in shown.data and len(shown.data[3]) == 0
+    explorer.stop_live(save=False)
+    panel.show_explorer(explorer, None)
+    assert panel.text("convert") == "1 shot with no hits" and "color" in panel.values["convert"].styleSheet()
+    explorer.close_cleanup()
+
+
+def test_a_loaded_folders_empty_helab_shots_are_its_no_hit_shots() -> None:
+    import numpy as np
+    from helab.utils import txy_sources
+    metadata = {"txy": {"source": "helab-priority", "origins": {"2": "helab:h", "3": "helab:h"}}}
+    data = {1: np.zeros((0, 3)), 2: np.zeros((0, 3)), 3: np.ones((4, 3))}
+    # (Shot 1 is MATLAB's: an empty MATLAB TXY isn't HeLab's conversion.)
+    assert txy_sources.empty_helab_shots(metadata, data) == [2]
+    assert txy_sources.empty_helab_shots({}, data) == []
+    text, tip = live_no_hits([2, 5])
+    assert text == "2 shots with no hits" and "shots 2, 5." in tip and live_no_hits([]) == ("", "")
 
 
 def test_a_damaged_file_is_said_once_and_survives_auto_convert_off_and_on(

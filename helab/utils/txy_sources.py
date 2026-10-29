@@ -125,6 +125,13 @@ def origins_of(metadata: Mapping[str, Any]) -> dict[int, str]:
     return found
 
 
+def empty_helab_shots(metadata: Mapping[str, Any], data: Mapping[int, Any]) -> list[int]:
+    """Shots read from HeLab's TXY that hold no hits (a 0-byte TXY: its conversion found none, A17.1), from
+    the data in RAM (``len`` of each shot's array)."""
+    return sorted(shot for shot, origin in origins_of(metadata).items()
+                  if is_helab(origin) and shot in data and len(data[shot]) == 0)
+
+
 def source_of(metadata: Mapping[str, Any]) -> str:
     """A dataset's source; data that names none (made before Q6.6) is MATLAB's alone."""
     record = metadata.get(TXY_FIELD)
