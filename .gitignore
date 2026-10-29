@@ -121,3 +121,6 @@ legacy/Momentum_Bells_test/
 .ai/session-export-*/
 .codegraph/
 .maestri/
+
+# Raw per-file tables of the post-2025 plates session (Q29.6): kept in .ai/local/sessions-data/
+.ai/sessions/2026-10-29-claude-txy-2025-plates/out/*.csv

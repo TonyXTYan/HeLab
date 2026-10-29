@@ -406,7 +406,7 @@ could not be tested: the only 2025 halo has no raw files.
 | `other_checks.py` | QE, gaps, logs |
 | `write_profile.py` | the provisional profile JSON |
 
-Numbers: `out/*.json`, `out/*.csv` (including `swapped_map_check.json`: the swapped channel map
+Numbers: `out/*.json`, and `out/*.csv` (the raw per-file tables, kept out of git since 2026-10-29, Q29.6: `.ai/local/sessions-data/2026-10-29-claude-txy-2025-plates/out/` on Tony's Mac) (including `swapped_map_check.json`: the swapped channel map
 gives exactly X → −X and Y → −Y on July raw files, with hit counts +0.001%).
 
 ## Figures (`figures/`)

@@ -68,4 +68,4 @@ for virtualization` errors that do not occur at the console. Qt/GPU issues must
 be tested by a person sitting at the machine.
 
 Python setup, interpreters, git, SSH/Maestri and RGAData notes for this machine
-are in [[lab-side-pc-caveats]].
+are in the lab PCs' local notes (`.ai/local/memory/`, Q29.2).

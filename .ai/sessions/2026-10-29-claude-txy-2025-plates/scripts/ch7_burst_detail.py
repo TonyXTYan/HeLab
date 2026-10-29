@@ -5,6 +5,11 @@
 (2) History: the same burst finder on a sample of raw files streamed from X (read-only): 06-20, 06-26,
     06-27, 07-21/22 and 09-21/22, giving burst rate and the share with ch7 per folder.
 Writes out/ch7_burst_detail.json, figures/ch7_burst_sizes.png."""
+import os
+
+# The 2026-09-22 BEC run's folder on X.
+SEPT_2026_FOLDER = os.environ.get("CH7_SEPT_2026_FOLDER", "2026-09-22 BEC run")
+
 from __future__ import annotations
 
 import json
@@ -104,7 +109,7 @@ if len(G):
 # (2) history on X
 hist = {}
 plan = {"20260620_Rabi_trial_weak_intrap": 40, "20260626_Ramsey_weaktrap": 60, "20260627_Ramsey_weaktrap": 80,
-        "20260722-tight-trap-freq-meas": 12, "20260922 - BEC attempts Isaac is too scared to delete": 6}
+        "20260722-tight-trap-freq-meas": 12, SEPT_2026_FOLDER: 6}
 for folder, step in plan.items():
     lst = SCRATCH / "listings" / (("20260922" if folder.startswith("20260922") else folder) + ".txt")
     paths = []

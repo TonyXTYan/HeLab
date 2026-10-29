@@ -65,3 +65,4 @@ number.
 | 26 | 2026-10-29 | Side (claude), Ground | byte units by OS, converted-TXY index (Tony in Chat, with Q22.7 and Q19.8) | dev/v0.0.7 | Q26.1, Q26.2, A26.1 |
 | 27 | 2026-10-29 | Side (claude), Ground | version robustness across machines (Tony in Chat) | dev/v0.0.7 | Q27.1–Q27.2, M1.10 (in block 1's smoke pass); Q27.3–Q27.5 from docs audit 3 (`sessions/2026-10-29-claude-docs-audit-3/findings.md`) |
 | 28 | 2026-10-29 | Side (claude) subagent, Ground | caching v2 readiness for an unattended run (`sessions/2026-10-29-claude-caching-v2-readiness/readiness.md`) | dev/v0.0.7 | Q28.1–Q28.6 |
+| 29 | 2026-10-29 | Side (claude) subagent, Ground | privacy pass over the public repos (details in gitignored `.ai/local/privacy-2026-10-29/`) | dev/v0.0.7 | Q29.1–Q29.6 (all decided) |
