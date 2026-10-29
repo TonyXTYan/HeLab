@@ -23,9 +23,10 @@ Per shot, the raw file parsed into binary arrays and kept in the store, beside t
   and the checks need from the text: the trigger time (`t_zero`, the first unsorted row), the
   first line's channel, the row count, whether the file ended with a newline, and the parse
   diagnostics. The parser's version is part of the key, so a parsing fix re-reads.
-- **Size:** on the 309-shot sample set, raw text 217.5 MB compresses to 29.5 MB as pulses, about
-  the same as the same shots' TXY as compressed float64 (30.7 MB). Caching raw costs about what
-  caching TXY costs now.
+- **Size:** on the 309-shot sample set, raw text 217.5 MB compresses to 29.5 MB as pulses. At
+  today's dataset settings (zstd-9, no shuffle) the same shots' TXY layer is 15.5 MB (`m19v1`) or
+  17.0 MB (full float64), so the raw layer is about 1.9× a TXY layer, and raw + one tag about 2.8×
+  what today's store keeps per folder (an earlier "about the same" compared different settings).
 - **Key:** the data root key and relative path (as datasets), plus the raw file's fingerprint
   (size and mtime, read once settled). A raw file overwritten in place (free-run) is a new key.
 - **Exactness:** converting from the layer must equal converting from the file, byte for byte;
@@ -97,4 +98,6 @@ before stage 1 (a design note, then this section):
 ## Open decisions
 
 - Q19.1–Q19.3 and Q19.5–Q19.8 (block 19).
-- The store-v4 design note (tables, keys, the store-v3 compatibility read path) before stage 1.
+- The [store-v4 design note](../.ai/sessions/2026-10-29-claude-caching-audit/store-v4-design.md)
+  (schema, keys, read/write paths, the store-v3 choice, budget, tests, build order) and its
+  questions, Q22.1–Q22.10.

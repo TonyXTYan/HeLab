@@ -14,6 +14,15 @@ How to use it:
 
 ## App
 
+- [ ] **A cached dataset over ~2.1 GB can't be saved.** `pack_dataset` (`helab/utils/cache_store.py:459`)
+  compresses a whole folder in one Blosc call, and python-blosc 1.11.4 caps a call at 2,147,483,631
+  bytes (store-v4 design note, 2026-10-29). Store-v4's chunked `.hlb` files fix it; until then a
+  folder that large stays RAM only (check what the save reports).
+- [ ] **Dataset files are pickles** (`DATASET_FORMAT = "blosc-pickle-1"`, `pickle.loads` in
+  `unpack_dataset`, `cache_store.py:466-473`), unlike saved results (NumPy + JSON). A cache folder
+  someone else can write to could run code in HeLab's helpers. Store-v4's pickle-free `.hlb`
+  containers fix it (design note, 2026-10-29).
+
 - [ ] The tab's startup default-folder resolve (`QTimer.singleShot(0)` in `FolderExplorer.__init__`)
   can run after an early `open_to_path` (a preset applied, or a path typed, before the event loop
   turns) and move the tab to the default folder; online, a preset then says "Live not started: another

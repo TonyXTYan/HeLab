@@ -280,6 +280,32 @@ included).
   folder (Load, or auto-load), Live's saves, loads for presets and reopened plots, auto-convert;
   not listings, Don't-cache folders, folders without a data root, or offline.
 
+## Store-v4 design (block 22; [design note](sessions/2026-10-29-claude-caching-audit/store-v4-design.md))
+
+Planning only (no cache code until Tony's go). Sizes: a raw layer is ~1.9× a TXY layer at today's
+settings; raw + one tag ~2.8× today's store per folder.
+
+- **Q22.1 When does a load fill the raw layer?** (a) a background `raw_fill` job after the folder
+  shows (proposed: keeps today's load speed; raw files are 2.4–3.6× the TXY bytes over the share);
+  (b) in the load itself.
+- **Q22.2 Key HeLab layers by profile hash, with tags as names?** Proposed: yes (`m19v1` and the
+  uncalibrated plate tags hold identical data).
+- **Q22.3 Before the store-v3 question is answered, behave as Keep (read only)?** Proposed: yes.
+- **Q22.4 Import the user's own state from v3 once, whatever the choice** (flags, converter flags,
+  constants, presets, data-root answers, mount hints, the budget)? Proposed: yes.
+- **Q22.5 A raw file that changes after it was read:** is free-run a real mode? Proposed: read it
+  again, re-convert its HeLab shots, replace its layer row; never stop Live; MATLAB TXY keep the
+  mismatch rule.
+- **Q22.6 Raw layers whose raw file is gone (the only copy) or from an older parser:** proposed:
+  kept and used, labelled; Make room lists them last and names them; never removed automatically.
+- **Q22.7 The disk budget:** keep 8 GB (proposed; Settings shows the split) or raise the default
+  (e.g. 20 GB)?
+- **Q22.8 Offline, may HeLab make and save a HeLab layer from the raw layer?** Proposed: yes (local
+  work only).
+- **Q22.9 A "clear this tag's data and its saved results" action?** Proposed: not now.
+- **Q22.10 Text for full-precision tags:** `%.17g` text so a beside or exported TXY equals its layer
+  (about twice the size), or text for export only, never loaded as data? Proposed: `%.17g`.
+
 ## From the audit (block 2)
 
 These come from the [audit](sessions/2026-10-28-claude-v0.0.6-checks/audit.md), whose finding
