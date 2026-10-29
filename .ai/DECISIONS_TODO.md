@@ -203,6 +203,35 @@ From the `agent/txy-ui` and `agent/txy-live` handoffs (`sessions/2026-10-29-clau
   end (~3 min), a candidate fix. No limit was changed overnight (Side). **Tony, 2026-10-29: (b),
   split pytest into two groups for every OS** (with Quick Fixes 6's typing-tests-first ordering).
 
+## Converter follow-ups (block 18, Tony in Chat 2026-10-29)
+
+Decided:
+- **Q18.1 (Q11.1):** numba's cache goes in HeLab's temp folder, for developers trying numba
+  (numba no longer ships, Q11.2).
+- **Q18.2 (Q14.1, Q14.2):** four TXY source modes: helab-priority (the default), matlab-priority,
+  helab-only, matlab-only; with the profile chosen by its tag once Q18.4 is settled (Q14.3).
+- **Q18.3 (Q15.2):** Live runs in one folder only, and there is one launch folder: an instance set
+  to launch Live and auto-convert opens no other folder tabs; turning Live on collapses the file
+  explorer panel.
+- **Q14.4** (folder status counting HeLab's TXY) is on Tony's next list (A18.1); **Q15.1** is a
+  check in the running app (M18.1); **Q15.3** later.
+
+Proposed, waiting for Tony before building:
+- **Q18.4 (Q12.2, Q14.3) Profile tag in the file name:** `d_txy_helab_<tag>_<N>.txt`, with short
+  fixed tags (`m19v1` matlab-2019, `p22v1` plates-2022 v1, `p25t1` plates-2025 testing; prefixes
+  `a`/`b`/`t` for alpha, beta, testing), each tag frozen once used, app-tweaked profiles tagged
+  from their hash (`u<hash>`). No metadata beside the raw files; per-shot provenance only in
+  HeLab's folders; freshness beside the raw files is "TXY newer than raw". `.txt` (not `.txy`),
+  like MATLAB's `d_txy_forc<N>.txt`.
+- **Q18.5 (Q12.5) Damaged raw files:** a raw file unchanged for 60 s that still fails the format
+  checks is marked damaged (a notification, a status in Live and Folder details, no TXY), never
+  holding up later shots; later perhaps "convert anyway" for its complete lines.
+- **Q18.6 (Q12.7) Keep the temporary name and rename** (and the `.partial` cleanup): it stops other
+  readers seeing a half-written TXY whatever the speed (Tony's 2026-10-19 rule for MATLAB);
+  writing elsewhere and moving isn't atomic across a share.
+- **Q14.5 explained to Tony:** a non-default source's dataset is RAM-only (one cached copy per
+  folder); cache them all if comparisons become frequent.
+
 ## From the audit (block 2)
 
 These come from the [audit](sessions/2026-10-28-claude-v0.0.6-checks/audit.md), whose finding

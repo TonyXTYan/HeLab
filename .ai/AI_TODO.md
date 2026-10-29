@@ -233,6 +233,8 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 
 - **A17.1 Warn about raw files with no hits** (Q10.3): the HeLab GUI shows a warning for shots
   whose conversion found no hits (Folder details and the Live line), with the shot numbers.
+- **A18.1 Folder status and HeLab's TXY** (Q14.4): on Tony's next list; whether a folder's status
+  and counts include HeLab's TXY. Waits for Tony.
 - **A17.2 Two pytest groups per OS in CI** (Q16.2 b): split the test job into two shards on
   every OS, keeping the typing-tests-first ordering (Quick Fixes 6); no limit raised.
 

@@ -131,6 +131,11 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   (Q1.7, [DECISIONS_TODO](DECISIONS_TODO.md#q17-windows-3d-scatter-window-flicker))? If the pane is black, Open in
   browser works.
 
+## Converter in the running app (added 2026-10-29)
+
+- [ ] **M18.1 Start-at-launch in the running app** (Q15.1): check the launch-folder setting and
+  Live with auto-convert starting at launch, in a real HeLab session.
+
 ## Maestri floor hooks (added 2026-10-28)
 
 - [x] **M8.1 Update the floor setup hooks in the Maestri app** to match
