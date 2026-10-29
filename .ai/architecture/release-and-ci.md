@@ -6,7 +6,16 @@ rules every task must follow; this file keeps the mechanics, names and behaviour
 on Ground, update it in the same commit as the code; on a floor, propose the change in your handoff. Settled decisions and Tony's wording live in
 `.ai/memory/results/`; feature plans in `roadmaps/`.
 
+## Building
+
 The `.spec` file produces `HeLab.app` on macOS (bundle ID `au.edu.anu.he-bec-lab`).
+
+`helab/main.py` dispatches in this order, each before anything that starts GUI services, caches
+or Dash: `multiprocessing.freeze_support()` (frozen only, so the converter's worker pool can spawn,
+A12.1), the I/O helper (`--helab-io-helper`), the headless converter (`convert`, [converter](converter.md)),
+`--version`, then the GUI.
+
+## Versioning
 
 **Versioning:** `helab/_version.py` is the only editable version source (PEP 440,
 no `v` prefix). Branch names need not match it. `helab/build_info.py` writes
@@ -23,6 +32,8 @@ is recoverable: rebuild/test that tagged SHA, validate clean archive stamps befo
 tagging/uploading, preserve manifest-verified assets and never modify a published
 release or force-move a tag. See `roadmaps/app-versioning.md`.
 
+## CI
+
 `.github/workflows/dev-cicd.yml` runs required Python 3.13 test/build matrices on
 macOS, Windows and Ubuntu for every branch push and PR to `main`. A push to a
 branch with an open PR to `main` runs only the detection job, since the PR's own
@@ -30,7 +41,9 @@ run tests the same commit (if the PR lookup fails, everything runs). Separate
 Python 3.11, 3.12 and 3.14 compatibility matrices run only on PRs to `main`,
 with soft failures. `ci-test.yml` has two independent jobs per OS and Python (converter stage 4,
 2026-10-29): "Converter backends" (20 min) builds and requires cython (`native/build.py --ci`,
-`HELAB_REQUIRE_BACKENDS=cython`) and runs the converter tests that use a backend; "Tests" runs the
+`HELAB_REQUIRE_BACKENDS=cython`) and runs the converter tests that use a backend, listed by hand
+(`tests/test_convert_backend_*.py`, `test_convert_required_backends.py`, `test_convert_helab.py`,
+`test_convert_split.py`; a new test that runs every available backend joins the list); "Tests" runs the
 whole suite in two groups, each a job of its own ("Tests (1/2)", "Tests (2/2)", Q16.2, A17.2):
 `pytest --test-group N/2` (see [testing](testing.md)); the caller's result, which the release gate
 needs, fails if either group does, and each macOS group uploads coverage for Codecov to merge. The
@@ -58,6 +71,8 @@ errors fail selection; they never mean "no release". Only authenticated main run
 query release state. Build jobs may target an older tagged SHA during recovery;
 the normal test jobs still check the current workflow commit, and recovery builds
 add Python 3.13 tests of the tagged commit on each OS.
+
+## Dependency graph
 
 `.github/workflows/dependency-graph.yml` (weekly, by hand, and on pushes to `main` that
 change `requirements.lock`, `helab/dependency_snapshot.py` or the workflow) runs

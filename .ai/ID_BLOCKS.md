@@ -22,6 +22,10 @@ This file is the registry of blocks for the IDs in [DECISIONS_TODO](DECISIONS_TO
   - adds a row here with the mapping, e.g. `Q~1→Q5.1, A~1→A5.1`;
   - copies the items into the lists with their new IDs.
 - A session on Ground that adds items takes a block before it adds the first one.
+- **Reserve first:** an agent takes a block by adding its row here, committed, before it writes
+  any item with that block's number, so two sessions never take the same number. A pushed ID is
+  never renamed: if a clash slips through, the later item gets a new ID and both rows say so (as
+  rows 19 and 20 do).
 
 **References:** commits, briefs, handoffs and Chat refer to items by ID ("Fixes A2.2", "Q1.2:
 yes"), so `git log --grep=A2.2` finds an item's history. Audit reports keep their own finding
@@ -51,8 +55,9 @@ number.
 | 16 | 2026-10-29 | Crate (claude), floor TXY packaging; merged by CoCo | packaging every backend (`sessions/2026-10-29-claude-txy-packaging/`) | agent/txy-packaging | Q~1→Q16.1, Q~2→Q16.2; A~1→A9.1 note, A~2→A16.1, A~3→A16.2, Puffin's nit 1→A16.3; M~1→M16.1, M~2→M16.2 |
 | 17 | 2026-10-29 | Side (claude), Ground | Tony's answers on the converter's open questions (Chat) | dev/v0.0.7 | A17.1, A17.2 |
 | 18 | 2026-10-29 | Side (claude), Ground | converter follow-ups (Tony in Chat) | dev/v0.0.7 | Q18.1–Q18.6, A18.1, M18.1 |
-| 19 | 2026-10-29 | Side (claude) subagent, Ground | caching audit after the converter (`sessions/2026-10-29-claude-caching-audit/audit.md`) | dev/v0.0.7 | Q19.1–Q19.10, A19.1, A19.2 |
+| 19 | 2026-10-29 | Side (claude) subagent, Ground | caching audit after the converter (`sessions/2026-10-29-claude-caching-audit/audit.md`) | dev/v0.0.7 | audit Q~1–Q~8→Q19.1–Q19.8; A~1→A19.1, A~3→A19.2; A~2 (build Q18.1) dropped, already built; Q19.9, Q19.10 from Tony in Chat, not the audit |
 | 20 | 2026-10-29 | Rivet (claude), floor Quick Fixes 6; merged by CoCo | test_typing first (`sessions/2026-10-29-claude-quick-fixes-6/`) | agent/quick-fixes-6 | A~1 (future slow modules) folded into testing.md; Tern's finding 1→A20.1 (first numbered A19.1 in `6fcf012`, which clashed with the caching audit's block 19) |
 | 21 | 2026-10-29 | Bale (claude), floor TXY ship; merged by CoCo | ship numpy + cython, two test groups (`sessions/2026-10-29-claude-txy-ship/`) | agent/txy-ship | A~1→A21.1, A~2→known-issues, A~3 closes A16.1/A16.2, A~4→A21.2; A16.3, A9.1 done |
-| 22 | 2026-10-29 | Side (claude) subagent, Ground | store-v4 design note (`sessions/2026-10-29-claude-caching-audit/store-v4-design.md`) | dev/v0.0.7 | Q22.1–Q22.11, A22.1 |
+| 22 | 2026-10-29 | Side (claude) subagent, Ground | store-v4 design note (`sessions/2026-10-29-claude-caching-audit/store-v4-design.md`) | dev/v0.0.7 | design note Q~1–Q~10→Q22.1–Q22.10; Q22.11 and A22.1 from Tony's answers in Chat, not the note |
 | 23 | 2026-10-29 | Quill (claude), floor TXY followups; merged by CoCo | converter follow-ups Q18.2-Q18.6, A17.1 (`sessions/2026-10-29-claude-txy-followups/`) | agent/txy-followups | Q~1→Q23.1, Q~2→Q23.2, Q~3→Q23.3, Q~4→Q23.4, Q~5→Q23.5, Q~6→Q23.6, Q~7→Q23.7; A~1→A23.1, A~2→A23.2, A~3→A23.3; M~1→M23.1, M~2→M23.2, M~3→M23.3 |
+| 24 | 2026-10-29 | Side (claude) subagent, Ground | planning-docs audit 2 fixes and the overnight process lessons (`sessions/2026-10-29-claude-docs-audit-2/planning.md`, the [mandate](sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md)) | dev/v0.0.7 | Q24.1–Q24.4, A24.1 |

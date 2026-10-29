@@ -98,8 +98,14 @@ register note which machine owns which task.
    (`claude`, `codex`). Maestri expects them installed already. Codex trusts
    only the projects listed in `~/.codex/config.toml` (on Tony's Mac, Ground
    alone); floors live in `.maestri/floors` beside the project, so a Codex
-   recruit there starts in an untrusted project. What that changes (approval
-   prompts, sandbox) **(check)**; trusting the floors folder may be needed.
+   recruit there starts in an untrusted project. Found 2026-10-29: a Codex
+   Reviewer on a floor stalled on its first approval prompt (`maestri list`)
+   and waited there unattended, until it was replaced by a Claude one. Two
+   likely causes: the floors folder isn't trusted, and the roles' commands
+   all start with `cd … && source …`, which Codex's `prefix_rule(["maestri"])`
+   doesn't match. Until Tony decides (trust the floors folder, keep Codex for
+   attended reviews only, or drop it: Q24.1 in
+   `.ai/DECISIONS_TODO.md`), a Codex recruit needs someone at the screen.
 2. **GitHub CLI**: `gh auth status` should show the account that can push to
    `TonyXTYan/HeLab`. Floors use `gh` for pull requests; without it Maestri
    opens the PR page in the browser.
@@ -111,7 +117,14 @@ register note which machine owns which task.
    *Notify when an agent needs attention*.
 5. **Presets** (optional): Settings → Terminal → Quick Start, one preset each
    for Claude Code and Codex, so the coordinator can recruit either. Extra
-   accounts: Settings → Agents → Accounts.
+   accounts: Settings → Agents → Accounts. Claude recruits ran all night on
+   2026-10-29 without a permission prompt, although the "Claude Code" preset
+   runs a bare `claude` and `~/.claude/settings.json` sets no `permissions`
+   or `defaultMode`: they run in Claude Code's auto mode, which Tony's
+   account opted into once (recorded in `~/.claude.json`, not in a settings
+   file). On a new machine, accept auto mode when Claude Code first offers
+   it, or recruits will stop at prompts **(check)**: confirm where the
+   default comes from on a second machine.
 6. **Gitignore**: `.maestri/` (role folders, `.maestri/roles/<id>/`) is in
    `.gitignore`.
 
@@ -225,7 +238,11 @@ register note which machine owns which task.
    > found no blocker.
 
    Recruit the Reviewer with the other model from the worker's (Codex
-   reviews Claude's work, Claude reviews Codex's).
+   reviews Claude's work, Claude reviews Codex's). **Today's limit:** a
+   Codex Reviewer stalls unattended on approval prompts, even for
+   `maestri` (section 1, step 1), so it reviews only while Tony is at the
+   screen. Unattended, recruit a Claude Reviewer: a fresh terminal, never
+   the author. Tony's question on Codex is Q24.1 in `.ai/DECISIONS_TODO.md`.
 
    **Quick Fixer** (small, well-scoped jobs one at a time: flaky or crashing tests, CI
    failures, small bugs; a brief can hold several jobs):
@@ -332,6 +349,11 @@ register note which machine owns which task.
 
 Note ropes stay on one floor, so workers on floors don't see this note; they
 report to the Coordinator (`maestri ask`) and post their floor status instead.
+The Coordinator updates a floor's row at each landing (the landed commit,
+pushed or not, floor kept, unloaded or deleted), the Ground line's commit
+when it moves, and the kept-branches list when it pushes a new `agent/*`
+branch. A line that holds only for a while (an overnight mandate, "no floors
+until …") goes when that ends.
 Keep the note in Maestri's own storage: if you *Move to…* a file inside the
 repo, floors would copy a stale version of it.
 
@@ -371,15 +393,42 @@ a fresh venv (about 16 s with uv's cache). Keep 1 and 2 both on or both off.
    ```
 
 **Private app folders and settings**, for tests and any manual run. Command 3
-starts `.ai/local/floor-env.sh` afresh; 4, 5 and 5b add a line each. Command 3 also makes `.ai/temp`, which is excluded from the
-clone (see Excluded folders below) and where `pytest --basetemp=.ai/temp/pytest`
-needs it.
+starts `.ai/local/floor-env.sh` afresh; 4, 5 and 5b add a line each. Command 3 also makes `.ai/temp`,
+where `pytest --basetemp=.ai/temp/pytest` needs it.
 
 3. App folder (locks, `cache-move.json`) and the floor's `.ai/temp`:
 
    ```bash
    mkdir -p "$MAESTRI_FLOOR_PATH/.ai/local" "$MAESTRI_FLOOR_PATH/.ai/temp" && echo "export HELAB_APP_DIR_OVERRIDE=\"$HOME/Library/Caches/HeLab/floors/$MAESTRI_FLOOR_NAME/app\"" > "$MAESTRI_FLOOR_PATH/.ai/local/floor-env.sh"
    ```
+
+   **A floor copies Ground as it is.** `maestri floor create` clones Ground's
+   files, uncommitted and untracked ones included, and has no way to exclude
+   a folder (Excluded folders, below, is only in the app's create dialog).
+   So every floor made from the command line carries Ground's `.ai/temp`
+   (2.8 GB on 2026-10-29: old briefs, `pytest-*` folders with copies of the
+   docs that turn up in a `grep -r`) and anything left uncommitted on Ground
+   (hence "Ground clean" in section 5).
+
+   **Proposed hook 3, for Tony to paste into the app** (2026-10-29), in place
+   of the one above: it first empties the floor's own `.ai/temp`, then does
+   what hook 3 does now.
+
+   ```bash
+   { [ -n "$MAESTRI_FLOOR_PATH" ] && [ -n "$MAESTRI_ROOT_PATH" ] && [ "$MAESTRI_FLOOR_PATH" != "$MAESTRI_ROOT_PATH" ] && root="$(cd -P "$MAESTRI_ROOT_PATH" && pwd -P)" && [ -n "$root" ] && cd -P "$MAESTRI_FLOOR_PATH" && [ "$(pwd -P)" != "$root" ] && [ ! -L .ai ] && rm -rf .ai/temp; } || echo "hook 3: not emptying .ai/temp" >&2; mkdir -p "$MAESTRI_FLOOR_PATH/.ai/local" "$MAESTRI_FLOOR_PATH/.ai/temp" && echo "export HELAB_APP_DIR_OVERRIDE=\"$HOME/Library/Caches/HeLab/floors/$MAESTRI_FLOOR_NAME/app\"" > "$MAESTRI_FLOOR_PATH/.ai/local/floor-env.sh"
+   ```
+
+   The removal runs only inside `$MAESTRI_FLOOR_PATH`, and never when either
+   variable is empty, when the two are equal as text, when the floor's real
+   path (symlinks resolved) is Ground's, or when `.ai` is a symlink (it could
+   point at Ground's). A `.ai/temp` that is itself a symlink loses only the
+   link. When the guard refuses, the step says so and still writes
+   `floor-env.sh`. The guard was checked under sh, zsh and bash on scratch
+   folders, with `echo` in place of the removal: it refused every case above
+   (and a missing floor or Ground folder) and passed a floor path with a
+   space in it. The removal itself
+   hasn't run on a floor yet **(check)**. Ground's own `.ai/temp` stays
+   (Q2.1.2).
 
 4. Cache folder:
 
@@ -412,7 +461,9 @@ traceback naming `../../../HeLab/tests/…`). Delete them outside `venv/` and
    cd "$MAESTRI_FLOOR_PATH" && [ "$MAESTRI_FLOOR_PATH" != "$MAESTRI_ROOT_PATH" ] && find . \( -path ./venv -o -path ./venv.nosync -o -path ./legacy -o -path ./.git \) -prune -o -type d -name __pycache__ -prune -exec rm -rf {} +
    ```
 
-   Added 2026-10-22, checked on a scratch tree only, not yet on a floor **(check)**.
+   Added 2026-10-22. Works on real floors (checked 2026-10-29 on TXY ship):
+   folders under `.ai/temp` that Ground had before the floor was made were
+   copied, but their `__pycache__` folders were gone.
 
 **Optional**, added but switched off; switch it on (or run the command in the
 brief) when a task needs the 2019 MATLAB converter. Since Q6.4 it is the only
@@ -444,15 +495,20 @@ this guide can bring its closing ```` ``` ```` along on a second line the hook
 editor may not show: the step then exits with an error (under zsh it writes
 nothing). **(check)** Whether Maestri stops or carries on after a failing step.
 
-When creating a floor in the UI you can add **Excluded folders**; `build`
-and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
-`.pytest_cache`. Check that `.codegraph/` works on a floor or re-run
+When creating a floor in the app's dialog (not from the command line, which
+has no such option) you can add **Excluded folders**; `build` and `dist` are
+excluded by default. Worth adding: `htmlcov`, `.ai/temp`, `.pytest_cache`. Check that `.codegraph/` works on a floor or re-run
 `codegraph init -i` there **(check)**.
 
 ## 5. Running a task
 
-1. **Choose the base commit** (you or the Coordinator). To start from a commit
-   other than Ground's current one, make the branch first, then use it:
+1. **Choose the base commit** (you or the Coordinator). First check that
+   Ground is clean (`git status --short` prints nothing): the new floor
+   copies Ground's working tree, uncommitted and untracked files included
+   (section 4). If it isn't, ask whoever made the change (the Assistant or
+   Tony) to commit it or keep it out of the tree; never stash or discard it.
+   To start from a commit other than Ground's current one, make the branch
+   first, then use it:
 
    ```bash
    git branch agent/<task> <commit>
@@ -465,8 +521,11 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
    After a release, base floors only on the new dev branch. v0.0.6 went to
    `main` as a squash (`9c477c2`), so `dev/v0.0.7` shares no history with
    `dev/v0.0.6`, and earlier `agent/*` branches are records, not bases.
-   `floor create` also has a `--copy-ground` flag that neither `maestri help`
-   nor these docs explain; don't use it until it is known **(check)**.
+   `floor create --copy` makes an independent APFS copy of the repository
+   instead of a git worktree (Mac only, `maestri help floor`); floors here
+   are worktrees, so don't pass it. `--copy-ground` is still explained
+   nowhere, neither in `maestri help floor` nor here; don't use it until it
+   is known **(check)**.
 2. **Recruit the worker** on that floor (the Coordinator asks you first):
 
    ```bash
@@ -480,7 +539,12 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
 
    then `maestri ask` it the brief (objective, acceptance, base commit, owned
    paths and paths not to touch, checks, handoff). For review, recruit the
-   other model on the same floor (`--preset "Codex" --role "Reviewer"`).
+   other model on the same floor (`--preset "Codex" --role "Reviewer"`),
+   but only while Tony is at the screen: a Codex Reviewer stalls unattended
+   on approval prompts, even for `maestri` (section 1, step 1; Q24.1 in
+   `.ai/DECISIONS_TODO.md`). Unattended, recruit a Claude
+   Reviewer (`--preset "Claude Code" --role "Reviewer"`): a fresh terminal,
+   never the author.
 
    Before sending the brief, `maestri check` the new terminal: a recruit can
    hang at start, showing only its typed `claude …` command and no Claude UI,
@@ -496,7 +560,9 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
      first and confirms that path is the floor, not Ground;
    - runs `source .ai/local/floor-env.sh` before tests or a manual run;
    - runs tests with its own `--basetemp=.ai/temp/pytest` and about `-n 4`
-     when several workers are busy;
+     when several workers are busy, and the type checks for Windows too
+     (`mypy --platform win32` and `pyright --pythonplatform Windows`, as
+     well as the usual ones: Windows-only typing errors have reached CI);
    - installs packages only into the floor's venv: when a task needs one that
      `requirements.lock` lacks (a spike's numba or Cython), it first checks that
      `venv/bin/python -c "import sys; print(sys.prefix)"` prints a path under
@@ -511,7 +577,15 @@ and `dist` are excluded by default. Worth adding: `htmlcov`, `.ai/temp`,
      doc changes);
    - when done, pushes the branch (pushes only at checkpoints), runs
      `maestri floor status "<summary>" --state review`, and reports to the
-     Coordinator.
+     Coordinator, naming the push's CI run ID and its result once it is in.
+
+   **Two agents on one floor** (e.g. a builder and a cross-checker, TXY
+   Reference 2026-10-29): give each its own `--basetemp`
+   (`.ai/temp/pytest-<name>`), since pytest empties its basetemp and two runs
+   sharing one clear each other. The second agent writes in its own
+   subfolder of the session folder (the cross-checker used
+   `.ai/sessions/<date>-<tool>-<task>/crosscheck/`), and the brief says
+   which paths each may commit.
 4. **The HeLab GUI may run from a floor** once `floor-env.sh` is sourced: hooks
    3–5b give it its own app, cache and temp folders and settings file (Q2.5).
    Check `echo $HELAB_TEST_SETTINGS_FILE` first; if it is empty, the hook
@@ -527,9 +601,19 @@ about each Ground commit.
 - Add a **Ground** row to Active work (task, terminal, files, status) and
   clear it when the change is committed; the Coordinator warns a floor whose
   owned paths overlap.
-- **Commit before landing a floor**: Merge Locally is refused while Ground has
-  uncommitted changes. Sync then brings the change into the floor before the
+- **Keep Ground clean**: commit a change (after asking Tony) or keep it out
+  of the tree before a floor lands or a new floor is made. Maestri's Merge
+  Locally refuses uncommitted work, but the `git merge` the Coordinator uses
+  doesn't, and a new floor copies whatever is in the tree (section 4). On
+  2026-10-29 an uncommitted Assistant log and a DECISIONS_TODO edit were
+  swept into landing commits. Logs and drafts written during a run go in
+  `.ai/local/` or a Maestri note, or are committed at once. With Maestri's
+  land, **Sync** then brings a committed change into the floor before the
   merge.
+- **ID blocks**: an agent reserves its block in `.ai/ID_BLOCKS.md` (a
+  committed row) before writing any item with that block's number; a
+  subagent gets its block from its parent. An ID that has been pushed is
+  never renamed (`f405de0` moved an A19.1 that was already on GitHub).
 - A change that overlaps a floor's owned paths and isn't small goes to that
   floor's worker instead. Anything bigger becomes its own floor.
 
@@ -551,25 +635,73 @@ slow drives, Windows, tests):
 
 You land floors (or approve the Coordinator doing it from Ground).
 
+**Landing conditions** (Q24.4, to confirm). A floor lands only when all of these hold (from the
+2026-10-29 overnight run, where helab-core landed with its own branch CI red
+on Windows and turned the dev branch red):
+
+- [ ] The Reviewer has no open findings.
+- [ ] The branch contains the current dev branch (`git merge-base
+      --is-ancestor dev/v0.0.7 agent/<task>`), so what was tested is what
+      lands.
+- [ ] The branch's latest CI run, on the commit that lands, is green on
+      macOS, Windows and Ubuntu: every job, both test groups ("Tests (1/2)",
+      "Tests (2/2)"), "Converter backends" and "Build". Check it by run ID
+      and quote the ID when asking Tony:
+      `gh run list --workflow "CI CD" --branch agent/<task> --limit 1 --json databaseId,headSha,conclusion`
+      (its `headSha` is `git rev-parse agent/<task>`), then
+      `gh run view <id> --json jobs --jq '.jobs[] | select(.name | test("py3.13")) | [.name, .conclusion] | @tsv'`.
+- [ ] The full suite passes on the merged tree, with its output kept whole
+      (`… > .ai/temp/<name>.txt 2>&1`, never filtered: a filter once dropped
+      a RERUN's name and reason), and every RERUN is named and explained or
+      filed in `roadmaps/known-issues.md`.
+- [ ] The type checks pass, for Windows too: `mypy helab/ --strict`,
+      `mypy tests --strict`, the same two with `--platform win32`,
+      `pyright helab tests` and `pyright --pythonplatform Windows helab tests`.
+- [ ] Ground is clean before the merge (`git status --short` prints
+      nothing): `git merge` doesn't refuse uncommitted work, and anything
+      left there ends up in a landing commit or in the next floor ("Work on
+      Ground").
+
+**How floors land today: `git merge` on Ground.** All 16 landings of
+2026-10-29 were a plain merge from a Ground terminal, which leaves the floor
+and its status in place:
+
+```bash
+git status --short                       # must print nothing
+git merge agent/<task>                   # a fast-forward when the branch contains the dev branch
+maestri floor status --floor "<Task>" "Landed <sha>" --state done
+```
+
+Then run the suite and type checks on Ground and update the register note's
+row. Without the `floor status` line the floor keeps saying "review" in the
+sidebar.
+
+**Maestri's own landing**, in the app or from the CLI:
+
 - Click the airplane button beside the floor, or **Land Floor** in its menu.
 - **Merge Locally**: pick the target branch (the current dev branch, e.g.
   `dev/v0.0.7`). **Sync** first pulls the target's latest changes into the
-  floor. A merge is refused when the target's checkout has uncommitted work,
-  or lists the conflicting files and stops.
+  floor. A merge is refused when the floor or the target's checkout has
+  uncommitted work, or lists the conflicting files and stops.
 - **Pull Request**: pick **Into**; title and description come from the commit
   and PR template. Maestri then tracks reviews and CI, offers *Ask an Agent to
   Fix the Checks* and the like, and lands the floor after **Merge…**.
 - The floor is removed after landing unless **Keep this floor after landing**
   is ticked. The branch stays in the repo.
 - CLI equivalent, from a Ground terminal only:
-  `maestri floor land "<Task>" --into dev/v0.0.7` (the current dev branch).
-  Never pass `--delete-branch`.
+  `maestri floor land "<Task>" --into dev/v0.0.7 --keep-floor` (the current
+  dev branch). Without `--keep-floor` the floor is deleted. Never pass
+  `--delete-branch`.
 
 After landing, the Coordinator applies the worker's proposed doc changes
 (`AGENTS.md`, `.ai/architecture/`, `roadmaps/` with known-issues,
 `.ai/MANUAL_TODO.md`, `.ai/memory/`) on Ground, merges its provisional items
-(`Q~1`, `A~1`, `M~1`) into the `.ai/*_TODO.md` lists under the next block in
-`.ai/ID_BLOCKS.md`, and asks you before committing them.
+(`Q~1`, `A~1`, `M~1`) into the `.ai/*_TODO.md` lists under a block it has
+reserved in `.ai/ID_BLOCKS.md` ("Work on Ground"), and asks you before
+committing them.
+
+Unattended runs, where an agent approves for Tony under a written mandate,
+are not a standing mode yet (proposed, see Q24.2 in `.ai/DECISIONS_TODO.md`).
 
 ## 7. Clean-up
 
@@ -577,7 +709,9 @@ After landing, the Coordinator applies the worker's proposed doc changes
 commits stay unless **Also remove the branch** is ticked: never tick it. From
 the CLI, `maestri floor delete "<Task>" --keep-branch`: without the flag it
 deletes the branch. Agent branches are kept, locally and on GitHub, for the
-record (AGENTS.md). Unload idle floors to free memory.
+record (AGENTS.md). Unload idle floors to free memory: the floor's menu, or
+`maestri floor unload "<Task>"` from a Maestro terminal. `maestri floor
+list` doesn't say which floors are unloaded, so note it in the register.
 
 After deleting a floor, check that `~/Library/Caches/HeLab/floors/` no longer
 holds its folder: the teardown hook hasn't always run (two empty folders were

@@ -75,9 +75,9 @@ Tony's answers in Chat, 2026-10-29, on what building the converter needs (block 
 - **Q9.6 Live auto-convert:** resets each session by default; the user can pick folders that
   remember Live and auto-convert and start them when HeLab launches.
 - **Q9.7 Writing beside the raw files:** by default HeLab converts into its temp folder or cache;
-  writing `d_txy_helab_<N>.txy` beside the raw files is an option the user turns on per folder
-  (with auto-convert at launch). This amends Q8.2 (HeLab still writes nothing else to source
-  folders).
+  writing `d_txy_helab_<N>.txy` (now `d_txy_helab_<tag>_<N>.txt`, Q18.4) beside the raw files is an
+  option the user turns on per folder (with auto-convert at launch). This amends Q8.2 (HeLab
+  still writes nothing else to source folders).
 - **Q9.8 MATLAB's converter gets no temp-name change:** once HeLab converts, no `d_txy_forc` is
   being written; HeLab keeps its checks for half-written TXY anyway, and must be careful about
   raw `d` files still being written.
@@ -92,215 +92,174 @@ Tony's answers in Chat, 2026-10-29, on what building the converter needs (block 
 Confirmed by Tony, 2026-10-29 ("confirm all"), and recorded where each lives (AGENTS.md, the
 setup guide, the roles): Q3.1, Q3.2, Q2.8, Q2.3, Q3.3, Q3.4, Q3.6.3, Q2.2.1, Q2.2.2, Q4.1.
 
-## Converter stage 1 (block 10)
+Tony's answers on v0.0.7's converter scope, 2026-10-28/29 (block 6). His wording is in the
+[converter memory](memory/results/txy-converter.md); the design is in the
+[plan](../roadmaps/txy-converter.md#decided). The parts still open are under block 6 below.
 
-From the `agent/txy-reference` handoffs ([builder](sessions/2026-10-29-claude-txy-reference/handoff.md),
-[cross-checker](sessions/2026-10-29-claude-txy-reference/crosscheck/handoff.md)), 2026-10-29.
+- **Q6.3 The converter's inputs:** raw files on X for testing (read-only, outside pytest); the goal
+  is to replace `tdc_autoconvert` with a headless HeLab converter, plus Live's auto-convert toggle.
+- **Q6.5 Benchmark first:** a reference reproducing MATLAB byte for byte, then one floor per
+  backend; done as stages 1 and 2.
+- **Q6.6 Which TXY a folder uses:** offer all three; built as the four source modes of Q18.2.
+- **Q6.8 The auto-convert toggle** shows once Live is on (built, `6454b4a`).
+- **Q6.10 Detector profiles** (most of it): the default is `matlab-2019`; a plate profile may
+  change every parameter we might calibrate; the 2022-11 ghost counts were on the new plates; plate
+  swaps 2017-03-17 and 2025-06-18.
+- **Q6.11 Calibration** (most of it): profiles are JSON; the 2017, 2022 and 2025 plates' profiles
+  are built in (2025 uncalibrated), with import, export and tweak; calibrated means the parameters
+  that maximise the back-to-back correlation across halos, plus hotspot and efficiency maps; Tony
+  approves each; provisional calibrations from X's data come in stage 3.
 
-- **Q10.1 The third MATLAB variant: a built-in profile?** Two 2022-07 he3he4 shots (d2, d3) were
-  re-converted on 2023-02-08 by `matlab-2019` plus a 2 µs x1 dead time (proved with MATLAB). Who
-  ran it, and why, is unknown. Proposed: no built-in profile; it stays a proved exception in
-  `dev/txy/reference_exceptions.py` (`matlab-2019` with `dead_time_x1 = 2e-6` reproduces it).
-  Decided that way by Side overnight, for Tony to confirm; and does Tony know who ran it?
-  **Tony, 2026-10-29: no, ignore those** (no built-in profile; they stay proven exceptions).
-- **Q10.2 A raw file with no rows** (0 bytes or blank lines only) makes MATLAB fail. What should
-  HeLab do (stage 4)? Proposed: the settle check refuses it while it may still be written; once
-  settled, it is reported as unconvertible (no TXY, a notification), never skipped silently.
-  **Tony, 2026-10-29: OK.**
-- **Q10.3 A shot with no hits: no TXY or an empty one?** The pinned 2019 wrapper writes none;
-  the lab's files include 0-byte TXY from 2020, 2022-11 and 2023-02 (other wrappers). **Decided by
-  Side overnight, for Tony to confirm:** HeLab's own output (`d_txy_helab_<N>.txy`) is a 0-byte
-  file, so "converted, empty" differs from "not converted yet"; `matlab-2019` writes none only for
-  comparisons (A10.5). **Tony, 2026-10-29: OK**, and the HeLab GUI should warn about raw files
-  that convert to no hits (A17.1).
+Tony's answers in Chat, 2026-10-29, on converter stages 1–4 and their follow-ups (blocks 10–18).
+Settled design: [converter memory](memory/results/txy-converter.md); mechanics:
+[converter.md](architecture/converter.md); plan: [txy-converter](../roadmaps/txy-converter.md).
 
-## Converter stage 2 (block 11)
+- **Q10.1 The third MATLAB variant:** "no, ignore those": no built-in profile; the two 2022-07
+  shots stay proven exceptions in `dev/txy/reference_exceptions.py`.
+- **Q10.2 A raw file with no rows** is never skipped silently: OK. As built since Q18.5 it waits
+  20 s and is marked damaged; Q23.3 asks to confirm that.
+- **Q10.3 A shot with no hits** gives a 0-byte HeLab TXY (A10.5): OK, and the GUI warns about it
+  (A17.1, `62d156e`).
+- **Q11.1** numba's cache in the cache folder: superseded by Q18.1.
+- **Q11.2 Backends:** NumPy the default, Cython the optional one; the app ships NumPy, Cython and
+  the reference (A9.1, `134e2ec`).
+- **Q11.3** `reference` stays in the build, and every backend's code stays in the repo.
+- **Q12.2, Q12.5, Q12.7** were settled as Q18.4, Q18.5 and Q18.6.
+- **Q14.1, Q14.3** were settled by Q18.2 (four source modes, a profile chosen by its tag).
+  **Q14.5** became the caching rethink (block 19; Q19.3 is still open).
+- **Q15.1** became a check in the running app (M18.1, merged into M23.2); the list it asked about
+  became one `live_launch_folder` (Q18.3). **Q15.2** was superseded by Q18.3.
+- **Q16.1** no `setup.py` extra for the fast backends (`native/build.py` serves developers and CI).
+- **Q16.2 CI time:** (b), two pytest groups on every OS (A17.2, `874fd2b`).
+- **Q18.1** numba's cache goes in HeLab's temp folder, for developers trying numba (`874fd2b`).
+- **Q18.2** four TXY source modes: helab-priority (the default), matlab-priority, helab-only,
+  matlab-only (`c718c71`; converter.md "TXY sources").
+- **Q18.3** Live runs in one folder; one launch folder, opened alone; Live on collapses the left
+  panel (`dbf80e4`; [live](architecture/live.md)).
+- **Q18.4 Tagged names** `d_txy_helab_<tag>_<N>.txt`, tags frozen once used, no metadata beside the
+  raw files ("agree with your suggestions"; `26a2ade`; AGENTS.md's write rule).
+- **Q18.5 Damaged raw files:** unchanged for 20 s and still failing the format checks ("damaged
+  timeout 20s").
+- **Q18.6** keep the temporary name and rename, and the `.partial` cleanup ("keep partial"; on
+  AGENTS.md's housekeeping list).
 
-From the backend floors and the final timings (sessions/2026-10-29-claude-txy-bench/results.md), 2026-10-29.
+Tony's answers on caching after the converter, 2026-10-29 (blocks 19 and 22). **No cache code
+until his explicit go** (A19.1 and A19.2 included). Plan: [caching v2](../roadmaps/caching-v2.md);
+settled design: [caching memory](memory/results/caching-v2.md).
 
-- **Q11.1 numba's compiled-code cache goes in HeLab's cache folder** (under `cache_dir()`, so it
-  moves with the cache). Frozen, numba ignores `NUMBA_CACHE_DIR` and writes under
-  `~/Library/Caches/numba/` (Windows `%LOCALAPPDATA%\numba\Cache`), outside HeLab's folders.
-  **Decided by Side overnight, for Tony to confirm**; moot if numba is dropped (Q11.2).
-- **Q11.2 Which converter backends ship once testing ends (A9.1)?** Every backend ships for now
-  (Q9.2). Measured: numpy 119 MB/s per core end to end (meets both targets on one core, ~31 kB),
-  rust 178 (0.47 MB abi3 wheel per OS), cython 170 (257 kB, one binary per Python version and
-  OS), numba 171 (+145 MB, ~0.2-0.6 s start per process), mlx 72 (+240 MB, Apple only).
-  Proposed: numpy the default plus **rust** as the one optional compiled backend; drop numba, mlx
-  and cython. Alternatives: cython instead of rust if stage 4's CI finds C extensions easier; or
-  numpy alone, since it meets both targets here (the compiled ones buy ~1.5x per core). The lab
-  PCs are untimed (M11.1). **Tony, 2026-10-29: NumPy stays the default, and Cython is the
-  optional backend.** So the app ships NumPy, Cython and the reference; Numba, MLX and Rust leave
-  the build, lock and CI's required set (A9.1), while their code stays in the repo (Q11.3).
-- **Q11.3 Keep `reference` in the build?** Proposed: yes, as the test oracle and the readable
-  specification, never the default; it is small, plain Python. **Tony, 2026-10-29: yes, and keep
-  all the backend code developed** (the unshipped backends stay in the repo, Q11.2).
+- **Q19.4** a fresh `store-v4`, with a one-time choice for store-v3: keep using it (read for what
+  v4 lacks), clear it (asked) or ignore it.
+- **Q19.9 Cache the raw pulses** ("plan to move on to caching the raw d files"): a raw layer per
+  raw file and TXY layers per tag. Its premise, that a raw layer costs about what TXY caching costs
+  now, was corrected by the [design note](sessions/2026-10-29-claude-caching-audit/store-v4-design.md):
+  a raw layer is ≈ 1.8× an `m19v1` TXY layer with Q22.7's proposed codec (1.9× at zstd 5), and
+  raw plus one tag ≈ 2.7× today's store (2.8×); the plan's "Size" gives the settings.
+- **Q19.10** the raw layer is filled wherever HeLab caches a folder today (loads of the selected
+  folder, Live's saves, presets and reopened plots, auto-convert).
+- **Q22.1–Q22.4, Q22.6, Q22.8–Q22.10 as proposed:** a background `raw_fill` job; HeLab layers keyed
+  by profile hash with tags as names; behave as Keep until the store-v3 choice is made; import the
+  user's own v3 state once; raw layers whose file is gone, or from an older parser, kept and
+  labelled; offline, HeLab layers made from the raw layer; no "clear this tag" action; `%.17g`
+  text for full-precision tags.
+- **Q22.5** a raw file overwritten after it was read is read again and re-converted, with a big
+  warning (it only happens when the TDC is misconfigured); per-shot plots get a shot-index axis
+  (A22.1).
+- **Q22.11 Cache policy:** the raw layer and the selected TXY versions together; a global default
+  to cache raw files; a per-folder source priority whose TXY layer is cached too.
+
+## Process lessons and v0.0.7's gate (block 24)
+
+From the overnight build ([mandate](sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md)) and
+the [planning-docs audit 2](sessions/2026-10-29-claude-docs-audit-2/planning.md), 2026-10-29.
+
+- **Q24.1 Codex Reviewers can't run unattended on floors.** **Tony, 2026-10-29: OK** (Claude
+  Reviewers for unattended runs, Codex when he is present). At ~01:50 the Codex Reviewer stalled
+  on its first approval prompt and CoCo replaced it with a Claude Reviewer. Codex asks approval
+  even for `maestri list`; floors are untrusted in `~/.codex/config.toml`; and the compound
+  `cd … && …` commands agents run don't match its allow rules. Options: (a) configure Codex for
+  floors (trust the floors folder, allow rules that match); (b) Claude Reviewers for unattended
+  runs, Codex when Tony is present. Proposed: (b).
+- **Q24.2 "Supervised runs" as a documented mode?** On 2026-10-29 Tony delegated approvals to
+  Side within a written mandate (what Side may approve, what is never done, a decision log).
+  Proposed: yes, written into the workflow guide and modelled on that
+  [mandate](sessions/2026-10-29-claude-v0.0.7-overnight/mandate.md).
+- **Q24.3 Which converter checks join v0.0.7's smoke pass?** **Tony, 2026-10-29: "live convert
+  and plot update"** (M1.9). The pass (M1.1–M1.8) has no converter
+  step, and MANUAL_TODO's converter items don't gate a release. Proposed: an M1.9 "Converter" step
+  on the Mac and a lab PC: Live auto-convert on a sample folder (M15.1's core), `helab convert
+  --watch --once` on a sample, a plot of the converted data, and the TXY source choice (M23.1,
+  M14.1). The rest (M12.1, M15.1 in full at the acquisition PC, M16.1 on the Sandy Bridge PC) stay
+  lab validation. What else v0.0.7 needs before its PR is the roadmap's
+  [Release v0.0.7](../roadmaps/_readme.md#now-v007) item.
+- **Q24.4 Land a floor only when its branch's latest CI is green on all three OSes?** Decided
+  overnight (mandate, 06:20) after helab-core landed with Windows failing. Today's docs fixes
+  write it as a landing condition (AGENTS.md's Landing line, the workflow guide, setup §6), so it
+  needs Tony's confirmation. Proposed: yes (every job, checked by run ID).
 
 ## Converter stage 4, HeLab core (block 12)
 
 From the `agent/txy-helab-core` handoff (`sessions/2026-10-29-claude-txy-helab-core/handoff.md`),
-2026-10-29. Q12.1-Q12.5 and Q12.7 were **decided by Side overnight, for Tony to confirm**.
+2026-10-29. These were **decided by Side overnight, for Tony to confirm, and built that way**. Tony
+hasn't answered them yet (2026-10-29), so they stay open. (Q12.2, Q12.5 and Q12.7 were settled as
+Q18.4–Q18.6, above.)
 
 - **Q12.1** A folder with no data root, asked for `cache`, converts to the temp folder (follows "no
-  data root, no disk cache"; `convert_plan.fallback` says why). Built.
-- **Q12.2** Provenance is never written beside the raw files (only `d_txy_helab_<N>.txy` may go
-  there), so another computer reading a beside TXY doesn't know its profile. Kept so until a second
-  HeLab needs it (stage 5 or Q6.7); a JSON beside would amend AGENTS.md's write rule.
+  data root, no disk cache"; `convert_plan.fallback` says why). Built. **Tony, 2026-10-29: yes.**
 - **Q12.3** HeLab's TXY in the cache folder are outside the 8 GB budget and no housekeeping removes
-  them; the UI floor shows their size in Settings → Cache with a Clear (asked first). Tony: should
-  they join the budget later (which adds them to AGENTS.md's housekeeping list)?
+  them. The same question as Q19.2: answer it there. **Tony, 2026-10-29: no; converted TXY in the
+  cache get their own budget, separate from the 8 GB dataset budget; TXY written beside the raw
+  files have no limit** (they are data in the source folder; HeLab never removes them). Its default
+  size and Make room behaviour come with the caching work (no cache code until Tony's go).
 - **Q12.4** `helab convert --output beside` writes beside for that run without the folder's flag and
-  saves no flag (AGENTS.md's write rule now says so).
-- **Q12.5** A settled raw file that never gets a final newline (or starts off the trigger channel)
-  waits for good, re-checked only when it changes; Live shows it waiting with the reason.
+  saves no flag. AGENTS.md's write rule already says so, so a rule rests on this answer.
 - **Q12.6** (an idea, not built) A manual **Convert anyway** for a file stuck waiting: the user's
   choice to convert it as it is (never one modified within the settle age), recorded in the
   provenance; a request field (e.g. `force_shots`) is the seam.
-- **Q12.7** A helper killed mid-way through a beside write leaves
-  `.d_txy_helab_<N>.txy.<16 hex>.partial` in the source folder; a later beside conversion deletes its
-  own such files (exact pattern, regular file, over 1 h old, no links, logged as `partial_removed`).
-  This is a deletion in a source folder, so it is on AGENTS.md's housekeeping list, marked to
-  confirm. Alternative: leave them and list them for the user.
 
 ## Converter stage 4, UI and Live (blocks 14, 15)
 
 From the `agent/txy-ui` and `agent/txy-live` handoffs (`sessions/2026-10-29-claude-txy-{ui,live}/handoff.md`).
 
-- **Q14.1 How "both as two datasets" (Q6.6 c) shows.** Built: one choice per dataset
-  (`matlab-only`, `helab-only`: two plots side by side). Alternatives: one plot drawing both, or a
-  button that opens the twin plot on the other dataset.
-- **Q14.2 Save a plot's TXY source with presets, arrangements and reopened plots?** Not built (a
-  format change in `analysis/presets.py`); a reopened plot uses the default.
-- **Q14.3 HeLab TXY of another profile.** Built: only those of the conversion profile's hash load.
-  Alternative: load any current HeLab TXY (the identity records it per shot). Note: `helab convert`
-  ignores the `convert_profile` setting (`--profile` takes a built-in's name or a file), so its TXY are
-  hidden from the app while another profile is chosen.
+- **Q14.2 Save a plot's TXY source and profile with presets, arrangements and reopened plots?**
+  Not built (a format change in `analysis/presets.py`); a reopened plot starts "As the folder's
+  tab" (Q23.4 is the same question). Proposed: save them once `analysis/presets.py` changes format
+  for something else.
 - **Q14.4 Count HeLab's TXY in a folder's status?** Today status and counts come from MATLAB's TXY
-  alone; proposed: count current HeLab TXY once scans can see HeLab's folders cheaply.
-- **Q14.5 Datasets of a non-default source are RAM only.** Proposed: keep it so until (b)/(c) are used
-  much; caching them needs their own store key.
-- **Q15.1 The start-at-launch list is a settings row** (`live_launch_folders`, CoCo approved; Tony to
-  confirm), not a store table: known before any listing, works without a `.helab-root`; Reset all
-  settings clears it.
-- **Q15.2 Several launch folders: Live only in the first.** Live runs in one tab at a time (L1, Tony
-  2026-10-19: switching tabs turns Live off), so the others open in their tabs and say so. Options:
-  (a) as built; (b) let Live run in several tabs at once (changes L1), then every launch folder
-  starts; (c) one launch folder only.
+  alone; proposed: count current HeLab TXY of the tab's tag once scans can see HeLab's folders
+  cheaply (A23.1 waits for this). Caching v2's stage 5 would make raw files drive status.
 - **Q15.3 The low-count threshold** `convert_low_hits`: default 100 hits, 0 off, once per shot.
   Alternatives: a rate like MATLAB's 700 Hz (needs `t_max` in `shot_converted`); per-folder
   thresholds. A low shot can notify twice (Shot trends' Notify during Live is a separate rule).
-
-## Converter stage 4, packaging (block 16)
-
-- **Q16.1 A `setup.py` extra for the fast backends?** (`pip install -e .[fast]`, or building the
-  extensions during `pip install`). Proposed: no: it needs a compiler and Rust on every lab PC, and
-  `native/build.py` does it for developers and CI. **Tony, 2026-10-29: no.**
-- **Q16.2 CI test-job time limits.** Windows' test job ran 20-25 min tonight (limit 30, Q2.6), and one
-  macOS job hit its 20-min limit on a slow runner (normally 5-11). Options: (a) raise the limits
-  (Windows 40, others 30); (b) split the test job into two shards per OS (one more runner each);
-  (c) leave them and re-run a job that hits the limit. Proposed (packaging floor): (a) now, (b) when
-  the suite grows again. Ubuntu's slow tail is all six `test_typing` tests landing on one worker at the
-  end (~3 min), a candidate fix. No limit was changed overnight (Side). **Tony, 2026-10-29: (b),
-  split pytest into two groups for every OS** (with Quick Fixes 6's typing-tests-first ordering).
-
-## Converter follow-ups (block 18, Tony in Chat 2026-10-29)
-
-Decided:
-- **Q18.1 (Q11.1):** numba's cache goes in HeLab's temp folder, for developers trying numba
-  (numba no longer ships, Q11.2).
-- **Q18.2 (Q14.1, Q14.2):** four TXY source modes: helab-priority (the default), matlab-priority,
-  helab-only, matlab-only; with the profile chosen by its tag once Q18.4 is settled (Q14.3).
-- **Q18.3 (Q15.2):** Live runs in one folder only, and there is one launch folder: an instance set
-  to launch Live and auto-convert opens no other folder tabs; turning Live on collapses the file
-  explorer panel.
-- **Q14.4** (folder status counting HeLab's TXY) is on Tony's next list (A18.1); **Q15.1** is a
-  check in the running app (M18.1); **Q15.3** later.
-
-Decided by Tony (2026-10-29, "agree with your suggestions", "damaged timeout 20s", "keep
-partial"), as proposed below except the timeout:
-- **Q18.4 (Q12.2, Q14.3) Profile tag in the file name:** `d_txy_helab_<tag>_<N>.txt`, with short
-  fixed tags (`m19v1` matlab-2019, `p22v1` plates-2022 v1, `p25t1` plates-2025 testing; prefixes
-  `a`/`b`/`t` for alpha, beta, testing), each tag frozen once used, app-tweaked profiles tagged
-  from their hash (`u<hash>`). No metadata beside the raw files; per-shot provenance only in
-  HeLab's folders; freshness beside the raw files is "TXY newer than raw". `.txt` (not `.txy`),
-  like MATLAB's `d_txy_forc<N>.txt`.
-- **Q18.5 (Q12.5) Damaged raw files:** a raw file unchanged for **20 s** (Tony: raw files arrive about
-  one per 30 s) that still fails the format
-  checks is marked damaged (a notification, a status in Live and Folder details, no TXY), never
-  holding up later shots; later perhaps "convert anyway" for its complete lines.
-- **Q18.6 (Q12.7) Keep the temporary name and rename** (and the `.partial` cleanup): it stops other
-  readers seeing a half-written TXY whatever the speed (Tony's 2026-10-19 rule for MATLAB);
-  writing elsewhere and moving isn't atomic across a share.
-- **Q14.5:** Tony: with the converter built in, rethink how caching works; an audit with
-  suggestions goes in a session note (`.ai/sessions/2026-10-29-claude-caching-audit/`).
+  Tony, 2026-10-29: later.
 
 ## Caching after the converter (block 19; [audit](sessions/2026-10-29-claude-caching-audit/audit.md))
 
-Tony asked (Q14.5) to rethink caching now that HeLab converts raw files. The audit's staged path:
-stage 0 small fixes (A19.1, A19.2) and the Q18.4 tags first; stage 1 identify HeLab shots by raw
-file + tag and store every source as a layer; stage 2 convert on read, HeLab writing TXY only
-beside the raw files or on export; stage 3 (after MATLAB is retired) raw files drive status.
-**Tony, 2026-10-29: keep planning; no cache coding until he gives an explicit go** (A19.1 and A19.2
-included).
+Tony asked (Q14.5) to rethink caching now that HeLab converts raw files; Q19.4, Q19.9 and Q19.10
+are decided (above), and the plan is [caching v2](../roadmaps/caching-v2.md). **Tony, 2026-10-29:
+keep planning; no cache code until he gives an explicit go** (A19.1 and A19.2 included).
 
 - **Q19.1 Keep HeLab's own TXY files once loads convert on read?** (a) no: only beside and export;
   (b) yes, as a cache in the budget; (c) yes, as now. Proposed: (a), at stage 2.
-- **Q19.2 Until then, does `<cache>/converted-txy` count toward the 8 GB budget (Q12.3)?** Proposed:
-  yes, counted and shown; Make room may offer it, always asked (no AGENTS.md change).
+- **Q19.2 Until then, does `<cache>/converted-txy` count toward the 8 GB budget?** (Also Q12.3.)
+  **Answered by Tony under Q12.3, 2026-10-29: a separate budget; beside TXY unlimited.**
+  Today it is outside the budget and no housekeeping removes it; Settings → Cache shows its size
+  with a Clear (asked first). Proposed: yes, counted and shown; Make room may offer it, always
+  asked (no AGENTS.md change).
 - **Q19.3 Disk-cache every TXY source (Q14.5)?** Proposed: yes, as layers (no duplication), stage 1.
-- **Q19.4 Layers in store-v3 (a migrated table) or a fresh store-v4 (lab caches re-read once)?**
-  Proposed: store-v3, migrated. **Tony, 2026-10-29: a fresh store-v4, with a compatibility option:
-  keep using store-v3 (read for what v4 lacks), clear it (asked), or ignore it** ([plan](../roadmaps/caching-v2.md#store-v4-q194-a-fresh-store-tony-2026-10-29)).
 - **Q19.5 Does Don't cache this folder also stop HeLab's TXY going to the cache folder?** Proposed:
   yes; such folders convert to temp, like folders without a data root.
 - **Q19.6 Precision of data converted on read:** 8 significant figures like the TXY text (T ≈ 0.4 s
-  → 10 ns), or full float64? Proposed: 8 figures, one rule for every path; full precision later
-  as a profile option.
+  → 10 ns), or full float64? Proposed (as Q19.9's proposal and Q22.10 imply): binary always (text
+  only beside the raw files or on export); `m19v1` rounds to 8 significant figures so it matches
+  its text exactly; newer tags keep full float64. The plan marks this proposed.
 - **Q19.7 Drop the temp output setting after stage 2?** Proposed: yes.
 - **Q19.8 Temp-folder TXY of folders without a data root:** cleared by the user only (proposed),
   or deleted after N days at startup (a new housekeeping line)?
-- **Q19.9 Cache the raw pulses too?** (Tony: each plot may prefer a different converter, and a
-  calibration script needs raw pulses; keep both options open, and once the converter is robust
-  go back to caching a selected tag.) Measured on the 309-shot sample set (Blosc zstd 5, read-only
-  script): raw text 217.5 MB, TXY text 50.4 MB; raw pulses as binary (int8 channel + int64 time,
-  stably sorted, time delta-encoded) compress to **29.5 MB**, about the same as the TXY as
-  compressed float64 (30.7 MB), so caching raw costs about what caching TXY costs now. Proposed:
-  the store keeps a raw-pulse layer (keyed by the raw file's fingerprint, with the trigger time
-  and first-line check data) and TXY layers per tag; a per-folder (or global) policy chooses raw
-  only (convert on load), raw + a selected tag (fast loads; the default once the converter is
-  robust), or TXY only (archives); any tag can be rebuilt from the raw layer without the share.
-  Q19.6 then reads: binary always (text only beside the raw files or on export); `m19v1` rounds
-  to 8 significant figures so it matches its text exactly, newer tags keep full float64.
-  **Tony, 2026-10-29: yes, plan to move on to caching the raw d files** (plan:
-  [caching v2](../roadmaps/caching-v2.md); still no cache code until his go).
-- **Q19.10 Which folders cache the raw layer by default?** Every folder with raw files, or only
-  where Live, auto-convert or calibration is used? Proposed: every folder with raw files (it
-  costs about what TXY caching costs now, and any later profile or calibration then works
-  offline). **Tony, 2026-10-29: wherever HeLab caches a folder today:** loads of the selected
-  folder (Load, or auto-load), Live's saves, loads for presets and reopened plots, auto-convert;
-  not listings, Don't-cache folders, folders without a data root, or offline.
 
 ## Store-v4 design (block 22; [design note](sessions/2026-10-29-claude-caching-audit/store-v4-design.md))
 
-Planning only (no cache code until Tony's go). Sizes: a raw layer is ~1.9× a TXY layer at today's
-settings; raw + one tag ~2.8× today's store per folder. **Tony, 2026-10-29: as proposed** for
-Q22.1–Q22.4, Q22.6 and Q22.8–Q22.10; Q22.5 explained and asked; Q22.7 compression investigated.
+Planning only (no cache code until Tony's go). Tony answered the rest of the block (above).
 
-- **Q22.1 When does a load fill the raw layer?** (a) a background `raw_fill` job after the folder
-  shows (proposed: keeps today's load speed; raw files are 2.4–3.6× the TXY bytes over the share);
-  (b) in the load itself.
-- **Q22.2 Key HeLab layers by profile hash, with tags as names?** Proposed: yes (`m19v1` and the
-  uncalibrated plate tags hold identical data).
-- **Q22.3 Before the store-v3 question is answered, behave as Keep (read only)?** Proposed: yes.
-- **Q22.4 Import the user's own state from v3 once, whatever the choice** (flags, converter flags,
-  constants, presets, data-root answers, mount hints, the budget)? Proposed: yes.
-- **Q22.5 A raw file that changes after it was read:** is free-run a real mode? Proposed: read it
-  again, re-convert its HeLab shots, replace its layer row; never stop Live; MATLAB TXY keep the
-  mismatch rule. **Tony, 2026-10-29:** the TDC overwriting an existing raw file only happens when
-  it is misconfigured: HeLab handles it as proposed **and shows a big warning**. The TDC may also
-  skip numbers on pause/resume, so per-shot plots offer a time axis or a short-index axis (A22.1).
-- **Q22.6 Raw layers whose raw file is gone (the only copy) or from an older parser:** proposed:
-  kept and used, labelled; Make room lists them last and names them; never removed automatically.
 - **Q22.7 The disk budget:** keep 8 GB (proposed; Settings shows the split) or raise the default
   (e.g. 20 GB)? Tony asked first to look harder at raw compression. Measured on the 309-shot
   sample set (13.7 M pulses, raw text 15.8 B/pulse): int64 time deltas + int8 channels, Blosc zstd
@@ -310,14 +269,6 @@ Q22.1–Q22.4, Q22.6 and Q22.8–Q22.10; Q22.5 explained and asked; Q22.7 compre
   compression is at its floor. The only big gain left would be a lossless codec that knows hit
   structure (corner pulses of a hit are correlated), which ties the raw layer to the converter:
   not proposed. Proposed: zstd 9 + byte shuffle on int64 deltas; raw layer ≈ 1.8× a TXY layer.
-- **Q22.11 Cache policy** (Tony, 2026-10-29): cache the raw layer and the selected TXY versions at
-  the same time; a global default to cache raw files; a per-folder override choosing the source
-  priority (MATLAB's TXY, or any HeLab profile tag), whose TXY layer is then cached too.
-- **Q22.8 Offline, may HeLab make and save a HeLab layer from the raw layer?** Proposed: yes (local
-  work only).
-- **Q22.9 A "clear this tag's data and its saved results" action?** Proposed: not now.
-- **Q22.10 Text for full-precision tags:** `%.17g` text so a beside or exported TXY equals its layer
-  (about twice the size), or text for export only, never loaded as data? Proposed: `%.17g`.
 
 ## Converter follow-ups as built (block 23)
 
@@ -332,8 +283,8 @@ Q12.7 confirmed as Q18.6 (the patterns now tagged).
   Folder details visible. Proposed: as built.
 - **Q23.3 No rows waits 20 s** before it is damaged (was: unconvertible once settled, Q10.2).
   Proposed: keep (one rule for all three checks).
-- **Q23.4 A plot's profile choice isn't saved** with presets, arrangements or reopened plots (Q14.2
-  still open): a reopened plot starts "As the folder's tab".
+- **Q23.4 A plot's profile choice isn't saved** with presets, arrangements or reopened plots: a
+  reopened plot starts "As the folder's tab". The same question as Q14.2: answer it there.
 - **Q23.5 The Live line turns amber for no-hit shots** (the whole line, which otherwise means
   "stopped"). Alternative: amber only in Folder details. Proposed: as built.
 - **Q23.6 A beside TXY from another computer with a colliding `u` tag** would be taken as current (no
@@ -379,9 +330,13 @@ Finding numbers refer to the
 
 ## v0.0.7 scope (block 6)
 
-- **Q6.2 Distributed results compute: what comes first?** (Postponed, below.) The roadmap
-  already has the parts: the [headless runner](../roadmaps/headless-analysis.md) and
-  [cross-machine result sharing](../roadmaps/network-runners-and-web.md#cross-machine-result-sharing).
+Q6.3, Q6.5, Q6.6 and Q6.8, and most of Q6.10 and Q6.11, are decided (above); the parts still open
+are here.
+
+- **Q6.2 Distributed results compute: what comes first?** **Postponed** (Tony, 2026-10-28):
+  "postpone distributed compute build until we have a very good working tdc_autoconvert within
+  helab". The roadmap already has the parts: the [headless runner](../roadmaps/headless-analysis.md)
+  and [cross-machine result sharing](../roadmaps/network-runners-and-web.md#cross-machine-result-sharing).
   Options:
   - (a) One machine (e.g. the acquisition PC) runs a headless HeLab that computes chosen
     results as shots settle, and other HeLabs read its completed results, read-only.
@@ -393,135 +348,34 @@ Finding numbers refer to the
   `.helab-root`), and which machines take part. Proposed: (a) first, over SSH, with results
   keyed by data root and input snapshot. It pairs with the converter on the same machine.
   (b) follows on the same runner; (c) is not planned.
-
-  **Postponed** (Tony, 2026-10-28): "postpone distributed compute build until we have a very
-  good working tdc_autoconvert within helab".
-- **Q6.3 The converter port's inputs.** Answered, 2026-10-28 (Tony in Chat):
-  - Q6.3.1: "there are many raw d files in Volume/X that you can read for testing": the X share
-    (`//…/X`, mounted at `/Volumes/192.168.137.1-4` on Tony's Mac). For example
-    `20241107_RT_low_mod_occ_350_mus` (10,911 raw, 10,904 `_txy_forc`, small shots) and
-    `2022_ghost_counts_debacle/20221123_ghost_counts_with_cut_1` (10 pairs, ~1.5 MB raw).
-    Read-only, and outside pytest (tests never touch real data).
-  - Q6.3.2: the goal is to replace MATLAB's `tdc_autoconvert` with HeLab, as a headless HeLab
-    converter, and Live can also toggle auto-convert. Converted files are named
-    `d_txy_helab_<N>.txy`. In the current build every HeLab-made TXY stays in HeLab's temp folder.
-  - Still planning: no building until the goals are clear.
-- **Q6.5 Implementation benchmark (spike).** (Decided, below.) Tony: "try build using few
-  different packages and benchmark, how about GPU accelerated?". Goal: choose how the reconstruction runs. A pure-Python
-  port of the MATLAB loop is the reference; each candidate must give the same output (event
-  counts, 8 significant figures) on the X samples. Candidates: NumPy vectorised, Numba, Cython or
-  Rust (PyO3), and GPU (CuPy on NVIDIA, PyTorch MPS or JAX on the Mac). Parsing, reconstruction
-  and writing are timed separately, on small and large shots, on the Mac and the acquisition PC.
-  Note on GPU: the matching is a greedy sequential pass over time-sorted pulses, and shots are
-  small (~3k–100k pulses), so copying to the GPU may cost more than it saves. Text parsing and
-  writing likely dominate. Proposed: go, as a spike on a floor whose only output is a results
-  note and the benchmark script; and which GPUs do the lab PCs have?
-
-  **Yes, benchmark first in a spike floor** (Tony, 2026-10-28), possibly one terminal agent per
-  numerical package; confirm the parallelisation plan first. Test on the local Apple Silicon Mac
-  for now. Lab machines vary: some have CUDA (version unknown), some only an Intel iGPU, so the
-  conversion backend must stay easy to switch. Also measure whether conversion keeps up with raw
-  files arriving at network speed (see Q6.9). More raw folders are a few levels down on X, an
-  HDD over the network, so read it sparingly. MATLAB check (Side, 2026-10-28): R2025b runs headless on Tony's
-  Mac (`matlab -nodisplay -batch`, ~5 s to start, core functions only). Both sample shots
-  (2022 ghost counts `d1`, 2024 `20241107` `d1111`) are reproduced **byte for byte** by the 2019
-  variant (`legacy/tdc_autoconverter`, `dlmwrite` precision 8); the 2023 variant writes 12–14 %
-  fewer hits (the x1 dead time). So the port's bar can be byte-identical output.
-
-  **Decided** (Tony, 2026-10-28): stages 1 and 2 build variants that reproduce the existing
-  MATLAB converter's results, and the code stays adaptable so the detector parameters can be
-  tweaked; later perhaps a parameter-space scan optimised on signals from real data. The
-  builder and a reviewer write the reference first (the reviewer cross-checks, also against
-  MATLAB run headless), then one builder per backend, all connected to the reviewer. Backends:
-  NumPy, Numba, Cython/C, Rust (PyO3), Apple GPU (MLX); not Julia, PyTorch or JAX (packaging).
-  Findings: [session notes](sessions/2026-10-28-claude-txy-converter-plan/findings.md).
-- **Q6.6 Which TXY a folder uses when both `d_txy_forc*.txt` and HeLab's `d_txy_helab_*.txy`
-  exist** (side by side on the acquisition PC, old archives re-converted with a better profile,
-  folders where MATLAB missed shots). Options: (a) MATLAB's by default, HeLab's filling only the
-  shots MATLAB lacks, with a per-folder "TXY from: MATLAB / HeLab (profile)" switch; (b) HeLab's
-  whenever they exist; (c) both, as two datasets of the same folder, for comparing. Either way
-  every dataset and saved result records its source (MATLAB, or HeLab's profile and version) so
-  caches never mix them, and Folder details and each plot's source line say which is shown.
-  Proposed: (a) now, (c) later as a comparison mode; the default flips to HeLab's after stage 5.
-  **Decided** (Tony, 2026-10-29): offer all three, (a), (b) and (c), in the plot settings.
 - **Q6.7 How other HeLabs get the acquisition PC's TXY** (Q6.2, as Tony framed it: the
   acquisition PC watches the raw files, converts them, maybe runs analysis; other HeLabs on the
   network fetch the TXY from its HeLab store). Options:
-  - (a) it writes `d_txy_helab_<N>.txy` beside the raw files on the share, as MATLAB does, and
-    other HeLabs read them as ordinary files;
+  - (a) it writes `d_txy_helab_<tag>_<N>.txt` beside the raw files on the share, as MATLAB does,
+    and other HeLabs read them as ordinary files (built as a per-folder option, Q9.7);
   - (b) its HeLab serves its store read-only (HTTP or SSH), and other HeLabs fetch by data root
     and shot;
   - (c) other HeLabs open its store folder over SMB: no, SQLite over SMB isn't safe.
 
   Proposed: (a) once HeLab replaces MATLAB (it needs nothing new and works with HeLab closed);
   (b) later, for analysis results, which have no file of their own.
-- **Q6.8 The Live auto-convert toggle.** (Answered, below.) Proposed: a per-folder switch in
-  the Live controls, remembered like Don't auto-load, off by default. **Answered** (Tony, 2026-10-28): "show auto convert
-  toggle after live is toggled". Later: configurations that turn on Live and auto-convert as soon
-  as HeLab starts (a roadmap item, not v0.0.7's first step).
 - **Q6.9 Store HeLab's TXY, or only cache it?** Tony: if conversion keeps up with raw files
   arriving at the network transfer limit, HeLab might never store TXY in the archives and keep
-  them only in its local cache. Waits for the Q6.5 benchmark (**done 2026-10-29**: on this Mac every
-  backend but the reference converts faster than gigabit delivers raw files, numpy on one core
-  included; the lab PCs are untimed, M11.1). Tony, 2026-10-28: "real
-  experiments have one d every ~30s"; the target is converting faster than raw files cross the
-  network, so other HeLabs read the raw files and convert them as they read, with no TXY stored.
-  On X, TXY is 27–41 % of the raw size (2022 and 2024 folders), so the TXY archive is ~22–29 % of
-  a folder; reading raw files moves 2.4–3.6× the bytes on a first, uncached load.
-- **Q6.10 Detector profiles and the default variant.** Both MATLAB variants hard-code the old
-  detector: channel map, one time sum (3200 bins) ± 200, v⊥ on both axes, a 36-row search; the
-  2023 lab edit adds an x1 dead time of 0.5 µs (−12–14 % hits) and time sums 3390/3275 in T only.
-  If those are the post-2023 detector's time sums, the 2019 converter may drop hits at the
-  outer x edge and stretch X by ~6 % (untested; [notes](sessions/2026-10-28-claude-txy-converter-plan/findings.md)).
-  Also: the ambiguous-x2 quirk (nearest kept, not rejected as the comment intends). Proposed:
-  the constants become a named detector profile; the default reproduces the 2019 converter byte
-  for byte; the 2023 edit and any corrected profile are separate, checked on their own; which
-  shots came from which detector is Tony's to say. Tony, 2026-10-28: the MCP plates changed in ~2022 and in 2025
-  (on X, the He3/He4 folders' `old_plates` end 2022-07 and `new_plates` start 2023-02); look into
-  the x2 handling while building. Probe results (old vs new plates, MCP-measured time sums
-  x 3367 / y 3294 bins in 2022-11) are in the notes. Detailed for Tony, 2026-10-29: profiles
-  `matlab-2019` (exact), `matlab-2023-lab-edit`, and `plates-2017/2022/2025` (copies of
-  `matlab-2019` until calibrated). Proposed: new conversions use `matlab-2019` until a plate
-  profile is calibrated and approved, then the plate profile valid on the shot's date (the raw
-  file's time, as D7 reads it), with a per-folder override; MATLAB's quirks stay only in
-  `matlab-2019`. Needed from Tony: the plate swap dates (2017; ~2022, between 2022-07-29 and
-  2023-02-04 on X; 2025) and whether the 2022-11 ghost-counts run was on the old or new plates.
-  **Answered** (Tony, 2026-10-29): the default is `matlab-2019`; the 2022-11 ghost-counts run was
-  on the new plates (so the ~2022 swap falls between 2022-07-29 and 2022-11-23, and the
-  MCP-measured time sums x 3367 / y 3294 are the 2022 plates'); a plate profile may change every
-  parameter we might want to calibrate (listed in the [plan](../roadmaps/txy-converter.md)).
-  Swap dates (Tony, 2026-10-29): 2017-03-17 and 2025-06-18; the 2022 date is unknown. On X the
-  last old-plate run is 2022-08-22 and the first named for the new plates is
-  `20221103_bragg_beam_tests_new_plates`, so provisionally 2022-11-03 until a closer date is found.
-- **Q6.11 Detector calibration in the converter plan.** Tony, 2026-10-28: the 2025 plates have
-  not been calibrated yet; plan for calibrating. Proposed: a calibration stage after the
-  byte-identical reference, built on D11's raw-pulse diagnostics (time sums from MCP pulses and
-  by position, x−y sum difference, pulse spacing for ringing and dead time, hotspot and
-  efficiency maps from dark counts and flat fields) plus a geometry check on known shapes
-  (Momentum Bells halos: radius and roundness; BEC position). Its output is a versioned detector
-  profile with a valid-from date and plate, recorded with every TXY HeLab makes. Questions:
-  where is 2025 data; was the MCP channel recorded; can the lab take a calibration set (dark run,
-  large thermal cloud, a halo, with the MCP channel on); where profiles live (proposed: built-in
-  ones in the repo, the lab's in one shared file beside the data). **Answered** (Tony, 2026-10-28): profiles are JSON files; the
-  2017, 2022 and 2025 plates' profiles are built into the app, which can import, export and
-  tweak them; the 2025 profile is marked uncalibrated. The MCP diameter hasn't changed; there is
-  no mask or grid. The file server with post-2025 data is offline for now; Tony will say when it
-  is back. Still open: whether the lab can take a calibration set, and whether the MCP channel
-  was recorded in 2025. Detailed for Tony, 2026-10-29: the 2017 and 2022 plates can probably be
-  calibrated from data on X (2019–2021 halos; 2023 halos in `2020_Momentum_Bells/Full_S_RT`;
-  the 2022-11 ghost counts with MCP pulses if on the right plates); only 2025 needs new data.
-  Also open: when a profile counts as calibrated (proposed: halo roundness and radius within 1 %,
-  time sums measured with their spread, a hotspot map) and who approves (proposed: Tony, from a
-  calibration report HeLab shows before saving). **Answered** (Tony, 2026-10-29): with halos,
-  calibrated means the parameters that maximise the correlation across halos (the back-to-back
-  pair correlation); also hotspot maps and efficiency, by region, with the other parameters
-  listed. Calibration data for the 2025 plates exists but isn't reachable now; meanwhile use the
-  old data in X's `dld_output_cheerypicked` (2022 plates: `20221212_new_plates_halo_test_4`,
-  2,423 shots; `20230130_new_plates_halo_3_halos`, 797; many 2023–2024 halo runs; none of those
-  checked has MCP pulses). Tony approves calibrations (2026-10-29). Provisional calibrations
-  from the data on X come after the converter is built (stage 3), not before; the halo runs are
-  copied to `~/HeLab-samples/calib-v1/` for then. The 2025 data should be reachable within a few
-  days.
+  them only in its local cache. The Q6.5 benchmark is done (2026-10-29: on this Mac every backend
+  but the reference converts faster than gigabit delivers raw files, numpy on one core included;
+  the lab PCs are untimed, M11.1). Tony, 2026-10-28: "real experiments have one d every ~30s"; the
+  target is converting faster than raw files cross the network, so other HeLabs read the raw files
+  and convert them as they read, with no TXY stored. On X, TXY is 27–41 % of the raw size (2022
+  and 2024 folders), so the TXY archive is ~22–29 % of a folder; reading raw files moves 2.4–3.6×
+  the bytes on a first, uncached load. Caching v2 answers it in effect (Q19.9: cache the raw
+  files; Q19.1, to decide: HeLab writes TXY only beside the raw files or on export). Proposed:
+  close Q6.9 as answered by caching v2, with Q19.1 still to decide.
+- **Q6.10 (still open) The ~2022 plate swap date.** On X the last old-plate run is 2022-08-22 and
+  the first named for the new plates is `20221103_bragg_beam_tests_new_plates`, so 2022-11-03
+  provisionally until a closer date is found.
+- **Q6.11 (still open) Calibration data:** can the lab take a calibration set (a dark run, a large
+  thermal cloud, a halo, with the MCP channel on), and was the MCP channel recorded in 2025? The
+  2025 plates' calibration data exists but wasn't reachable on 2026-10-29 (expected within days).
 
 ## After the v0.0.6 release (not blocking)
 
@@ -561,7 +415,7 @@ that block it become Q items here, as the converter's did (Q6.6–Q6.11).
   Q1.6).
 - [Analysis job runner](../roadmaps/analysis-job-runner.md#open-decisions): 7.
 - [Network runners and web](../roadmaps/network-runners-and-web.md#open-decisions): 7.
-- [Live monitoring](../roadmaps/live-monitoring.md#open-decisions): 6.
+- [Live monitoring](../roadmaps/live-monitoring.md#open-decisions): 3.
 - [Headless analysis](../roadmaps/headless-analysis.md#open-decisions): 5.
 - [Run comparison and batch](../roadmaps/run-comparison-and-batch.md#open-decisions): 5.
 - 4 each: [agent workflow](../roadmaps/agent-workflow.md),
@@ -573,5 +427,7 @@ that block it become Q items here, as the converter's did (Q6.6–Q6.11).
 - [App updates](../roadmaps/app-updates.md#open-decisions): 3.
 - In prose: [quality control and repair](../roadmaps/quality-control-and-repair.md#acceptance-and-open-decisions),
   [reproducible workflows](../roadmaps/reproducible-workflows.md#dependencies-and-open-decisions).
-- [TXY converter](../roadmaps/txy-converter.md#open-decisions): already Q6.6–Q6.11, plus two
-  smaller ones there.
+- [TXY converter](../roadmaps/txy-converter.md#open-decisions): Q items (Q6.7, Q6.9–Q6.11, block
+  12, Q14.2, Q14.4, Q15.3, block 23), plus one smaller question there.
+- [Caching v2](../roadmaps/caching-v2.md#open-decisions): Q items (Q19.1–Q19.3, Q19.5–Q19.8,
+  Q22.7); its design is in the store-v4 design note.

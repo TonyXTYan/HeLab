@@ -115,13 +115,25 @@ Codex review); the architecture summary is in [live](../.ai/architecture/live.md
   check (metadata only, by Tony's decision: its content isn't checked). A writer
   paused longer than the settle age is read unfinished; a shot Live read in the
   last 5 minutes that then changes is read again (by checks and by saves), with a
-  note for a minute and a WARNING. The converter's temp-name rename remains the
-  real fix (planned).
+  note for a minute and a WARNING. HeLab's own conversions write to a temporary
+  name and rename (`write_atomic`, Q18.6); MATLAB's converter gets no change (Q9.8).
 - A Live check pauses background work only while it reads a file (measured: 15 %
   of a background load paused otherwise).
-- Live greys out the tab's explorer; switching tabs turns Live off and saves.
+- Live greys out the tab's explorer (since Q18.3, 2026-10-29: Live on collapses the
+  whole left panel, Q23.2); switching tabs turns Live off and saves.
   Errors keep Live on with the data and a Retry; nothing retries by itself.
 - Quit waits for every save a subscriber asked for, with Quit now.
+
+## Decided in L4 (2026-10-29)
+
+Built by the TXY Live floor (`6454b4a`) and the follow-ups (`c718c71`); mechanics in
+[live](../.ai/architecture/live.md) and [converter](../.ai/architecture/converter.md).
+
+- **Auto-convert** is a toggle shown once Live is on (Q6.8), reset each session (Q9.6).
+- **One launch folder** (Q9.6, Q18.3): Live runs in one folder only; a folder set to start Live
+  and auto-convert at launch opens alone, and Live on collapses the left panel.
+- **Low-count alerts** through system notifications: `convert_low_hits`, default 100 hits, once
+  per shot; a rate or per-folder thresholds later (Q15.3, open).
 
 ## Plots following Live: L3 (decided by Tony 2026-10-19)
 

@@ -16,7 +16,9 @@ session reviewed by Codex until clean.
 
 - **Old cache dropped, not migrated** (early development). Records are plain JSON text in SQLite
   (`store-v2/records.sqlite` then, `store-v3/records.sqlite` since data roots; WAL); datasets stay Blosc-compressed pickles in files (a
-  pickle-free format is an unchosen roadmap idea). **Only helper processes open the store.**
+  pickle-free format is an unchosen roadmap idea, planned in store-v4, `caching-v2.md`). **Only helper
+  processes open the store** (and, since the converter, `helab convert`, a headless process
+  without the GUI; AGENTS.md).
 - **Nothing is removed without the user asking.** Records are kept forever and never removed
   to make room. Removals go through one store function that bumps generations/epochs, so a
   save already running can't bring removed data back.

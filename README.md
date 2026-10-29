@@ -119,6 +119,7 @@ A release build (`pyinstaller HeLab.spec`) ships cython's kernel only if `native
 
 ```bash
 helab              # or: python -m helab
+helab convert --watch FOLDER [--once] [--output temp|cache|beside]   # headless TXY converter
 ```
 
 On later runs, just activate `venv` and run `helab`. Without activating, run `venv/bin/helab` (macOS/Linux) or `venv\Scripts\helab` (Windows).

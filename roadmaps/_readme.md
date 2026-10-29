@@ -27,25 +27,29 @@ there; `dev/v0.0.7` goes to `main` by PR, with the version bump on that branch.
 compute is postponed until the converter works well (Q6.2).
 
 - [ ] The TXY converter port (`HeBECANU/tdc_autoconverter`, `lib/dld_raw_to_txy_counts.m`;
-  [Live L4](live-monitoring.md#stages)): replace MATLAB's converter with a headless HeLab
-  converter, and a Live auto-convert toggle shown once Live is on (Q6.3, Q6.8). Output
-  `d_txy_helab_<N>.txy`, written to a temporary name and renamed; for now every HeLab-made TXY
-  stays in HeLab's temp folder. **The bar is byte-identical output:** the 2019 MATLAB variant
-  reproduces existing `_txy_forc` files byte for byte, while the 2023 lab edit (x1 dead time
-  0.5 µs, separate tsums) writes 12–14 % fewer hits
+  [Live L4](live-monitoring.md#stages)): a headless HeLab converter (`helab convert --watch`) and
+  Live's auto-convert toggle replace MATLAB's converter (Q6.3, Q6.8). Output
+  `d_txy_helab_<tag>_<N>.txt` (Q18.4), written to a temporary name and renamed, into HeLab's cache
+  (the default) or temp folder, or beside the raw files as a per-folder option (Q9.3, Q9.7). **The
+  bar is byte-identical output:** `matlab-2019` reproduces 303 of the 309 sample shots and the
+  other 6 are proved reference faults
   ([findings](../.ai/sessions/2026-10-28-claude-txy-converter-plan/findings.md),
   [legacy notes](../.ai/sessions/2026-10-20-claude-dld-front-panel-review/core-update.md#import-and-reconstruction)).
-  Stages: a reference port cross-checked against MATLAB run headless (**done 2026-10-29**,
-  `d26e196`), a benchmark spike, then one builder per backend (NumPy, Numba, Cython/C, Rust, MLX)
-  (Q6.5; **done 2026-10-29**, `3bd791c`: NumPy the default, Q11.2 on which fast backend to keep);
-  stage 4 (in HeLab) started. Open: detector profiles and
-  calibration (Q6.10, Q6.11), which TXY a folder uses (Q6.6), how other HeLabs get it (Q6.7),
-  store or cache only (Q6.9). Building decisions: Q9.1–Q9.9 (MATLAB's converter gets no
-  temp-name change, Q9.8); v0.0.7 ships with stages 1, 2 and 4 (Q9.9).
-  [Plan](txy-converter.md) (2026-10-29; focus 2026-10-28).
+  Stage 1, the reference cross-checked against MATLAB run headless: **done 2026-10-29**
+  (`d26e196`). Stage 2, one floor per backend: **done 2026-10-29** (`3bd791c`); NumPy the default,
+  Cython optional, the reference kept; numba, MLX and Rust left the build (Q11.2, `134e2ec`).
+  Stage 4, in HeLab: **done 2026-10-29** (`02cda86`; Tony's follow-ups: tagged names, four source
+  modes, one launch folder, damaged raw files, `c718c71`). Stage 3 (calibration) and stage 5
+  (replacing MATLAB) **not started**, after v0.0.7 (Q9.9). Open: Q6.7, Q6.9–Q6.11, Q12.x, Q14.2,
+  Q14.4, Q15.3, Q23.x ([plan](txy-converter.md#open-decisions)). [Plan](txy-converter.md)
+  (2026-10-29; focus 2026-10-28).
+- [ ] Release v0.0.7 (Q9.9: stages 1, 2 and 4 plus the smoke pass). Left: the smoke pass on a Mac
+  and a lab PC, with a converter step (which checks: Q24.3); Q23.1, the tags frozen once released;
+  the version bump on the PR branch (`helab/_version.py` is still `0.0.6a1`); the PR to `main`; the
+  release tidy-up (Q8.3) (2026-10-29).
 - [ ] Caching v2: the raw d files as the cached source (a raw layer of pulses plus TXY layers per
-  profile tag, with a per-folder policy); planning only, no code until Tony's go
-  ([plan](caching-v2.md), Q19.x, 2026-10-29).
+  profile, with a per-folder policy) in a fresh store-v4. v0.0.7 covers its planning only;
+  building follows Tony's explicit go ([plan](caching-v2.md), Q19.x, Q22.x, 2026-10-29).
 - [ ] Distributed results compute: one machine computes analysis results and other HeLabs use
   them without repeating the work. It builds on the [headless runner](headless-analysis.md)
   and the [network extension](network-runners-and-web.md#cross-machine-result-sharing).
@@ -182,7 +186,8 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
   staged 2026-10-15). New shots stay in RAM; the disk cache is written every
   N shots (configurable) and when monitoring stops or HeLab quits
   ([decided](live-monitoring.md#dataset-cache-writes-while-monitoring)) (2026-10-13).
-  L1–L3 done (2026-10-19): plots follow Live; L4 (converter in HeLab) next.
+  L1–L3 done (2026-10-19): plots follow Live. L4 auto-convert done 2026-10-29 (`6454b4a`,
+  `c718c71`); converter stage 5 replaces MATLAB.
 - [ ] QC script catalogue and safe derived-file repairs, kept in HeLab's cache
   folder; migrate the current status scan as its first provider
   ([plan](quality-control-and-repair.md)) (2026-10-14; revised 2026-10-15).
@@ -226,7 +231,8 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
 
 - [ ] Dataset format without pickle (JSON header + Blosc-compressed raw buffers, possibly
   Blosc2), for safety and numpy-version independence. Kept as pickle for now
-  ([plan](cache-storage-and-settings.md#decisions-tony-2026-10-10)) (2026-10-10).
+  ([plan](cache-storage-and-settings.md#decisions-tony-2026-10-10)) (2026-10-10). Planned in
+  store-v4 as pickle-free `.hlb` files ([caching v2](caching-v2.md)), not yet approved.
 
 - [ ] Lower a load's peak memory: the helper compresses the saved `.npy` artifacts
   for the cache instead of holding a second copy of every shot (2026-10-10).

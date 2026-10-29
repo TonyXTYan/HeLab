@@ -46,7 +46,13 @@ his settings and cache, the packaged release, or each other.
   updates those when merging.
 - **Review**: by a different model from the author where possible; the
   reviewer reads the actual diff and reruns critical checks. Branches are
-  integrated one at a time, with the full suite after each.
+  integrated one at a time, with the full suite after each. Today a Codex
+  reviewer stalls unattended on approval prompts, even for `maestri`, so it
+  reviews only while Tony is at the screen; unattended, a fresh Claude
+  reviewer does it (2026-10-29; Tony's question Q24.1 in
+  [DECISIONS_TODO](../.ai/DECISIONS_TODO.md)).
+- **Supervised runs** (Tony away, an agent approving for him under a written
+  mandate): proposed, see Q24.2 in [DECISIONS_TODO](../.ai/DECISIONS_TODO.md).
 - **Models** (decided 2026-10-19): Claude agents (coordinator, assistant,
   workers, reviewers) run **Opus 5.5** by default, at the effort the
   coordinator judges the task needs. **Fable** (any Fable model) runs only
@@ -71,6 +77,10 @@ hook, landing): [.ai/maestri-setup.md](../.ai/maestri-setup.md).
 2. The coordinator creates the floor on a new branch:
    `maestri floor create "<Task>" --branch agent/<task>`, from a ground
    checkout of the chosen commit, then recruits a worker on it with the brief.
+   Ground must be clean first (`git status --short` prints nothing): a floor
+   made from the command line copies Ground's working tree, uncommitted and
+   untracked files and `.ai/temp` included
+   ([setup §4](../.ai/maestri-setup.md#4-floor-setup-hook)).
 3. Floor setup: the Maestri setup hooks, run once per floor
    ([setup §4](../.ai/maestri-setup.md#4-floor-setup-hook)):
    - **Python**: the floor's copy-on-write venv has the right packages but is
@@ -95,20 +105,30 @@ hook, landing): [.ai/maestri-setup.md](../.ai/maestri-setup.md).
      floor, a traceback naming `../../../HeLab/tests/…`, 2026-10-22). A setup hook step
      does it ([setup](../.ai/maestri-setup.md#4-floor-setup-hook)).
    - **Tests**: own `--basetemp`, and about `-n 4` per worker when several run.
+     Two agents on one floor (a builder and a cross-checker) each get their own
+     (`.ai/temp/pytest-<name>`): pytest empties its basetemp.
    - CodeGraph: initialise `.codegraph/` in the floor if the worker uses it.
 4. The worker commits as it goes; when done it writes its handoff, pushes its
    branch and posts `--state review`.
 5. The coordinator reviews, applies the handoff's doc changes, and asks Tony
-   before landing or opening a PR.
+   before landing or opening a PR. A floor lands only when the
+   [landing conditions](../.ai/maestri-setup.md#6-landing) hold: the reviewer
+   has no open findings; the branch's latest CI run is green on all three OSes
+   (every job, both test groups and the converter backends included), checked
+   and quoted by run ID; the full suite and the type checks (also for
+   Windows: `mypy --platform win32`, `pyright --pythonplatform Windows`)
+   pass, with output kept whole and every RERUN explained or filed; and
+   Ground is clean before the merge.
 
 Each push starts the full CI matrix (macOS, Windows, Ubuntu), so agents push only at
 checkpoints, never with every commit: when the work is done, after review fixes, or when a CI
 run is worth it, e.g. to check a fix on Windows (Tony, 2026-10-29).
 
 **Piloted** (floors since 2026-10-19): what the clone includes (Ground's
-gitignored files, minus the excluded folders), the setup hooks, landing with
-`--into` and clean-up that keeps branches are in the
-[setup guide](../.ai/maestri-setup.md).
+whole working tree, gitignored files too; folders are excluded only from the
+app's create dialog), the setup hooks, landing (a `git merge` on Ground, or
+Maestri's land with `--keep-floor`) and clean-up that keeps branches are in
+the [setup guide](../.ai/maestri-setup.md).
 
 ## Cloud agents (kept open)
 

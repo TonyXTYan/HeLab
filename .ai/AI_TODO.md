@@ -140,10 +140,12 @@ From the `agent/txy-reference` handoffs ([builder](sessions/2026-10-29-claude-tx
 [cross-checker](sessions/2026-10-29-claude-txy-reference/crosscheck/handoff.md)); detail in
 [converter.md](architecture/converter.md).
 
-- **A10.1 Settle checks, with the evidence** (stage 4, `agent/txy-helab-core`): 2019-halos d3667
+- [x] **A10.1 Settle checks, with the evidence** (done in stage 4 core, `5cf4652`, landed `775fb1d`;
+  converter.md's settle rules) (stage 4, `agent/txy-helab-core`): 2019-halos d3667
   shows MATLAB converting a raw file 0.25 s after its last write and losing the end of the shot.
   Test the settle check with a synthetic half-written file.
-- **A10.2 Backend constraints** (stage 2, every backend floor): all 39 cases and every sample shot,
+- [x] **A10.2 Backend constraints** (done in the stage 2 landings `d522691`, `32158c2`, `7031bea`,
+  `aecbe68`, `ed35099`) (stage 2, every backend floor): all 39 cases and every sample shot,
   including the phantom row, `NoRowsError` and stable NaN-last sorts (`kind="stable"`). A split of
   one shot keeps the global `t_zero`, the first-row skip (first piece only), the whole-file
   `floor(N/4)` preallocation, the 2023 cuts (only at gaps over 20,000 bins, or before splitting)
@@ -151,23 +153,27 @@ From the `agent/txy-reference` handoffs ([builder](sessions/2026-10-29-claude-tx
   `dead_time_x1` cases.
 - [x] **A10.3 Built-in profiles as JSON files** in the package (stage 4, Q6.11), each tested to load
   equal to the Python definitions. Done in `475c6a6` (`agent/txy-ui`).
-- **A10.4 Durable HeLab TXY writes** (stage 4): use `txy.write_atomic` (new file with mode
+- [x] **A10.4 Durable HeLab TXY writes** (done in `5cf4652`, landed `775fb1d`; `io_ops/convert.py`)
+  (stage 4): use `txy.write_atomic` (new file with mode
   `0o666` under the umask, fsync, rename, folder fsync) for `d_txy_helab_<N>.txy`, which matters
   once they go beside raw files on a share (Q9.7).
-- **A10.5 A conversion with no hits writes an empty HeLab TXY** (stage 4; Q10.3, Side overnight).
+- [x] **A10.5 A conversion with no hits writes an empty HeLab TXY** (stage 4; Q10.3, confirmed by
+  Tony 2026-10-29). Done in `5cf4652` (converter.md, `pipeline`).
 
 ## Converter stage 2 (block 11)
 
 From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-txy-*/handoff.md`).
 
-- **A11.1 Packaging the backends** (stage 4, `agent/txy-packaging`): build cython and rust in CI on
+- [x] **A11.1 Packaging the backends** (done in `7cb168e`; since `134e2ec` only numpy, cython and the
+  reference ship, Q11.2) (stage 4, `agent/txy-packaging`): build cython and rust in CI on
   all three OSes (MSVC from VS 2022 17.0+, never `/arch:AVX2` with an older toolset; GCC/clang with
   `-ffp-contract=off`; maturin abi3-py311, no `target-cpu=native` for the Sandy Bridge lab PC), make
   their tests required there (a missing extension fails, not skips) and check each built kernel
   equals the reference on `tests/data/convert/`; numba (with llvmlite) in the lock if it ships;
   mlx's GPU tests only where Metal exists (print `mx.metal.is_available()` first); `hiddenimports`
   for every `_MODULES` backend and mlx's `collect_*`.
-- **A11.2 In the helper** (stage 4, `agent/txy-helab-core`): `numba_backend.set_cache_folder(<cache_dir()>/numba)`
+- [x] **A11.2 In the helper** (done in `5cf4652`, landed `775fb1d`; numba's folder is now under the
+  temp folder, Q18.1, `874fd2b`) (stage 4, `agent/txy-helab-core`): `numba_backend.set_cache_folder(<cache_dir()>/numba)`
   before first use, and after a cache-folder move restart helpers that loaded the kernels (or accept
   a stray old folder); a lock in `reconstruct._load`; convert across shots in long-lived processes,
   no within-shot splitting for the fast backends.
@@ -188,7 +194,8 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 - **A12.2 `HeLab.exe convert` on Windows** (`agent/txy-packaging`): the windowed exe has no console;
   check where its output goes, and consider a console launcher (`HeLab-convert.exe`) if the
   acquisition PC needs one.
-- **A12.3 Live sends the summary back** (`agent/txy-live`): every `convert_summary`'s lists as
+- [x] **A12.3 Live sends the summary back** (done in `573c86b`, landed `6454b4a`; `folder_cache.py`'s
+  `convert` payload) (`agent/txy-live`): every `convert_summary`'s lists as
   `seen`/`done`/`kept`/`skip`, so done shots aren't checked again and unfinished ones aren't read again
   (`seen` is required).
 - [x] **A12.4 JSON leftovers in `converted-txy/`** (done in Quick Fixes 5, `2b9435a`): conversions remove their own leftover temporary TXY
@@ -231,25 +238,33 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 
 ## Tony's answers on the converter (block 17)
 
-- **A17.1 Warn about raw files with no hits** (Q10.3): the HeLab GUI shows a warning for shots
-  whose conversion found no hits (Folder details and the Live line), with the shot numbers.
-- **A18.1 Folder status and HeLab's TXY** (Q14.4): on Tony's next list; whether a folder's status
-  and counts include HeLab's TXY. Waits for Tony.
-- **A17.2 Two pytest groups per OS in CI** (Q16.2 b): split the test job into two shards on
-  every OS, keeping the typing-tests-first ordering (Quick Fixes 6); no limit raised.
+- [x] **A17.1 Warn about raw files with no hits** (Q10.3; done in `62d156e`): the HeLab GUI shows a
+  warning for shots whose conversion found no hits (Folder details and the Live line), with the
+  shot numbers.
+- [x] **A17.2 Two pytest groups per OS in CI** (Q16.2 b; done in `874fd2b`, `ci-test.yml`'s
+  `--test-group`): split the test job into two shards on every OS, keeping the typing-tests-first
+  ordering (Quick Fixes 6); no limit raised.
 
-## Quick Fixes 6 (block 20)
+## Converter follow-ups (block 18)
 
-- **A20.1 Correct the slow-first hook's comment** (`tests/conftest.py` ~158-161, and the floor's notes):
-  workers never see the command line's `--dist` (xdist sets `dist = 'no'` on every worker), so the
-  `spread` check is always true under xdist; drop it and fix the comment. Harmless today (Tern).
+- [x] **A18.1 Folder status and HeLab's TXY** (Q14.4): merged into A23.1; the question is Q14.4.
 
 ## Caching after the converter (block 19)
 
-- **A19.1 Settings › Cache shows and clears HeLab's TXY in the temp folder too** (audit I4, I6):
-  `converted_usage` and `clear_converted` over both places.
-- **A19.2 Clear converted TXY vs a running conversion** (audit K4): `clear_converted` takes a fence
-  a conversion checks before each write, or the docs say a running conversion may write after it.
+**On hold: Tony's go (block 19).** Tony, 2026-10-29: no cache coding until his explicit go, "A19.1
+and A19.2 included"; don't start these without it.
+
+- **A19.1 Settings › Cache shows and clears HeLab's TXY in the temp folder too** (audit I4, I6;
+  on hold): `converted_usage` and `clear_converted` over both places.
+- **A19.2 Clear converted TXY vs a running conversion** (audit K4; on hold): `clear_converted` takes
+  a fence a conversion checks before each write, or the docs say a running conversion may write
+  after it.
+
+## Quick Fixes 6 (block 20)
+
+- **A20.1 Correct the slow-first hook's comment** (`tests/conftest.py` ~205-209, and the floor's notes):
+  workers never see the command line's `--dist` (xdist sets `dist = 'no'` on every worker), so the
+  `spread` check is always true under xdist; drop it and fix the comment. Harmless today (Tern).
 
 ## TXY ship (block 21)
 
@@ -270,9 +285,16 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 
 ## Converter follow-ups (block 23)
 
-- **A23.1 Count HeLab's TXY of the tab's tag in folder status** (A18.1, waits for Tony).
+- **A23.1 Count HeLab's TXY of the tab's tag in folder status** (also A18.1). Waits for Q14.4.
 - **A23.2 Colour only the no-hit part of the Live line** if `ElidedLabel` learns rich text (Q23.5).
 - **A23.3 Remove the `live_launch_folders` row and its migration** a release or two after v0.0.7.
+
+## Docs audit 2 (block 24)
+
+- **A24.1 Enforce `helab/convert/` as Qt-free** (architecture audit 2, #6): extend
+  `tests/test_headless_imports.py` to walk `helab.convert` (`pkgutil.walk_packages`) with
+  `backends.numba_kernels` as optional only, so a converter module that imports Qt or
+  `helab.utils.constants` fails CI; then `converter.md` and AGENTS.md can say it is enforced.
 
 ## Not AI work (stays in MANUAL_TODO)
 

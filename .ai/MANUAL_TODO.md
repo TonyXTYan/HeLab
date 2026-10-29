@@ -12,7 +12,7 @@ The v0.0.5a checks below were added on 2026-10-08 and remain pending.
 
 Decisions only Tony can make are in [DECISIONS_TODO](DECISIONS_TODO.md), and work agents
 may do without asking in [AI_TODO](AI_TODO.md). Items here have `M` IDs ([ID_BLOCKS](ID_BLOCKS.md)): the
-smoke pass is M1.1–M1.8, and older items get IDs as they're touched. Items below the smoke pass that it doesn't
+smoke pass is M1.1–M1.9 (M1.9 added 2026-10-29, Q24.3), and older items get IDs as they're touched. Items below the smoke pass that it doesn't
 cover are lab validation, and don't gate a release (Tony, 2026-10-28: Q1.1).
 
 ## Release smoke pass
@@ -21,6 +21,9 @@ cover are lab validation, and don't gate a release (Tony, 2026-10-28: Q1.1).
 ([results](sessions/2026-10-28-claude-smoke-mac/results.md)): all passed except M1.3 (skipped,
 no run acquiring) and M1.7's plots, which need Tony's look. Tony released on it and on his own
 use (Q6.1). The lab PC pass and M1.3 Live are the first checks of v0.0.7.
+
+**v0.0.7:** the pass has no converter step yet; which converter checks below join it is Q24.3
+([DECISIONS_TODO](DECISIONS_TODO.md)).
 
 These checks gate a release (Tony, 2026-10-28: Q1.1; amended for v0.0.6a1 by Q6.1, above). Run the pass once
 on a Mac and once on a lab PC (Windows), on the release candidate. Steps marked **Lab PC**
@@ -131,10 +134,15 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   (Q1.7, [DECISIONS_TODO](DECISIONS_TODO.md#q17-windows-3d-scatter-window-flicker))? If the pane is black, Open in
   browser works.
 
-## Converter in the running app (added 2026-10-29)
-
-- [ ] **M18.1 Start-at-launch in the running app** (Q15.1): check the launch-folder setting and
-  Live with auto-convert starting at launch, in a real HeLab session.
+### M1.9 Live convert and plot update (Q24.3, Tony 2026-10-29)
+- **Do:** make a scratch folder with a data root (Place .helab-root here…), copy three raw
+  `d<N>.txt` from `~/HeLab-samples/txy-v1/2024-11-rt-low-occupancy/` into it (raw files only, no
+  TXY), open it, start Live, turn on Auto-convert, and open Shot trends and a density image. Then
+  copy three more raw files in, one every ~10 s.
+- **Expect:** each shot converts once written (the Live line counts them; no damaged or no-hit
+  warning for these shots), the plots update with every new shot, and the data's source reads
+  HeLab (`m19v1`). Turning Live on collapses the left panel. Nothing is written into the folder
+  unless Write beside is on.
 
 ## Maestri floor hooks (added 2026-10-28)
 
@@ -155,13 +163,13 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   file. Worth knowing before stage 5 compares HeLab with MATLAB on every shot.
 
 - [ ] **M11.1 Time the converter on the lab PCs** (Tony, at each PC, not over SSH: an elevated SSH
-  session has poisoned HeLab's cache settings on the Main PC before): numpy, and the chosen compiled
-  backend once CI builds it (numba too if it still ships: first compile, cache location, identical
-  output), with `sessions/2026-10-29-claude-txy-bench/bench.py --mode serial` and `processes-warm`
-  at x2 and x4 on a copy of the sample set. Decides whether one core there keeps up with gigabit
-  (Q11.2). Optional: repeat the Mac's x12/x16 rows with Safari closed.
-- [ ] **M11.2 A CI-built rust (or cython) wheel on a lab PC** (Windows, Sandy Bridge): install it and
-  convert one shot with that backend, to see it load there.
+  session has poisoned HeLab's cache settings on the Main PC before): numpy and cython, the two
+  shipped backends (Q11.2; cython from the CI build), with
+  `sessions/2026-10-29-claude-txy-bench/bench.py --mode serial` and `processes-warm` at x2 and x4 on
+  a copy of the sample set. Shows whether one core there keeps up with gigabit (Q6.9). Optional:
+  repeat the Mac's x12/x16 rows with Safari closed.
+- [x] **M11.2 A CI-built rust (or cython) wheel on a lab PC**: superseded by M16.1 (cython only, since
+  rust no longer ships).
 - [ ] **M11.3 Keep the MATLAB 2023 reference outputs**: the 32 files in the TXY Reference floor's
   `.ai/temp/txy/matlab-2023/` are the only 2023-variant reference set on this Mac. Proposed: copy
   them beside the sample set (e.g. `~/HeLab-samples/txy-v1-matlab-2023/`, read-only) before that
@@ -187,17 +195,20 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
 - [ ] **M15.2 The Auto-convert button on Windows and macOS** (its menu arrow, the checked look, the
   menu's texts).
 
-- [ ] **M16.1 Compiled backends on the Sandy Bridge lab PC**: the CI Windows build's `HeLab.exe convert
-  --watch <copy of a run> --once --backend rust` and `--backend cython` load and convert (no AVX2: the
-  rust crate has no `target-cpu`, cython builds with `/O2 /fp:precise`). Supersedes M11.2.
-- [ ] **M16.2 macOS signing and Gatekeeper** accept the new `.so`/`.dylib` files in a release
-  `HeLab.app` (`helab_convert_rs.abi3.so`, the cython `_kernel`, libmlx, libllvmlite).
+- [ ] **M16.1 The compiled backend on the Sandy Bridge lab PC**: the CI Windows build's `HeLab.exe
+  convert --watch <copy of a run> --once --backend cython` loads and converts (no AVX2: cython builds
+  with `/O2 /fp:precise`). Supersedes M11.2. (Rust no longer ships, Q11.2.)
+- [ ] **M16.2 macOS signing and Gatekeeper** accept the cython `_kernel` extension in a release
+  `HeLab.app` (the only compiled converter file that ships since `134e2ec`; rust, mlx and llvmlite
+  don't).
 
 - [ ] **M23.1 TXY sources and profiles in the app**: Settings → TXY converter shows "Tabs and Live
   read"; a plot's TXY row has the source and profile combos; HeLab only + plates-2022 loads its own
   data and the source line says `TXY: HeLab only (p22v1)`.
 - [ ] **M23.2 The launch folder**: set one, restart: only its tab opens, Live and auto-convert start,
-  the left panel collapses; Live off brings it back.
+  the left panel collapses; Live off brings it back. In a real HeLab session (also M18.1).
+- [x] **M18.1 Start-at-launch in the running app** (Q15.1): merged into M23.2 (one launch folder
+  since Q18.3).
 - [ ] **M23.3 Damaged raw files on the acquisition PC**: a deliberately truncated raw file is reported
   damaged after ~20 s with one notification; later shots convert.
 

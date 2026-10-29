@@ -30,10 +30,11 @@ How to use it:
   guard in `_resolve_default` (skip it once the tab has navigated) would do (Quick Fixes 4, A~1;
   behaviour users see, so not changed there).
 - [ ] Folders with over 100,000 entries record a scan failure.
-- [ ] The temp folder (`DIR_TEMPS`, Settings → General) is created and can be
-  changed, but nothing uses it: helpers' private folders go to the system temp
-  dir (`tempfile.mkdtemp` in `IOService`). Remove the setting, or move helper
-  folders into it (2026-10-15).
+- [ ] Helpers' private folders go to the system temp folder (`tempfile.mkdtemp` in `IOService`),
+  not HeLab's temp folder (`DIR_TEMPS`, Settings → General). Since converter stage 4 the temp
+  folder is used: HeLab's converted TXY when the output is `temp` or the folder has no data root
+  (`folder_cache.py`, `convert_cli.py`), and numba's cache (Q18.1), so the setting stays; moving
+  helper folders into it is what's left (2026-10-15; updated 2026-10-29).
 - [ ] SMB audit leftovers (2026-10-20): a Windows-suited "seen twice" interval
   (Windows caches attributes 10 s); details scans for visible rows only; icons kept
   across Refresh; the startup "database is locked" on a fresh store; refuse a
@@ -122,6 +123,22 @@ How to use it:
   crashed workers gw0 and gw1. The same tree (`e75a105`) passed every job in run 40679110506
   minutes earlier, so a slow runner with timing-sensitive, compute-heavy tests is likely; cause
   not found.
+- [ ] macOS CI on `agent/txy-packaging` (run 40765484151, `e2f3e14`, 2026-10-28): the test job was
+  cancelled at its 20-min limit on both attempts, so neither printed its summary or rerun reasons
+  (job logs read 2026-10-29 with `gh api …/actions/jobs/<id>/logs`). Attempt 1 (job 123091397883):
+  `test_analysis_gui.py::test_another_library_draws_the_plot_again_without_a_rerun` reran after
+  its worker gw0 crashed ("node down: Not properly terminated"), following a 100 s faulthandler
+  dump with the test at line 581 inside matplotlib's font cache build
+  (`font_manager._get_macos_fonts`); `test_convert_helab.py::test_heartbeats_while_computing_stop_after_the_budget`
+  reran once. Attempt 2 (job 123103873970): the same font-cache dump in the same test, which then
+  passed; `test_convert_helab.py::test_a_hung_backend_stops_sending_heartbeats` reran twice;
+  `test_correlations.py::test_g2_zero_error_matches_its_scatter` reran after worker gw3 crashed;
+  `test_live_plots.py::test_a_following_correlations_plot_counts_only_new_shots_and_skips_its_bootstrap`
+  reran 5× and then **failed** (reason lost). The two heartbeat tests' cause was found and fixed
+  later (Quick Fixes 5, Fixed below); the packaging floor then moved the compiled backends to
+  their own job, after which macOS tests took 4–11 min again. The other three: cause not found.
+  For `test_another_library…`, also in the 2026-10-28 run below, a slow runner building
+  matplotlib's font cache is likely.
 - [ ] `test_live_plots.py::test_a_floating_plot_runs_and_follows_with_its_settings_in_its_window`
   reran once on macOS CI (run 40260284152): `'completed' == 'cancelled'`. Cause unknown
   ([audit](../.ai/sessions/2026-10-28-claude-v0.0.6-checks/audit.md) #23, 2026-10-28).
