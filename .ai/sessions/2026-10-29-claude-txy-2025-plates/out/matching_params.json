@@ -1,0 +1,232 @@
+{
+ "Jun 2026 (4 runs, 172 shots)": {
+  "baseline (matlab-2019 = plates-2025 today)": {
+   "hits": 529523,
+   "in_atom_windows": 496547,
+   "outside": 32976,
+   "change_pct": 0.0,
+   "change_in_windows": 0,
+   "change_outside": 0
+  },
+  "match_tolerance 100 (x and y)": {
+   "hits": 529449,
+   "in_atom_windows": 496473,
+   "outside": 32976,
+   "change_pct": -0.014,
+   "change_in_windows": -74,
+   "change_outside": 0
+  },
+  "match_tolerance 300": {
+   "hits": 529570,
+   "in_atom_windows": 496594,
+   "outside": 32976,
+   "change_pct": 0.009,
+   "change_in_windows": 47,
+   "change_outside": 0
+  },
+  "xy_sum_tolerance 200": {
+   "hits": 478167,
+   "in_atom_windows": 447867,
+   "outside": 30300,
+   "change_pct": -9.699,
+   "change_in_windows": -48680,
+   "change_outside": -2676
+  },
+  "xy_sum_tolerance 300": {
+   "hits": 518424,
+   "in_atom_windows": 486469,
+   "outside": 31955,
+   "change_pct": -2.096,
+   "change_in_windows": -10078,
+   "change_outside": -1021
+  },
+  "xy_sum_tolerance 600": {
+   "hits": 547538,
+   "in_atom_windows": 512006,
+   "outside": 35532,
+   "change_pct": 3.402,
+   "change_in_windows": 15459,
+   "change_outside": 2556
+  },
+  "window 3600 (search 3600, |x1-x2| < 3800)": {
+   "hits": 530387,
+   "in_atom_windows": 497382,
+   "outside": 33005,
+   "change_pct": 0.163,
+   "change_in_windows": 835,
+   "change_outside": 29
+  },
+  "window 4000 (search 4000, |x1-x2| < 4200)": {
+   "hits": 531698,
+   "in_atom_windows": 498570,
+   "outside": 33128,
+   "change_pct": 0.411,
+   "change_in_windows": 2023,
+   "change_outside": 152
+  },
+  "search_depth 18": {
+   "hits": 529523,
+   "in_atom_windows": 496547,
+   "outside": 32976,
+   "change_pct": 0.0,
+   "change_in_windows": 0,
+   "change_outside": 0
+  },
+  "search_depth 72": {
+   "hits": 529523,
+   "in_atom_windows": 496547,
+   "outside": 32976,
+   "change_pct": 0.0,
+   "change_in_windows": 0,
+   "change_outside": 0
+  },
+  "dead time 0.25 us all corners": {
+   "hits": 436296,
+   "in_atom_windows": 406024,
+   "outside": 30272,
+   "change_pct": -17.606,
+   "change_in_windows": -90523,
+   "change_outside": -2704
+  },
+  "dead time x1 0.5 us (2023 edit)": {
+   "hits": 376335,
+   "in_atom_windows": 346817,
+   "outside": 29518,
+   "change_pct": -28.929,
+   "change_in_windows": -149730,
+   "change_outside": -3458
+  },
+  "time sums in T 3367/3294 (T shift only)": {
+   "hits": 529523,
+   "in_atom_windows": 496547,
+   "outside": 32976,
+   "change_pct": 0.0,
+   "change_in_windows": 0,
+   "change_outside": 0
+  },
+  "x2 retry (probe_match; MATLAB keeps the first x2)": {
+   "hits": 529561,
+   "in_atom_windows": 496573,
+   "outside": 32988,
+   "change_pct": 0.007,
+   "change_in_windows": 26,
+   "change_outside": 12
+  },
+  "_atom_window_time_fraction": 0.016646848989298454
+ },
+ "Jul 2026 tight trap (24 shots)": {
+  "baseline (matlab-2019 = plates-2025 today)": {
+   "hits": 392211,
+   "in_atom_windows": 388914,
+   "outside": 3297,
+   "change_pct": 0.0,
+   "change_in_windows": 0,
+   "change_outside": 0
+  },
+  "match_tolerance 100 (x and y)": {
+   "hits": 392211,
+   "in_atom_windows": 388914,
+   "outside": 3297,
+   "change_pct": 0.0,
+   "change_in_windows": 0,
+   "change_outside": 0
+  },
+  "match_tolerance 300": {
+   "hits": 392212,
+   "in_atom_windows": 388915,
+   "outside": 3297,
+   "change_pct": 0.0,
+   "change_in_windows": 1,
+   "change_outside": 0
+  },
+  "xy_sum_tolerance 200": {
+   "hits": 389108,
+   "in_atom_windows": 386090,
+   "outside": 3018,
+   "change_pct": -0.791,
+   "change_in_windows": -2824,
+   "change_outside": -279
+  },
+  "xy_sum_tolerance 300": {
+   "hits": 390897,
+   "in_atom_windows": 387708,
+   "outside": 3189,
+   "change_pct": -0.335,
+   "change_in_windows": -1206,
+   "change_outside": -108
+  },
+  "xy_sum_tolerance 600": {
+   "hits": 395449,
+   "in_atom_windows": 391923,
+   "outside": 3526,
+   "change_pct": 0.826,
+   "change_in_windows": 3009,
+   "change_outside": 229
+  },
+  "window 3600 (search 3600, |x1-x2| < 3800)": {
+   "hits": 392241,
+   "in_atom_windows": 388941,
+   "outside": 3300,
+   "change_pct": 0.008,
+   "change_in_windows": 27,
+   "change_outside": 3
+  },
+  "window 4000 (search 4000, |x1-x2| < 4200)": {
+   "hits": 392378,
+   "in_atom_windows": 389055,
+   "outside": 3323,
+   "change_pct": 0.043,
+   "change_in_windows": 141,
+   "change_outside": 26
+  },
+  "search_depth 18": {
+   "hits": 392211,
+   "in_atom_windows": 388914,
+   "outside": 3297,
+   "change_pct": 0.0,
+   "change_in_windows": 0,
+   "change_outside": 0
+  },
+  "search_depth 72": {
+   "hits": 392211,
+   "in_atom_windows": 388914,
+   "outside": 3297,
+   "change_pct": 0.0,
+   "change_in_windows": 0,
+   "change_outside": 0
+  },
+  "dead time 0.25 us all corners": {
+   "hits": 378546,
+   "in_atom_windows": 375565,
+   "outside": 2981,
+   "change_pct": -3.484,
+   "change_in_windows": -13349,
+   "change_outside": -316
+  },
+  "dead time x1 0.5 us (2023 edit)": {
+   "hits": 363291,
+   "in_atom_windows": 360415,
+   "outside": 2876,
+   "change_pct": -7.374,
+   "change_in_windows": -28499,
+   "change_outside": -421
+  },
+  "time sums in T 3367/3294 (T shift only)": {
+   "hits": 392211,
+   "in_atom_windows": 388914,
+   "outside": 3297,
+   "change_pct": 0.0,
+   "change_in_windows": 0,
+   "change_outside": 0
+  },
+  "x2 retry (probe_match; MATLAB keeps the first x2)": {
+   "hits": 392221,
+   "in_atom_windows": 388919,
+   "outside": 3302,
+   "change_pct": 0.003,
+   "change_in_windows": 5,
+   "change_outside": 5
+  },
+  "_atom_window_time_fraction": 0.16765755053507728
+ }
+}

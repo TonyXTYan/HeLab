@@ -144,6 +144,17 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   HeLab (`m19v1`). Turning Live on collapses the left panel. Nothing is written into the folder
   unless Write beside is on.
 
+## Post-2025 plates, in the lab (added 2026-10-29, block 25)
+
+- [ ] **M25.1 Corner cabling (urgent):** what changed between 2026-06-27 and 2026-07-21 in the
+  anode/amplifier/CFD/TDC chain? x1↔x2 and y1↔y2 are swapped since then (Q25.1).
+- [ ] **M25.2 TDC input 7:** what is connected, is it enabled, at what threshold, and did anything
+  move there in 2025 (Q25.2)?
+- [ ] **M25.3 The second converter:** which program on the TDC PC writes `d_txy_forc` besides
+  AutoConvert (the front panel?) (Q25.3).
+- [ ] **M25.4 A calibration run for the 2025 plates:** a free-space halo with ≥100 halo atoms per
+  shot, raw files kept, ideally with the MCP pick-off on channel 4 (absolute time sums).
+
 ## Maestri floor hooks (added 2026-10-28)
 
 - [x] **M8.1 Update the floor setup hooks in the Maestri app** to match

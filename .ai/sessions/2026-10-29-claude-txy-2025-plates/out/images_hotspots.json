@@ -1,0 +1,528 @@
+{
+ "2017 plates (2019-11 halos)": {
+  "hits": 5177290,
+  "bg_hits": 1615812,
+  "bg_time_fraction": 0.902,
+  "hot_spots": [
+   {
+    "x_mm": 23.58,
+    "y_mm": -24.9,
+    "r_mm": 44.57,
+    "excess": 1106201.4,
+    "counts": 1152710,
+    "p": null
+   },
+   {
+    "x_mm": -20.01,
+    "y_mm": -35.69,
+    "r_mm": 9.35,
+    "excess": 133198.1,
+    "counts": 136476,
+    "p": null
+   },
+   {
+    "x_mm": 33.7,
+    "y_mm": 20.43,
+    "r_mm": 7.79,
+    "excess": 82356.4,
+    "counts": 87127,
+    "p": null
+   },
+   {
+    "x_mm": -39.29,
+    "y_mm": -13.25,
+    "r_mm": 5.76,
+    "excess": 8064.5,
+    "counts": 8805,
+    "p": null
+   },
+   {
+    "x_mm": 28.98,
+    "y_mm": 27.15,
+    "r_mm": 5.91,
+    "excess": 5871.4,
+    "counts": 7288,
+    "p": null
+   },
+   {
+    "x_mm": 21.21,
+    "y_mm": 34.31,
+    "r_mm": 3.49,
+    "excess": 808.1,
+    "counts": 1055,
+    "p": null
+   }
+  ],
+  "edge": {
+   "centre_mm": [
+    6.2,
+    -3.79
+   ],
+   "semi_axes_mm": [
+    37.68,
+    34.61
+   ],
+   "axis_ratio": 1.0886,
+   "tilt_deg_of_first_axis": 172.3,
+   "mean_radius_mm": 36.83,
+   "radius_sd_mm": 3.38,
+   "sectors": 24
+  }
+ },
+ "2022 plates (2022-12, 2023-01 halos)": {
+  "hits": 7242379,
+  "bg_hits": 564296,
+  "bg_time_fraction": 0.752,
+  "hot_spots": [
+   {
+    "x_mm": 27.94,
+    "y_mm": -2.79,
+    "r_mm": 3.83,
+    "excess": 174469.7,
+    "counts": 176342,
+    "p": null
+   },
+   {
+    "x_mm": 20.09,
+    "y_mm": 14.47,
+    "r_mm": 3.32,
+    "excess": 51057.7,
+    "counts": 53020,
+    "p": null
+   },
+   {
+    "x_mm": 10.03,
+    "y_mm": 12.17,
+    "r_mm": 2.36,
+    "excess": 27313.5,
+    "counts": 28182,
+    "p": null
+   },
+   {
+    "x_mm": 28.21,
+    "y_mm": 12.33,
+    "r_mm": 2.44,
+    "excess": 21345.3,
+    "counts": 21924,
+    "p": null
+   },
+   {
+    "x_mm": 4.91,
+    "y_mm": 4.64,
+    "r_mm": 3.48,
+    "excess": 9311.2,
+    "counts": 13309,
+    "p": null
+   },
+   {
+    "x_mm": 9.18,
+    "y_mm": -13.86,
+    "r_mm": 2.12,
+    "excess": 7686.2,
+    "counts": 7907,
+    "p": null
+   },
+   {
+    "x_mm": 31.34,
+    "y_mm": 12.08,
+    "r_mm": 1.81,
+    "excess": 3689.7,
+    "counts": 3886,
+    "p": null
+   },
+   {
+    "x_mm": 28.39,
+    "y_mm": -15.03,
+    "r_mm": 1.22,
+    "excess": 945.6,
+    "counts": 1076,
+    "p": null
+   },
+   {
+    "x_mm": 32.65,
+    "y_mm": -3.75,
+    "r_mm": 0.76,
+    "excess": 378.8,
+    "counts": 405,
+    "p": null
+   },
+   {
+    "x_mm": -31.01,
+    "y_mm": 22.17,
+    "r_mm": 1.23,
+    "excess": 199.7,
+    "counts": 270,
+    "p": null
+   },
+   {
+    "x_mm": 10.94,
+    "y_mm": 6.64,
+    "r_mm": 1.0,
+    "excess": 146.6,
+    "counts": 281,
+    "p": null
+   },
+   {
+    "x_mm": 0.15,
+    "y_mm": 12.41,
+    "r_mm": 0.79,
+    "excess": 83.0,
+    "counts": 140,
+    "p": null
+   }
+  ],
+  "edge": {
+   "centre_mm": [
+    1.93,
+    1.98
+   ],
+   "semi_axes_mm": [
+    38.53,
+    33.16
+   ],
+   "axis_ratio": 1.1618,
+   "tilt_deg_of_first_axis": 144.0,
+   "mean_radius_mm": 35.59,
+   "radius_sd_mm": 3.12,
+   "sectors": 24
+  }
+ },
+ "2025 plates, Jun 2026 (Rabi/Ramsey)": {
+  "hits": 1981506,
+  "bg_hits": 87796,
+  "bg_time_fraction": 0.84,
+  "hot_spots": [
+   {
+    "x_mm": 15.85,
+    "y_mm": 1.22,
+    "r_mm": 2.53,
+    "excess": 7289.5,
+    "counts": 7439,
+    "p": null
+   },
+   {
+    "x_mm": 32.26,
+    "y_mm": 1.14,
+    "r_mm": 1.37,
+    "excess": 4035.9,
+    "counts": 4061,
+    "p": null
+   },
+   {
+    "x_mm": 8.61,
+    "y_mm": -1.11,
+    "r_mm": 1.29,
+    "excess": 229.7,
+    "counts": 333,
+    "p": null
+   },
+   {
+    "x_mm": 1.16,
+    "y_mm": -0.2,
+    "r_mm": 1.1,
+    "excess": 169.7,
+    "counts": 224,
+    "p": null
+   },
+   {
+    "x_mm": -29.04,
+    "y_mm": -18.31,
+    "r_mm": 1.57,
+    "excess": 93.2,
+    "counts": 126,
+    "p": null
+   },
+   {
+    "x_mm": -21.56,
+    "y_mm": -19.37,
+    "r_mm": 1.0,
+    "excess": 88.0,
+    "counts": 110,
+    "p": null
+   }
+  ],
+  "edge": {
+   "centre_mm": [
+    0.6,
+    -1.25
+   ],
+   "semi_axes_mm": [
+    41.2,
+    38.24
+   ],
+   "axis_ratio": 1.0773,
+   "tilt_deg_of_first_axis": 166.5,
+   "mean_radius_mm": 39.55,
+   "radius_sd_mm": 2.15,
+   "sectors": 24
+  }
+ },
+ "2025 plates, Jul 2026 (tight trap)": {
+  "hits": 390670,
+  "bg_hits": 2542,
+  "bg_time_fraction": 0.748,
+  "hot_spots": [
+   {
+    "x_mm": -15.85,
+    "y_mm": -1.62,
+    "r_mm": 1.63,
+    "excess": 277.2,
+    "counts": 278,
+    "p": null
+   }
+  ],
+  "edge": null
+ },
+ "2025 plates, 2026-07-27 RingBEC": {
+  "hits": 2237323,
+  "bg_hits": 10346,
+  "bg_time_fraction": 0.695,
+  "hot_spots": [
+   {
+    "x_mm": -15.89,
+    "y_mm": -1.61,
+    "r_mm": 1.97,
+    "excess": 1009.1,
+    "counts": 1016,
+    "p": null
+   },
+   {
+    "x_mm": 19.05,
+    "y_mm": 19.3,
+    "r_mm": 1.97,
+    "excess": 194.0,
+    "counts": 237,
+    "p": null
+   },
+   {
+    "x_mm": -32.46,
+    "y_mm": -1.44,
+    "r_mm": 0.74,
+    "excess": 22.8,
+    "counts": 24,
+    "p": null
+   }
+  ],
+  "edge": null
+ },
+ "2025 plates, 2026-08-12 QE": {
+  "hits": 12127618,
+  "bg_hits": 1071759,
+  "bg_time_fraction": 0.362,
+  "hot_spots": [
+   {
+    "x_mm": 16.24,
+    "y_mm": -7.19,
+    "r_mm": 5.72,
+    "excess": 14216.9,
+    "counts": 23098,
+    "p": null
+   },
+   {
+    "x_mm": -7.97,
+    "y_mm": -17.22,
+    "r_mm": 7.22,
+    "excess": 7631.5,
+    "counts": 14426,
+    "p": null
+   },
+   {
+    "x_mm": -8.72,
+    "y_mm": 1.64,
+    "r_mm": 3.73,
+    "excess": 5766.5,
+    "counts": 10429,
+    "p": null
+   },
+   {
+    "x_mm": 20.48,
+    "y_mm": 17.21,
+    "r_mm": 2.82,
+    "excess": 3887.8,
+    "counts": 6320,
+    "p": null
+   },
+   {
+    "x_mm": 29.75,
+    "y_mm": 15.06,
+    "r_mm": 3.81,
+    "excess": 2479.7,
+    "counts": 5416,
+    "p": null
+   },
+   {
+    "x_mm": 25.32,
+    "y_mm": -30.29,
+    "r_mm": 6.6,
+    "excess": 1909.3,
+    "counts": 2384,
+    "p": null
+   },
+   {
+    "x_mm": 29.99,
+    "y_mm": 6.11,
+    "r_mm": 1.35,
+    "excess": 781.4,
+    "counts": 1622,
+    "p": null
+   },
+   {
+    "x_mm": 7.57,
+    "y_mm": 7.29,
+    "r_mm": 0.98,
+    "excess": 438.4,
+    "counts": 908,
+    "p": null
+   },
+   {
+    "x_mm": -20.38,
+    "y_mm": 14.53,
+    "r_mm": 1.59,
+    "excess": 357.8,
+    "counts": 818,
+    "p": null
+   },
+   {
+    "x_mm": 15.51,
+    "y_mm": 29.09,
+    "r_mm": 1.61,
+    "excess": 304.6,
+    "counts": 647,
+    "p": null
+   },
+   {
+    "x_mm": -10.53,
+    "y_mm": -27.81,
+    "r_mm": 1.64,
+    "excess": 297.8,
+    "counts": 594,
+    "p": null
+   },
+   {
+    "x_mm": -35.27,
+    "y_mm": 15.19,
+    "r_mm": 1.38,
+    "excess": 294.7,
+    "counts": 550,
+    "p": null
+   },
+   {
+    "x_mm": 9.03,
+    "y_mm": 18.32,
+    "r_mm": 1.14,
+    "excess": 245.4,
+    "counts": 573,
+    "p": null
+   },
+   {
+    "x_mm": 29.38,
+    "y_mm": 30.02,
+    "r_mm": 1.32,
+    "excess": 133.9,
+    "counts": 178,
+    "p": null
+   },
+   {
+    "x_mm": 2.2,
+    "y_mm": 38.25,
+    "r_mm": 0.91,
+    "excess": 93.5,
+    "counts": 218,
+    "p": null
+   },
+   {
+    "x_mm": 29.75,
+    "y_mm": 25.25,
+    "r_mm": 0.36,
+    "excess": 30.0,
+    "counts": 50,
+    "p": null
+   }
+  ],
+  "edge": {
+   "centre_mm": [
+    0.65,
+    3.13
+   ],
+   "semi_axes_mm": [
+    38.57,
+    33.57
+   ],
+   "axis_ratio": 1.149,
+   "tilt_deg_of_first_axis": 153.6,
+   "mean_radius_mm": 36.16,
+   "radius_sd_mm": 2.1,
+   "sectors": 24
+  }
+ },
+ "2025 plates, 2026-10-10 collisions": {
+  "hits": 1909799,
+  "bg_hits": 117072,
+  "bg_time_fraction": 0.971,
+  "hot_spots": [
+   {
+    "x_mm": -15.89,
+    "y_mm": -1.58,
+    "r_mm": 2.6,
+    "excess": 14798.2,
+    "counts": 14975,
+    "p": null
+   },
+   {
+    "x_mm": -32.44,
+    "y_mm": -1.36,
+    "r_mm": 1.37,
+    "excess": 1480.5,
+    "counts": 1511,
+    "p": null
+   },
+   {
+    "x_mm": 27.6,
+    "y_mm": 7.65,
+    "r_mm": 3.78,
+    "excess": 462.5,
+    "counts": 602,
+    "p": null
+   },
+   {
+    "x_mm": -9.07,
+    "y_mm": 0.86,
+    "r_mm": 1.82,
+    "excess": 437.8,
+    "counts": 623,
+    "p": null
+   },
+   {
+    "x_mm": -7.07,
+    "y_mm": 3.11,
+    "r_mm": 1.59,
+    "excess": 204.1,
+    "counts": 281,
+    "p": null
+   },
+   {
+    "x_mm": 9.22,
+    "y_mm": 11.72,
+    "r_mm": 1.11,
+    "excess": 42.2,
+    "counts": 55,
+    "p": null
+   }
+  ],
+  "edge": {
+   "centre_mm": [
+    -1.02,
+    0.53
+   ],
+   "semi_axes_mm": [
+    41.31,
+    38.81
+   ],
+   "axis_ratio": 1.0643,
+   "tilt_deg_of_first_axis": 170.7,
+   "mean_radius_mm": 40.05,
+   "radius_sd_mm": 0.99,
+   "sectors": 24
+  }
+ }
+}

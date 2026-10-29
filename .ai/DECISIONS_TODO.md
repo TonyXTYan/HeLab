@@ -293,6 +293,36 @@ Q12.7 confirmed as Q18.6 (the patterns now tagged).
   by the mtime alone (≥ 20 s; its settle rule is 60 s by the mtime alone too). Alternative: `--once`
   never reports damaged. Proposed: as built.
 
+## Post-2025 plates (block 25; [investigation](sessions/2026-10-29-claude-txy-2025-plates/investigation.md))
+
+Provisional analysis, nothing applied to HeLab. **The corner cables were swapped between
+2026-06-27 and 2026-07-21** (x1↔x2, y1↔y2): every image since July is rotated 180° against June
+and all earlier data (reflection delays per delay-line end, background images r = 0.984 only when
+rotated, and the x1 ringing excess moved from channel 0 to channel 1; Side re-checked the last).
+
+- **Q25.1 How should HeLab handle the swap?** Options: (a) a `plates-2025` profile pair split by
+  date (June: today's channel map; from July: x1↔x2, y1↔y2 swapped), so HeLab's own TXY come out
+  unrotated; plus a per-folder "rotated 180°" note for MATLAB's July+ TXY; (b) swap the cables
+  back in the lab and treat July–October as rotated. Proposed: (a) now, and (b) if the swap was
+  accidental (M25.1).
+- **Q25.2 Channel 7:** random (~1.3 per shot, Poisson), absent 2019 – Jan 2025, with corner pulses
+  within 10 ns 95 % of the time; likely a high-threshold transient (an MCP/HV micro-discharge or
+  whatever is on input 7). Conversion is unaffected (byte-identical without it). Proposed: ignore
+  it in every profile; find out what is on input 7 (M25.2).
+- **Q25.3 Another converter on the TDC PC:** some July `d_txy_forc` were written by the 2023 lab
+  edit (7–29 % fewer hits), and `20260722-tight-trap-1000Hzsampling/d_txy_forc183.txt` is corrupted
+  by two writers. Proposed: find and stop the second writer (M25.3); HeLab's checker flags such
+  files; HeLab's own conversion avoids both problems.
+- **Q25.4 The per-shot logs' "posixtime" is local time stored as UTC** (10 h ahead). Proposed: HeLab
+  reads it as local time when it uses these logs, and the lab fixes the logger.
+
+The provisional `plates-2025` numbers (x−y sum difference 121 ± 0.5 bins; active area round to
+7 %, radius 40.0 ± 0.5 mm at `matlab-2019` scale; candidate v⊥ x 5.088e5, y 5.444e5 m/s; hot spots
+at (15.9, 1.4) and (32.3, 1.2) mm) wait for stage 3 and Tony's approval. Keep `matlab-2019`'s
+matching settings (a wider window adds mostly random combinations; a converter dead time loses real
+atoms). The collisions halo can't calibrate the plates (elliptical, no measurable back-to-back
+peak): a free-space halo run with raw files kept is needed (M25.4).
+
 ## From the audit (block 2)
 
 These come from the [audit](sessions/2026-10-28-claude-v0.0.6-checks/audit.md), whose finding

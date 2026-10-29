@@ -14,6 +14,11 @@ How to use it:
 
 ## App
 
+- [ ] **Lab data: a corrupted MATLAB TXY** in
+  `dld_output_cheerypicked/20260722-tight-trap-1000Hzsampling/d_txy_forc183.txt` (two programs
+  wrote it at once), and July 2026 TXY from the 2023 lab edit beside AutoConvert's (Q25.3). HeLab's
+  own conversion is unaffected; reconvert those shots from raw.
+
 - [ ] **A cached dataset over ~2.1 GB can't be saved.** `pack_dataset` (`helab/utils/cache_store.py:459`)
   compresses a whole folder in one Blosc call, and python-blosc 1.11.4 caps a call at 2,147,483,631
   bytes (store-v4 design note, 2026-10-29). Store-v4's chunked `.hlb` files fix it; until then a
