@@ -1426,8 +1426,16 @@ for shot in range(count):
         output="temp", txy_name=provenance.txy_name("m19v1", shot), txy_size=shot, txy_mtime_ns=shot,
         txy_sha256="", hits=1, converted_at=time.time(), helab_version="0", read_seconds=0.0, parse_seconds=0.0,
         reconstruct_seconds=0.0, format_seconds=0.0, write_seconds=0.0)
-    with provenance.open_index(root, write=True) as index:
-        index.record(name, "", "/data/" + name, record, time.time())
+    began = time.monotonic()
+    try:
+        with provenance.open_index(root, write=True) as index:
+            index.record(name, "", "/data/" + name, record, time.time())
+    except Exception as error:  # (Said in one line, so the test's message shows it whole.)
+        cause = error.__cause__ or error.__context__
+        print(f"shot {shot}: {type(error).__name__}: {error} (cause {type(cause).__name__}: {cause}; "
+              f"code {getattr(cause, 'sqlite_errorname', None)}) after {time.monotonic() - began:.2f} s",
+              file=sys.stderr)
+        raise
 """
 
 
@@ -1440,7 +1448,7 @@ def test_two_writers_side_by_side_lose_nothing(tmp_path: Path) -> None:
                                 stderr=subprocess.PIPE, text=True) for name in ("helper", "command line")]
     for writer in writers:
         _, errors = writer.communicate(timeout=120)
-        assert writer.returncode == 0, errors
+        assert writer.returncode == 0, errors.strip().splitlines()[0] if errors.strip() else errors
     with provenance.open_index(root, write=False) as index:  # type: ignore[union-attr]
         assert len(index.shots("helper")) == len(index.shots("command line")) == 150
         assert [(row[0], row[3]) for row in index.folders()] == [("command line", sum(range(150))),
