@@ -169,7 +169,8 @@ Each rule names the area file with the detail.
   - the RAM budget evicts datasets and releases plots (never closes them);
   - a beside conversion deletes its own leftover temporary TXY in that source folder
     (`.d_txy_helab_<N>.txy.<16 hex>.partial`, exactly that pattern, regular files over an hour old,
-    never through a link), and the same leftovers in HeLab's own `converted-txy/` folder
+    never through a link), and the same leftovers in HeLab's own `converted-txy/` folder, its
+    records' (`.d_txy_helab_<N>.json.<16 hex>.partial`, `.folder.json.<16 hex>.partial`) too
     (Q12.7, to confirm).
 
   Any other removal is the user's choice, asked first, and sends `removed` (Q3.3).

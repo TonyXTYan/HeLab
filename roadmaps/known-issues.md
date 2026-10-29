@@ -73,13 +73,9 @@ How to use it:
 
 ## Tests and CI
 
-- [ ] `test_convert_helab.py::test_a_hung_backend_stops_sending_heartbeats` (line 879) and
-  `::test_heartbeats_while_computing_stop_after_the_budget` (line 855) rerun on macOS CI ('assert ([])':
-  no 'converting' heartbeat recorded within the slowed compute window on a loaded runner): runs
-  40764414177 (2×), 40779568331 (5× and 2×), 40780439624. Being fixed (Quick Fixes 5, job 3).
-- [ ] `test_convert_helab.py::test_watch_converts_new_shots_and_stops_on_ctrl_c` failed all 6 attempts
-  in a full local run under load 28-30 (Egret, 2026-10-29): the CLI didn't exit within 20 s of SIGINT;
-  suspected an unread stderr pipe. Passes alone and on CI. Being investigated (Quick Fixes 5, job 2).
+- [ ] `test_root_gui.py::test_the_gui_never_writes_the_saved_file_itself`: xdist worker gw0 crashed
+  once on macOS CI (run 40790093719, `agent/quick-fixes-5` `ed0635c`, job 123172940859, 2026-10-29);
+  passed on its rerun. A crash, not an assertion (a native fault in a GUI test?); cause unknown.
 - [ ] `test_test_isolation.py::test_pytest_imports_the_checkout_it_runs_in_before_any_other`: a
   collection error in pathlib `lstat` on Windows CI (run 40754482305, `agent/txy-packaging` `7d2bff9`),
   passed on retry.
@@ -97,20 +93,11 @@ How to use it:
   should start each with a fresh or quiesced app-wide service, but a closed one must not simply be
   reset: wait for its old helpers' exits first (`cache_busy()`), or their store may still be open
   (found by `agent/quick-fixes-3`, Feeler's review, 2026-10-27).
-- [ ] `test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]`
-  reran once on macOS CI (2026-10-26, run 40279097363, `276e571`): `assert 'Cached data loaded ·
-  Cached just now · Freshness unknown' == 'Cached data loaded · Cached just now'` (line 413). Likely
-  a timing race: the second tab's row has no folder modified time yet when the save completes, so
-  its freshness is unknown. Passed on its retry and in 12 local runs (Cache Only handoff).
-  Reran 3× on macOS CI on 2026-10-28 (run 40679555921, job 122786573479, `7b82c9d`; below), so
-  it is not a one-off.
-  Again on macOS CI on 2026-10-29: run 40753079487 (`e4a63b5`) and run 40754538456
-  (`agent/txy-helab-core` `6cbe446`), once each, same assertion.
 - [ ] macOS CI on `dev/v0.0.7` (run 40679555921, job 122786573479, `7b82c9d`, 2026-10-28) was
   cancelled at ~20 min (earlier macOS jobs took 5–6 min):
   `test_correlations.py::test_fifty_shots_of_two_thousand_events_take_seconds` reran 5× then
   failed; `test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]`
-  reran 3×; `test_correlations_plot.py::test_back_to_back_pairs_peak_at_zero_with_the_trap_origin`
+  reran 3× (cause found and fixed by Quick Fixes 5, below in Fixed); `test_correlations_plot.py::test_back_to_back_pairs_peak_at_zero_with_the_trap_origin`
   and `test_analysis_gui.py::test_another_library_draws_the_plot_again_without_a_rerun` reran once
   each. Four "Timeout (0:01:40)!" dumps (one in `test_g2_zero_error_matches_its_scatter`) and
   crashed workers gw0 and gw1. The same tree (`e75a105`) passed every job in run 40679110506
@@ -142,6 +129,26 @@ crashed" on CI with no traceback is usually CI's 120 s timeout, whose stacks
 ## Fixed
 
 Landed in `dev/v0.0.7`:
+
+- [x] Quick Fixes 5 (2026-10-29, merged `931f9f8`; `.ai/sessions/2026-10-29-claude-quick-fixes-5/notes.md`;
+  Reviewer Sandpiper reproduced each cause):
+  - `test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]`
+    (macOS CI reruns since 2026-10-26): the test waited only for the second tab's dataset, which
+    shows from RAM a zero-timer before the shared listing's replay brings the row's folder date; a
+    slow loop pass let the wait return between them. The test now waits for the date too; the app's
+    label corrects itself one timer later.
+  - `test_convert_helab.py::test_watch_converts_new_shots_and_stops_on_ctrl_c` failed every attempt
+    in suites started as a background job (`pytest … &`): the shell ignores SIGINT for those, the
+    convert child inherited it and Python then installs no Ctrl-C handler. The fixture now starts
+    the child with SIGINT handled; other tests that send SIGINT to a child need the same. The CLI is
+    unchanged (from a terminal, Ctrl-C works).
+  - `test_convert_helab.py::test_a_hung_backend_stops_sending_heartbeats` and
+    `::test_heartbeats_while_computing_stop_after_the_budget` (macOS CI reruns): the tests used a
+    0.02 s interval and ~0.1 s real-time budgets, so a ticker thread woken late sent nothing; the
+    ticker itself is fine (1 s interval, ≥ 60 s budget). The tests now use a clock only they move.
+  - `test_convert_helab.py::test_a_killed_helpers_workers_exit` (one Ubuntu rerun): a kill during a
+    provenance or `folder.json` write left a JSON `.partial` that HeLab's own-folder cleanup didn't
+    match; the cleanup now covers them (A12.4) and the test accepts exactly those names.
 
 - [x] Four CI-flaky tests, fixed by Quick Fixes 4 (2026-10-29, merged `e9c5bfa`;
   `.ai/sessions/2026-10-29-claude-quick-fixes-4/notes.md`; Reviewer Plover reproduced three causes on

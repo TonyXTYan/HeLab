@@ -234,11 +234,12 @@ a no-replace rename); never a raw file, an existing TXY, or the provenance, whic
 converted again, never kept for good; Gannet L2; in the cache or temp the TXY goes first, so an old
 record no longer matches it). **Leftovers** (Gannet M1, Q12.7): a beside conversion removes its own
 leftover temporary files in that folder: only names matching exactly the pattern `write_atomic`
-makes (`txy.partial_pattern`; `convert.partial()`: `^\.d_txy_helab_\d+\.txy\.[0-9a-f]{16}\.partial$`),
+makes (`txy.partial_pattern`; `convert.partial()`: `^\.d_txy_helab_(?:0|[1-9][0-9]*)\.txy\.[0-9a-f]{16}\.partial$`, ASCII),
 regular files by `lstat` (a link is left alone, never followed), unmodified for `PARTIAL_MAX_AGE`
-(1 h), only in a folder it is writing beside (and the same leftovers in HeLab's own `converted-txy/`
-folder, where a kill on Windows often lands inside `write_atomic`) (the flag on, or `--output beside`); each is sent as
-`partial_removed` (and traced).
+(1 h), only in a folder it is writing beside (the flag on, or `--output beside`); each is sent as
+`partial_removed` (and traced). The same rules remove its own leftovers in HeLab's `converted-txy/`
+folder, where a kill on Windows often lands inside `write_atomic`: through `own_partial()`, the TXY's,
+the records' (`.d_txy_helab_<N>.json.<16 hex>.partial`) and `folder.json`'s temporaries.
 
 #### Provenance (`helab.convert.provenance`)
 

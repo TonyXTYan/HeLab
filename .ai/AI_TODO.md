@@ -191,7 +191,7 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 - **A12.3 Live sends the summary back** (`agent/txy-live`): every `convert_summary`'s lists as
   `seen`/`done`/`kept`/`skip`, so done shots aren't checked again and unfinished ones aren't read again
   (`seen` is required).
-- **A12.4 JSON leftovers in `converted-txy/`**: conversions remove their own leftover temporary TXY
+- [x] **A12.4 JSON leftovers in `converted-txy/`** (done in Quick Fixes 5, `2b9435a`): conversions remove their own leftover temporary TXY
   there (over 1 h), but a kill can also leave `.d_txy_helab_<N>.json.<16 hex>.partial` (the record)
   and `.folder.json.<16 hex>.partial`, which stay for good. Harmless and small; widen the own-folder
   pattern to HeLab's own JSON names (Gannet, fix round).
