@@ -229,6 +229,13 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 - **A16.3 `native/build.py`'s `--out`/`--prebuilt`** are no longer used by any workflow (Puffin): drop
   them, or fix the module docstring that says the test job takes a build job's `--out`.
 
+## Tony's answers on the converter (block 17)
+
+- **A17.1 Warn about raw files with no hits** (Q10.3): the HeLab GUI shows a warning for shots
+  whose conversion found no hits (Folder details and the Live line), with the shot numbers.
+- **A17.2 Two pytest groups per OS in CI** (Q16.2 b): split the test job into two shards on
+  every OS, keeping the typing-tests-first ordering (Quick Fixes 6); no limit raised.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

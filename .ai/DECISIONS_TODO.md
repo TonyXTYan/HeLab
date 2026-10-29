@@ -102,14 +102,17 @@ From the `agent/txy-reference` handoffs ([builder](sessions/2026-10-29-claude-tx
   ran it, and why, is unknown. Proposed: no built-in profile; it stays a proved exception in
   `dev/txy/reference_exceptions.py` (`matlab-2019` with `dead_time_x1 = 2e-6` reproduces it).
   Decided that way by Side overnight, for Tony to confirm; and does Tony know who ran it?
+  **Tony, 2026-10-29: no, ignore those** (no built-in profile; they stay proven exceptions).
 - **Q10.2 A raw file with no rows** (0 bytes or blank lines only) makes MATLAB fail. What should
   HeLab do (stage 4)? Proposed: the settle check refuses it while it may still be written; once
   settled, it is reported as unconvertible (no TXY, a notification), never skipped silently.
+  **Tony, 2026-10-29: OK.**
 - **Q10.3 A shot with no hits: no TXY or an empty one?** The pinned 2019 wrapper writes none;
   the lab's files include 0-byte TXY from 2020, 2022-11 and 2023-02 (other wrappers). **Decided by
   Side overnight, for Tony to confirm:** HeLab's own output (`d_txy_helab_<N>.txy`) is a 0-byte
   file, so "converted, empty" differs from "not converted yet"; `matlab-2019` writes none only for
-  comparisons (A10.5).
+  comparisons (A10.5). **Tony, 2026-10-29: OK**, and the HeLab GUI should warn about raw files
+  that convert to no hits (A17.1).
 
 ## Converter stage 2 (block 11)
 
@@ -126,9 +129,12 @@ From the backend floors and the final timings (sessions/2026-10-29-claude-txy-be
   Proposed: numpy the default plus **rust** as the one optional compiled backend; drop numba, mlx
   and cython. Alternatives: cython instead of rust if stage 4's CI finds C extensions easier; or
   numpy alone, since it meets both targets here (the compiled ones buy ~1.5x per core). The lab
-  PCs are untimed (M11.1).
+  PCs are untimed (M11.1). **Tony, 2026-10-29: NumPy stays the default, and Cython is the
+  optional backend.** So the app ships NumPy, Cython and the reference; Numba, MLX and Rust leave
+  the build, lock and CI's required set (A9.1), while their code stays in the repo (Q11.3).
 - **Q11.3 Keep `reference` in the build?** Proposed: yes, as the test oracle and the readable
-  specification, never the default; it is small, plain Python.
+  specification, never the default; it is small, plain Python. **Tony, 2026-10-29: yes, and keep
+  all the backend code developed** (the unshipped backends stay in the repo, Q11.2).
 
 ## Converter stage 4, HeLab core (block 12)
 
@@ -188,13 +194,14 @@ From the `agent/txy-ui` and `agent/txy-live` handoffs (`sessions/2026-10-29-clau
 
 - **Q16.1 A `setup.py` extra for the fast backends?** (`pip install -e .[fast]`, or building the
   extensions during `pip install`). Proposed: no: it needs a compiler and Rust on every lab PC, and
-  `native/build.py` does it for developers and CI.
+  `native/build.py` does it for developers and CI. **Tony, 2026-10-29: no.**
 - **Q16.2 CI test-job time limits.** Windows' test job ran 20-25 min tonight (limit 30, Q2.6), and one
   macOS job hit its 20-min limit on a slow runner (normally 5-11). Options: (a) raise the limits
   (Windows 40, others 30); (b) split the test job into two shards per OS (one more runner each);
   (c) leave them and re-run a job that hits the limit. Proposed (packaging floor): (a) now, (b) when
   the suite grows again. Ubuntu's slow tail is all six `test_typing` tests landing on one worker at the
-  end (~3 min), a candidate fix. No limit was changed overnight (Side).
+  end (~3 min), a candidate fix. No limit was changed overnight (Side). **Tony, 2026-10-29: (b),
+  split pytest into two groups for every OS** (with Quick Fixes 6's typing-tests-first ordering).
 
 ## From the audit (block 2)
 
