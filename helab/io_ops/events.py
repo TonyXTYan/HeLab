@@ -109,7 +109,7 @@ class AdminResultFields(TypedDict, total=False):
     folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
     store: str  # the store an adoption answered from (its ``store_id``)
     # HeLab's TXY under the cache and temp folders after a Clear (``helab_txy.converted_summary``).
-    converted_txy: dict[str, Any]
+    converted_txy: ConvertedSummaryField
 
 
 # Process and progress
@@ -551,6 +551,22 @@ class RemovedEvent(TypedDict):
     # Saved results Make room removed for a waiting one, [folder, lookup, result_id] each: not a clear
     # (no epoch moved; a newer copy of one of those keys has another result_id).
     evicted: NotRequired[list[list[str]]]
+
+
+class ConvertedUsageField(TypedDict):
+    """HeLab's converted TXY under one base's ``converted-txy`` (``helab_txy.converted_usage``): the TXY
+    files, their bytes (the index and old builds' records included), the folders holding them, and when
+    a conversion or load last used one (None: never, or no index says)."""
+    files: int
+    bytes: int
+    folders: int
+    last_used: float | None
+
+
+class ConvertedSummaryField(ConvertedUsageField):
+    """Both bases' (Q27.5, ``helab_txy.converted_summary``): the totals, and each base's by name
+    (``cache``; ``temp`` when the app sent its temp folder)."""
+    bases: dict[str, ConvertedUsageField]
 
 
 class ResultCountField(TypedDict):

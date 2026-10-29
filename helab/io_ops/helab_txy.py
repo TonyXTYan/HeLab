@@ -25,6 +25,7 @@ import os
 import re
 from typing import Any, Mapping
 
+from helab.io_ops.events import ConvertedSummaryField, ConvertedUsageField
 from helab.io_ops.fingerprints import _quick_mtime
 from helab.io_ops.infra import _entry_stat
 
@@ -345,14 +346,14 @@ def _index_files(root: str) -> list[os.DirEntry[str]]:
         return []
 
 
-def converted_usage(root: str) -> dict[str, Any]:
+def converted_usage(root: str) -> ConvertedUsageField:
     """HeLab's TXY under ``root`` (a base's ``converted-txy``): their count and bytes (the index and old
     records included), the folders holding them, and when one was last used (None: never, or unknown).
     The index gives each TXY's size; only files it doesn't know (old builds', or a lost index's) are
     measured one by one."""
     import sqlite3
     from helab.convert.provenance import open_index
-    usage: dict[str, Any] = {"files": 0, "bytes": 0, "folders": 0, "last_used": None}
+    usage: ConvertedUsageField = {"files": 0, "bytes": 0, "folders": 0, "last_used": None}
     known: dict[tuple[str, str], int] = {}
     last_used: dict[str, float] = {}
     index = open_index(root, write=False)
@@ -398,13 +399,13 @@ def converted_usage(root: str) -> dict[str, Any]:
     return usage
 
 
-def converted_summary(roots: Mapping[str, str]) -> dict[str, Any]:
+def converted_summary(roots: Mapping[str, str]) -> ConvertedSummaryField:
     """``converted_usage`` of each base (``bases``) and their totals: what Settings → Cache shows."""
     bases = {name: converted_usage(root) for name, root in roots.items()}
     used = [base["last_used"] for base in bases.values() if base["last_used"] is not None]
-    return {"files": sum(int(base["files"]) for base in bases.values()),
-            "bytes": sum(int(base["bytes"]) for base in bases.values()),
-            "folders": sum(int(base["folders"]) for base in bases.values()),
+    return {"files": sum(base["files"] for base in bases.values()),
+            "bytes": sum(base["bytes"] for base in bases.values()),
+            "folders": sum(base["folders"] for base in bases.values()),
             "last_used": max(used) if used else None, "bases": bases}
 
 
