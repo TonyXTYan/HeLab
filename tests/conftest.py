@@ -144,6 +144,42 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
             terminalreporter.write_line(f"{test}\n{why}")
 
 
+# The slowest tests: test_typing.py runs mypy and pyright, 10 s to 1 min each by machine. Collected
+# last, they ran one after another on the xdist worker that got them, minutes after the others had
+# finished (CI's Windows test job reached its 30-min limit in that tail). They run first instead,
+# each on its own worker where there are enough, beside the rest of the suite.
+SLOW_FIRST_MODULES = frozenset({"test_typing.py"})
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    slow = [item for item in items if item.path.name in SLOW_FIRST_MODULES]
+    if not slow:
+        return
+    # A worker collects; it reads the command line's --dist, "no" with -n alone (which the
+    # controller runs as "load").
+    workers = int(getattr(config, "workerinput", {}).get("workercount", 1))
+    spread = config.getoption("dist", "no") in ("no", "load")
+    positions = slow_first_positions(len(items), len(slow), workers if spread else 1,
+                                     config.getoption("maxschedchunk", None))
+    rest = iter(item for item in items if item.path.name not in SLOW_FIRST_MODULES)
+    at = dict(zip(positions, slow))
+    items[:] = [at[i] if i in at else next(rest) for i in range(len(items))]
+
+
+def slow_first_positions(total: int, count: int, workers: int, max_chunk: int | None) -> list[int]:
+    """Where ``count`` slow tests go among ``total`` so that xdist's ``load`` scheduling starts them
+    on different workers at once. It sends each worker a batch of consecutive tests first (a quarter
+    of its share, at least 2, at most ``--maxschedchunk``; one each, in turn, under 2 per worker:
+    ``LoadScheduling.schedule``), so slow test ``j`` goes at the start of worker ``j % workers``'s
+    batch. Simply first when that layout doesn't fit (one worker, more slow tests than batch room)."""
+    if workers <= 1 or total < 2 * workers:
+        return list(range(count))
+    batch = max(min(total // workers // 4, max_chunk or total), 2)
+    if count > workers * batch:
+        return list(range(count))
+    return [(j % workers) * batch + j // workers for j in range(count)]
+
+
 @pytest.hookimpl(wrapper=True)
 def pytest_runtest_teardown(item: pytest.Item) -> Iterator[None]:
     try:
