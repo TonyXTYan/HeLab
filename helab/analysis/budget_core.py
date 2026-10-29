@@ -66,8 +66,8 @@ def restore(view: DatasetView, dataset: Dataset, shots: Optional[Iterable[int]] 
     fingerprint (rewritten since) and shots ``dataset`` lacks are left out and named."""
     prints = fingerprints_of(dataset.metadata)
     origins = txy_sources.origins_of(dataset.metadata)
-    if txy_sources.identity_source(txy_sources.source_of(dataset.metadata)) != view.identity.source:
-        origins = {shot: "another source" for shot in view.shots}  # (Another source's data is never its.)
+    if not txy_sources.same_choice(txy_sources.metadata_choice(dataset.metadata), view.txy_choice):
+        origins = {shot: "another source" for shot in view.shots}  # (Another choice's data is never its.)
     wanted = view.shots if shots is None else sorted(set(shots) & set(view.shots))
     kept: dict[int, Events] = {}
     changed: list[int] = []

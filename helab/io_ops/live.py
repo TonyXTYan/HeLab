@@ -93,10 +93,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     held = {int(shot): (int(size), int(modified)) for shot, size, modified in memory}
     rereadable = {int(shot) for shot in recent or ()} & set(held)
     txy = dict(txy or {})
-    txy_source = str(txy.get("source") or txy_sources.DEFAULT_SOURCE)
-    if txy_source not in txy_sources.SOURCES:
-        raise ValueError(f"Unknown TXY source {txy_source!r}")
-    txy["source"] = txy_source
+    txy_source = txy["source"] = txy_sources.requested_source(txy.get("source"))
     held_origins = {shot: origin for shot, origin in helab_txy.origins_from(memory_origins).items() if shot in held}
     # HeLab's folders now: unchanged since the last check, nothing was converted since (``helab_since``).
     helab_key = ""

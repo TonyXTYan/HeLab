@@ -200,10 +200,11 @@ def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, o
 
 def could_take(source: str, raw: Mapping[int, Any], matlab: Mapping[int, Any],
                held: Mapping[int, str] | None = None) -> set[int] | None:
-    """The shots ``source`` could take from HeLab's TXY, for ``find``'s ``only``: by default those MATLAB's
-    lack, and those held from HeLab's (kept while there); every shot for the other sources (None)."""
-    from helab.utils.txy_sources import MATLAB
-    if source != MATLAB:
+    """The shots ``source`` could take from HeLab's TXY, for ``find``'s ``only``: with MATLAB priority those
+    MATLAB's lack, and those held from HeLab's (kept while there); every shot for the other sources (None)."""
+    from helab.utils.txy_sources import MATLAB_PRIORITY
+    from helab.utils.txy_sources import normal_source
+    if normal_source(source) != MATLAB_PRIORITY:
         return None
     return (set(raw) - set(matlab)) | set(held or {})
 
@@ -277,8 +278,9 @@ def store_key(store: Any, path: str) -> str:
     return key if key.startswith("root://") else ""
 
 
-def default_record(source: str = "matlab") -> dict[str, Any]:
-    """The ``txy`` of data made before HeLab's TXY were looked for (MATLAB's alone)."""
+def default_record(source: str = "") -> dict[str, Any]:
+    """The ``txy`` of data made before HeLab's TXY were looked for (MATLAB's alone): its source "" (none
+    named), which every source but HeLab only reads alike (``loading._helab_unchanged``)."""
     return {"source": source, "origins": {}, "profiles": {}, "profile_hash": "", "folders": []}
 
 

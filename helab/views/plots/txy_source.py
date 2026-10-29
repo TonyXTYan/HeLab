@@ -1,11 +1,13 @@
-"""A plot's TXY source (Q6.6): which TXY its data is made of, in its settings page.
+"""A plot's TXY choice (Q6.6, Q18.2): which TXY its data is made of, in its settings page.
 
-The choices (``txy_sources``): MATLAB's with HeLab's filling the shots MATLAB lacks (the default: the
-folder's tab data, which Live follows), HeLab's wherever they exist, and both as two datasets (MATLAB's
-only, HeLab's only) for comparing, one plot on each. A plot on another source than the default loads
-its own dataset of the folder (RAM only) through ``FolderCache`` and loads it again when Live finds new
-shots. The row also names the profile HeLab converts with and, from the folder's date, the plate
-profile the swap dates suggest (Q6.10: shown, never applied).
+The sources (``txy_sources``): HeLab's where they exist with MATLAB's for the rest (the default for tabs
+and Live), MATLAB's with HeLab's filling the shots MATLAB lacks, and HeLab's only or MATLAB's only for
+comparing, one plot on each; and for HeLab's, the profile whose TXY are read, chosen by its tag (the
+conversion profile's unless another is picked). "As the tab" follows the folder's tab (the setting in
+Settings → TXY converter). A plot on another choice than the tab's loads its own dataset of the folder
+(RAM only) through ``FolderCache`` and loads it again when Live finds new shots. The row also names the
+profile HeLab converts with and, from the folder's date, the plate profile the swap dates suggest (Q6.10:
+shown, never applied).
 """
 from __future__ import annotations
 
@@ -15,8 +17,24 @@ from typing import Callable, Optional
 from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from helab.analysis.dataset_view import DatasetView
-from helab.convert.profile import UNCALIBRATED, suggested_plates
+from helab.convert.profile import BUILTIN_PROFILES, UNCALIBRATED, DetectorProfile, file_tag, suggested_plates
 from helab.utils import txy_sources
+
+
+def known_profiles() -> dict[str, DetectorProfile]:
+    """The built-in and user profiles by name (a user profile folder that can't be read gives none)."""
+    from helab.convert.user_profiles import ProfileLibrary
+    from helab.utils.constants import profiles_folder
+    try:
+        user = ProfileLibrary(profiles_folder()).profiles()
+    except OSError:
+        user = {}
+    return {**dict(BUILTIN_PROFILES), **user}
+
+
+def profile_by_tag(tag: str) -> Optional[DetectorProfile]:
+    """The known profile whose TXY carry ``tag`` (``profile.file_tag``), or None."""
+    return next((profile for profile in known_profiles().values() if file_tag(profile) == tag), None)
 
 
 def folder_day(view: DatasetView) -> str:
@@ -36,10 +54,12 @@ def plate_note(view: DatasetView, profile_name: str) -> str:
 
 
 class TxySourceRow(QWidget):
-    """``TXY: [choice ▾]`` and one line under it: the profile HeLab converts with, and a plate
-    suggestion when there is one. ``changed`` is called with the source chosen."""
+    """``TXY: [source ▾] [profile ▾]`` and one line under it: the profile HeLab converts with, and a plate
+    suggestion when there is one. ``changed`` is called with the source ("": as the tab) and the profile's
+    name ("": the conversion profile's) chosen."""
 
-    def __init__(self, source: str, changed: Callable[[str], None], parent: Optional[QWidget] = None) -> None:
+    def __init__(self, source: str, changed: Callable[[str, str], None], profile: str = "",
+                 parent: Optional[QWidget] = None) -> None:
         super().__init__(parent)
         self._changed = changed
         layout = QVBoxLayout(self)
@@ -49,38 +69,57 @@ class TxySourceRow(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(QLabel("TXY:"))
         self.combo = QComboBox()
+        self.combo.addItem("As the folder's tab", "")
         for value in txy_sources.SOURCES:
             self.combo.addItem(txy_sources.LABELS[value], value)
         self.combo.setToolTip(
-            "Which TXY this plot's data is made of (MATLAB's d_txy_forc, HeLab's d_txy_helab). Both, as two "
-            "datasets: one plot on MATLAB's, another on HeLab's, to compare. Only HeLab's TXY made with the "
-            "profile HeLab converts with (Settings → TXY converter) are used.")
-        row.addWidget(self.combo, 1)
+            "Which TXY this plot's data is made of (MATLAB's d_txy_forc, HeLab's d_txy_helab_<tag>). HeLab's only "
+            "and MATLAB's only: one plot on each, to compare. As the folder's tab: the source tabs and Live read "
+            "(Settings → TXY converter).")
+        row.addWidget(self.combo, 2)
+        self.profile_combo = QComboBox()
+        self.profile_combo.setToolTip("Whose HeLab TXY are read: those of the profile HeLab converts with "
+                                      "(Settings → TXY converter), or another's, by the tag in their names.")
+        self.profile_combo.addItem("Conversion profile", "")
+        for name, item in sorted(known_profiles().items()):
+            self.profile_combo.addItem(f"{name} ({file_tag(item)})", name)
+        row.addWidget(self.profile_combo, 1)
         layout.addLayout(row)
         self.note = QLabel()
         self.note.setWordWrap(False)
         layout.addWidget(self.note)
-        self.set_source(source)
+        self.set_source(source, profile)
         self.combo.currentIndexChanged.connect(self._picked)
+        self.profile_combo.currentIndexChanged.connect(self._picked)
 
-    def set_source(self, source: str) -> None:
-        index = self.combo.findData(source)
-        if index >= 0 and index != self.combo.currentIndex():
-            self.combo.blockSignals(True)
-            self.combo.setCurrentIndex(index)
-            self.combo.blockSignals(False)
+    def set_source(self, source: str, profile: str = "") -> None:
+        for combo, value in ((self.combo, source), (self.profile_combo, profile)):
+            index = combo.findData(value)
+            if index < 0 and combo is self.profile_combo and value:
+                combo.addItem(value, value)  # (A profile no longer listed: still named.)
+                index = combo.findData(value)
+            if index >= 0 and index != combo.currentIndex():
+                combo.blockSignals(True)
+                combo.setCurrentIndex(index)
+                combo.blockSignals(False)
+        self.profile_combo.setEnabled(self.source() != txy_sources.MATLAB_ONLY)
 
     def source(self) -> str:
-        return str(self.combo.currentData())
+        return str(self.combo.currentData() or "")
+
+    def profile(self) -> str:
+        return str(self.profile_combo.currentData() or "")
 
     def show_profile(self, view: DatasetView, profile_name: str) -> None:
         """One line: the profile, the data's TXY and a plate suggestion (detail in the tooltip)."""
         suggestion = plate_note(view, profile_name)
         self.note.setText(f"HeLab converts with {profile_name}" + (f" · {suggestion}" if suggestion else ""))
-        self.note.setToolTip(f"{view.txy_text()}\nHeLab's TXY are loaded only when made with the profile HeLab "
-                             f"converts with ({profile_name}; Settings → TXY converter)."
+        self.note.setToolTip(f"{view.txy_text()}\nHeLab's TXY are read by their profile's tag (the profile "
+                             f"chosen here, else the one HeLab converts with: {profile_name}; Settings → TXY "
+                             "converter)."
                              + (f"\nThe plate swap dates suggest {suggestion}; it is not applied: choose it in "
                                 "Settings → TXY converter to convert with it." if suggestion else ""))
 
     def _picked(self) -> None:
-        self._changed(self.source())
+        self.profile_combo.setEnabled(self.source() != txy_sources.MATLAB_ONLY)
+        self._changed(self.source(), self.profile())

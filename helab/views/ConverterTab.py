@@ -26,10 +26,11 @@ from PyQt6.QtWidgets import (
 from helab.convert.profile import (BUILTIN_PROFILES, CANDIDATE_HANDLING, DEFAULT_PROFILE, PLATE_SWAPS, POSITION_FORMULAS,
                                    UNCALIBRATED, DetectorProfile, ProfileError, file_tag)
 from helab.convert.user_profiles import ProfileLibrary, Unreadable, check_name, duplicate
+from helab.utils import txy_sources
 from helab.utils.colours import AMBER
 from helab.utils.constants import (
-    CONVERT_BACKEND_SETTING, CONVERT_OUTPUT_SETTING, CONVERT_PROFILE_SETTING, profiles_folder, read_convert_backend,
-    read_convert_output,
+    CONVERT_BACKEND_SETTING, CONVERT_OUTPUT_SETTING, CONVERT_PROFILE_SETTING, TXY_SOURCE_SETTING, profiles_folder,
+    read_convert_backend, read_convert_output, read_txy_source,
 )
 from helab.utils.folder_cache import FolderCache
 from helab.utils.settings_defaults import CONVERT_OUTPUTS, read_setting
@@ -212,6 +213,14 @@ class ConverterTab(QWidget):
             self.output_combo.addItem(OUTPUT_LABELS[name], name)
         self.output_combo.setToolTip("Folders set to write them beside the raw files do that instead.")
         grid.addWidget(self.output_combo, 2, 1)
+        grid.addWidget(QLabel("Tabs and Live read"), 3, 0)
+        self.source_combo = QComboBox()
+        for name in txy_sources.SOURCES:
+            self.source_combo.addItem(txy_sources.LABELS[name], name)
+        self.source_combo.setToolTip("Which TXY a folder's tab and Live load (Q18.2): HeLab's are those of the "
+                                     "profile conversions use (its tag in their names). A plot can choose another "
+                                     "source or profile in its settings.")
+        grid.addWidget(self.source_combo, 3, 1)
         grid.setColumnStretch(1, 1)
         layout.addLayout(grid)
         profiles_label = QLabel("Profiles (changes to profiles are saved at once; the choices above with Save)")
@@ -240,6 +249,7 @@ class ConverterTab(QWidget):
         self.refresh(read_setting(settings, CONVERT_PROFILE_SETTING, typed=True) or DEFAULT_PROFILE)
         self.backend_combo.setCurrentIndex(max(0, self.backend_combo.findData(read_convert_backend(settings))))
         self.output_combo.setCurrentIndex(max(0, self.output_combo.findData(read_convert_output(settings))))
+        self.source_combo.setCurrentIndex(max(0, self.source_combo.findData(read_txy_source(settings))))
 
     # The list
 
@@ -426,8 +436,11 @@ class ConverterTab(QWidget):
         settings.setValue(CONVERT_PROFILE_SETTING, name if name in self.profiles() else DEFAULT_PROFILE)
         settings.setValue(CONVERT_BACKEND_SETTING, self.backend_combo.currentData())
         settings.setValue(CONVERT_OUTPUT_SETTING, self.output_combo.currentData())
+        source = str(self.source_combo.currentData() or txy_sources.DEFAULT_SOURCE)
+        settings.setValue(TXY_SOURCE_SETTING, source)
         if self.cache is not None:
             self.cache.set_convert_profile(self.chosen_profile())
+            self.cache.set_tab_source(source)
 
 
 __all__ = ["ConverterTab", "ProfileEditor", "plate_dates", "profile_label"]

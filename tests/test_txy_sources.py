@@ -112,7 +112,7 @@ def test_the_default_takes_matlabs_and_fills_with_helabs(tmp_path: Path, private
     data = shots_read(events)
     assert sorted(data) == [1, 2, 3, 4]
     assert data[1][0, 0] == 1.5  # MATLAB's (the fixture's values), not HeLab's conversion.
-    assert result["txy"]["source"] == "matlab"
+    assert result["txy"]["source"] == "matlab-priority"  # (Asked as "matlab", its name before Q18.2.)
     assert result["txy"]["origins"] == {"3": f"helab:{PROFILE}", "4": f"helab:{PROFILE}"}
     assert result["txy"]["profiles"] == {PROFILE: {"name": "matlab-2019", "version": 1, "calibrated": False,
                                                    "names": ["matlab-2019 v1"]}}
@@ -135,9 +135,12 @@ def test_each_source_takes_its_txy(tmp_path: Path, private_store: str) -> None:
     assert origins(txy_sources.HELAB) == ([1, 2, 3, 4], helab)
     assert origins(txy_sources.HELAB_ONLY) == ([1, 2, 3, 4], helab)
     assert origins(txy_sources.MATLAB_ONLY) == ([1, 2], {})
+    # The default (Q18.2): HeLab's where they exist, MATLAB's for the rest.
+    assert origins(txy_sources.HELAB_PRIORITY) == ([1, 2, 3, 4], helab)
+    assert origins(txy_sources.MATLAB_PRIORITY) == ([1, 2, 3, 4], {"3": f"helab:{PROFILE}", "4": f"helab:{PROFILE}"})
     # Without the option (a helper of before): the default, but without the app's folders HeLab's aren't found.
     events = run_load(source, tmp_path, None, None)
-    assert sorted(shots_read(events)) == [1, 2] and loaded(events)["txy"]["source"] == "matlab"
+    assert sorted(shots_read(events)) == [1, 2] and loaded(events)["txy"]["source"] == "helab-priority"
     with pytest.raises(ValueError, match="Unknown TXY source"):
         run_load(source, tmp_path, None, {"source": "both"})
 
@@ -277,12 +280,15 @@ def test_folders_are_where_convert_writes(tmp_path: Path) -> None:
 
 
 @pytest.mark.parametrize(("source", "matlab", "helab", "held", "expected"), [
-    ("matlab", True, True, None, "matlab"), ("matlab", False, True, None, "helab"),
-    ("helab", True, True, None, "helab"), ("helab", True, False, None, "matlab"),
+    ("matlab-priority", True, True, None, "matlab"), ("matlab-priority", False, True, None, "helab"),
+    ("helab-priority", True, True, None, "helab"), ("helab-priority", True, False, None, "matlab"),
     ("matlab-only", False, True, None, None), ("helab-only", True, False, None, None),
+    ("matlab-only", True, True, None, "matlab"), ("helab-only", True, True, None, "helab"),
     # Held shots keep their kind while it is there.
-    ("matlab", True, True, "helab:x", "helab"), ("helab", True, True, "", "matlab"),
-    ("matlab", True, False, "helab:x", "matlab"),
+    ("matlab-priority", True, True, "helab:x", "helab"), ("helab-priority", True, True, "", "matlab"),
+    ("matlab-priority", True, False, "helab:x", "matlab"),
+    # The names before Q18.2 read as the priority sources.
+    ("matlab", True, True, None, "matlab"), ("helab", True, True, None, "helab"),
 ])
 def test_choose(source: str, matlab: bool, helab: bool, held: str | None, expected: str | None) -> None:
     assert txy_sources.choose(source, matlab, helab, held) == expected
@@ -374,10 +380,11 @@ def test_live_saves_keep_the_origins(tmp_path: Path, private_store: str) -> None
 # Views, results and their keys.
 
 
-def dataset(origins: dict[str, str], source: str = "matlab", signature: str = "sig") -> Dataset:
+def dataset(origins: dict[str, str], source: str = "helab-priority", signature: str = "sig",
+            tag: str = "m19v1") -> Dataset:
     fingerprint = [[1, 10, 100], [2, 20, 200]]
     data = {1: np.zeros((2, 3)), 2: np.ones((2, 3))}
-    metadata = {"fingerprint": fingerprint, "txy": {"source": source, "origins": origins,
+    metadata = {"fingerprint": fingerprint, "txy": {"source": source, "origins": origins, "profile_tag": tag,
                                                     "profiles": {"h": {"name": "plates-2022", "version": 1}}}}
     return Dataset(RUN, signature, data, metadata, 0)
 
@@ -411,7 +418,14 @@ def test_a_revision_or_reload_never_crosses_sources() -> None:
     assert swapped.revision == 2 and swapped.added_shots == (2,) and dict(swapped.origins) == {2: "helab:h"}
     restored = restore(plain, dataset({"2": "helab:h"}))
     assert restored.kept == (1,) and restored.changed == (2,)
-    assert restore(plain, dataset({}, source="helab")).changed == (1, 2)
+    assert restore(plain, dataset({}, source="matlab-priority")).changed == (1, 2)
+    # The two priority sources share the identity (their origins tell their data apart), but a view of one
+    # is never revised by, or restored from, the other's data (Q18.2), nor another profile's.
+    other = build_view(dataset({}, source="matlab-priority"))
+    assert other.identity == plain.identity and other.txy_choice != plain.txy_choice
+    assert revise(plain, dataset({}, source="matlab-priority")).revision == 1
+    assert revise(plain, dataset({}, tag="m23v1")).revision == 1
+    assert restore(plain, dataset({}, tag="m23v1")).changed == (1, 2)
 
 
 # FolderCache: each source's datasets and jobs apart; the options a load is sent.
@@ -423,22 +437,36 @@ def test_folder_cache_keeps_each_sources_datasets_apart(qtbot: Any, monkeypatch:
     service = service_for_test(monkeypatch)
     cache = FolderCache(service)
     path = RUN
-    tab, plot = dataset({"2": "helab:h"}), dataset({"1": "helab:h", "2": "helab:h"}, source="helab")
-    for entry in (tab, plot):
+    # The tab's choice (Q18.2): the setting's source, helab-priority, with the conversion profile's tag.
+    assert cache.tab_choice() == "helab-priority@m19v1"
+    tab, plot = dataset({"2": "helab:h"}), dataset({"1": "helab:h"}, source="matlab-priority")
+    other = dataset({"1": "helab:h", "2": "helab:h"}, tag="m23v1")  # Another profile's HeLab TXY.
+    for entry in (tab, plot, other):
         cache.datasets[cache.dataset_key(entry)] = entry
-    assert cache.dataset(path, "sig") is tab and cache.dataset(path, "sig", "helab") is plot
-    assert cache.latest_dataset(path) is tab and cache.latest_dataset(path, "helab") is plot
-    assert cache._base(path) is tab and cache._base(path, "", "helab") is plot
-    assert cache._base(path, "", "helab-only") is None
-    cache._drop_superseded(dataset({}, signature="newer"))  # (A newer tab dataset: the plot's stays.)
-    assert cache.dataset(path, "sig", "helab") is plot and cache.dataset(path, "sig") is None
-    # The options: the default source unless asked, the profile from the settings, the bases.
+    assert cache.dataset_choice(plot) == "matlab-priority@m19v1" and cache.dataset_choice(other) == "helab-priority@m23v1"
+    assert cache.dataset(path, "sig") is tab and cache.dataset(path, "sig", "matlab-priority@m19v1") is plot
+    assert cache.dataset(path, "sig", "helab-priority@m23v1") is other
+    assert cache.latest_dataset(path) is tab and cache.latest_dataset(path, "matlab-priority@m19v1") is plot
+    assert cache._base(path) is tab and cache._base(path, "", "matlab-priority@m19v1") is plot
+    assert cache._base(path, "", "helab-only@m19v1") is None
+    # Data naming no source (before Q6.6: MATLAB's alone) is the tab's, whatever its source.
+    assert cache.is_tab_dataset(Dataset(RUN, "sig", {}, {"fingerprint": []}, 0))
+    cache._drop_superseded(dataset({}, signature="newer"))  # (A newer tab dataset: the others stay.)
+    assert cache.dataset(path, "sig", "matlab-priority@m19v1") is plot and cache.dataset(path, "sig") is None
+    # The tab's source changed (Settings): the datasets are keyed again, the plot's choice now the tab's.
+    cache.set_tab_source("matlab-priority")
+    assert cache.dataset(path, "sig") is plot and cache.current_dataset(path) is plot
+    cache.set_tab_source("helab")  # (Its name before Q18.2.)
+    assert cache.tab_source() == "helab-priority" and cache.dataset(path, "sig") is None
+    # The options: the tab's source unless asked, the profile from the settings, the bases.
     sent = cache.with_txy(str(tmp_path), {"memory": []})["txy"]
-    assert sent["source"] == "matlab" and sent["profile_hash"] == MATLAB_2019.content_hash()
+    assert sent["source"] == "helab-priority" and sent["profile_hash"] == MATLAB_2019.content_hash()
+    assert sent["profile_tag"] == "m19v1" and sent["profile"]["name"] == "matlab-2019"
     assert sent["temps"] == constants.DIR_TEMPS and sent["cache_base"] == os.path.dirname(store_root(constants.cache_dir()))
     assert cache.with_txy(str(tmp_path), {"txy": {"source": "helab-only"}})["txy"]["source"] == "helab-only"
     cache.set_convert_profile(MATLAB_2023_LAB_EDIT)
     assert cache.with_txy(str(tmp_path), {})["txy"]["profile_hash"] == MATLAB_2023_LAB_EDIT.content_hash()
+    assert cache.tab_choice() == "helab-priority@m23v1" and cache.dataset(path, "sig") is other
     service.shutdown()
 
 
@@ -587,7 +615,7 @@ def test_a_cache_save_marks_only_the_default_sources_dataset(monkeypatch: pytest
     service = service_for_test(monkeypatch)
     cache = FolderCache(service)
     try:
-        tab, plot = dataset({}, signature="sig"), dataset({"1": "helab:h", "2": "helab:h"}, source="helab")
+        tab, plot = dataset({}, signature="sig"), dataset({"1": "helab:h", "2": "helab:h"}, source="helab-only")
         for entry in (tab, plot):
             cache.datasets[cache.dataset_key(entry)] = entry
         cache._finishing["saver"] = RUN

@@ -52,6 +52,7 @@ CONVERT_BACKEND_SETTING = "convert_backend"
 # launches (Q9.6; helab/views/live_launch.py), and the hits below which a converted shot notifies (Q9.4).
 LIVE_LAUNCH_FOLDERS_SETTING = "live_launch_folders"
 CONVERT_LOW_HITS_SETTING = "convert_low_hits"
+TXY_SOURCE_SETTING = "txy_source"
 # The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).
 REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
 OPEN_PLOTS_SETTING = "open_plots"
@@ -113,6 +114,10 @@ SETTINGS: tuple[Setting, ...] = (
             "Folders that open in a tab each and start Live with auto-convert when HeLab launches (the Live "
             "line's Auto-convert menu): a JSON list of paths. Live follows the current tab, so it starts in the "
             "first one only. Unset: none."),
+    Setting(TXY_SOURCE_SETTING, str, "helab-priority",
+            "Which TXY tabs and Live load (Settings → TXY converter, Q18.2): helab-priority (HeLab's of the "
+            "conversion profile where they exist, MATLAB's for the rest), matlab-priority, helab-only or "
+            "matlab-only; anything else reads as helab-priority. A plot may choose another in its settings."),
     Setting(CONVERT_LOW_HITS_SETTING, int, 100,
             "Live auto-convert: a converted shot with fewer hits than this raises a system notification, once "
             "per shot (the Auto-convert menu); 0: never."),

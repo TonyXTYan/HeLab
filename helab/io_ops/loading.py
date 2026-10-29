@@ -116,8 +116,13 @@ def _txy_record(info: dict[str, Any]) -> dict[str, Any]:
 def _helab_unchanged(path: str, store: CacheStore | None, txy: dict[str, Any], saved: dict[str, Any]) -> bool:
     """Nothing converted, and no other profile asked for, since ``saved`` (a dataset's ``txy``) was
     made: HeLab's folders have the mtimes it recorded (none, for data made before any existed)."""
-    source = str(txy.get("source") or txy_sources.DEFAULT_SOURCE)
-    if saved.get("source", txy_sources.DEFAULT_SOURCE) != source:
+    source = txy_sources.requested_source(txy.get("source"))
+    if not saved.get("source"):
+        # Made before HeLab's TXY were looked for (MATLAB's alone; no HeLab TXY named so then): as
+        # every source but HeLab only reads it while no HeLab folder or shot has turned up since.
+        if source == txy_sources.HELAB_ONLY:
+            return False
+    elif txy_sources.normal_source(saved.get("source")) != source:
         return False
     if not txy_sources.wants_helab(source):
         return True
@@ -298,10 +303,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
           memory_origins: dict[str, str] | None = None) -> None:
     from helab.utils.cache_store import StoreError
     txy = dict(txy or {})
-    txy_source = str(txy.get("source") or txy_sources.DEFAULT_SOURCE)
-    if txy_source not in txy_sources.SOURCES:
-        raise ValueError(f"Unknown TXY source {txy_source!r} (have {', '.join(txy_sources.SOURCES)})")
-    txy["source"] = txy_source
+    txy_source = txy["source"] = txy_sources.requested_source(txy.get("source"))
     # The held shots' origins (HeLab's; the rest are MATLAB's).
     held_origins = helab_txy.origins_from(memory_origins)
     held_from = "memory"  # Where the shots counted as held are: the caller's RAM, or its cached read.
