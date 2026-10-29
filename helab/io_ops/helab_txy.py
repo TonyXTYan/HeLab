@@ -463,7 +463,9 @@ def clear_converted(root: str) -> dict[str, int]:
         folders = [entry.path for entry in os.scandir(root) if entry.is_dir(follow_symlinks=False)]
     except (FileNotFoundError, NotADirectoryError):
         return removed
+    import sqlite3
     index: TxyIndex | None = None
+    forgot = False
     if index_schema(root) == SCHEMA:
         with contextlib.suppress(IndexUnavailable):
             index = open_index(root, write=True)
@@ -489,6 +491,7 @@ def clear_converted(root: str) -> dict[str, int]:
             if index is not None and gone:
                 with contextlib.suppress(IndexUnavailable):
                     index.forget_removed(os.path.basename(folder), gone)
+                    forgot = True
             try:
                 left = os.listdir(folder)
                 if left == [_FOLDER_RECORD]:
@@ -500,6 +503,10 @@ def clear_converted(root: str) -> dict[str, int]:
                     os.rmdir(folder)
             except OSError:
                 pass
+        if index is not None and forgot:
+            # Rows removed: give their space back (the file never shrinks by itself; Clear is rare).
+            with contextlib.suppress(sqlite3.Error):
+                index.vacuum()
     finally:
         if index is not None:
             index.close()

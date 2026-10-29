@@ -206,6 +206,15 @@ def own_partial() -> re.Pattern[str]:
     return partial_pattern("|".join((BARE_NAME + r"\.(?:txt|json)", r"folder\.json")))
 
 
+def journal_for(base: str) -> str:
+    """The journal mode for a new index in ``base`` (the cache or temp folder): WAL where the folder is
+    local, a rollback journal where ``cache_location_problem`` objects (a network drive, a UNC path, a
+    synced folder: the temp folder is the user's to set), since WAL's shared memory needs a local disk."""
+    from helab.convert.provenance import DELETE, WAL
+    from helab.utils import cache_location
+    return DELETE if cache_location.cache_location_problem(base) else WAL
+
+
 def compute_budget(raw_bytes: int) -> float:
     """Seconds a shot of ``raw_bytes`` may compute while heartbeats go on."""
     return COMPUTE_SECONDS + raw_bytes / COMPUTE_RATE
@@ -549,7 +558,7 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
         if not beside:
             os.makedirs(places["folder"], exist_ok=True)
         _remove_own_partials(path, places["folder"], send)
-        index = provenance.open_index(root, write=True)
+        index = provenance.open_index(root, write=True, journal=journal_for(os.path.dirname(root)))
     index_path = os.path.join(root, provenance.INDEX_NAME)
 
     converted = 0

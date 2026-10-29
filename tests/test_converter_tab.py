@@ -257,6 +257,55 @@ def test_a_clear_leaves_a_newer_helabs_index_alone(tmp_path: Path) -> None:
                                                "newer": len(before) + 5, "clearable": 0, "clearable_bytes": 0}
 
 
+def test_a_clear_that_removed_rows_gives_their_space_back(tmp_path: Path) -> None:
+    """Review Low-6: SQLite reuses a removed row's space but never shrinks the file by itself, so a Clear
+    that removed rows ends with a VACUUM: the index is small again."""
+    root = str(tmp_path / "converted-txy")
+    folder = converted_folder(root, "a" * 24, {provenance.txy_name("m19v1", shot): b"x" for shot in range(400)})
+    with provenance.open_index(root, write=True) as index:
+        for shot in range(400):
+            info = (folder / provenance.txy_name("m19v1", shot)).stat()
+            index.record(folder.name, "", "/data/run", provenance.Provenance(
+                shot=shot, raw_name=f"d{shot}.txt", raw_size=1, raw_mtime_ns=1, raw_sha256="r" * 64,
+                profile_name="matlab-2019", profile_version=1, profile_hash="h" * 64, profile_tag="m19v1",
+                profile_calibrated=False, backend="numpy", output="cache", txy_name=provenance.txy_name("m19v1", shot),
+                txy_size=info.st_size, txy_mtime_ns=info.st_mtime_ns, txy_sha256="t" * 64, hits=1, converted_at=1.0,
+                helab_version="0", read_seconds=0.0, parse_seconds=0.0, reconstruct_seconds=0.0, format_seconds=0.0,
+                write_seconds=0.0), 1.0)
+    index_file = Path(root) / provenance.INDEX_NAME
+    full = index_file.stat().st_size
+    assert full > 100_000
+    assert helab_txy.clear_converted(root)["files"] == 400
+    assert index_file.stat().st_size < full / 4 and sorted(os.listdir(root)) == [provenance.INDEX_NAME]
+    assert provenance.read_shots(root, folder.name) == {}
+
+
+def test_the_clear_question_names_records_when_no_txy_is_left(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+                                                              tmp_path: Path) -> None:
+    """Review Nit-6: with only old records or a damaged index to clear, the question doesn't say "0 TXY files"."""
+    service, cache = frozen(monkeypatch)
+    try:
+        tab = CacheTab(cache, settings(tmp_path))
+        qtbot.addWidget(tab)
+        asked: list[str] = []
+
+        def decline(title: str, text: str, verb: str) -> bool:
+            asked.append(text)
+            return False
+        tab.confirm = decline
+        for files, clearable_bytes in ((0, 40_000), (3, 1500)):
+            tab.inventory = {"converted_txy": {"files": files, "bytes": 99_000, "clearable": 2,
+                                               "clearable_bytes": clearable_bytes}}
+            tab.clear_converted()
+        assert asked[0].startswith(f"Removes what is left of HeLab's converted TXY: old records and damaged indexes "
+                                   f"({byte_size(40_000)}), from the cache and temp folders")
+        assert "0 TXY files" not in asked[0]
+        assert asked[1].startswith(f"Removes 3 TXY files HeLab converted, with their records ({byte_size(1500)})")
+        tab.detach()
+    finally:
+        service.shutdown()
+
+
 def test_a_clear_keeps_the_row_of_a_txy_written_again_meanwhile(tmp_path: Path) -> None:
     """Rows go only for the very files removed (name, size, mtime): one a conversion wrote since stays."""
     root = str(tmp_path / "converted-txy")

@@ -32,7 +32,9 @@ busy timeout, tried again where SQLite answers busy at once rather than risk a d
 never block the writer and a commit deletes no journal file: with a rollback journal (DELETE), two
 processes writing a row each in turn starved each other past the 10 s timeout on Windows (CI run
 40879735789). WAL's shared memory needs a local disk: the cache folder is never on a network share
-(``cache_location`` refuses one), and the temp folder is the OS's. Its ``-wal``/``-shm`` files are
+(``cache_location`` refuses one), but the temp folder is the user's to set, so an index made where
+``cache_location_problem`` objects (a network drive, a UNC path, a synced folder) uses a rollback
+journal instead (``DELETE``; ``io_ops.convert.journal_for``). Its ``-wal``/``-shm`` files are
 SQLite's own: never housekeeping's, counted with the index's bytes, never removed by Clear; the last
 connection to close checkpoints the ``-wal`` into the index and removes both.
 
@@ -48,11 +50,11 @@ from __future__ import annotations
 import contextlib
 from dataclasses import astuple, dataclass, fields
 import os
-import pathlib
 import re
 import secrets
 import sqlite3
 import time
+import urllib.parse
 from typing import Any, Callable, Iterable, Literal, TypeVar, overload
 
 # The tag (``profile.TAG_PATTERN``, or ``u`` and hex digits) and the shot as HeLab writes them: ASCII
@@ -75,6 +77,9 @@ _COMPANIONS = ("-journal", "-wal", "-shm")
 # and for another connection's lock (SQLITE_BUSY, SQLITE_LOCKED).
 _DAMAGED_CODES = (11, 26)
 _BUSY_CODES = (5, 6)
+# Journal modes a new index is made in (``open_index``'s ``journal``): WAL where its folder is local,
+# a rollback journal where it may not be (the caller's choice: ``io_ops.convert.journal_for``).
+WAL, DELETE = "wal", "delete"
 T = TypeVar("T")
 
 
@@ -178,21 +183,29 @@ def _busy(error: sqlite3.Error) -> bool:
     return "locked" in str(error) or "busy" in str(error)
 
 
-def _patient(action: Callable[[], T]) -> T:
-    """``action`` (one short transaction that rolls itself back when it fails), tried again while
-    another connection's lock is in the way, for up to ``BUSY_SECONDS``. SQLite waits out a lock by
-    itself (the busy timeout) except where waiting could deadlock: then it answers busy at once, and
-    the transaction must be tried again (seen on Windows with two writers creating the index)."""
+def _patient(conn: sqlite3.Connection, action: Callable[[], T]) -> T:
+    """``action`` on ``conn`` (one short transaction that rolls itself back when it fails), tried again
+    while another connection's lock is in the way, for up to ``BUSY_SECONDS`` in all. SQLite waits out
+    a lock by itself (the busy timeout) except where waiting could deadlock: then it answers busy at
+    once, and the transaction must be tried again (seen on Windows with two writers creating the
+    index). Each attempt's own busy timeout is what is left of ``BUSY_SECONDS``, and so is the last
+    sleep, so the whole wait stays within it."""
     deadline = time.monotonic() + BUSY_SECONDS
     delay = 0.005
-    while True:
-        try:
-            return action()
-        except sqlite3.OperationalError as error:
-            if not _busy(error) or time.monotonic() + delay > deadline:
-                raise
-        time.sleep(delay)
-        delay = min(2 * delay, 0.1)
+    try:
+        while True:
+            conn.execute(f"PRAGMA busy_timeout = {max(1, int((deadline - time.monotonic()) * 1000))}")
+            try:
+                return action()
+            except sqlite3.OperationalError as error:
+                left = deadline - time.monotonic()
+                if not _busy(error) or left <= 0:
+                    raise
+            time.sleep(min(delay, left))
+            delay = min(2 * delay, 0.1)
+    finally:
+        with contextlib.suppress(sqlite3.Error):
+            conn.execute(f"PRAGMA busy_timeout = {int(BUSY_SECONDS * 1000)}")
 
 
 def set_aside(path: str, reason: str) -> str:
@@ -268,7 +281,7 @@ class TxyIndex:
         failure is ``IndexUnavailable``."""
         for attempt in range(2):
             try:
-                return _patient(lambda: self._transaction(statements))
+                return _patient(self.conn, lambda: self._transaction(statements))
             except sqlite3.Error as error:
                 if attempt or not damaged(error):
                     raise IndexUnavailable(f"HeLab's TXY index couldn't be written ({error})") from error
@@ -331,6 +344,11 @@ class TxyIndex:
                      ("DELETE FROM folders WHERE folder = ?1 AND NOT EXISTS (SELECT 1 FROM shots WHERE folder = ?1)",
                       (folder,))])
 
+    def vacuum(self) -> None:
+        """Give the file back the space of rows removed (SQLite reuses it otherwise, but never shrinks
+        the file): after a Clear, which the user asked for and which is rare."""
+        _patient(self.conn, lambda: self.conn.execute("VACUUM"))
+
     def touch(self, folder: str, now: float, older: float) -> None:
         """Mark ``folder`` used now if its last use is ``older`` seconds ago or more (a load took a TXY
         from it: one small write an hour at most). One statement, its own transaction; its errors are
@@ -339,16 +357,23 @@ class TxyIndex:
                           (now, folder, now - older))
 
 
+def _uri(path: str) -> str:
+    """SQLite's ``file:`` URI of an absolute path, every character but letters, digits and ``_.-~``
+    quoted, so a Windows drive, a UNC ``\\\\server\\share`` (no URI authority) and ``?``, ``#`` or ``%`` in a
+    name all stay in the path."""
+    return "file:" + urllib.parse.quote(path, safe="")
+
+
 def _connect(path: str, mode: str) -> sqlite3.Connection:
-    uri = pathlib.Path(os.path.abspath(path)).as_uri()
-    return sqlite3.connect(f"{uri}?mode={mode}", uri=True, timeout=BUSY_SECONDS, isolation_level=None)
+    return sqlite3.connect(f"{_uri(os.path.abspath(path))}?mode={mode}", uri=True, timeout=BUSY_SECONDS,
+                           isolation_level=None)
 
 
-def _prepare(conn: sqlite3.Connection) -> int:
-    """The index's schema, its tables made first in a new file (``user_version`` 0)."""
+def _prepare(conn: sqlite3.Connection, journal: str) -> int:
+    """The index's schema, its tables made first in a new file (``user_version`` 0), in ``journal`` mode."""
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
     if version == 0:
-        conn.execute("PRAGMA journal_mode = WAL")  # (Kept in the file: every later connection uses it.)
+        conn.execute(f"PRAGMA journal_mode = {journal}")  # (Kept in the file: every later connection uses it.)
         conn.execute("BEGIN IMMEDIATE")
         try:
             if conn.execute("PRAGMA user_version").fetchone()[0] == 0:  # (Not made meanwhile.)
@@ -368,18 +393,18 @@ def _prepare(conn: sqlite3.Connection) -> int:
 
 
 @overload
-def open_index(root: str, *, write: Literal[True]) -> TxyIndex: ...
+def open_index(root: str, *, write: Literal[True], journal: str = ...) -> TxyIndex: ...
 
 
 @overload
-def open_index(root: str, *, write: Literal[False]) -> TxyIndex | None: ...
+def open_index(root: str, *, write: Literal[False], journal: str = ...) -> TxyIndex | None: ...
 
 
-def open_index(root: str, *, write: bool) -> TxyIndex | None:
+def open_index(root: str, *, write: bool, journal: str = WAL) -> TxyIndex | None:
     """The index in ``root`` (a base's ``converted-txy`` folder). A reader (``write`` False) gets None
     when there is none, or it can't be read or is of another schema. A writer gets one it can write,
-    created if missing, a damaged or newer one set aside first (``set_aside``); otherwise
-    ``IndexUnavailable``."""
+    created if missing (in ``journal`` mode: ``WAL``, or ``DELETE`` for a folder that may not be local),
+    a damaged or newer one set aside first (``set_aside``); otherwise ``IndexUnavailable``."""
     path = os.path.join(root, INDEX_NAME)
     if not write:
         if not os.path.isfile(path):
@@ -403,7 +428,7 @@ def open_index(root: str, *, write: bool) -> TxyIndex | None:
             raise IndexUnavailable(f"HeLab's TXY index couldn't be opened ({error})") from error
         try:
             writer = conn
-            version = _patient(lambda: _prepare(writer))
+            version = _patient(writer, lambda: _prepare(writer, journal))
             if version == SCHEMA:
                 return TxyIndex(conn, path)
             reason = "newer" if version > SCHEMA else "damaged"

@@ -54,8 +54,8 @@ RESULTS_TEXT = ("Plots shown now stay as they are; the next run of each plot com
 # HeLab's converted TXY (Q27.5): where they are, and what each folder holds (the row's tooltip).
 CONVERTED_TIP = ("TXY files HeLab converted from raw files, in the cache and temp folders' converted-txy folders, "
                  "with HeLab's index of what made them. They don't count toward the budget, and nothing removes "
-                 "them but this Clear, which keeps the index (a few kB, counted here) and the records of TXY "
-                 "written beside the raw files (those TXY aren't here).")
+                 "them but this Clear, which keeps the index (counted here; a Clear gives back the space of the "
+                 "rows it removes) and the records of TXY written beside the raw files (those TXY aren't here).")
 CONVERTED_BASES = {"cache": "Cache folder", "temp": "Temp folder"}
 
 
@@ -470,14 +470,15 @@ class CacheTab(QWidget):
         if inventory is None or self.busy:
             return
         converted = inventory.get("converted_txy") or {"files": 0, "bytes": 0}
+        files, size = int(converted["files"]), byte_size(int(converted.get("clearable_bytes") or 0))
+        # (No TXY left, only old builds' records or a damaged index set aside: say those.)
+        what = (f"{plural(files, 'TXY file')} HeLab converted, with their records ({size})" if files
+                else f"what is left of HeLab's converted TXY: old records and damaged indexes ({size})")
         if not self.confirm("Clear HeLab's converted TXY?",
-                            f"Removes {plural(int(converted['files']), 'TXY file')} HeLab converted, with their "
-                            f"records ({byte_size(int(converted.get('clearable_bytes') or 0))}), from the cache and "
-                            "temp folders; HeLab's index of what made them stays. Raw "
-                            "files, "
-                            "MATLAB's TXY and HeLab's TXY written beside raw files are kept. Data loaded stays open; "
-                            "plots on HeLab's TXY keep what they show, and shots are converted again when converting "
-                            "is on.", "Clear"):
+                            f"Removes {what}, from the cache and temp folders; HeLab's index of what made them "
+                            "stays. Raw files, MATLAB's TXY and HeLab's TXY written beside raw files are kept. Data "
+                            "loaded stays open; plots on HeLab's TXY keep what they show, and shots are converted "
+                            "again when converting is on.", "Clear"):
             return
         self._run("Clear HeLab's converted TXY", "clear_converted_txy")
 

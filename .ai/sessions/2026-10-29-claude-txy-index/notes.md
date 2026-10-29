@@ -69,3 +69,11 @@ Final runs (after 35b50d0):
   two-writer test on Windows; quoted in the handoff's last section.
 - After WAL: full suite `8199 passed, 669 skipped, 2 warnings in 142.08s`, no RERUN; the five type
   checks clean; local stress six writers x 300 rows, three trials, no error.
+
+## Review round 4 checks
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
+  `8205 passed, 669 skipped, 2 warnings in 143.12s`, no RERUN.
+- The five type checks clean (mypy strict helab 191 / tests 159, win32; pyright, Windows).
+- The touch-timeout test fails without the 200 ms limit (`assert 10.971249207970686 < 5.0`) and passes
+  with it.

@@ -237,3 +237,142 @@ A fix would patch `os.lstat` only for the paths under test, or patch the name in
 rather than in `os`. Together with the Windows `test_writing_held_data_out_counts_as_progress`
 RERUN from run 40863356565 (already in the handoff for CoCo to file), that makes two known-issues
 entries for the landing.
+
+## Round 3 review (head `5dc161f`, `git diff 9691873..5dc161f`)
+
+**Result: no blocker.** Nit-4 is closed. WAL, `_patient`, the move and the 200 ms wait hold up under
+the checks below. I add two Low findings (both about where the docs promise more than the code does)
+and three Nits. None of them stops the landing if CoCo accepts them as follow-ups.
+
+| Finding | Status | What I checked |
+|---|---|---|
+| Nit-4 | **closed** | `CacheTab.py:668` enables Clear only when `clearable` > 0. `converted_usage` computes `clearable`/`clearable_bytes` with the same `_cleared` rule `clear_converted` uses, plus a `folder.json` left alone in its folder (as Clear removes it, now with its bytes counted). `test_the_cache_tab_shows_and_clears_converted_txy` shows "0 files · <index>" with Clear disabled after a Clear. |
+| Low-5 (new) | open, Low | See below: the temp folder is user-set, so it isn't always local. |
+| Low-6 (new) | open, Low | See below: the index never shrinks, and the tooltip says "a few kB". |
+| Nit-5 (new) | open, Nit | An index made by an earlier head of this branch stays in DELETE mode. |
+| Nit-6 (new) | open, Nit | The confirm text can read "Removes 0 TXY files … with their records (40 kB)". |
+| Nit-7 (new) | open, Nit | `_patient` can wait up to about 2 × `BUSY_SECONDS`, not "up to 10 s". |
+
+### Low-5: "the temp folder is the OS's" isn't so; WAL (and the URI) need a local, plain path
+
+- **Where:** `helab/convert/provenance.py:35` ("and the temp folder is the OS's"), and the handoff's
+  lines 70–71 ("A UNC *temp* override, a developer setting").
+- **Why:** Settings has an editable temp folder with Browse… (`SettingsDialog.py:127`, `:143`,
+  `:329`). Nothing checks it with `cache_location_problem`; only Help › Record I/O trace warns
+  (`io_ops/trace_check.py:18`). So a user can put it on a network drive, a UNC path or a synced
+  folder. There:
+  - **WAL** needs shared memory (`-shm`) that SQLite doesn't support over a network filesystem, and
+    a sync client can copy `index.sqlite` and `-wal` separately. The likely outcome is a "damaged"
+    index (set aside, shots converted again) or lock errors (`IndexUnavailable`, conversions to temp
+    fail). Don't-cache folders always convert to temp (Q27.4).
+  - **A UNC path** still fails every open, as I noted in round 0 (Low-4): `pathlib.Path.as_uri()`
+    gives `file://server/share/…` and SQLite refuses the authority. With WAL nothing changes here,
+    but the handoff now calls it a developer setting, and it isn't.
+- **Fix (any one):** refuse a network or synced temp folder in Settings the way the cache folder is
+  refused (Tony's call on wording, so a `Q~` for DECISIONS); or, for a base where
+  `cache_location_problem(base)` is non-empty, keep the index in DELETE mode and build the URI as
+  `file:` plus the quoted path, which keeps a UNC host inside the path. At least correct the
+  docstring and the doc proposal.
+
+### Low-6: the index never shrinks, and the row says "a few kB"
+
+- **Where:** `CacheTab.py:57` ("which keeps the index (a few kB, counted here)"), and the handoff's
+  line 369.
+- **Why:** each row is about 400 bytes. I measured 5000 rows at 1,986,560 bytes. The index has
+  `auto_vacuum` 0, and nothing runs `VACUUM`. After `clear_converted` removed all 5000 TXY and their
+  rows, the file was still 1,986,560 bytes. The row then reads "0 files · 2.0 MB" with Clear
+  disabled. The user has no way to get that space back short of deleting the file by hand. A lab
+  that converts tens of thousands of shots ends up with tens of MB.
+- **Fix:** run `VACUUM` on the index at the end of a Clear that removed rows. Clear is rare and
+  asked for. In WAL, `VACUUM` takes the write lock, and `_patient` covers a busy answer. Then the
+  tooltip can say "counted here" without "a few kB". At least drop "a few kB".
+
+### Nits
+
+- **Nit-5:** `provenance.py:351` sets WAL only when it creates the file (`user_version` 0). An index
+  made by an earlier head of this branch (1e7329c–c546394, on dev machines or the floor) stays in
+  DELETE mode for good. My probe confirmed it. Nothing shipped with DELETE, so accepting this is
+  fine. Otherwise, switch it on a writable open when `PRAGMA journal_mode` says `delete`, ignoring
+  busy.
+- **Nit-6:** `CacheTab.py:474`: with only a damaged set-aside index or old records to clear, Clear is
+  now enabled and the confirm reads "Removes 0 TXY files HeLab converted, with their records (40
+  kB)". Possible fix: name the files when `files` is 0 ("Removes HeLab's leftover records (40 kB)").
+- **Nit-7:** `provenance.py:181–196`: the deadline is checked only between attempts. An attempt that
+  starts just before the deadline can wait SQLite's own 10 s busy timeout, so the total approaches
+  20 s. CI's "after 13.41 s" (run 40879735789) shows the overshoot. That is still inside the 60 s
+  no-progress timeout. Only the docstring and the handoff ("up to the same 10 s") need a change.
+
+### What I checked and found sound
+
+- **WAL with two writers and readers:** `BEGIN IMMEDIATE` per write, with `_patient` retrying
+  `SQLITE_BUSY`/`SQLITE_LOCKED` (extended codes by `& 0xFF`). `_transaction` and `_prepare` roll
+  themselves back first, so each retry starts clean. A damaged file raises `DatabaseError`, which
+  `_patient` doesn't retry, so it still goes to set-aside. Readers open with `mode=rw`, so the last
+  one to close checkpoints and removes `-wal`/`-shm`. A `mode=ro` reader would leave them, but no
+  HeLab code opens one. Under a write transaction held by another connection, `read_shots`,
+  `index_schema` and `converted_usage` each answered in under 1 ms (probe).
+- **Checkpoints:** SQLite's automatic checkpoint (1000 pages) on commit. No connection holds a read
+  transaction between operations (autocommit, `isolation_level=None`), so nothing pins the `-wal`.
+  The last close removes it: two-writer test, `listdir == [index.sqlite]`, on all three OSes.
+- **A killed writer:** probe with `wal_autocheckpoint = 0`, one committed update and one open
+  `BEGIN IMMEDIATE`, then `os._exit`. `-wal`/`-shm` were left. The next reader saw the committed row
+  and not the uncommitted one. The next writer wrote in 1 ms, and its close left only
+  `index.sqlite`.
+- **The move:** `_copy_tree` copies `-wal` and skips `-shm` (`SKIP_SUFFIXES`). `checkpoint` covers
+  only the store, which is fine because no index writer runs during a move: helpers are stopped and
+  `helab convert` registers in `cache_locks`. `test_a_cache_move_carries_rows_still_in_the_wal`
+  proves the rows replay at the new place, and that `-wal`/`-shm` are measured with the index but
+  are neither TXY nor `clearable`, and Clear leaves them.
+- **Windows file handles:** a set-aside while another process has the index open fails at the first
+  companion rename, since SQLite's win32 VFS doesn't share delete. `_COMPANIONS` puts `-journal`
+  then `-wal` first, so nothing is half renamed, and it fails as `IndexUnavailable` (accepted in
+  round 1). Clear never touches `-wal`/`-shm`. The move's test exits its writer before cleanup.
+  Windows CI passes all of it.
+- **The 200 ms wait (`helab_txy.py:217`):** `touch` is a single autocommit statement, not wrapped in
+  `_patient`. So `PRAGMA busy_timeout = 200` bounds it: 0.25 s in my probe under a held write. On a
+  timeout, `sqlite3.OperationalError` is swallowed, `last_used` doesn't move, and the load returns
+  its shots as usual. Opening and reading in `find` don't wait on a writer in WAL. One gap: no test
+  pins the 200 ms. The probe is in the review scratch, not the suite.
+- **The GUI never opens the index:** unchanged. `CacheTab` reads only the inventory.
+- **`events.py`:** `ConvertedUsageField` has `clearable` and `clearable_bytes`, and
+  `ConvertedSummaryField` sums them. `test_helper_events` passes.
+
+### Checks (floor venv, macOS, head `5dc161f`)
+
+- Touched tests: `test_convert_helab`, `test_converter_tab`, `test_txy_sources`,
+  `test_helper_events`, `test_cache_switch`, `test_cache_move` and `test_headless_imports`, with
+  `-n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **195 passed, 0 reruns**.
+- Full suite, same flags: **8199 passed, 669 skipped, 0 reruns** (2 min 3 s).
+- `mypy helab/ --strict` (191 files), `mypy tests --strict` (159), and `mypy helab/ --strict
+  --platform win32` (191): no issues. `pyright helab tests` and `pyright --pythonplatform Windows
+  helab tests`: 0 errors.
+
+### CI run 40883472651 (head `5dc161f`, attempt 1): success
+
+I read every job's log:
+
+| Job | ID | Result |
+|---|---|---|
+| macOS Converter backends | 123480992365 | 678 passed |
+| Ubuntu Converter backends | 123480992493 | 678 passed |
+| Windows Converter backends | 123480992308 | 677 passed |
+| macOS Tests (1/2) | 123480992457 | 4082 passed |
+| macOS Tests (2/2) | 123480992782 | 4117 passed |
+| Ubuntu Tests (1/2) | 123480992399 | 4079 passed |
+| Ubuntu Tests (2/2) | 123480992535 | 4117 passed |
+| Windows Tests (2/2) | 123480992168 | 4101 passed |
+| Windows Tests (1/2) | 123480992297 | 4069 passed, **1 rerun** |
+| Three Builds, Detect branch | — | success |
+
+The compat matrix (3.11, 3.12, 3.14) was skipped because this is a push, not a PR.
+
+- **The rerun, quoted from "rerun reasons":**
+  `RERUN tests/test_plot_backends.py::test_2d_plots_draw_with_every_library[values1-Matplotlib-CountsPerShot]`,
+  "worker 'gw1' crashed while running …", with no traceback.
+- **Is it known?** `roadmaps/known-issues.md:98` has the same test's worker crash on Windows, but
+  for the `[values0-Plotly-CountsPerShot]` case (run 40803552596). This one is the Matplotlib case,
+  so the entry should be widened to name it and this run. It isn't this branch's: the branch
+  doesn't touch plots.
+- **The two-writer test passed on every OS with no rerun.** On Windows Tests (2/2) it took about
+  10 s from start to pass (13:41:40 → 13:41:50, including two interpreter starts), against about
+  2 s on Ubuntu. That is worth watching, but it isn't a failure.

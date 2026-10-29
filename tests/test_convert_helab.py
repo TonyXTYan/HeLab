@@ -1392,10 +1392,12 @@ def test_an_index_that_cant_be_set_aside_fails_the_conversion_to_be_tried_again(
 
 
 def test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeout(
-        monkeypatch: pytest.MonkeyPatch) -> None:
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """SQLite answers "database is locked" at once, without its busy timeout, where waiting could
     deadlock (CI run 40874212130, Windows: two writers creating the index): the transaction is tried
-    again for up to ``BUSY_SECONDS``; any other error, or busy past then, is raised."""
+    again for up to ``BUSY_SECONDS`` in all, each attempt's own busy timeout being what is left of it
+    (review Nit-7); any other error, or busy past then, is raised, and the connection's timeout restored."""
+    conn = sqlite3.connect(tmp_path / "x.sqlite", isolation_level=None)
     locked = sqlite3.OperationalError("database is locked")
     answers: list[BaseException | None] = [locked, locked, None]
 
@@ -1404,14 +1406,69 @@ def test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeo
         if answer is not None:
             raise answer
         return "done"
-    assert provenance._patient(action) == "done" and answers == []
+    assert provenance._patient(conn, action) == "done" and answers == []
     with pytest.raises(sqlite3.OperationalError, match="no such table"):
-        provenance._patient(lambda: (_ for _ in ()).throw(sqlite3.OperationalError("no such table: x")))
-    monkeypatch.setattr(provenance, "BUSY_SECONDS", 0.05)
+        provenance._patient(conn, lambda: conn.execute("SELECT * FROM x"))
+    monkeypatch.setattr(provenance, "BUSY_SECONDS", 0.3)
+    timeouts: list[int] = []
+
+    def stays_locked() -> None:
+        timeouts.append(int(conn.execute("PRAGMA busy_timeout").fetchone()[0]))
+        raise sqlite3.OperationalError("database is locked")
     started = time.monotonic()
     with pytest.raises(sqlite3.OperationalError, match="locked"):
-        provenance._patient(lambda: (_ for _ in ()).throw(sqlite3.OperationalError("database is locked")))
-    assert time.monotonic() - started < 1.0
+        provenance._patient(conn, stays_locked)
+    assert time.monotonic() - started < 0.3 + 0.1  # (Within BUSY_SECONDS, the last sleep capped at it.)
+    assert len(timeouts) > 2 and timeouts[0] <= 300 and timeouts == sorted(timeouts, reverse=True)
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 300
+    # A real lock held past the deadline: SQLite's own wait counts toward it too.
+    holder = sqlite3.connect(tmp_path / "x.sqlite", isolation_level=None)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        started = time.monotonic()
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            provenance._patient(conn, lambda: conn.execute("BEGIN IMMEDIATE"))
+        assert time.monotonic() - started < 0.3 + 0.2
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+        conn.close()
+
+
+def test_the_index_uri_quotes_the_whole_path(tmp_path: Path) -> None:
+    """Low-5: a UNC temp folder (``\\\\server\\share``) must not read as a URI authority, and ``?``,
+    ``#`` or ``%`` in a folder's name must stay in the path."""
+    assert provenance._uri("\\\\server\\share\\t") == "file:%5C%5Cserver%5Cshare%5Ct"
+    assert provenance._uri("C:\\Users\\x") == "file:C%3A%5CUsers%5Cx"
+    assert provenance._uri("//server/share") == "file:%2F%2Fserver%2Fshare"
+    odd = tmp_path / "a?b#c%d e" / "converted-txy"
+    with provenance.open_index(str(odd), write=True) as index:
+        index.record("f", "", "/data/run", provenance_record(), 1.0)
+    assert sorted(os.listdir(odd)) == [provenance.INDEX_NAME] and list(provenance.read_shots(str(odd), "f"))
+
+
+@pytest.mark.parametrize("problem", ["", "on a network drive (smbfs)"])
+def test_an_index_where_the_folder_may_not_be_local_uses_a_rollback_journal(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str) -> None:
+    """Low-5: WAL needs a local disk; the temp folder is the user's to set. Where ``cache_location_problem``
+    objects to the base (a network drive, a UNC path, a synced folder), a new index uses DELETE instead;
+    conversions and loads work the same either way."""
+    from helab.utils import cache_location
+    write_raw(source, 1, raw_bytes(10_000))
+    seen: list[str] = []
+
+    def problem_of(path: str) -> str:
+        seen.append(path)
+        return problem
+    monkeypatch.setattr(cache_location, "cache_location_problem", problem_of)
+    assert len(of(run(source, request_for(source, tmp_path)), "shot_converted")) == 1
+    assert seen == [str(tmp_path / "temps")] and convert.journal_for(str(tmp_path / "temps")) == (
+        provenance.DELETE if problem else provenance.WAL)
+    with contextlib.closing(sqlite3.connect(index_file(tmp_path))) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == ("delete" if problem else "wal")
+    assert of(run(source, request_for(source, tmp_path)), "shot_converted") == []
+    assert os.listdir(index_file(tmp_path).parent) != [] and not [
+        name for name in os.listdir(index_file(tmp_path).parent) if name.endswith(("-wal", "-shm", "-journal"))]
 
 
 WRITER = """

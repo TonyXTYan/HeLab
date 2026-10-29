@@ -53,7 +53,8 @@ was: a beside conversion's row replaces a cache one of the same tag and shot, ex
 below). Writes are rare and tiny (a row per shot, plus the folder's), each one `BEGIN IMMEDIATE`
 transaction; `sqlite3.connect(timeout=BUSY_SECONDS)` = 10 s busy timeout (well inside the 60 s
 no-progress timeout), and the transaction is tried again where SQLite answers busy at once rather
-than risk a deadlock (`provenance._patient`, up to the same 10 s). **Why WAL:** with a rollback
+than risk a deadlock (`provenance._patient`: 10 s in all, each attempt's own busy timeout and the
+last sleep being what is left of it, review Nit-7). **Why WAL:** with a rollback
 journal, every commit needs every reader gone and deletes the journal file; two processes writing a
 row each in turn starved each other on Windows CI (run 40879735789: `SQLITE_BUSY` after 10.65 s,
 10.67 s, 10.81 s and 13.41 s in the two-writer test). In WAL, readers never block the writer, a
@@ -65,12 +66,17 @@ row and `PRAGMA integrity_check` (its writer prints its error, SQLite code and w
 fails). **`-wal` and `-shm` are SQLite's own files:** never housekeeping's (`own_partial()` can't match
 them), measured with the index's bytes in Settings › Cache (never as TXY, never in `clearable`), never
 removed by Clear; the last connection to close checkpoints the `-wal` into the index and removes both,
-so between conversions there is normally only `index.sqlite`. WAL's shared memory needs a local disk,
-which the index always is. **The index is on a local disk:** `cache_location.cache_location_problem` already
-refuses a cache folder on a network drive or a UNC path, and the temp folder is the OS's. (A UNC
-*temp* override, a developer setting, would make every index open fail, since SQLite refuses a
-`file://server/share/…` URI: loads would find no rows and conversions fail with `IndexUnavailable`;
-A~3.)
+so between conversions there is normally only `index.sqlite`. **WAL's shared memory needs a local
+disk** (review Low-5): `cache_location.cache_location_problem` already refuses a cache folder on a
+network drive, a UNC path or a synced folder, but the temp folder is the user's to set in Settings
+(Browse…) and nothing checks it. So a conversion creates a new index in WAL only where
+`cache_location_problem(base)` is empty, and with a rollback journal (DELETE) where it objects
+(`io_ops.convert.journal_for`; the mode is kept in the file). Every open now uses a fully quoted
+`file:` URI (`provenance._uri`: `file:` plus the path with every character but letters, digits and
+`_.-~` percent-encoded), so a UNC `\\server\share` is a path, not a URI authority, and `?`, `#`, `%`
+in a folder's name stay in it (tests: `test_the_index_uri_quotes_the_whole_path`,
+`test_an_index_where_the_folder_may_not_be_local_uses_a_rollback_journal[|on a network drive]`).
+Whether Settings should refuse such a temp folder outright is Q~5.
 
 Readers (loads, Live checks, `save_held`, Settings › Cache's measure) open with `mode=rw`, never
 create a file, get None for no file, another schema, or any SQLite error, and never set aside. They
@@ -305,9 +311,15 @@ rows and old records of beside TXY stay; set-aside indexes go)."
 - **A~2**: `helab_txy.converted_usage` still lists each hash folder (names only; `stat` only for files
   the index doesn't know). If converted-txy grows to tens of thousands of TXY, measure by the index
   alone and list folders only on Clear.
-- **A~3**: `provenance._connect` builds a `file://server/share/…` URI from a UNC path, which SQLite
-  refuses. Only a developer's UNC temp-folder override reaches it (the cache folder is refused on a
-  share). If one ever matters, open UNC paths without a URI (`mode=rw` then needs an existence check).
+- **A~3**: done in review round 4 (the quoted `file:` URI above); dropped.
+- **Q~5** (Tony): Settings › General lets the temp folder be set anywhere, and nothing checks it
+  (only Help › Record I/O trace warns). On a network drive, a UNC path or a synced folder, HeLab's
+  converted TXY of folders without a data root or marked Don't cache go there, and the index there now
+  uses a rollback journal (slower with two writers, but sound where locks work). Should Settings refuse
+  such a temp folder the way it refuses the cache folder? Proposed: yes, with the cache folder's
+  wording: "HeLab's temp folder can't be on a network drive or in a synced folder ({problem}): choose
+  a folder on this computer's own disk." (an existing such setting kept but warned about once, as for
+  the cache folder's).
 - **Orphan rows aren't pruned (review Nit-2), on purpose:** a row whose TXY isn't on disk (a kill
   between row and rename, a TXY deleted by hand) is harmless: it reads as stale, the next conversion of
   that shot replaces it (primary key), and Settings › Cache counts files, not rows. Pruning "rows
@@ -366,7 +378,7 @@ doing nothing. Now `converted_usage` also reports `clearable` / `clearable_bytes
 `clear_converted` would remove, by the same rule (`_cleared`, shared by both: never the index, nor an
 old record of a beside TXY; `folder.json` when it would be left alone; damaged set-aside indexes).
 Clear is enabled only when `clearable` is above 0, its question names the clearable bytes and says
-the index stays, and the row's tooltip says Clear keeps the index (a few kB, counted in the row).
+the index stays, and the row's tooltip says Clear keeps the index (counted in the row).
 `clear_converted` now also counts the `folder.json` it removes in its bytes, so the two agree. Tests:
 `test_the_helper_measures_and_clears_converted_txy` (clearable before, none after a Clear while bytes
 remain) and `test_the_cache_tab_shows_and_clears_converted_txy` (after a Clear: "0 files · <index
@@ -412,3 +424,27 @@ CI run 40874212130 (c546394) passed every job, with two RERUNs, quoted from "rer
   `_mark_used`). The busy test now expects the failure at the write ("couldn't be written"): in WAL an
   exclusive writer no longer blocks opening and reading. Local stress: six writers × 300 rows, three
   trials, 1.5 s each, no error, only `index.sqlite` left.
+
+## Review round 4 (Tern's round 3: 2 Low, 3 Nit)
+
+- **Low-5** (the temp folder is the user's, maybe not local): a new index uses DELETE where
+  `cache_location_problem(base)` objects, WAL elsewhere (`io_ops.convert.journal_for`, called as
+  `cache_location.cache_location_problem`, the name tests patch); every open uses a fully quoted
+  `file:` URI, so a UNC temp folder opens. Tests for both modes and the URI. Docstring (`provenance.py`)
+  and the journal-mode text above corrected; Q~5 for Tony (refuse such a temp folder in Settings?).
+- **Low-6** (the index never shrank): a Clear that removed rows ends with `VACUUM` (`TxyIndex.vacuum`,
+  through `_patient`, its errors ignored); "a few kB" dropped from the tooltip, which now says a Clear
+  gives back the space of the rows it removes. Test: 400 rows, the file under a quarter of its size
+  after the Clear (`test_a_clear_that_removed_rows_gives_their_space_back`).
+- **Nit-5** (an index made by an earlier head of this branch stays in DELETE): **accepted**, nothing
+  with DELETE shipped (the index never reached Ground or a release); such a dev file still works, as
+  DELETE is a supported mode.
+- **Nit-6**: with no TXY left, the question reads "Removes what is left of HeLab's converted TXY: old
+  records and damaged indexes (N kB), …", never "0 TXY files" (test).
+- **Nit-7**: `_patient` now sets each attempt's busy timeout to what is left of `BUSY_SECONDS` and caps
+  the last sleep at it, so the whole wait stays within 10 s (docstring true); it restores the
+  connection's 10 s timeout after. Test: retries with shrinking timeouts, a held lock answered within
+  `BUSY_SECONDS` plus 0.2 s.
+- **The 200 ms `last_used` wait, pinned**: `test_a_load_whose_last_used_mark_times_out_still_returns_its_shots`
+  holds the index's write lock while a load runs: the load returns HeLab's four shots, `last_used`
+  stays, and it takes well under 5 s (it fails at 10.97 s with the 200 ms limit removed).

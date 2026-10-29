@@ -645,6 +645,30 @@ def test_a_dont_cache_folders_txy_are_found_in_the_temp_folder(tmp_path: Path, p
         assert index.folders()[0][4] > time.time() - 60
 
 
+def test_a_load_whose_last_used_mark_times_out_still_returns_its_shots(tmp_path: Path, private_store: str) -> None:
+    """A load moves its folder's ``last_used`` on, waiting at most 200 ms for a lock: with a conversion
+    holding the index's write lock, the load still returns HeLab's shots, soon, and ``last_used`` stays."""
+    import contextlib
+    import sqlite3
+    from helab.convert import provenance
+    source = make_run(tmp_path, private_store)
+    [folder] = [path for path in helab_txy.folders(str(source), options(tmp_path, private_store),
+                                                   _key(source, private_store)) if os.path.isdir(path)]
+    root = os.path.dirname(folder)
+    with provenance.open_index(root, write=False) as index:  # type: ignore[union-attr]
+        index.conn.execute("UPDATE folders SET last_used = 1.0")
+    with contextlib.closing(sqlite3.connect(os.path.join(root, provenance.INDEX_NAME), isolation_level=None)) as holder:
+        holder.execute("BEGIN IMMEDIATE")  # (A conversion's write, held.)
+        started = time.monotonic()
+        result = loaded(run_load(source, tmp_path, private_store, options(tmp_path, private_store, txy_sources.HELAB)))
+        took = time.monotonic() - started
+        holder.execute("ROLLBACK")
+    assert result["txy"]["origins"] == {str(shot): f"helab:{PROFILE}" for shot in (1, 2, 3, 4)}
+    assert took < 5.0  # (Not the index's 10 s busy timeout.)
+    with provenance.open_index(root, write=False) as index:  # type: ignore[union-attr]
+        assert index.folders()[0][4] == 1.0
+
+
 def test_records_are_read_only_for_shots_helab_could_give(tmp_path: Path, private_store: str,
                                                           monkeypatch: pytest.MonkeyPatch) -> None:
     from helab.convert import provenance
