@@ -513,19 +513,11 @@ def app_folder() -> str:
 
 DEV_POTENTIAL_DATA_PATHS = [
     '/Volumes/dld_output',
-    '/Volumes/tonyNVME Gold/dld output',
-    '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
-    # '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
-    # Don't use OneDrive it's shit (cause file system hangs)
     os.path.join(OS_WORKING_DIRECTORY,'tests_sample_data'),
     str(QDir_WORKING_DIRECTORY.filePath("tests_sample_data")),
     str(QDir_WORKING_DIRECTORY),
     OS_WORKING_DIRECTORY,
-    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab',
-    'C:\\Users\\XinTong\\Documents',
     'O:\\',
-    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/good',
-    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/bad',
 ]
 
 # This is a display hint; availability is resolved by an isolated I/O helper

@@ -22,7 +22,8 @@ mechanics go in its architecture file.
   freely. It pushes that branch only at checkpoints, never with every commit (each push runs the
   full CI): when its work is done, after review fixes, or when a CI run on all three OSes is
   worth it (Tony, 2026-10-29). Merging into Tony's branches, landing a floor and opening a PR
-  need his approval.
+  need his approval. Standing exception (Tony, 2026-10-29): the Assistant commits record-only
+  changes on Ground (the three `.ai/*_TODO.md` lists and `.ai/ID_BLOCKS.md`) without asking.
 - **Commit messages:** a concise subject and a body that says what changed, why, and how it was
   checked, separated by a blank line.
 - **Branches are kept.** Never delete an agent branch, locally or on GitHub; push finished

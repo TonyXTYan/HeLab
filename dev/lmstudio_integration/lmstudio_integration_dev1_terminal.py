@@ -115,18 +115,11 @@ if __name__ == "__main__":
         "And attempt to continue writing additional content as much as possible"
     )
     parser = argparse.ArgumentParser(description="Review LaTeX files using OpenAI API")
-    parser.add_argument('target_file', nargs='?',
-                        default="/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/he44.tex",  
+    parser.add_argument('target_file',
                         help="Path to the LaTeX file to be reviewed"
                         )
     parser.add_argument('context_filess', nargs='*',
-                        default=[
-                            # "/Users/tonyyan/Documents/_ANU/_PhD_Thesis/main.tex",
-                            "/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/coc.tex",
-                            # "/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/he44.tex",
-                            "/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/he34.tex",
-                            "/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/csl.tex",
-                        ],
+                        default=[],
                         help="Paths to the LaTeX files to be reviewed"
                         )
     parser.add_argument('system_message', nargs='?',
@@ -152,9 +145,10 @@ if __name__ == "__main__":
               f"{chars_per_sec:.2f} chars/s, iteration: {iteration}, total chars: {sys_total_chars}")
         print("\n\n\n")
 
-        os.makedirs("/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/.llm/", exist_ok=True)
+        output_dir = os.path.join(os.path.dirname(os.path.abspath(args.target_file)), ".llm")
+        os.makedirs(output_dir, exist_ok=True)
         output_filename = "combined"
-        with open(f"/Users/tonyyan/Documents/_ANU/_PhD_Thesis/chapters/.llm/{output_filename}.llm-{iteration}.tex", "w") as file:
+        with open(os.path.join(output_dir, f"{output_filename}.llm-{iteration}.tex"), "w") as file:
             file.write(message)
         time.sleep(0.1)
         

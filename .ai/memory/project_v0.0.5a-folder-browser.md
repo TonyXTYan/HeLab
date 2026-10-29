@@ -22,6 +22,6 @@ Still only here:
 
 - Default cache/temp folders moved (2026-10-08) from the system temp dir to
   `~/Library/Caches/HeLab` (macOS) / `%LOCALAPPDATA%\HeLab` (Windows); unwritable saved paths
-  fall back instead of crashing (see [[lab-main-pc-caveats]]).
+  fall back instead of crashing (see the lab PCs' local notes, `.ai/local/memory/`).
 - Not chosen, revisit only if Tony asks: a per-row "Retry 2/3" tree state. Accepted: an open
   tooltip doesn't live-refresh "stopping for N s" (a Qt limitation).
