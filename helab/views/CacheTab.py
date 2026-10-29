@@ -659,6 +659,8 @@ class CacheTab(QWidget):
         self.converted_label.setToolTip("\n".join((CONVERTED_TIP, "", *(
             f"{CONVERTED_BASES.get(name, name)}: {plural(int(base['files']), 'file')} in "
             f"{plural(int(base['folders']), 'folder')} · {byte_size(int(base['bytes']))}{converted_used(base)}"
+            + (f" · a newer HeLab's index, {byte_size(int(base['newer']))}, which Clear leaves"
+               if base.get("newer") else "")
             for name, base in (converted.get("bases") or {}).items()))))
         self.converted_button.setEnabled(writable and bool(converted["files"] or converted["bytes"]))
         checked = f"Checked {datetime.fromtimestamp(inventory['checked_at']):%H:%M}"

@@ -102,7 +102,8 @@ def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, o
     record isn't read again: a TXY and its record are written once, and raw files are never rewritten,
     Tony 2026-10-20); ``only``: the shots the source could take from HeLab (``could_take``; None: all),
     so a check reads no record of a shot MATLAB's TXY wins."""
-    from helab.convert.provenance import beside_stale, parse_txy_name, read_shots, stale, txy_name
+    from helab.convert import provenance
+    from helab.convert.provenance import beside_stale, parse_txy_name, stale, txy_name
     from helab.utils.txy_sources import HELAB_ORIGIN
     wanted = str(options.get("profile_hash") or "")
     wanted_tag = str(options.get("profile_tag") or "")
@@ -177,7 +178,7 @@ def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, o
         if not look:
             continue
         root, name = os.path.dirname(folder), os.path.basename(folder)
-        records = read_shots(root, name, tag=wanted_tag, shots={shot for _, shot in look})
+        records = provenance.read_shots(root, name, tag=wanted_tag, shots={shot for _, shot in look})
         took = False
         for tag, shot in look:
             if shot in found and not found[shot].profile:
@@ -312,10 +313,10 @@ def default_record(source: str = "") -> dict[str, Any]:
 
 # HeLab's own files in a folder there: the TXY of the tagged names, the untagged ones before Q18.4, and the
 # per-shot records and ``folder.json`` of the builds before the index (none read any more, but HeLab's:
-# measured and cleared with the rest), and their leftover temporaries.
+# measured and cleared with the rest), and their leftover temporaries (``io_ops.convert.own_partial``'s).
 _OWN_FILE = re.compile(r"^(?:d_txy_helab_(?:[a-z][a-z0-9]{1,15}_)?(?:0|[1-9][0-9]*)\.(?:txt|txy|json)"
                        r"|\.d_txy_helab_(?:[a-z][a-z0-9]{1,15}_)?(?:0|[1-9][0-9]*)\.(?:txt|txy|json)\.[0-9a-f]{16}"
-                       r"\.partial|folder\.json)$", re.ASCII)
+                       r"\.partial|folder\.json|\.folder\.json\.[0-9a-f]{16}\.partial)$", re.ASCII)
 _TXY_SUFFIXES = (".txt", ".txy")
 _FOLDER_RECORD = "folder.json"
 
@@ -335,45 +336,59 @@ def converted_roots(cache_directory: str, temps: str) -> dict[str, str]:
     return roots
 
 
-def _index_files(root: str) -> list[os.DirEntry[str]]:
-    """The index and its journal, and indexes set aside (``provenance.SET_ASIDE_PATTERN``): regular files."""
-    from helab.convert.provenance import INDEX_NAME, SET_ASIDE_PATTERN
+def _index_files(root: str) -> tuple[list[os.DirEntry[str]], list[os.DirEntry[str]]]:
+    """The index (and its journal) and indexes set aside (``provenance.SET_ASIDE_PATTERN``), regular
+    files: (this HeLab's or damaged ones, a newer HeLab's). A newer HeLab's index, live or set aside, is
+    never ours to clear (nor counted as ours)."""
+    from helab.convert.provenance import INDEX_NAME, SCHEMA, SET_ASIDE_PATTERN, index_schema
+    live_newer = (index_schema(root) or 0) > SCHEMA
+    ours: list[os.DirEntry[str]] = []
+    newer: list[os.DirEntry[str]] = []
     try:
         with os.scandir(root) as entries:
-            return [entry for entry in entries if entry.is_file(follow_symlinks=False)
-                    and (entry.name in (INDEX_NAME, INDEX_NAME + "-journal") or SET_ASIDE_PATTERN.fullmatch(entry.name))]
+            for entry in entries:
+                if not entry.is_file(follow_symlinks=False):
+                    continue
+                if entry.name in (INDEX_NAME, INDEX_NAME + "-journal"):
+                    (newer if live_newer else ours).append(entry)
+                elif SET_ASIDE_PATTERN.fullmatch(entry.name):
+                    (newer if entry.name.startswith("index-newer-") else ours).append(entry)
     except OSError:
-        return []
+        pass
+    return ours, newer
+
+
+def _size(entry: os.DirEntry[str]) -> int:
+    try:
+        return entry.stat(follow_symlinks=False).st_size
+    except OSError:
+        return 0
 
 
 def converted_usage(root: str) -> ConvertedUsageField:
     """HeLab's TXY under ``root`` (a base's ``converted-txy``): their count and bytes (the index and old
-    records included), the folders holding them, and when one was last used (None: never, or unknown).
-    The index gives each TXY's size; only files it doesn't know (old builds', or a lost index's) are
-    measured one by one."""
+    builds' records included), the folders holding them, when one was last used (from the index; None:
+    never, or unknown), and ``newer``: the bytes of a newer HeLab's index there, which Clear leaves.
+    Each file is measured by its ``stat`` (a row's size may name a file a killed write never renamed in)."""
     import sqlite3
     from helab.convert.provenance import open_index
-    usage: ConvertedUsageField = {"files": 0, "bytes": 0, "folders": 0, "last_used": None}
-    known: dict[tuple[str, str], int] = {}
+    usage: ConvertedUsageField = {"files": 0, "bytes": 0, "folders": 0, "last_used": None, "newer": 0}
     last_used: dict[str, float] = {}
     index = open_index(root, write=False)
     if index is not None:
         try:
-            known = {(folder, name): size for folder, name, size, _ in index.held()}
             last_used = {row[0]: row[4] for row in index.folders()}
         except sqlite3.Error:
-            known, last_used = {}, {}
+            last_used = {}
         finally:
             index.close()
     try:
         folders = [entry for entry in os.scandir(root) if entry.is_dir(follow_symlinks=False)]
     except (FileNotFoundError, NotADirectoryError):
         return usage
-    for entry in _index_files(root):
-        try:
-            usage["bytes"] += entry.stat(follow_symlinks=False).st_size
-        except OSError:
-            continue
+    ours, newer = _index_files(root)
+    usage["bytes"] += sum(_size(entry) for entry in ours)
+    usage["newer"] = sum(_size(entry) for entry in newer)
     newest: float | None = None
     for folder in folders:
         holds = False
@@ -382,10 +397,7 @@ def converted_usage(root: str) -> ConvertedUsageField:
                 for entry in entries:
                     if not (entry.is_file(follow_symlinks=False) and _OWN_FILE.fullmatch(entry.name)):
                         continue
-                    size = known.get((folder.name, entry.name))
-                    if size is None:
-                        size = entry.stat(follow_symlinks=False).st_size
-                    usage["bytes"] += size
+                    usage["bytes"] += entry.stat(follow_symlinks=False).st_size
                     usage["files"] += int(entry.name.endswith(_TXY_SUFFIXES))
                     holds = True
         except OSError:
@@ -406,26 +418,29 @@ def converted_summary(roots: Mapping[str, str]) -> ConvertedSummaryField:
     return {"files": sum(base["files"] for base in bases.values()),
             "bytes": sum(base["bytes"] for base in bases.values()),
             "folders": sum(base["folders"] for base in bases.values()),
-            "last_used": max(used) if used else None, "bases": bases}
+            "last_used": max(used) if used else None,
+            "newer": sum(base["newer"] for base in bases.values()), "bases": bases}
 
 
 def clear_converted(root: str) -> dict[str, int]:
     """Remove HeLab's TXY under ``root`` (the user asked, Settings → Cache): each folder's TXY with their
-    rows in the index (only rows naming the very file removed), old builds' records, indexes set aside,
-    never a file of another name or a link. Rows of TXY written beside the raw files stay (the only
-    account of how they were made), and so does the index; an old record whose TXY isn't here (beside)
-    stays too, and a folder left with its ``folder.json`` alone goes."""
+    rows in the index (only rows naming the very file removed), old builds' records and their leftover
+    temporaries, damaged indexes set aside, never a file of another name or a link. Rows of TXY written
+    beside the raw files stay (the only account of how they were made), and so does the index; an old
+    record whose TXY isn't here (beside) stays too, and a folder left with its ``folder.json`` alone
+    goes. A newer HeLab's index (``user_version`` above ``SCHEMA``, or set aside as ``index-newer-…``) is
+    left as it is, its rows too: not ours to clear."""
     import contextlib
-    from helab.convert.provenance import IndexUnavailable, INDEX_NAME, TXY_PATTERN, TxyIndex, open_index
+    from helab.convert.provenance import IndexUnavailable, SCHEMA, TXY_PATTERN, TxyIndex, index_schema, open_index
     removed = {"files": 0, "bytes": 0}
     try:
         folders = [entry.path for entry in os.scandir(root) if entry.is_dir(follow_symlinks=False)]
     except (FileNotFoundError, NotADirectoryError):
         return removed
     index: TxyIndex | None = None
-    if os.path.isfile(os.path.join(root, INDEX_NAME)):
+    if index_schema(root) == SCHEMA:
         with contextlib.suppress(IndexUnavailable):
-            index = open_index(root, write=True)  # (A damaged one is set aside first: removed below.)
+            index = open_index(root, write=True)
     try:
         for folder in folders:
             try:
@@ -465,10 +480,10 @@ def clear_converted(root: str) -> dict[str, int]:
         if index is not None:
             index.close()
     from helab.convert.provenance import SET_ASIDE_PATTERN
-    for entry in _index_files(root):
-        if SET_ASIDE_PATTERN.fullmatch(entry.name):
+    for entry in _index_files(root)[0]:
+        if SET_ASIDE_PATTERN.fullmatch(entry.name):  # (Damaged ones; never the live index.)
+            size = _size(entry)
             try:
-                size = entry.stat(follow_symlinks=False).st_size
                 os.unlink(entry.path)
             except OSError:
                 continue

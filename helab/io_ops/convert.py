@@ -45,7 +45,8 @@ sent as ``partial_removed``.
 ``convert_plan`` says why (``fallback``). HeLab's folder for a source folder is
 ``<base>/converted-txy/<hash of its key>/``; the base's ``converted-txy/index.sqlite`` names the key
 and path (its ``folders`` row, updated when the folder moved) and holds the shots' rows. A
-conversion there removes its leftover temporary TXY the same way (``own_partial()``).
+conversion there removes its leftover temporary TXY the same way, and old builds' JSON
+temporaries (``own_partial()``).
 
 **Processes.** Reads, writes and every source-folder call stay in this process (traced, guarded
 and paused like the other helpers'). With ``workers`` > 1, conversions run across shots in a pool
@@ -195,10 +196,14 @@ def partial() -> re.Pattern[str]:
     return partial_pattern(BARE_NAME + r"\.txt")
 
 
+@functools.cache
 def own_partial() -> re.Pattern[str]:
-    """The temporary names ``write_atomic`` gives HeLab's TXY in its own folder: ``partial()``'s (the
-    provenance is in the index now, whose own journal is SQLite's, never housekeeping's)."""
-    return partial()
+    """``partial()``, and the temporary names ``write_atomic`` gave the JSON of builds before the index
+    (Q26.2) in HeLab's own folder (each shot's ``d_txy_helab_<tag>_<N>.json``, ``folder.json``), and
+    nothing else. (The index's own journal is SQLite's, never housekeeping's.)"""
+    from helab.convert.provenance import BARE_NAME
+    from helab.convert.txy import partial_pattern
+    return partial_pattern("|".join((BARE_NAME + r"\.(?:txt|json)", r"folder\.json")))
 
 
 def compute_budget(raw_bytes: int) -> float:
@@ -703,7 +708,8 @@ def _remove_partial(path: str, entry: os.DirEntry[str], send: Emit) -> None:
 
 def _remove_own_partials(path: str, folder: str, send: Emit) -> None:
     """The same in HeLab's own folder for ``path`` (a helper killed mid-write there leaves one too;
-    on Windows that is likely, the flush to disk taking most of a write; ``own_partial()``)."""
+    on Windows that is likely, the flush to disk taking most of a write), old builds' records' too
+    (``own_partial()``)."""
     import stat
     try:
         entries = [entry for entry in os.scandir(folder) if own_partial().match(entry.name)]

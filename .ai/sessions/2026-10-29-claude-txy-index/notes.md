@@ -39,3 +39,14 @@ Final runs (after 35b50d0):
   read-count test counts index rows.
 - `tests/test_helper_events.py`: `test_the_converted_txy_summary_is_the_declared_shape`.
 - `tests/test_cache_switch.py`: the inventory payload carries `temps`.
+
+## Review round 1 checks (after Tern's review; macOS, same merged base)
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
+  `8197 passed, 669 skipped, 2 warnings in 126.87s`, no RERUN (2 more tests than before: the
+  set-aside-blocked and the newer-index Clear tests).
+- `mypy helab/ --strict`: Success (191). `mypy tests --strict`: Success (159). `pyright helab tests`:
+  0 errors. `mypy helab/ --strict --platform win32`: Success. `pyright --pythonplatform Windows helab
+  tests`: 0 errors.
+- CI run 40863356565 (head 1e7329c) had failed on Windows only, on `[newer]` (High-1), plus one
+  unrelated RERUN in `test_io_service_run.py` (quoted in the handoff for known-issues).

@@ -22,13 +22,13 @@ it is still its own (``forget``: another conversion may have written its own sin
 The index is rebuildable: missing, unreadable, busy for a reader or of another schema, it only means
 shots convert again. A writer that finds it damaged (SQLite's "malformed" or "not a database") or of
 a newer schema sets it aside, with its journal, as ``index-damaged-<UTC>-<8 hex>.sqlite`` (or
-``index-newer-…``; ``SET_ASIDE_PATTERN``) and starts a new one; nothing removes those but Settings ›
-Cache's Clear. Journal mode DELETE (a rollback journal, SQLite's default): writes are rare and tiny (a
+``index-newer-…``; ``SET_ASIDE_PATTERN``) and starts a new one (on Windows, not while another process
+has it open: the conversion then fails with ``IndexUnavailable`` and is tried again later). Settings ›
+Cache's Clear removes damaged ones; a newer HeLab's index, live or set aside, is never ours to clear. Journal mode DELETE (a rollback journal, SQLite's default): writes are rare and tiny (a
 row per shot), each a short ``BEGIN IMMEDIATE`` transaction with a busy timeout, so the app's
-helpers and ``helab convert`` write side by side; WAL's shared memory would gain nothing here, isn't
-safe if the folder is ever on a network share, and leaves ``-wal``/``-shm`` files beside it. (On a
-share whose locks don't work, two writers at once can damage it: then it is set aside, and its shots
-convert again.)
+helpers and ``helab convert`` write side by side; WAL's shared memory would gain nothing here and
+leaves ``-wal``/``-shm`` files beside it. The cache folder is never on a network share
+(``cache_location`` refuses one), so the index is on a local disk.
 
 ``stale`` says why a TXY no longer stands for its raw file and the profile asked for (no row, the
 raw file or the TXY changed, another profile hash), so a shot is converted again when a profile
@@ -227,11 +227,6 @@ class TxyIndex:
         return [(str(row[0]), str(row[1]), str(row[2]), int(row[3]), float(row[4])) for row in self.conn.execute(
             "SELECT folder, key, source, bytes, last_used FROM folders ORDER BY folder")]
 
-    def held(self) -> list[tuple[str, str, int, int]]:
-        """The TXY HeLab's folders should hold (not beside): (folder, TXY name, size, mtime)."""
-        return [(str(row[0]), str(row[1]), int(row[2]), int(row[3])) for row in self.conn.execute(
-            "SELECT folder, txy_name, txy_size, txy_mtime_ns FROM shots WHERE output != 'beside'")]
-
     # Writes: each a short transaction.
 
     def _write(self, statements: list[tuple[str, tuple[Any, ...]]]) -> int:
@@ -393,12 +388,30 @@ def read_shots(root: str, folder: str, *, tag: str = "", shots: Iterable[int] | 
     if index is None:
         return {}
     try:
-        return index.shots(folder, tag=tag, shots=shots)
+        rows = index.shots(folder, tag=tag, shots=shots)
     except sqlite3.Error as error:
-        index.close()
+        index.close()  # (First: Windows renames no file a handle holds open.)
         if repair and damaged(error):
             with contextlib.suppress(OSError):
                 set_aside(index.path, "damaged")
         return {}
+    index.close()
+    return rows
+
+
+def index_schema(root: str) -> int | None:
+    """The ``user_version`` of the index in ``root``: None when there is none or it can't be read
+    (damaged, or busy); ``SCHEMA`` is this HeLab's, above it a newer HeLab's (never ours to change)."""
+    path = os.path.join(root, INDEX_NAME)
+    if not os.path.isfile(path):
+        return None
+    try:
+        conn = _connect(path, "rw")
+    except sqlite3.Error:
+        return None
+    try:
+        return int(conn.execute("PRAGMA user_version").fetchone()[0])
+    except sqlite3.Error:
+        return None
     finally:
-        index.close()
+        conn.close()

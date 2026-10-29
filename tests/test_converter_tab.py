@@ -2,8 +2,10 @@
 Clear (Q12.3), and a plot's TXY source row (Q6.6, Q6.10). Synthetic files under ``tmp_path`` only."""
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
+import sqlite3
 import time
 from typing import Any
 
@@ -199,23 +201,56 @@ def test_the_helper_measures_and_clears_converted_txy(tmp_path: Path) -> None:
     # A TXY the index doesn't know (an index lost or set aside): measured by its file, cleared too.
     gone = converted_folder(root, "c" * 24, {"d_txy_helab_m19v1_3.txt": b"y" * 5, "d_txy_helab_m19v1_3.json": b"{}",
                                               "folder.json": b"{}"})
+    # An old build's leftover temporary folder.json: HeLab's too (so its folder can go); look-alikes stay.
+    leftover = converted_folder(root, "d" * 24, {".folder.json.0123456789abcdef.partial": b"half",
+                                                  "folder.json": b"{}"})
+    (gone / ".folder.json.0123456789abcdeF.partial").write_bytes(b"theirs")
     os.symlink(one / "d_txy_helab_m19v1_1.txt", gone / "d_txy_helab_m19v1_9.txt")
     aside = Path(root) / "index-damaged-20261029T120000Z-0123abcd.sqlite"
     aside.write_bytes(b"damaged")
     (Path(root) / "index-notes.sqlite").write_bytes(b"theirs")
     index_bytes = os.path.getsize(Path(root) / provenance.INDEX_NAME)
-    assert helab_txy.converted_usage(root) == {"files": 2, "bytes": 10 + 2 + 2 + 2 + 2 + 5 + 2 + 2 + 7 + index_bytes,
-                                               "folders": 3, "last_used": 200.0}
-    assert helab_txy.converted_usage(str(tmp_path / "none")) == {"files": 0, "bytes": 0, "folders": 0, "last_used": None}
-    assert helab_txy.clear_converted(root) == {"files": 2, "bytes": 10 + 2 + 5 + 2 + 7}
+    assert helab_txy.converted_usage(root) == {
+        "files": 2, "bytes": 10 + 2 + 2 + 2 + 2 + 5 + 2 + 2 + 4 + 2 + 7 + index_bytes, "folders": 4, "last_used": 200.0,
+        "newer": 0}
+    assert helab_txy.converted_usage(str(tmp_path / "none")) == {"files": 0, "bytes": 0, "folders": 0, "last_used": None,
+                                                                 "newer": 0}
+    assert helab_txy.clear_converted(root) == {"files": 2, "bytes": 10 + 2 + 5 + 2 + 4 + 7}
+    assert not leftover.exists()
     assert sorted(os.listdir(one)) == ["folder.json", "notes.txt"]  # Another's file stays, so its folder too.
     assert sorted(os.listdir(beside)) == ["d_txy_helab_m19v1_2.json", "folder.json"]  # A beside TXY's record stays.
-    assert sorted(os.listdir(gone)) == ["d_txy_helab_m19v1_9.txt", "folder.json"]  # A link is never followed or removed.
+    assert sorted(os.listdir(gone)) == [".folder.json.0123456789abcdeF.partial", "d_txy_helab_m19v1_9.txt",
+                                        "folder.json"]  # A link is never followed or removed; a look-alike stays.
     assert sorted(os.listdir(root)) == ["a" * 24, "b" * 24, "c" * 24, "index-notes.sqlite", provenance.INDEX_NAME]
     # The removed TXY's row and its folder's row go; the beside TXY's row and folder stay.
     with provenance.open_index(root, write=False) as index:  # type: ignore[union-attr]
         assert [row[0] for row in index.folders()] == ["b" * 24]
         assert list(index.shots("b" * 24)) == [("m19v1", 2)] and index.shots("a" * 24) == {}
+
+
+def test_a_clear_leaves_a_newer_helabs_index_alone(tmp_path: Path) -> None:
+    """An older HeLab's Clear never sets aside or removes a newer HeLab's index (its beside rows are the
+    only account of those TXY), live or set aside by a conversion: not counted as ours, said as ``newer``.
+    It removes the TXY it was asked to, and damaged set-aside indexes."""
+    root = str(tmp_path / "converted-txy")
+    folder = converted_folder(root, "a" * 24, {"d_txy_helab_m19v1_1.txt": b"x" * 10})
+    indexed(folder, 1)
+    index = Path(root) / provenance.INDEX_NAME
+    with contextlib.closing(sqlite3.connect(index)) as conn:
+        conn.execute(f"PRAGMA user_version = {provenance.SCHEMA + 1}")
+        conn.commit()
+    newer_aside = Path(root) / "index-newer-20261029T120000Z-0123abcd.sqlite"
+    newer_aside.write_bytes(b"newer")
+    damaged = Path(root) / "index-damaged-20261029T120000Z-89abcdef.sqlite"
+    damaged.write_bytes(b"damaged")
+    before = index.read_bytes()
+    usage = helab_txy.converted_usage(root)
+    assert usage["newer"] == len(before) + 5 and usage["bytes"] == 10 + 7 and usage["files"] == 1
+    assert helab_txy.clear_converted(root) == {"files": 1, "bytes": 10 + 7}
+    assert index.read_bytes() == before and newer_aside.exists() and not damaged.exists()
+    assert sorted(os.listdir(root)) == [newer_aside.name, provenance.INDEX_NAME]
+    assert helab_txy.converted_usage(root) == {"files": 0, "bytes": 0, "folders": 0, "last_used": None,
+                                               "newer": len(before) + 5}
 
 
 def test_a_clear_keeps_the_row_of_a_txy_written_again_meanwhile(tmp_path: Path) -> None:

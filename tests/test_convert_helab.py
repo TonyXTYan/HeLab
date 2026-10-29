@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import builtins
+import contextlib
 import io
 import json
 import os
@@ -169,10 +170,12 @@ def test_provenance_rows_round_trip_and_say_what_is_stale(tmp_path: Path) -> Non
         shot=4, output="beside", txy_size=3)}
     assert provenance.read_shots(root, "f", tag="m23v1") == {} and provenance.read_shots(root, "g") == {}
     assert list(provenance.read_shots(root, "f", shots=[4])) == [("m19v1", 4)]
-    with sqlite3.connect(os.path.join(root, provenance.INDEX_NAME)) as conn:
+    # (``closing``: a connection's own ``with`` commits but doesn't close, and Windows renames no open file.)
+    with contextlib.closing(sqlite3.connect(os.path.join(root, provenance.INDEX_NAME))) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == provenance.SCHEMA == 1
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
         conn.execute("UPDATE shots SET hits = 'two' WHERE shot = 4")  # A row of the wrong shape: none.
+        conn.commit()
     assert list(index_rows(Path(root) / "f")) == [("m19v1", 3)]
 
     def stale(record: provenance.Provenance | None, raw_mtime_ns: int = 5, txy: tuple[int, int] | None = (40, 7),
@@ -1000,16 +1003,35 @@ RECORD_PARTIAL = ".d_txy_helab_m19v1_1.json.0123456789abcdef.partial"
 FOLDER_PARTIAL = ".folder.json.0123456789abcdef.partial"
 
 
-def test_the_own_folder_pattern_is_the_txys_temporary_names_alone(tmp_path: Path) -> None:
-    """Since the index (Q26.2), HeLab's folder holds TXY alone: housekeeping there removes their temporary
-    names only. Old builds' JSON temporaries are cleared only by Settings → Cache; the index's journal
-    is SQLite's own; a set-aside index is never housekeeping's."""
+def test_the_own_folder_pattern_adds_exactly_old_builds_records_temporary_names(tmp_path: Path) -> None:
+    """HeLab's folder holds TXY alone since the index (Q26.2); housekeeping there also removes the
+    temporaries old builds gave their JSON (each shot's record, ``folder.json``), and nothing else: the
+    index's journal is SQLite's, a set-aside index the user's to clear."""
     pattern = convert.own_partial()
-    for name in (PARTIAL_NAME, ".d_txy_helab_m19v1_0.txt.fedcba9876543210.partial"):
+    made: list[str] = []
+    real_open = os.open
+
+    def spy(path: Any, *args: Any, **kwargs: Any) -> int:
+        made.append(Path(path).name)
+        return real_open(path, *args, **kwargs)
+    with pytest.MonkeyPatch.context() as patches:
+        patches.setattr(os, "open", spy)
+        for name in ("d_txy_helab_m19v1_12.txt", "d_txy_helab_m19v1_12.json", "folder.json"):
+            txy.write_atomic(tmp_path / name, b"")
+    assert sum(bool(pattern.match(name)) for name in made) == 3
+    for name in (PARTIAL_NAME, RECORD_PARTIAL, FOLDER_PARTIAL, ".d_txy_helab_m19v1_0.json.fedcba9876543210.partial"):
         assert pattern.match(name), name
-    for name in (RECORD_PARTIAL, FOLDER_PARTIAL, ".d_txy_helab_m19v1_0.json.fedcba9876543210.partial",
-                 provenance.INDEX_NAME, provenance.INDEX_NAME + "-journal", ".index.sqlite.0123456789abcdef.partial",
-                 "index-damaged-20261029T120000Z-0123abcd.sqlite"):
+    # Source folders keep the TXY's names only: no JSON was ever written there.
+    assert not convert.partial().match(RECORD_PARTIAL) and not convert.partial().match(FOLDER_PARTIAL)
+    for name in (".d_txy_helab_m19v1_1.json.0123456789abcdeg.partial", ".d_txy_helab_m19v1_1.json.0123456789abcde.partial",
+                 ".d_txy_helab_m19v1_1.json.0123456789ABCDEF.partial", ".d_txy_helab_m19v1_07.json.0123456789abcdef.partial",
+                 ".d_txy_helab_\u0661.json.0123456789abcdef.partial", RECORD_PARTIAL + ".bak", RECORD_PARTIAL[1:],
+                 "x" + RECORD_PARTIAL, ".d_txy_forc1.json.0123456789abcdef.partial", ".d1.json.0123456789abcdef.partial",
+                 FOLDER_PARTIAL + ".bak", FOLDER_PARTIAL[1:], ".xfolder.json.0123456789abcdef.partial",
+                 ".Folder.json.0123456789abcdef.partial", ".folder.jsonl.0123456789abcdef.partial",
+                 ".folderxjson.0123456789abcdef.partial", ".notes.json.0123456789abcdef.partial",
+                 ".d_txy_helab_1.json.0123456789abcdef.partial", provenance.INDEX_NAME, provenance.INDEX_NAME + "-journal",
+                 ".index.sqlite.0123456789abcdef.partial", "index-damaged-20261029T120000Z-0123abcd.sqlite"):
         assert not pattern.match(name), name
 
 
@@ -1247,11 +1269,13 @@ def test_a_conversion_removes_old_leftovers_in_helabs_own_folder(source: Path, t
     write_raw(source, 1, raw_bytes(10_000))
     folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
     folder.mkdir(parents=True)
-    old = [folder / PARTIAL_NAME]
-    young = [folder / ".d_txy_helab_m19v1_2.txt.fedcba9876543210.partial"]
-    # (Old builds' JSON temporaries are HeLab's but no longer housekeeping's: Settings → Cache clears them.)
-    lookalikes = [folder / name for name in (".d_txy_helab_m19v1_3.txt.0123456789abcdeg.partial", PARTIAL_NAME + ".bak",
-                                             RECORD_PARTIAL, FOLDER_PARTIAL, "notes.partial")]
+    # (Old builds' JSON temporaries too: the index's builds write none, but theirs are HeLab's leftovers.)
+    old = [folder / name for name in (PARTIAL_NAME, RECORD_PARTIAL, FOLDER_PARTIAL)]
+    young = [folder / name for name in (".d_txy_helab_m19v1_2.txt.fedcba9876543210.partial",
+                                        ".d_txy_helab_m19v1_2.json.fedcba9876543210.partial",
+                                        ".folder.json.fedcba9876543210.partial")]
+    lookalikes = [folder / name for name in (".d_txy_helab_m19v1_3.json.0123456789abcdeg.partial", RECORD_PARTIAL + ".bak",
+                                             ".xfolder.json.0123456789abcdef.partial", "notes.partial")]
     for path, seconds in [(path, 2 * 3600) for path in old + lookalikes] + [(path, 60) for path in young]:
         path.write_bytes(b"half")
         age(path, seconds)
@@ -1303,8 +1327,9 @@ def test_a_missing_or_damaged_index_only_means_shots_convert_again(source: Path,
         data[page:] = b"\xff" * (len(data) - page)  # (Every page but the schema's.)
         index.write_bytes(bytes(data))
     else:
-        with sqlite3.connect(index) as conn:
+        with contextlib.closing(sqlite3.connect(index)) as conn:
             conn.execute(f"PRAGMA user_version = {provenance.SCHEMA + 1}")
+            conn.commit()
     damaged = index.read_bytes() if index.exists() else b""
     # A load finds no rows (and changes nothing); a conversion converts both shots again.
     assert index_rows(folder) == {} and (index.read_bytes() if index.exists() else b"") == damaged
@@ -1340,6 +1365,29 @@ def test_an_index_that_cant_be_written_fails_the_conversion_to_be_tried_again(
     folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
     assert not (folder / "d_txy_helab_m19v1_1.txt").exists() and set_aside(tmp_path) == []
     assert len(of(run(source, request_for(source, tmp_path)), "shot_converted")) == 1
+
+
+def test_an_index_that_cant_be_set_aside_fails_the_conversion_to_be_tried_again(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows renames no file another process holds open (a running ``helab convert``, a load): a damaged
+    or newer index then can't be set aside, so the conversion fails before any TXY, leaving it as it was;
+    the next one (Live's Retry, ``helab convert``'s next pass) sets it aside and converts."""
+    write_raw(source, 1, raw_bytes(10_000))
+    index = index_file(tmp_path)
+    index.parent.mkdir(parents=True)
+    index.write_bytes(b"not a database, " * 300)
+
+    def held_open(path: str, reason: str) -> str:
+        raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+    monkeypatch.setattr(provenance, "set_aside", held_open)
+    with pytest.raises(provenance.IndexUnavailable, match="damaged and couldn't be set aside"):
+        run(source, request_for(source, tmp_path))
+    folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
+    assert not (folder / "d_txy_helab_m19v1_1.txt").exists()
+    assert index.read_bytes() == b"not a database, " * 300 and set_aside(tmp_path) == []
+    monkeypatch.undo()
+    assert len(of(run(source, request_for(source, tmp_path)), "shot_converted")) == 1
+    assert [name.startswith("index-damaged-") for name in set_aside(tmp_path)] == [True]
 
 
 WRITER = """

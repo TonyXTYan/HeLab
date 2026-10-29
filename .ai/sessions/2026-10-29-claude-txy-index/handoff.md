@@ -19,7 +19,7 @@ with CoCo: `helab/convert/txy.py` (the `before_rename` keyword), `helab/io_ops/a
   renamed (`txy.write_atomic(..., before_rename=)`); a failed write removes the row only if still its own.
 - A missing, unreadable, busy-for-a-reader, damaged or newer index only means shots convert again. A
   conversion sets a damaged or newer one aside (`index-damaged-<UTC>-<8 hex>.sqlite`,
-  `index-newer-…`) and starts a new one. Nothing deletes those but the user's Clear.
+  `index-newer-…`) and starts a new one. Housekeeping never deletes those; the user's Clear removes damaged ones, never a newer HeLab's.
 - Settings › Cache measures and clears through each base's index, in a helper, asked first.
 - Q27.4: the store's Don't cache flag, read by the conversion itself, sends the TXY to the temp
   folder (the app and `helab convert` alike).
@@ -55,15 +55,18 @@ busy timeout (well inside the 60 s no-progress timeout). The app's helpers and `
 the index per operation (a conversion holds one connection for its run, never a transaction between
 shots), so they write side by side; `test_two_writers_side_by_side_lose_nothing` runs two writer
 processes at once (150 rows each, each opening the index per row like a conversion), then checks every
-row and `PRAGMA integrity_check`. Why not WAL: nothing to gain at this write rate; WAL's shared memory
-isn't safe on a network share; and it leaves `-wal`/`-shm` files beside the index (the cache move's
-copy skips `-shm` and checkpoints only the store's database). **If the cache folder isn't local:**
-DELETE mode works wherever the share's byte-range locks work; where they don't, two writers at once
-can damage the file, which is then set aside and its shots convert again (no data is lost: TXY are
-rebuildable). The default cache and temp folders are local.
+row and `PRAGMA integrity_check`. Why not WAL: nothing to gain at this write rate, and it leaves
+`-wal`/`-shm` files beside the index (the cache move's copy skips `-shm` and checkpoints only the
+store's database). **The index is on a local disk:** `cache_location.cache_location_problem` already
+refuses a cache folder on a network drive or a UNC path, and the temp folder is the OS's. (A UNC
+*temp* override, a developer setting, would make every index open fail, since SQLite refuses a
+`file://server/share/…` URI: loads would find no rows and conversions fail with `IndexUnavailable`;
+A~3.)
 
-Readers (loads, Live checks, `save_held`, Settings › Cache's measure) open with `mode=rw` (never
-creating a file), get None for no file, another schema, or any SQLite error, and never set aside.
+Readers (loads, Live checks, `save_held`, Settings › Cache's measure) open with `mode=rw`, never
+create a file, get None for no file, another schema, or any SQLite error, and never set aside. They
+are not quite read-only: a load that takes a TXY from a folder moves that folder's `last_used` on, at
+most once an hour (`TxyIndex.touch`, one `UPDATE`, its errors ignored; Q~3).
 
 ### The rules keep their meaning
 
@@ -110,8 +113,19 @@ creating a file), get None for no file, another schema, or any SQLite error, and
   exist), then starts a new one; its shots convert again. **Newer** (`user_version` > 1): set aside the
   same way as `index-newer-…`. Exact pattern (`provenance.SET_ASIDE_PATTERN`):
   `^index-(?:damaged|newer)-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\.sqlite(?:-journal|-wal|-shm)?$` (ASCII).
-  **HeLab never removes them by itself**: they stay until the user's Settings › Cache Clear, which
-  removes them with the converted TXY (measured in its bytes). So no housekeeping line is proposed.
+  **HeLab never removes them by itself**, so no housekeeping line is proposed. The user's Settings ›
+  Cache Clear removes `index-damaged-…` ones with the converted TXY (measured in its bytes); it leaves
+  `index-newer-…` ones, and a live newer index, alone (below).
+- **On Windows, an index another process holds open can't be set aside** (`WinError 32`: a running
+  `helab convert` or a load in another helper has it open; HeLab closes its own connection first,
+  `read_shots` included). The conversion then fails with `IndexUnavailable` ("… is damaged/newer and
+  couldn't be set aside") before any TXY, leaving the index as it was, and the next conversion sets it
+  aside once the other handle is closed (helpers hold it only per operation)
+  (`test_an_index_that_cant_be_set_aside_fails_the_conversion_to_be_tried_again`). **It never loops
+  hot:** Live's auto-convert stops on a failed conversion and waits for Retry (or auto-convert off and
+  on; `explorer_live`'s `convert.error`); `helab convert --watch` logs it and tries again after its
+  `--interval`; Settings › TXY converter's conversion is one run; IOService retries only loads'
+  no-progress timeouts, never a helper's `error`.
 - **Busy or unwritable** (another process's transaction past 10 s, the disk, permissions):
   `provenance.IndexUnavailable` (an `OSError`): the conversion fails before that shot's TXY is
   renamed, as a failed TXY write always did, and is tried again
@@ -128,10 +142,20 @@ the folder (a beside TXY's) stays, and a folder left with `folder.json` alone go
 ### Settings › Cache (brief item 5, Q27.5)
 
 - `helab_txy.converted_roots(cache_directory, temps)` → `{"cache": …, "temp": …}`;
-  `converted_usage(root)` per base: TXY files, bytes (the index, its journal, set-aside indexes and old
-  records included), folders holding them, `last_used`; the index gives each indexed TXY's size, so
-  only files it doesn't know (old builds', or a lost index's) are `stat`ed. `converted_summary` gives
-  the totals plus `bases`. Typed in the helper contract: `events.ConvertedUsageField` /
+  `converted_usage(root)` per base: TXY files, bytes (the index, its journal, damaged set-aside
+  indexes, old builds' records and their leftover temporaries included), folders holding them,
+  `last_used` (from the index), and `newer`. Every file is measured by its `stat`, not its row's size:
+  a row can name a file a killed redo never renamed in, or one replaced by hand (review Nit-1).
+  `converted_summary` gives the totals plus `bases`.
+- **A newer HeLab's index is never ours to clear** (review Low-1): when `index.sqlite`'s
+  `user_version` is above 1 (`provenance.index_schema`), Clear neither sets it aside nor writes its
+  rows (its beside rows are the only account of those TXY); it still removes the TXY files the user
+  asked to clear. `index-newer-…` set-aside files stay too. Their bytes are reported apart, as
+  `newer`, not in `bytes`, and the row's tooltip adds "a newer HeLab's index, N kB, which Clear leaves"
+  (`test_a_clear_leaves_a_newer_helabs_index_alone`).
+- Old builds' `.folder.json.<16 hex>.partial` (review Low-2) are measured and cleared like the other
+  legacy files (`_OWN_FILE` gains exactly `\.folder\.json\.[0-9a-f]{16}\.partial`), so Clear can
+  remove their folder; a look-alike (upper-case hex) stays. Typed in the helper contract: `events.ConvertedUsageField` /
   `ConvertedSummaryField` (checked at the send by strict typing, and both admin paths by
   `test_the_converted_txy_summary_is_the_declared_shape`).
 - `clear_converted(root)` per base: removes each folder's TXY and old records, deletes the rows of the
@@ -164,9 +188,11 @@ conversion writes to the cache folder; the temp folder's TXY stay until Settings
 
 ### Housekeeping (brief item 6)
 
-`own_partial()` now returns `partial()`: HeLab's folder holds TXY alone, so the only leftovers
-housekeeping removes there are TXY temporaries. Old builds' `.json`/`folder.json` temporaries are
-cleared only by Settings › Cache; SQLite's own `index.sqlite-journal` is SQLite's.
+`own_partial()` is unchanged from before the floor (review Low-2): the TXY's temporaries and those
+old builds gave their JSON (`.d_txy_helab_<tag>_<N>.json.<16 hex>.partial`, `.folder.json.<16
+hex>.partial`): new builds write no JSON, but an old build's leftovers are HeLab's own and still go
+once an hour old. SQLite's own `index.sqlite-journal` is SQLite's, never housekeeping's; set-aside
+indexes are the user's to clear.
 
 ### The cache-folder move (brief item 7)
 
@@ -189,6 +215,9 @@ outside it; the five type checks).
 ## Proposed doc changes (Coordinator applies)
 
 ### `.ai/architecture/converter.md`
+
+(In "Provenance", for the journal mode: "DELETE; the index is on a local disk, the cache folder never
+being on a share (`cache_location` refuses one)". Not "works on a share".)
 
 - **"Where files go"**: replace the "Changing before v0.0.7's release (Q26.2 …)" and "Q19.5 (decided,
   not built, Q27.4)" paragraphs with: "`<base>/converted-txy/index.sqlite` (Q26.2) holds the
@@ -220,18 +249,22 @@ rows and old records of beside TXY stay; set-aside indexes go)."
 
 ### `.ai/architecture/io-and-browsing.md`
 
-In the long "Responsive filesystem I/O" paragraph, after "Loads and Live checks also read HeLab's
-folders under the cache and temp folders (`io_ops.helab_txy`, plain calls, not source I/O)", add: "and
-the base's `converted-txy/index.sqlite` (read-only, never created or set aside by a load; a load that
-takes a TXY marks its folder used at most hourly); `convert` and `helab convert` write it. The GUI
-never opens it."
+- In the long "Responsive filesystem I/O" paragraph, after "Loads and Live checks also read HeLab's
+  folders under the cache and temp folders (`io_ops.helab_txy`, plain calls, not source I/O)", add:
+  "and the base's `converted-txy/index.sqlite`, never created or set aside by a load, which only moves
+  its folder's `last_used` on at most hourly; `convert` and `helab convert` write it. The GUI never
+  opens it."
+- Patched names (review Low-3): add `provenance.read_shots` (`helab.convert.provenance`, patched by
+  `tests/test_txy_sources.py`; `helab_txy.find` and `convert` call it as `provenance.read_shots`).
 
 ### `AGENTS.md`
 
 - Housekeeping list, last item: "every conversion with shots to convert deletes, by the same rules,
-  its own leftover temporary TXY in HeLab's `converted-txy/` folder (under the cache or temp folder):
-  `io_ops.convert.own_partial()` (= `partial()`). The index's `-journal` is SQLite's; a damaged or
-  newer index set aside (`index-{damaged,newer}-<UTC>-<8 hex>.sqlite`) stays until the user clears."
+  its own leftovers in HeLab's `converted-txy/` folder (under the cache or temp folder):
+  `io_ops.convert.own_partial()` (the TXY's temporaries, and those old builds gave their JSON records
+  and `folder.json`). The index's `-journal` is SQLite's; an index set aside
+  (`index-{damaged,newer}-<UTC>-<8 hex>.sqlite`) is never removed by housekeeping (Settings › Cache's
+  Clear removes damaged ones, never a newer HeLab's)."
 - "The disk cache" invariants could gain one line: "HeLab's converted-TXY provenance is one SQLite
   file per base (`converted-txy/index.sqlite`), opened only by helpers and `helab convert`; its row
   goes in before the TXY's rename; missing or damaged, shots only convert again (Q26.2)."
@@ -258,8 +291,36 @@ never opens it."
 - **A~2**: `helab_txy.converted_usage` still lists each hash folder (names only; `stat` only for files
   the index doesn't know). If converted-txy grows to tens of thousands of TXY, measure by the index
   alone and list folders only on Clear.
+- **A~3**: `provenance._connect` builds a `file://server/share/…` URI from a UNC path, which SQLite
+  refuses. Only a developer's UNC temp-folder override reaches it (the cache folder is refused on a
+  share). If one ever matters, open UNC paths without a URI (`mode=rw` then needs an existence check).
+- **Orphan rows aren't pruned (review Nit-2), on purpose:** a row whose TXY isn't on disk (a kill
+  between row and rename, a TXY deleted by hand) is harmless: it reads as stale, the next conversion of
+  that shot replaces it (primary key), and Settings › Cache counts files, not rows. Pruning "rows
+  without a TXY in HeLab's folder" would have to tell them from beside rows, whose TXY is never there
+  and which are the only provenance of those TXY; Clear removes only the rows of the very files it
+  removes. No follow-up proposed.
+- **Known issue to file (Coordinator):** `tests/test_io_service_run.py::test_writing_held_data_out_counts_as_progress`,
+  one RERUN in CI run 40863356565, job "windows Tests (2/2)" (123411955603), then passed: `assert (2 ==
+  1)` with `where 2 = len([0.000682100000005903, 0.0014403000000129396])`, `tests\test_io_service_run.py:40`.
+  Not this branch's code (IOService untouched): a Windows timing flake, two progress marks where one is
+  expected.
 - **M~1** (release smoke pass): on a machine with old-build `d_txy_helab_*.json` / `folder.json` in
   `converted-txy/`, open Settings › Cache: the row counts them, its tooltip lists Cache folder and Temp
   folder lines, Clear removes them; then convert a folder with Live on and see "last used just now".
 - **M~2**: mark a folder Don't cache, convert it (Live auto-convert or Settings › TXY converter) and
   check its TXY appear under the temp folder's `converted-txy/` and still load as HeLab's.
+
+## Review round 1 (Tern, `review.md`): what changed
+
+- **High-1** (Windows CI red on `[newer]`): the tests' SQLite connections are closed
+  (`contextlib.closing`, with `commit()`), at both places; the Windows behaviour when another process
+  holds the index is described above and tested.
+- **Low-1**: Clear leaves a newer HeLab's index (live or set aside) and its rows alone; reported as
+  `newer` (`events.ConvertedUsageField.newer`) and in the tooltip.
+- **Low-2**: `.folder.json.<16 hex>.partial` measured, cleared and housekept by an exact pattern;
+  `own_partial()` restored to its pre-floor pattern; AGENTS.md proposal updated.
+- **Low-3**: `helab_txy.find` calls `provenance.read_shots` by module; io-and-browsing proposal added.
+- **Low-4**: doc proposals corrected (the cache folder is never on a share; loads move `last_used`).
+- **Nits**: `read_shots` closes once on each path (first, before a set-aside); sizes by `stat`
+  (`TxyIndex.held` dropped, nothing else used it); orphan rows kept on purpose (above).
