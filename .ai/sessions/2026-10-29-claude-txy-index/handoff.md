@@ -458,3 +458,10 @@ CI run 40874212130 (c546394) passed every job, with two RERUNs, quoted from "rer
   CI's runners oversleep SQLite's busy-wait steps and ours; the test now uses `BUSY_SECONDS` = 1 s and
   a 0.6 s margin, still far below the 5 s an unbounded attempt would wait (the connection's sqlite3
   default timeout). `_patient` itself is unchanged.
+- **CI 40890989136 (463c44e)**: green, but the `_patient` timing test reran on macOS Tests (2/2) (job
+  123507559816), macOS and Windows Converter backends (2 and 3 reruns): the held-lock case took 1.68 s
+  (`assert (281.217096666 - 279.533168416) < (1.0 + 0.6)`), as loaded runners overshoot each of SQLite's
+  short busy-wait sleeps (it counts them nominally). The margin is now 2 s on the 1 s bound, against the
+  5 s an unbounded attempt takes; with the per-attempt timeout removed, the test still fails (its
+  timeouts check). The other rerun, `test_gui_responsiveness …[2]` (Windows Tests 1/2), is known-issues
+  line 94.

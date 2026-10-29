@@ -1418,9 +1418,9 @@ def test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeo
     started = time.monotonic()
     with pytest.raises(sqlite3.OperationalError, match="locked"):
         provenance._patient(conn, stays_locked)
-    # (Within BUSY_SECONDS, the last sleep capped at it; the margin is CI's oversleeping, well under the
-    # second attempt-long wait the bound is about.)
-    assert time.monotonic() - started < 1.0 + 0.6
+    # (Within BUSY_SECONDS, the last sleep capped at it. The margin is for loaded CI runners, whose short
+    # sleeps overshoot: 1 s of SQLite's nominal busy-wait took up to 1.7 s there, CI run 40890989136.)
+    assert time.monotonic() - started < 1.0 + 2.0
     assert len(timeouts) > 2 and timeouts[0] <= 1000 and timeouts == sorted(timeouts, reverse=True)
     assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 1000
     # A real lock held past the deadline: SQLite's own wait counts toward it too (unbounded, each attempt
@@ -1431,7 +1431,7 @@ def test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeo
         started = time.monotonic()
         with pytest.raises(sqlite3.OperationalError, match="locked"):
             provenance._patient(conn, lambda: conn.execute("BEGIN IMMEDIATE"))
-        assert time.monotonic() - started < 1.0 + 0.6
+        assert time.monotonic() - started < 1.0 + 2.0  # (Unbounded: 5 s, the first attempt's own timeout.)
     finally:
         holder.execute("ROLLBACK")
         holder.close()
