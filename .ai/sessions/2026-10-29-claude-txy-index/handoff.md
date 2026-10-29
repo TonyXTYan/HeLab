@@ -448,3 +448,13 @@ CI run 40874212130 (c546394) passed every job, with two RERUNs, quoted from "rer
 - **The 200 ms `last_used` wait, pinned**: `test_a_load_whose_last_used_mark_times_out_still_returns_its_shots`
   holds the index's write lock while a load runs: the load returns HeLab's four shots, `last_used`
   stays, and it takes well under 5 s (it fails at 10.97 s with the 200 ms limit removed).
+- **CI 40888404379 (87d0475) failed on two of this round's new tests**, fixed in the next commit:
+  `test_the_index_uri_quotes_the_whole_path` on Windows Tests (1/2) (job 123498366820, 5 reruns, then
+  failed): `OSError: [WinError 123] The filename, directory name, or volume label syntax is incorrect:
+  '…\\a?b#c%d e'`: Windows forbids `?` in a name, so the folder there is `a#c%d e` (`?` is still
+  tested off Windows). `test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeout`
+  on macOS Tests (2/2) (job 123498366886, 5 reruns, then failed) and both Converter-backends jobs (macOS
+  4 reruns, Windows 10 with the URI test): `assert (180.245601541 - 179.548123916) < (0.3 + 0.2)`:
+  CI's runners oversleep SQLite's busy-wait steps and ours; the test now uses `BUSY_SECONDS` = 1 s and
+  a 0.6 s margin, still far below the 5 s an unbounded attempt would wait (the connection's sqlite3
+  default timeout). `_patient` itself is unchanged.

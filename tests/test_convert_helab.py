@@ -1409,7 +1409,7 @@ def test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeo
     assert provenance._patient(conn, action) == "done" and answers == []
     with pytest.raises(sqlite3.OperationalError, match="no such table"):
         provenance._patient(conn, lambda: conn.execute("SELECT * FROM x"))
-    monkeypatch.setattr(provenance, "BUSY_SECONDS", 0.3)
+    monkeypatch.setattr(provenance, "BUSY_SECONDS", 1.0)
     timeouts: list[int] = []
 
     def stays_locked() -> None:
@@ -1418,17 +1418,20 @@ def test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeo
     started = time.monotonic()
     with pytest.raises(sqlite3.OperationalError, match="locked"):
         provenance._patient(conn, stays_locked)
-    assert time.monotonic() - started < 0.3 + 0.1  # (Within BUSY_SECONDS, the last sleep capped at it.)
-    assert len(timeouts) > 2 and timeouts[0] <= 300 and timeouts == sorted(timeouts, reverse=True)
-    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 300
-    # A real lock held past the deadline: SQLite's own wait counts toward it too.
+    # (Within BUSY_SECONDS, the last sleep capped at it; the margin is CI's oversleeping, well under the
+    # second attempt-long wait the bound is about.)
+    assert time.monotonic() - started < 1.0 + 0.6
+    assert len(timeouts) > 2 and timeouts[0] <= 1000 and timeouts == sorted(timeouts, reverse=True)
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 1000
+    # A real lock held past the deadline: SQLite's own wait counts toward it too (unbounded, each attempt
+    # could wait the connection's own timeout, here sqlite3's 5 s default, on top).
     holder = sqlite3.connect(tmp_path / "x.sqlite", isolation_level=None)
     holder.execute("BEGIN EXCLUSIVE")
     try:
         started = time.monotonic()
         with pytest.raises(sqlite3.OperationalError, match="locked"):
             provenance._patient(conn, lambda: conn.execute("BEGIN IMMEDIATE"))
-        assert time.monotonic() - started < 0.3 + 0.2
+        assert time.monotonic() - started < 1.0 + 0.6
     finally:
         holder.execute("ROLLBACK")
         holder.close()
@@ -1441,7 +1444,8 @@ def test_the_index_uri_quotes_the_whole_path(tmp_path: Path) -> None:
     assert provenance._uri("\\\\server\\share\\t") == "file:%5C%5Cserver%5Cshare%5Ct"
     assert provenance._uri("C:\\Users\\x") == "file:C%3A%5CUsers%5Cx"
     assert provenance._uri("//server/share") == "file:%2F%2Fserver%2Fshare"
-    odd = tmp_path / "a?b#c%d e" / "converted-txy"
+    # (Windows forbids "?" in a name; "#", "%" and spaces it allows.)
+    odd = tmp_path / ("a#c%d e" if sys.platform == "win32" else "a?b#c%d e") / "converted-txy"
     with provenance.open_index(str(odd), write=True) as index:
         index.record("f", "", "/data/run", provenance_record(), 1.0)
     assert sorted(os.listdir(odd)) == [provenance.INDEX_NAME] and list(provenance.read_shots(str(odd), "f"))
