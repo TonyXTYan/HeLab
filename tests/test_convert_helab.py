@@ -12,7 +12,8 @@ import signal
 import subprocess
 import sys
 import time
-from typing import Any, Iterator
+from types import SimpleNamespace
+from typing import Any, Callable, Iterator
 
 import pytest
 from pytestqt.qtbot import QtBot
@@ -547,7 +548,7 @@ def test_a_killed_helpers_workers_exit(source: Path, tmp_path: Path) -> None:
     # TXY under its own name is ever half written.
     expected = convert_raw(raw_bytes(*range(10_000, 10_000 + 40_000 * 20_000, 40_000)), MATLAB_2019, "reference")
     assert all(path.read_bytes() == expected for path in folder.glob("d_txy_helab_*.txy"))
-    assert all(convert.partial().match(name) for name in names if name.endswith(".partial"))
+    assert all(convert.own_partial().match(name) for name in names if name.endswith(".partial"))
 
 
 def test_the_numba_backends_cache_folder_is_under_the_cache(source: Path, tmp_path: Path, private_store: str,
@@ -655,9 +656,17 @@ def test_convert_once_from_the_command_line(source: Path, tmp_path: Path) -> Non
 
 @pytest.fixture
 def watching(source: Path) -> Iterator[subprocess.Popen[str]]:
-    process = subprocess.Popen([sys.executable, "-m", "helab", "convert", "--watch", str(source), "--output",
-                                "beside", "--interval", "0.2"], stderr=subprocess.PIPE, text=True, cwd=ROOT,
-                               env=dict(os.environ))
+    # A shell starts a background job (`pytest … &`) with SIGINT ignored, which children inherit and
+    # Python then leaves alone, so the watcher would never see Ctrl-C. Start it as from a terminal:
+    # a handled SIGINT is reset to the default by exec, and Python installs its handler.
+    previous = signal.signal(signal.SIGINT, signal.default_int_handler)
+    try:
+        process = subprocess.Popen([sys.executable, "-m", "helab", "convert", "--watch", str(source), "--output",
+                                    "beside", "--interval", "0.2"], stderr=subprocess.PIPE, text=True, cwd=ROOT,
+                                   env=dict(os.environ))
+    finally:
+        if previous is not None:
+            signal.signal(signal.SIGINT, previous)
     yield process
     if process.poll() is None:
         process.kill()
@@ -786,6 +795,37 @@ def test_the_partial_pattern_is_exactly_write_atomics_names(tmp_path: Path) -> N
         assert not pattern.match(name), name
 
 
+RECORD_PARTIAL = ".d_txy_helab_1.json.0123456789abcdef.partial"
+FOLDER_PARTIAL = ".folder.json.0123456789abcdef.partial"
+
+
+def test_the_own_folder_pattern_adds_exactly_the_records_temporary_names(tmp_path: Path) -> None:
+    pattern = convert.own_partial()
+    made: list[str] = []
+    real_open = os.open
+
+    def spy(path: Any, *args: Any, **kwargs: Any) -> int:
+        made.append(Path(path).name)
+        return real_open(path, *args, **kwargs)
+    with pytest.MonkeyPatch.context() as patches:
+        patches.setattr(os, "open", spy)
+        for name in ("d_txy_helab_12.txy", provenance.provenance_name(12), convert.FOLDER_RECORD):
+            txy.write_atomic(tmp_path / name, b"")
+    assert sum(bool(pattern.match(name)) for name in made) == 3
+    for name in (PARTIAL_NAME, RECORD_PARTIAL, FOLDER_PARTIAL, ".d_txy_helab_0.json.fedcba9876543210.partial"):
+        assert pattern.match(name), name
+    # Source folders keep the TXY's names only: no JSON is written there.
+    assert not convert.partial().match(RECORD_PARTIAL) and not convert.partial().match(FOLDER_PARTIAL)
+    for name in (".d_txy_helab_1.json.0123456789abcdeg.partial", ".d_txy_helab_1.json.0123456789abcde.partial",
+                 ".d_txy_helab_1.json.0123456789ABCDEF.partial", ".d_txy_helab_07.json.0123456789abcdef.partial",
+                 ".d_txy_helab_\u0661.json.0123456789abcdef.partial", RECORD_PARTIAL + ".bak", RECORD_PARTIAL[1:],
+                 "x" + RECORD_PARTIAL, ".d_txy_forc1.json.0123456789abcdef.partial", ".d1.json.0123456789abcdef.partial",
+                 FOLDER_PARTIAL + ".bak", FOLDER_PARTIAL[1:], ".xfolder.json.0123456789abcdef.partial",
+                 ".Folder.json.0123456789abcdef.partial", ".folder.jsonl.0123456789abcdef.partial",
+                 ".folderxjson.0123456789abcdef.partial", ".notes.json.0123456789abcdef.partial"):
+        assert not pattern.match(name), name
+
+
 def test_a_beside_conversion_removes_only_its_own_old_leftovers(source: Path, tmp_path: Path) -> None:
     write_raw(source, 1, raw_bytes(10_000))
     old = source / PARTIAL_NAME
@@ -845,14 +885,35 @@ def test_a_killed_beside_writes_leftover_goes_on_a_later_pass_once_old(source: P
     assert sorted(path.name for path in source.iterdir()) == ["d1.txt", "d_txy_helab_1.txy"]
 
 
+def convert_clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
+    """``io_ops.convert``'s monotonic clock, moved only by the test (the ticker's waits keep real
+    time): a compute budget can't run out while a loaded runner holds the ticker's thread back."""
+    now = [time.monotonic()]
+    monkeypatch.setattr(convert, "time", SimpleNamespace(monotonic=lambda: now[0], perf_counter=time.perf_counter,
+                                                         time=time.time))
+    return now
+
+
+def wait_for(condition: Callable[[], bool], timeout: float = 30) -> None:
+    deadline = time.monotonic() + timeout
+    while not condition():
+        assert time.monotonic() < deadline, "timed out"
+        time.sleep(0.01)
+
+
 def test_heartbeats_while_computing_stop_after_the_budget(monkeypatch: pytest.MonkeyPatch) -> None:
     from helab.io_ops.infra import Heartbeat
     monkeypatch.setattr(Heartbeat, "INTERVAL", 0.02)
-    beats: list[float] = []
-    with convert._Ticker(lambda event: beats.append(time.monotonic()), "converting", 0.15):
-        started = time.monotonic()
-        time.sleep(0.5)
-    assert beats and max(beats) - started < 0.25
+    now = convert_clock(monkeypatch)
+    beats: list[dict[str, Any]] = []
+    ticker = convert._Ticker(lambda event: beats.append(dict(event)), "converting", 0.15)
+    with ticker:
+        wait_for(lambda: len(beats) >= 2)
+        now[0] += 0.15
+        # The budget spent, the ticker stops by itself while the shot still computes.
+        ticker.thread.join(30)
+        assert not ticker.thread.is_alive() and not ticker.stop.is_set()
+    assert {(beat["kind"], beat["phase"]) for beat in beats} == {("heartbeat", "converting")}
     assert convert.still_computing([10.0, 20.0], 15.0) and not convert.still_computing([10.0, 12.0], 15.0)
     assert not convert.still_computing([], 0.0)
     assert convert.compute_budget(0) == convert.COMPUTE_SECONDS
@@ -863,20 +924,31 @@ def test_a_hung_backend_stops_sending_heartbeats(source: Path, tmp_path: Path, m
     from helab.convert import pipeline
     from helab.io_ops.infra import Heartbeat
     monkeypatch.setattr(Heartbeat, "INTERVAL", 0.02)
-    monkeypatch.setattr(convert, "COMPUTE_SECONDS", 0.1)
-    original = pipeline.convert_shot
+    now = convert_clock(monkeypatch)
+    tickers: list[convert._Ticker] = []
 
-    def slow(*args: Any, **kwargs: Any) -> Any:
-        time.sleep(0.6)
+    class Ticker(convert._Ticker):
+        def __enter__(self) -> convert._Ticker:
+            tickers.append(self)
+            return super().__enter__()
+    monkeypatch.setattr(convert, "_Ticker", Ticker)
+    events: list[dict[str, Any]] = []
+
+    def beats() -> int:
+        return sum(event["kind"] == "heartbeat" and event["phase"] == "converting" for event in list(events))
+    original = pipeline.convert_shot
+    stopped: list[bool] = []
+
+    def hung(*args: Any, **kwargs: Any) -> Any:
+        wait_for(lambda: beats() > 0)  # Heartbeats while it computes,
+        now[0] += 3600  # until it has computed past its budget: then they stop, though it goes on.
+        tickers[0].thread.join(30)
+        stopped.append(not tickers[0].thread.is_alive() and not tickers[0].stop.is_set())
         return original(*args, **kwargs)
-    monkeypatch.setattr(pipeline, "convert_shot", slow)
+    monkeypatch.setattr(pipeline, "convert_shot", hung)
     write_raw(source, 1, raw_bytes(10_000))
-    stamped: list[tuple[float, dict[str, Any]]] = []
-    convert_folder(str(source), request_for(source, tmp_path),
-                   lambda event: stamped.append((time.monotonic(), dict(event))))
-    beats = [at for at, event in stamped if event["kind"] == "heartbeat" and event["phase"] == "converting"]
-    [converted_at] = [at for at, event in stamped if event["kind"] == "shot_converted"]
-    assert beats and converted_at - max(beats) > 0.3
+    convert_folder(str(source), request_for(source, tmp_path), lambda event: events.append(dict(event)))
+    assert stopped == [True] and len(tickers) == 1 and len(of(events, "shot_converted")) == 1
 
 
 @pytest.mark.no_auto_data_root
@@ -989,10 +1061,27 @@ def test_a_conversion_removes_old_leftovers_in_helabs_own_folder(source: Path, t
     write_raw(source, 1, raw_bytes(10_000))
     folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
     folder.mkdir(parents=True)
-    old, young = folder / PARTIAL_NAME, folder / ".d_txy_helab_2.txy.fedcba9876543210.partial"
-    for path, seconds in ((old, 2 * 3600), (young, 60)):
+    old = [folder / name for name in (PARTIAL_NAME, RECORD_PARTIAL, FOLDER_PARTIAL)]
+    young = [folder / name for name in (".d_txy_helab_2.txy.fedcba9876543210.partial",
+                                        ".d_txy_helab_2.json.fedcba9876543210.partial",
+                                        ".folder.json.fedcba9876543210.partial")]
+    lookalikes = [folder / name for name in (".d_txy_helab_3.json.0123456789abcdeg.partial", RECORD_PARTIAL + ".bak",
+                                             ".xfolder.json.0123456789abcdef.partial", "notes.partial")]
+    for path, seconds in [(path, 2 * 3600) for path in old + lookalikes] + [(path, 60) for path in young]:
         path.write_bytes(b"half")
         age(path, seconds)
+    elsewhere = tmp_path / "elsewhere.json"
+    elsewhere.write_bytes(b"not HeLab's")
+    age(elsewhere, 2 * 3600)
+    link = folder / ".d_txy_helab_4.json.aaaaaaaaaaaaaaaa.partial"
+    try:
+        link.symlink_to(elsewhere)
+        age(link, 2 * 3600)
+    except (OSError, NotImplementedError):  # (Windows without the privilege to make links.)
+        pass
     events = run(source, request_for(source, tmp_path))
-    assert [(event["folder"], event["file"]) for event in of(events, "partial_removed")] == [(str(folder), PARTIAL_NAME)]
-    assert not old.exists() and young.exists()
+    assert sorted((event["folder"], event["file"]) for event in of(events, "partial_removed")) == sorted(
+        (str(folder), path.name) for path in old)
+    assert not any(path.exists() for path in old) and all(path.exists() for path in young + lookalikes)
+    assert link.is_symlink() or sys.platform == "win32"
+    assert elsewhere.read_bytes() == b"not HeLab's"
