@@ -45,6 +45,11 @@ LIVE_BLOCKED = {
 # re-checked only when the file changes (no final newline, off the trigger channel: Q12.5), or
 # until the clock or the share lets it be read (``future``, ``read_failed``).
 CONVERT_SETTLING = ("settling", "changed")
+# A raw file unmodified for 20 s that still fails the format checks (``io_ops.convert.DAMAGED``, Q18.5):
+# its ``shot_unconvertible`` reason, and how its message starts (as FolderCache keeps it after auto-convert
+# is turned off and on).
+DAMAGED_REASON = "damaged"
+DAMAGED_TEXT = "Damaged: "
 # What the Live line calls each place HeLab's TXY go (``convert_plan.output``).
 CONVERT_OUTPUTS = {"beside": "beside the raw files", "cache": "HeLab's disk cache folder",
                    "temp": "HeLab's temp folder"}
@@ -74,9 +79,11 @@ class AutoConvert:
     profile: dict[str, Any] = field(default_factory=dict)
     backend: str = ""
     # Raw files not converted (by name): waiting (reason, message), from the last conversion;
-    # unconvertible (message), kept while they stay unconvertible; kept beside (shot: reason).
+    # unconvertible (message), kept while they stay unconvertible, the damaged ones among them (Q18.5)
+    # named in ``damaged``; kept beside (shot: reason).
     waiting: dict[str, tuple[str, str]] = field(default_factory=dict)
     unconvertible: dict[str, str] = field(default_factory=dict)
+    damaged: set[str] = field(default_factory=set)
     kept: dict[int, str] = field(default_factory=dict)
     error: str = ""  # Why conversions stopped (Retry, or auto-convert off and on, starts them again).
 
@@ -775,6 +782,9 @@ class LiveController:
             convert.unconvertible[name] = str(event.get("message") or event["reason"])
             logging.warning("Live auto-convert: %s in %s can't be converted: %s", name, session.path,
                             convert.unconvertible[name])
+            if event["reason"] == DAMAGED_REASON:
+                convert.damaged.add(name)
+                self._notify_damaged(session, event)
         elif kind == "shot_kept":
             convert.kept[int(event["shot"])] = str(event["reason"])
         elif kind == "partial_removed":
@@ -786,6 +796,8 @@ class LiveController:
             reasons = self.explorer.model.cache.convert_reasons.get(session.path, {})
             convert.unconvertible = {str(entry[0]): convert.unconvertible.get(str(entry[0])) or reasons.get(
                 str(entry[0]), "can't be converted") for entry in event["unconvertible"]}
+            convert.damaged = {name for name, why in convert.unconvertible.items()
+                               if name in convert.damaged or why.startswith(DAMAGED_TEXT)}
         elif kind in ("done", "error", "cancelled", "offline"):
             if kind == "offline":
                 convert.error = "not while working offline"
@@ -802,6 +814,18 @@ class LiveController:
             return
         self.explorer._update_activity()
         self.explorer.loadStateChanged.emit()
+
+    @staticmethod
+    def _notify_damaged(session: LiveSession, event: dict[str, Any]) -> None:
+        """A damaged raw file (Q18.5): a system notification, once per file (its name, size and mtime)."""
+        name = os.path.basename(session.path.rstrip(os.sep)) or session.path
+        raw_name = str(event["raw_name"])
+        message = str(event.get("message") or "").removeprefix(DAMAGED_TEXT)
+        events.notify(events.DAMAGED_RAW, f"{raw_name} in {name} is damaged: {message}. No TXY is made for it; "
+                      "later shots go on.", title="HeLab: damaged raw file",
+                      key=(events.DAMAGED_RAW, session.path, raw_name, int(event["raw_size"]),
+                           int(event["raw_mtime_ns"])),
+                      desktop=True, path=session.path, shot=int(event["shot"]), source="convert")
 
     def _converted(self, session: LiveSession, convert: AutoConvert, event: dict[str, Any]) -> None:
         """A shot converted: its TXY reaches the data through Live's next check (now, or as soon
@@ -840,8 +864,10 @@ class LiveController:
                 parts.append(f"{convert.converted:,} converted (last: shot {convert.last_shot})")
             if stuck := convert.stuck():
                 parts.append(f"{len(stuck):,} waiting")
-            if convert.unconvertible:
-                parts.append(f"{len(convert.unconvertible):,} unconvertible")
+            if convert.damaged:
+                parts.append(f"{len(convert.damaged):,} damaged")
+            if others := len(convert.unconvertible) - len(convert.damaged):
+                parts.append(f"{others:,} unconvertible")
             text = "auto-convert " + (", ".join(parts) if parts else "on")
         started = datetime.fromtimestamp(convert.started_at).astimezone()
         lines = [f"Auto-convert on since {started:%H:%M:%S} (this session): each check also converts the folder's "
@@ -864,8 +890,13 @@ class LiveController:
             lines.append(f"Being written: {plural(settling, 'raw file')} (converted once written)")
         for title, entries in (("Waiting", [f"{name}: {message or reason}" for name, (reason, message)
                                             in sorted(convert.stuck().items())]),
+                               ("Damaged (unchanged for 20 s and still failing the format checks; no TXY, "
+                                "skipped while unchanged)",
+                                [f"{name}: {why.removeprefix(DAMAGED_TEXT)}" for name, why
+                                 in sorted(convert.unconvertible.items()) if name in convert.damaged]),
                                ("Can't be converted", [f"{name}: {why}" for name, why
-                                                       in sorted(convert.unconvertible.items())]),
+                                                       in sorted(convert.unconvertible.items())
+                                                       if name not in convert.damaged]),
                                ("Kept beside (not HeLab's to replace)", [f"shot {shot}: {why}" for shot, why
                                                                          in sorted(convert.kept.items())])):
             if entries:

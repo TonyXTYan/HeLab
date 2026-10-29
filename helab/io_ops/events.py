@@ -926,7 +926,8 @@ class ShotConvertedEvent(TypedDict):
 
 class ShotWaitingEvent(TypedDict):
     """A raw file not converted yet: it may still be being written (``reason``: ``settling``,
-    ``changed``, ``no_final_newline``, ``not_trigger_first``), is dated ahead of this computer's
+    ``changed``, ``no_final_newline``, ``not_trigger_first``, ``no_rows``; damaged once unmodified for
+    20 s), is dated ahead of this computer's
     clock (``future``, with ``clock_skew`` for the folder) or couldn't be read now
     (``read_failed``). Nothing was written; it is looked at again by a later conversion."""
     kind: Literal["shot_waiting"]
@@ -940,9 +941,10 @@ class ShotWaitingEvent(TypedDict):
 
 
 class ShotUnconvertibleEvent(TypedDict):
-    """A settled raw file that can't be converted (``reason``: ``no_rows``, Q10.2, or ``failed``):
-    no TXY. A later conversion skips it while its (size, mtime) stay the same and the app sends them
-    back in ``skip``."""
+    """A settled raw file that can't be converted (``reason``: ``damaged``, Q18.5: unmodified for
+    ``io_ops.convert.DAMAGED_SECONDS`` and still failing the format checks, ``problem`` naming which
+    (``no_final_newline``, ``not_trigger_first``, ``no_rows``); or ``failed``): no TXY. A later conversion
+    skips it while its (size, mtime) stay the same and the app sends them back in ``skip``."""
     kind: Literal["shot_unconvertible"]
     path: str
     shot: int
@@ -951,6 +953,7 @@ class ShotUnconvertibleEvent(TypedDict):
     raw_mtime_ns: int
     reason: str
     message: str
+    problem: NotRequired[str]
 
 
 class ShotKeptEvent(TypedDict):

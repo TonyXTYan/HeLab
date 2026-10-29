@@ -20,8 +20,11 @@ can be fooled (a source clock behind ours, a share's stale attribute cache), so 
 sends ``seen``; only ``helab convert --once`` sends None (one check), and then a file must be
 unmodified for ``ONCE_SETTLE_SECONDS`` (60 s) instead. A file dated more than
 ``fingerprints.FUTURE_SECONDS`` ahead waits as ``future``, and ``clock_skew`` says so once per
-conversion. A settled file with no rows is unconvertible (``shot_unconvertible``, Q10.2); so is one
-the converter fails on.
+conversion. A file that still fails the format checks (no final newline, its first line off the
+trigger channel, no rows) once unmodified for ``DAMAGED_SECONDS`` (20 s; a shot arrives about every
+30 s) is **damaged** (Q18.5): unconvertible (``shot_unconvertible``, reason ``damaged``, the check in
+``problem``), no TXY, skipped from then on while unchanged, so it never holds up later shots. One the
+converter fails on is unconvertible too.
 
 **Output** (Q9.3, Q9.7). ``beside`` writes the TXY next to the raw files, only when the folder's
 ``write_beside`` flag is on in the store (or the command line asked, ``beside_confirmed``), and
@@ -65,7 +68,7 @@ import time
 from typing import Any, Callable, Iterable, NotRequired, TypedDict, TYPE_CHECKING
 
 from helab.io_ops import fingerprints, stores
-from helab.io_ops.events import ConvertProfile, ConvertSeconds, HelperEvent
+from helab.io_ops.events import ConvertProfile, ConvertSeconds, HelperEvent, ShotUnconvertibleEvent
 from helab.io_ops.infra import Emit, Heartbeat, Pause, _entry_stat, _guard, _scandir, _trace, _traced_error, emit
 from helab.utils import file_kinds
 
@@ -93,6 +96,10 @@ ONCE_SETTLE_SECONDS = 60.0
 # times slower than the plain-Python reference): a hung backend then times out.
 COMPUTE_SECONDS = 60.0
 COMPUTE_RATE = 10**6
+# A raw file unmodified this long that still fails the format checks is damaged (Q18.5, Tony: "damaged
+# timeout 20s"; raw files arrive about one per 30 s).
+DAMAGED_SECONDS = 20.0
+DAMAGED = "damaged"
 # Leftover temporary TXY of a killed beside write: removed once this old, by a beside conversion.
 PARTIAL_MAX_AGE = 3600.0
 # Workers when the request doesn't say: across shots in processes. A frozen app's spawned workers
@@ -404,10 +411,10 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     seen_list = request["seen"]
     seen = None if seen_list is None else _stats(seen_list)
     # Files the previous conversion read and found unfinished (no final newline, another first
-    # channel): their (size, mtime), reason and message.
+    # channel, no rows yet): their (size, mtime), reason and message.
     unfinished = {str(entry[0]): ((int(entry[1]), int(entry[2])), str(entry[3]), str(entry[4]))
                   for entry in seen_list or [] if isinstance(entry, (list, tuple)) and len(entry) == 5
-                  and entry[3] in (raw.NO_FINAL_NEWLINE, raw.NOT_TRIGGER_FIRST)}
+                  and entry[3] in (raw.NO_FINAL_NEWLINE, raw.NOT_TRIGGER_FIRST, raw.NO_ROWS)}
     done, kept_before, skip = _stats(request.get("done")), _stats(request.get("kept")), _stats(request.get("skip"))
     redo = str(request.get("redo") or "stale")
     if seen is not None:
@@ -456,10 +463,22 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
         send({"kind": "shot_waiting", "path": path, "shot": shot.shot, "raw_name": shot.name, "raw_size": shot.size,
               "raw_mtime_ns": shot.mtime_ns, "reason": code, "message": message})
 
-    def refuse(shot: _Shot, code: str, message: str) -> None:
+    def refuse(shot: _Shot, code: str, message: str, problem: str = "") -> None:
         unconvertible.append(shot.entry)
-        send({"kind": "shot_unconvertible", "path": path, "shot": shot.shot, "raw_name": shot.name,
-              "raw_size": shot.size, "raw_mtime_ns": shot.mtime_ns, "reason": code, "message": message})
+        event: ShotUnconvertibleEvent = {
+            "kind": "shot_unconvertible", "path": path, "shot": shot.shot, "raw_name": shot.name,
+            "raw_size": shot.size, "raw_mtime_ns": shot.mtime_ns, "reason": code, "message": message}
+        if problem:
+            event["problem"] = problem
+        send(event)
+
+    def unfinished_or_damaged(shot: _Shot, code: str, message: str) -> None:
+        """A file failing the format checks: damaged once unmodified for DAMAGED_SECONDS, else waiting."""
+        age = now - shot.mtime_ns / 1e9
+        if age >= DAMAGED_SECONDS:
+            refuse(shot, DAMAGED, f"Damaged: {message} (unchanged for {age:,.0f} s)", code)
+        else:
+            wait(shot, code, message)
 
     for shot in raws:
         stat = (shot.size, shot.mtime_ns)
@@ -509,8 +528,9 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
                  if shot.name not in seen else "Its size or date changed since the previous check")
             continue
         if shot.name in unfinished and unfinished[shot.name][0] == stat:
-            # Read before and found unfinished, and unchanged since: still so, without reading it again.
-            wait(shot, *unfinished[shot.name][1:])
+            # Read before and found unfinished, and unchanged since: still so, without reading it again
+            # (or damaged by now).
+            unfinished_or_damaged(shot, *unfinished[shot.name][1:])
             continue
         shot.replaced = "" if txy_size is None else (why or "converted again on request")
         todo.append(shot)
@@ -612,7 +632,7 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
         problem = raw.not_done(data, profile.channel_trigger)
         if problem is not None:
             handled += 1
-            (refuse if problem[0] == raw.NO_ROWS else wait)(shot, *problem)
+            unfinished_or_damaged(shot, *problem)
             return None
         return data, time.perf_counter() - read_started
 

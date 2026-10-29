@@ -205,9 +205,9 @@ def test_a_folder_converts_to_the_temp_folder_with_provenance(source: Path, tmp_
         assert Path(converted[shot]["txy"]).read_bytes() == convert_raw(datas[shot], MATLAB_2019, "reference")
     # No hits: a 0-byte TXY, "converted, empty" (Q10.3).
     assert converted[3]["hits"] == 0 and Path(converted[3]["txy"]).read_bytes() == b""
-    # No rows: unconvertible, no TXY, never silently skipped (Q10.2).
+    # No rows, unchanged for 20 s: damaged, no TXY, never silently skipped (Q10.2, Q18.5).
     [refused] = of(events, "shot_unconvertible")
-    assert (refused["shot"], refused["reason"]) == (4, raw.NO_ROWS)
+    assert (refused["shot"], refused["reason"], refused["problem"]) == (4, convert.DAMAGED, raw.NO_ROWS)
     assert not (Path(folder) / "d_txy_helab_m19v1_4.txt").exists()
     record = provenance.Provenance.from_json((Path(folder) / "d_txy_helab_m19v1_2.json").read_text())
     assert (record.raw_name, record.raw_size, record.raw_mtime_ns) == ("d2.txt", len(datas[2]), OLD * 10**9)
@@ -231,6 +231,7 @@ def test_files_that_may_still_be_written_wait(source: Path, tmp_path: Path, monk
     monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", 5.0)
     whole = raw_bytes(10_000, 20_000)
     write_raw(source, 1, whole, mtime=time.time() - 1)  # Modified a second ago.
+    monkeypatch.setattr(convert, "DAMAGED_SECONDS", 1e9)  # (Not damaged yet: their own test is below.)
     write_raw(source, 2, whole[:-5])  # Ends mid-line (settled by age, but half-written).
     write_raw(source, 3, raw_bytes(10_000, trigger=0))  # Doesn't start on the trigger.
     write_raw(source, 4, whole, mtime=time.time() + 120)  # Dated ahead of this clock: the clocks differ.
@@ -259,6 +260,62 @@ def test_files_that_may_still_be_written_wait(source: Path, tmp_path: Path, monk
     write_raw(source, 2, whole)
     later = run(source, request_for(source, tmp_path))
     assert [event["shot"] for event in of(later, "shot_converted")] == [2]
+
+
+def test_a_raw_file_failing_the_checks_for_20_s_is_damaged_and_holds_nothing_up(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Q18.5: unmodified for ``DAMAGED_SECONDS`` and still failing the format checks (no final newline,
+    off the trigger channel, no rows): damaged, no TXY, skipped from then on while unchanged."""
+    assert convert.DAMAGED_SECONDS == 20.0
+    whole = raw_bytes(10_000, 20_000)
+    young = time.time() - 10
+    write_raw(source, 1, whole[:-5], mtime=young)
+    write_raw(source, 2, raw_bytes(10_000, trigger=0), mtime=young)
+    write_raw(source, 3, b"\r\n", mtime=young)
+    write_raw(source, 4, whole)
+    request = request_for(source, tmp_path, seen=[])
+    first = run(source, request)  # (Seen for the first time: every file waits for a second look.)
+    assert of(first, "shot_unconvertible") == [] and of(first, "shot_converted") == []
+    # Seen unchanged a check apart: read, and waiting while younger than 20 s.
+    request["seen"] = summary(first)["waiting"]
+    second = run(source, request)
+    assert [event["shot"] for event in of(second, "shot_converted")] == [4]
+    assert {event["shot"]: event["reason"] for event in of(second, "shot_waiting")} == {
+        1: raw.NO_FINAL_NEWLINE, 2: raw.NOT_TRIGGER_FIRST, 3: raw.NO_ROWS}
+    # Unchanged, and now past the damaged age: damaged, without being read again.
+    monkeypatch.setattr(convert, "DAMAGED_SECONDS", 5.0)
+    request["seen"], request["done"] = summary(second)["waiting"], summary(second)["current"]
+    reads: list[int] = []
+    original = convert._read_raw
+
+    def counted(shot: Any, beat: Any) -> bytes | str:
+        reads.append(shot.shot)
+        return original(shot, beat)
+    monkeypatch.setattr(convert, "_read_raw", counted)
+    fourth = run(source, request)
+    assert reads == []
+    damaged = {event["shot"]: (event["reason"], event["problem"]) for event in of(fourth, "shot_unconvertible")}
+    assert damaged == {1: (convert.DAMAGED, raw.NO_FINAL_NEWLINE), 2: (convert.DAMAGED, raw.NOT_TRIGGER_FIRST),
+                       3: (convert.DAMAGED, raw.NO_ROWS)}
+    assert all(event["message"].startswith("Damaged: ") for event in of(fourth, "shot_unconvertible"))
+    assert sorted(entry[0] for entry in summary(fourth)["unconvertible"]) == ["d1.txt", "d2.txt", "d3.txt"]
+    folder = Path(of(second, "convert_plan")[0]["folder"])
+    assert [path.name for path in folder.glob("d_txy_helab_*.txt")] == ["d_txy_helab_m19v1_4.txt"]
+    # Read for the first time past the damaged age: damaged at once.
+    write_raw(source, 6, whole[:-5], mtime=young)
+    once = run(source, request_for(source, tmp_path, shots=[6]))
+    assert [(event["shot"], event["problem"]) for event in of(once, "shot_unconvertible")] == [(6, raw.NO_FINAL_NEWLINE)]
+    (source / "d6.txt").unlink()
+    # Skipped from then on (sent back as skip), never read again, never holding up a later shot.
+    write_raw(source, 5, whole)
+    request["seen"], request["skip"] = summary(fourth)["waiting"], summary(fourth)["unconvertible"]
+    request["done"] = summary(fourth)["current"]
+    reads.clear()
+    fifth = run(source, request)
+    request["seen"] = summary(fifth)["waiting"]
+    sixth = run(source, request)
+    assert [event["shot"] for event in of(sixth, "shot_converted")] == [5] and of(sixth, "shot_unconvertible") == []
+    assert set(reads) <= {5}
 
 
 def test_a_file_changed_since_the_previous_check_waits_for_the_next(source: Path, tmp_path: Path) -> None:

@@ -162,7 +162,8 @@ def line(explorer: FolderExplorer) -> tuple[str, str]:
 
 
 def test_a_raw_file_arriving_during_live_is_converted_once_written_not_before(
-        qtbot: QtBot, service: IOService, tmp_path: Path) -> None:
+        qtbot: QtBot, service: IOService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(convert, "DAMAGED_SECONDS", 1e9)  # (Its files are dated long ago: never damaged here.)
     explorer, path = watching_raw_folder(qtbot, tmp_path)
     cache = explorer.model.cache
     session = explorer.live
@@ -276,10 +277,11 @@ def test_auto_convert_is_remembered_for_the_session_and_shown_only_while_live(
     explorer.close_cleanup()
 
 
-def test_an_unconvertible_files_reason_survives_auto_convert_off_and_on(
-        qtbot: QtBot, service: IOService, tmp_path: Path) -> None:
-    """A settled raw file with no rows is unconvertible, said once by the helper (later conversions skip
-    it): its reason is still given after auto-convert goes off and on (Heron2's review)."""
+def test_a_damaged_file_is_said_once_and_survives_auto_convert_off_and_on(
+        qtbot: QtBot, service: IOService, tmp_path: Path, notifier: FakeNotifier) -> None:
+    """A raw file unchanged for 20 s that fails the format checks (here: no rows) is damaged (Q18.5), said
+    once by the helper (later conversions skip it) and notified once; the Live line and Folder details
+    name it, also after auto-convert goes off and on (Heron2's review)."""
     explorer, path = watching_raw_folder(qtbot, tmp_path)
     session = explorer.live
     assert session is not None
@@ -288,15 +290,25 @@ def test_an_unconvertible_files_reason_survives_auto_convert_off_and_on(
     cycle(qtbot, explorer, path, tmp_path)
     _, sent = cycle(qtbot, explorer, path, tmp_path)
     [refused] = of(sent, "shot_unconvertible")
-    reason = str(refused["message"] or refused["reason"])
+    reason = str(refused["message"])
+    assert refused["reason"] == "damaged" and refused["problem"] == "no_rows" and reason.startswith("Damaged: ")
     assert session.convert is not None and session.convert.unconvertible == {"d4.txt": reason}
+    assert session.convert.damaged == {"d4.txt"}
+    assert len(notifier.sent) == 1 and notifier.sent[0][0] == "HeLab: damaged raw file"
+    assert "d4.txt in run is damaged" in notifier.sent[0][1] and "later shots go on" in notifier.sent[0][1]
     explorer.live_control.set_auto_convert(False)
     explorer.live_control.set_auto_convert(True)
     _, sent = cycle(qtbot, explorer, path, tmp_path)
     assert not of(sent, "shot_unconvertible")  # Skipped, not said again ...
     assert session.convert.unconvertible == {"d4.txt": reason}  # ... and its reason kept.
+    assert session.convert.damaged == {"d4.txt"} and len(notifier.sent) == 1
     text, tooltip = line(explorer)
-    assert "1 unconvertible" in text and f"d4.txt: {reason}" in tooltip
+    assert "1 damaged" in text and "unconvertible" not in text
+    assert f"d4.txt: {reason.removeprefix('Damaged: ')}" in tooltip and "Damaged (unchanged for 20 s" in tooltip
+    panel = FolderDetailsPanel()
+    qtbot.addWidget(panel)
+    panel.show_explorer(explorer, None)
+    assert "1 damaged" in panel.text("convert") and "d4.txt" in panel.values["convert"].toolTip()
     explorer.stop_live(save=False)
     explorer.close_cleanup()
 
