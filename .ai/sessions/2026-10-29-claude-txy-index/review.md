@@ -376,3 +376,121 @@ The compat matrix (3.11, 3.12, 3.14) was skipped because this is a push, not a P
 - **The two-writer test passed on every OS with no rerun.** On Windows Tests (2/2) it took about
   10 s from start to pass (13:41:40 → 13:41:50, including two interpreter starts), against about
   2 s on Ubuntu. That is worth watching, but it isn't a failure.
+
+## Round 4 review (head `1b71c37`, `git diff 5dc161f..1b71c37`)
+
+**Result: no blocker.** Low-5, Low-6, Nit-6 and Nit-7 are closed, and the 200 ms wait is pinned by a
+test. Nit-5 is accepted. I add one new Low (Low-7), small and in the spirit of Low-5, and one Nit
+about the timing test (Nit-8).
+
+| Finding | Status | What I checked |
+|---|---|---|
+| Low-5 | **closed** (except Low-7) | `convert.journal_for(base)` returns DELETE when `cache_location.cache_location_problem` objects, otherwise WAL. `convert_folder` (`convert.py:561`) passes it on. `_uri` percent-quotes the whole path, so a UNC `\\server\share` has no URI authority. The test runs both modes and checks `?`, `#`, `%` and spaces in a name (no `?` on Windows). The docstring is corrected, and Q~5 asks Tony about refusing such a temp folder. |
+| Low-6 | **closed** | `clear_converted` ends with `TxyIndex.vacuum()` (through `_patient`, its `sqlite3.Error` ignored), but only after a `forget_removed` that succeeded. In WAL, `VACUUM` leaves a full-size `-wal` until the last connection closes, which is normal and gone after the Clear. The tooltip drops "a few kB". The test shows 400 rows and a file under a quarter of its size afterwards. |
+| Nit-5 | **accepted** | Nothing with DELETE reached Ground or a release. |
+| Nit-6 | **closed** | With `files` 0, the question names old records and damaged indexes. Tested. |
+| Nit-7 | **closed** | Each attempt's `busy_timeout` is what is left of `BUSY_SECONDS`. The last sleep is capped by it, and `finally` restores the 10 s timeout. The bound is now BUSY_SECONDS plus one 1 ms attempt. |
+| 200 ms touch | **pinned** | `test_a_load_whose_last_used_mark_times_out_still_returns_its_shots` holds `BEGIN IMMEDIATE` while a load runs: four shots returned, `last_used` unchanged, under 5 s. It fails at about 11 s without the limit, per the handoff. |
+| Low-7 (new) | open, Low | See below. |
+| Nit-8 (new) | open, Nit | The timing test (see (a) below). |
+
+### Low-7: a damaged index set aside during a write comes back in WAL, even on a non-local temp folder
+
+- **Where:** `provenance.py:293`, `TxyIndex._write`:
+  `self.conn = open_index(self.root, write=True).conn`. No `journal` is passed, so the default is
+  WAL.
+- **Why:** `open_index`'s own set-aside retry keeps the caller's `journal`, but `_write` doesn't. On
+  a network or synced temp folder, where an index is most likely to be found damaged, the
+  replacement is made in WAL, which is what Low-5 set out to avoid. `clear_converted`
+  (`helab_txy.py:471`) also opens with the default. That only matters if the index vanishes between
+  `index_schema` and the open, which is a race, so it can be ignored.
+- **Fix:** keep the journal on the `TxyIndex`, set by `open_index`, and pass it on in `_write`. Or
+  make `open_index`'s default `journal_for(os.path.dirname(root))`. That needs a helper in
+  `helab/convert/` (it is Qt-free; `cache_location` would have to be checked for `PURE`), or a
+  caller-supplied default. Add a test: a write that finds the index damaged on a base that
+  `cache_location_problem` objects to leaves a DELETE index.
+
+### (a) The `_patient` timing test: robust now?
+
+- **The CI evidence:**
+  - At 0.3 + 0.2 s (87d0475, run 40888404379), the test failed after 5 reruns on macOS Tests (2/2)
+    (job 123498366886): `assert (180.245601541 - 179.548123916) < (0.3 + 0.2)`.
+  - At 1.0 + 0.6 s (463c44e, run 40890989136), it reran on macOS Tests (2/2) (123507559816),
+    Windows Converter backends (123507559950) and macOS Converter backends (123507560022). The
+    held-lock case took 1.68 s, 1.66 s, 1.68 s and 1.63 s:
+    `assert (281.217096666 - 279.533168416) < (1.0 + 0.6)`.
+  - The overshoot is steady at about 0.65 s on both OSes, not a rare spike: SQLite counts its
+    busy-wait sleeps nominally.
+- **Locally:** 15 runs while the full suite ran with `-n 8` took 2.09–2.16 s each, about 1.05 s per
+  case.
+- **At 1.0 + 2.0 s (1b71c37):** CI's worst is 1.68 s, so the margin is about 1.3 s, and run
+  40894080358 had no rerun of it. **Robust enough to land.** But the wall-time check discriminates
+  poorly: the regression it guards against waits the connection's 5 s default, only 2 s above the
+  bound. What actually catches a regression is the behaviour check (`timeouts` shrinking and starting
+  at ≤ 1000, the 10 s restored). The handoff says that check alone fails with the per-attempt
+  timeout removed.
+- **Nit-8 (suggested):**
+  - Open `conn` with `timeout=60`, so a regression would wait 60 s, and bound the held-lock case at
+    `BUSY_SECONDS + 5` s. That is loose enough for any runner and still catches the bug.
+  - Drop the wall-time assert on the fake-lock case, or drive it with a fake clock (patch
+    `provenance.time` with a `monotonic`/`sleep` pair that advances a counter). Then assert that the
+    sleeps add up to ≤ `BUSY_SECONDS`, and that the last sleep is capped.
+  - Also: the handoff's round 4 Nit-7 line still says "within `BUSY_SECONDS` plus 0.2 s". It is 2 s
+    now.
+
+### (b) The Windows rerun of `test_scan_reports_cached_children_without_loading_or_probing_them`: is it this branch?
+
+**No, and the branch can't plausibly cause it.**
+
+- **The failure:** "rerun reasons", Windows Tests (2/2), job 123518429856:
+  `tests\test_folder_cache.py:1155: assert scanned == [str(root)]`. The diff was
+  `'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\helab_io_1p59fsr4'` at index 0, in front of the test's
+  `…\test_scan_reports_cached_child0\root`.
+- **Why it happens:** the test patches `os.scandir` for the whole process
+  (`monkeypatch.setattr("os.scandir", record_scandir)`) and records every call. A `helab_io_` folder
+  is `IOService._run`'s private folder for a non-load request (`io_service.py:800`).
+  `IOService.release` removes it with `shutil.rmtree` on a daemon thread, "HeLab-artifact-cleanup"
+  (`io_service.py:963`), and `rmtree` lists through `os.scandir`. A request from an earlier test on
+  worker gw0 was still being cleaned up when this test's patch went in.
+- **This exact trap is in known-issues already.** The `test_folder_summary.py::test_scan_metadata_survives_restart_without_reading_txy_contents`
+  entry (`roadmaps/known-issues.md:212–214`) says "its process-wide `os.scandir` patch caught
+  `IOService.release`'s `shutil.rmtree` on a daemon thread; the patches now act only on the test's
+  own thread". `test_folder_cache.py` has the same pattern unfixed.
+- **The branch:** it changes what an admin helper computes (the converted-TXY inventory, the `temps`
+  parameter). It adds no threads, doesn't touch `release` or the `helab_io_` folders, and doesn't
+  touch `test_folder_cache.py`. The gw0 tests just before were `test_constant_layers` and
+  `test_constants`, and none of the branch's tests. Any IOService request from any earlier test
+  leaves the same thread.
+- **Fix (for the known-issues entry):** record only calls from the test's own thread
+  (`threading.get_ident()` check), as `test_folder_summary` now does, or only paths under
+  `tmp_path`.
+
+### Checks (floor venv, macOS, head `1b71c37`)
+
+- Touched tests: `test_convert_helab`, `test_converter_tab`, `test_txy_sources`,
+  `test_helper_events`, `test_cache_switch`, `test_cache_move`, `test_cache_mover`,
+  `test_headless_imports` and `test_folder_cache`, with
+  `-n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **261 passed, 0 reruns**.
+- Full suite (`-n 8`, same rerun flags): **8205 passed, 669 skipped, 0 reruns** (1 min 21 s).
+- `mypy helab/ --strict` (191), `mypy tests --strict` (159), and `mypy helab/ --strict --platform
+  win32` (191): no issues. `pyright helab tests` and `pyright --pythonplatform Windows helab tests`:
+  0 errors.
+
+### CI run 40894080358 (head `1b71c37`, attempt 1): success
+
+I read every job's log:
+
+| Job | ID | Result |
+|---|---|---|
+| macOS Converter backends | 123518429781 | 681 passed |
+| Ubuntu Converter backends | 123518429771 | 681 passed |
+| Windows Converter backends | 123518429768 | 680 passed |
+| macOS Tests (1/2) | 123518429785 | 4086 passed |
+| macOS Tests (2/2) | 123518429895 | 4119 passed |
+| Ubuntu Tests (1/2) | 123518429866 | 4084 passed |
+| Ubuntu Tests (2/2) | 123518429867 | 4120 passed |
+| Windows Tests (1/2) | 123518429983 | 4073 passed |
+| Windows Tests (2/2) | 123518429856 | 4103 passed, **1 rerun** (`test_folder_cache`, (b) above) |
+| Three Builds, Detect branch | — | success |
+
+The `_patient` timing test passed with no rerun in every job.

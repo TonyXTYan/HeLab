@@ -343,6 +343,18 @@ rows and old records of beside TXY stay; set-aside indexes go)."
   unidentified (the hook failed before printing it). Attempt 2 (the failed job rerun) passed.
   Proposed fix: patch the name the code under test calls (e.g. `data_roots`' or `infra`'s, not
   `os.lstat` globally), or `gc.collect()` before patching.
+- **Known issue to file (Coordinator): `tests/test_folder_cache.py::test_scan_reports_cached_children_without_loading_or_probing_them`**
+  reran once on Windows, CI run 40894080358 (1b71c37), job 123518429856 ("windows + py3.13 / Tests
+  (2/2)"), then passed: `tests\test_folder_cache.py:1155: assert scanned == [str(root)]`, at index 0
+  `'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\helab_io_1p59fsr4'` before the test's `…\\root`. Cause
+  (Tern, round 4): the test patches `os.scandir` for the whole process and records every call; an
+  earlier test's IOService request was still being cleaned up by `IOService.release`'s
+  `shutil.rmtree` on the "HeLab-artifact-cleanup" daemon thread (`io_service.py:963`), which lists
+  its private `helab_io_` folder through `os.scandir`. The same trap as the
+  `test_folder_summary.py::test_scan_metadata_survives_restart_without_reading_txy_contents` entry
+  (known-issues 212–214), fixed there. Fix: record only calls from the test's own thread
+  (`threading.get_ident()`), or only paths under `tmp_path`. Not this branch's (it adds no threads and
+  doesn't touch IOService's folders or that test).
 - **Known issue to file (Coordinator): SQLite connections leaked by store tests.** On the base
   `9f0b21f` too, `tests/test_cache_switch.py` leaves three `sqlite3.Connection`s unclosed (Python
   3.13 `ResourceWarning: unclosed database`, seen with `-W always::ResourceWarning` and
@@ -443,8 +455,10 @@ CI run 40874212130 (c546394) passed every job, with two RERUNs, quoted from "rer
   records and damaged indexes (N kB), …", never "0 TXY files" (test).
 - **Nit-7**: `_patient` now sets each attempt's busy timeout to what is left of `BUSY_SECONDS` and caps
   the last sleep at it, so the whole wait stays within 10 s (docstring true); it restores the
-  connection's 10 s timeout after. Test: retries with shrinking timeouts, a held lock answered within
-  `BUSY_SECONDS` plus 0.2 s.
+  connection's 10 s timeout after. Test (as revised in round 5, Nit-8): a fake clock shows the sleeps
+  (5 ms doubling to 100 ms, the last cut to what is left) adding up to `BUSY_SECONDS` exactly and the
+  per-attempt timeouts shrinking from it; a real held lock is answered within `BUSY_SECONDS` + 5 s,
+  where an unbounded attempt would wait the test connection's 60 s.
 - **The 200 ms `last_used` wait, pinned**: `test_a_load_whose_last_used_mark_times_out_still_returns_its_shots`
   holds the index's write lock while a load runs: the load returns HeLab's four shots, `last_used`
   stays, and it takes well under 5 s (it fails at 10.97 s with the 200 ms limit removed).
@@ -465,3 +479,18 @@ CI run 40874212130 (c546394) passed every job, with two RERUNs, quoted from "rer
   5 s an unbounded attempt takes; with the per-attempt timeout removed, the test still fails (its
   timeouts check). The other rerun, `test_gui_responsiveness …[2]` (Windows Tests 1/2), is known-issues
   line 94.
+
+## Review round 5 (Tern's round 4: Low-7, Nit-8)
+
+- **Low-7**: a write that finds the index damaged sets it aside and reopened the replacement in WAL
+  whatever the base. `TxyIndex` now keeps the journal mode it was opened with (`journal`, set by
+  `open_index`) and `_write` makes the replacement in it, so a DELETE base (one `cache_location_problem`
+  objects to) stays DELETE. `clear_converted` also opens with `journal_for(base)`. Test:
+  `test_a_damaged_index_replaced_mid_write_keeps_its_bases_journal` (damages the open DELETE index in
+  place, change counter bumped so the connection rereads it; the replacement is DELETE and holds the
+  next row); it fails with the old reopen.
+- **Nit-8**: the `_patient` test checks behaviour, not wall time: a fake clock (`provenance.time`
+  patched) records the sleeps and per-attempt timeouts; the real held-lock case uses a connection with
+  a 60 s timeout and allows `BUSY_SECONDS` + 5 s. The Nit-7 line above is corrected.
+- The `test_folder_cache` Windows rerun from CI 40894080358 is in the known-issue proposals above, with
+  Tern's cause and fix.

@@ -237,8 +237,9 @@ class TxyIndex:
     """One base's ``converted-txy/index.sqlite``: open with ``open_index``, close after use (the
     app's helpers and ``helab convert`` each hold it only while they look or write)."""
 
-    def __init__(self, conn: sqlite3.Connection, path: str) -> None:
-        self.conn, self.path = conn, path
+    def __init__(self, conn: sqlite3.Connection, path: str, journal: str = WAL) -> None:
+        # ``journal``: the mode a replacement is made in if this one is found damaged (its base's).
+        self.conn, self.path, self.journal = conn, path, journal
         self.root = os.path.dirname(path)
 
     def close(self) -> None:
@@ -290,7 +291,7 @@ class TxyIndex:
                 set_aside(self.path, "damaged")
             except OSError as error:
                 raise IndexUnavailable(f"HeLab's TXY index is damaged and couldn't be set aside ({error})") from error
-            self.conn = open_index(self.root, write=True).conn
+            self.conn = open_index(self.root, write=True, journal=self.journal).conn
         raise AssertionError("unreachable")
 
     def _transaction(self, statements: list[tuple[str, tuple[Any, ...]]]) -> int:
@@ -415,7 +416,7 @@ def open_index(root: str, *, write: bool, journal: str = WAL) -> TxyIndex | None
             if conn.execute("PRAGMA user_version").fetchone()[0] != SCHEMA:
                 conn.close()
                 return None
-            return TxyIndex(conn, path)
+            return TxyIndex(conn, path, journal)
         except sqlite3.Error:
             if conn is not None:
                 conn.close()
@@ -430,7 +431,7 @@ def open_index(root: str, *, write: bool, journal: str = WAL) -> TxyIndex | None
             writer = conn
             version = _patient(writer, lambda: _prepare(writer, journal))
             if version == SCHEMA:
-                return TxyIndex(conn, path)
+                return TxyIndex(conn, path, journal)
             reason = "newer" if version > SCHEMA else "damaged"
         except sqlite3.Error as error:
             if not damaged(error):

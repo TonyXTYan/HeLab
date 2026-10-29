@@ -1395,9 +1395,10 @@ def test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeo
         tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """SQLite answers "database is locked" at once, without its busy timeout, where waiting could
     deadlock (CI run 40874212130, Windows: two writers creating the index): the transaction is tried
-    again for up to ``BUSY_SECONDS`` in all, each attempt's own busy timeout being what is left of it
-    (review Nit-7); any other error, or busy past then, is raised, and the connection's timeout restored."""
-    conn = sqlite3.connect(tmp_path / "x.sqlite", isolation_level=None)
+    again for up to ``BUSY_SECONDS`` in all, each attempt's own busy timeout and the last sleep being
+    what is left of it (review Nit-7); any other error, or busy past then, is raised, and the
+    connection's timeout restored. Checked by behaviour (a fake clock), not wall time (review Nit-8)."""
+    conn = sqlite3.connect(tmp_path / "x.sqlite", isolation_level=None, timeout=60)
     locked = sqlite3.OperationalError("database is locked")
     answers: list[BaseException | None] = [locked, locked, None]
 
@@ -1409,33 +1410,75 @@ def test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeo
     assert provenance._patient(conn, action) == "done" and answers == []
     with pytest.raises(sqlite3.OperationalError, match="no such table"):
         provenance._patient(conn, lambda: conn.execute("SELECT * FROM x"))
+
+    class Clock:
+        """``time`` for ``provenance``: time passes only by its sleeps."""
+        now = 100.0
+        sleeps: list[float] = []
+
+        @classmethod
+        def monotonic(cls) -> float:
+            return cls.now
+
+        @classmethod
+        def sleep(cls, seconds: float) -> None:
+            cls.sleeps.append(seconds)
+            cls.now += seconds
+    monkeypatch.setattr(provenance, "time", Clock)
     monkeypatch.setattr(provenance, "BUSY_SECONDS", 1.0)
     timeouts: list[int] = []
 
     def stays_locked() -> None:
         timeouts.append(int(conn.execute("PRAGMA busy_timeout").fetchone()[0]))
         raise sqlite3.OperationalError("database is locked")
-    started = time.monotonic()
     with pytest.raises(sqlite3.OperationalError, match="locked"):
         provenance._patient(conn, stays_locked)
-    # (Within BUSY_SECONDS, the last sleep capped at it. The margin is for loaded CI runners, whose short
-    # sleeps overshoot: 1 s of SQLite's nominal busy-wait took up to 1.7 s there, CI run 40890989136.)
-    assert time.monotonic() - started < 1.0 + 2.0
-    assert len(timeouts) > 2 and timeouts[0] <= 1000 and timeouts == sorted(timeouts, reverse=True)
+    # Back-off from 5 ms doubling to 100 ms, the last sleep cut to what is left: 1 s in all, never more.
+    assert Clock.sleeps[:6] == [0.005, 0.01, 0.02, 0.04, 0.08, 0.1] and max(Clock.sleeps) == 0.1
+    assert sum(Clock.sleeps) == pytest.approx(1.0) and Clock.sleeps[-1] < 0.1
+    # Each attempt waits at most what is left (ms), and the connection's 10 s comes back after.
+    assert timeouts[0] == 1000 and timeouts == sorted(timeouts, reverse=True) and len(timeouts) == len(Clock.sleeps) + 1
     assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 1000
-    # A real lock held past the deadline: SQLite's own wait counts toward it too (unbounded, each attempt
-    # could wait the connection's own timeout, here sqlite3's 5 s default, on top).
+    monkeypatch.undo()
+    # A real lock held past the deadline: SQLite's own wait counts toward it too. Unbounded, the first
+    # attempt would wait this connection's 60 s; the bound leaves loaded runners 5 s.
+    monkeypatch.setattr(provenance, "BUSY_SECONDS", 1.0)
     holder = sqlite3.connect(tmp_path / "x.sqlite", isolation_level=None)
     holder.execute("BEGIN EXCLUSIVE")
     try:
         started = time.monotonic()
         with pytest.raises(sqlite3.OperationalError, match="locked"):
             provenance._patient(conn, lambda: conn.execute("BEGIN IMMEDIATE"))
-        assert time.monotonic() - started < 1.0 + 2.0  # (Unbounded: 5 s, the first attempt's own timeout.)
+        assert time.monotonic() - started < provenance.BUSY_SECONDS + 5
     finally:
         holder.execute("ROLLBACK")
         holder.close()
         conn.close()
+
+
+def test_a_damaged_index_replaced_mid_write_keeps_its_bases_journal(tmp_path: Path) -> None:
+    """Review Low-7: a write that finds the index damaged sets it aside and makes the replacement in the
+    journal mode the index was opened with (DELETE where the base may not be local), not WAL."""
+    root = tmp_path / "converted-txy"
+    index = provenance.open_index(str(root), write=True, journal=provenance.DELETE)
+    try:
+        index.record("f", "", "/data/run", provenance_record(), 1.0)
+        path = root / provenance.INDEX_NAME
+        data = bytearray(path.read_bytes())
+        page = int.from_bytes(data[16:18], "big")
+        data[page:] = b"\xff" * (len(data) - page)
+        # (The file change counter moved too, so the open connection drops its cached pages.)
+        data[24:28] = (int.from_bytes(data[24:28], "big") + 1).to_bytes(4, "big")
+        with open(path, "r+b") as stream:  # (In place: the open connection reads it next.)
+            stream.write(bytes(data))
+        index.record("f", "", "/data/run", provenance_record(shot=4), 2.0)
+    finally:
+        index.close()
+    assert [name.startswith("index-damaged-") for name in sorted(os.listdir(root))
+            if provenance.SET_ASIDE_PATTERN.fullmatch(name)] == [True]
+    with contextlib.closing(sqlite3.connect(root / provenance.INDEX_NAME)) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+    assert list(provenance.read_shots(str(root), "f")) == [("m19v1", 4)]
 
 
 def test_the_index_uri_quotes_the_whole_path(tmp_path: Path) -> None:

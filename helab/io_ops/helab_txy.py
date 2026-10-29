@@ -467,8 +467,9 @@ def clear_converted(root: str) -> dict[str, int]:
     index: TxyIndex | None = None
     forgot = False
     if index_schema(root) == SCHEMA:
+        from helab.io_ops.convert import journal_for
         with contextlib.suppress(IndexUnavailable):
-            index = open_index(root, write=True)
+            index = open_index(root, write=True, journal=journal_for(os.path.dirname(root)))
     try:
         for folder in folders:
             try:

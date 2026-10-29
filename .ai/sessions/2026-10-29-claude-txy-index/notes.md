@@ -77,3 +77,9 @@ Final runs (after 35b50d0):
 - The five type checks clean (mypy strict helab 191 / tests 159, win32; pyright, Windows).
 - The touch-timeout test fails without the 200 ms limit (`assert 10.971249207970686 < 5.0`) and passes
   with it.
+
+## Review round 5 checks
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
+  `8206 passed, 669 skipped, 2 warnings in 117.25s`, no RERUN.
+- The five type checks clean. The Low-7 test fails with the old reopen (no journal passed).
