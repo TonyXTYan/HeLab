@@ -128,6 +128,11 @@ On the merged state (`f58e161`: this work plus `origin/dev/v0.0.7` at `9f0b21f`)
 - Checks: strict mypy helab + tests (also `--platform win32`), pyright (also Windows): clean. Full
   suite with `--basetemp=.ai/temp/pytest`: **8204 passed, 669 skipped, no RERUN** (125 s); without it:
   **8204 passed, 669 skipped, no RERUN** (117 s).
+- CI run 40865344851 (head `28dc03c`): success, every non-skipped job passed. **One RERUN**, windows
+  Tests (2/2) (job 123418722344): `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`,
+  "worker 'gw3' crashed while running" it, passed on retry. Already in known-issues (line 98, first
+  seen on run 40803552596); not related to units. Proposed: add this run as a second sighting there.
+  No other job had a "rerun reasons" section.
 
 ## For the Reviewer
 
