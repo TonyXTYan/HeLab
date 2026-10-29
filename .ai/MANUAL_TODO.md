@@ -146,11 +146,12 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
 
 ## Post-2025 plates, in the lab (added 2026-10-29, block 25)
 
-- [ ] **M25.1 Corner cabling (urgent):** what changed between 2026-06-27 and 2026-07-21 in the
+- [x] **M25.1 Corner cabling** (Tony, 2026-10-29: it was the cable swap; handled as a 180° detector
+  orientation from July 2026, Q25.1). Was: what changed between 2026-06-27 and 2026-07-21 in the
   anode/amplifier/CFD/TDC chain? x1↔x2 and y1↔y2 are swapped since then (Q25.1).
 - [ ] **M25.2 TDC input 7:** what is connected, is it enabled, at what threshold, and did anything
   move there in 2025 (Q25.2)?
-- [ ] **M25.3 The second converter:** which program on the TDC PC writes `d_txy_forc` besides
+- [x] **M25.3 The second converter** (Tony: not an issue at the moment). Was: which program on the TDC PC writes `d_txy_forc` besides
   AutoConvert (the front panel?) (Q25.3).
 - [ ] **M25.4 A calibration run for the 2025 plates:** a free-space halo with ≥100 halo atoms per
   shot, raw files kept, ideally with the MCP pick-off on channel 4 (absolute time sums).

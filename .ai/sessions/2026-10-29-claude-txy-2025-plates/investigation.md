@@ -1,3 +1,7 @@
+> **Provisional** (Tony, 2026-10-29): the data on X is still being transferred, so these findings
+> cover only the folders present on 2026-10-29 and are re-checked when the transfer completes.
+> Tony confirmed the cable swap and asked to treat it as the detector orientation (Q25.1).
+
 # 2025 MCP plates: channel 7, a provisional calibration, and other findings
 
 **PROVISIONAL. Nothing here is a calibration Tony has approved, and nothing was applied to HeLab.**
