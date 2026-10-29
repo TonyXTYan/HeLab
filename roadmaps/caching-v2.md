@@ -27,6 +27,8 @@ Per shot, the raw file parsed into binary arrays and kept in the store, beside t
   today's dataset settings (zstd-9, no shuffle) the same shots' TXY layer is 15.5 MB (`m19v1`) or
   17.0 MB (full float64), so the raw layer is about 1.9× a TXY layer, and raw + one tag about 2.8×
   what today's store keeps per folder (an earlier "about the same" compared different settings).
+  Best raw codec of ten measured: int64 time deltas + int8 channels, zstd 9 with byte shuffle,
+  27.5 MB (2.0 B/pulse, 7.9× the text), at the floor for generic compression (Q22.7).
 - **Key:** the data root key and relative path (as datasets), plus the raw file's fingerprint
   (size and mtime, read once settled). A raw file overwritten in place (free-run) is a new key.
 - **Exactness:** converting from the layer must equal converting from the file, byte for byte;

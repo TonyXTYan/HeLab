@@ -283,7 +283,8 @@ included).
 ## Store-v4 design (block 22; [design note](sessions/2026-10-29-claude-caching-audit/store-v4-design.md))
 
 Planning only (no cache code until Tony's go). Sizes: a raw layer is ~1.9× a TXY layer at today's
-settings; raw + one tag ~2.8× today's store per folder.
+settings; raw + one tag ~2.8× today's store per folder. **Tony, 2026-10-29: as proposed** for
+Q22.1–Q22.4, Q22.6 and Q22.8–Q22.10; Q22.5 explained and asked; Q22.7 compression investigated.
 
 - **Q22.1 When does a load fill the raw layer?** (a) a background `raw_fill` job after the folder
   shows (proposed: keeps today's load speed; raw files are 2.4–3.6× the TXY bytes over the share);
@@ -299,7 +300,14 @@ settings; raw + one tag ~2.8× today's store per folder.
 - **Q22.6 Raw layers whose raw file is gone (the only copy) or from an older parser:** proposed:
   kept and used, labelled; Make room lists them last and names them; never removed automatically.
 - **Q22.7 The disk budget:** keep 8 GB (proposed; Settings shows the split) or raise the default
-  (e.g. 20 GB)?
+  (e.g. 20 GB)? Tony asked first to look harder at raw compression. Measured on the 309-shot
+  sample set (13.7 M pulses, raw text 15.8 B/pulse): int64 time deltas + int8 channels, Blosc zstd
+  level 9 with byte shuffle, **27.5 MB (2.0 B/pulse, 7.9×)**, the best of ten variants (zstd 5:
+  29.5; bitshuffle, 32-bit deltas or per-channel streams: no better, 29–38; lz4hc: 38.4 MB but
+  4.9 GB/s decoding vs ~1.9). An estimate for independent deltas is ~2.2 B/pulse, so generic
+  compression is at its floor. The only big gain left would be a lossless codec that knows hit
+  structure (corner pulses of a hit are correlated), which ties the raw layer to the converter:
+  not proposed. Proposed: zstd 9 + byte shuffle on int64 deltas; raw layer ≈ 1.8× a TXY layer.
 - **Q22.8 Offline, may HeLab make and save a HeLab layer from the raw layer?** Proposed: yes (local
   work only).
 - **Q22.9 A "clear this tag's data and its saved results" action?** Proposed: not now.
