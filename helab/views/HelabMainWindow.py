@@ -33,7 +33,7 @@ from helab.utils.constants import (
     read_disk_budget, read_io_concurrency, read_live_autosave, read_live_interval, read_load_mode,
     app_folder, read_plot_auto_reload, read_ram_budget,
 )
-from helab.utils.number_format import byte_size, fnum
+from helab.utils.number_format import byte_size, byte_unit, fnum
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, WORK_OFFLINE_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
@@ -345,14 +345,15 @@ class HelabMainWindow(QMainWindow):
         cpu_usage_total = sum(psutil.cpu_percent(percpu=True))
         ram_usage_app = self.process.memory_info().rss  # in bytes
         ram_usage_total = psutil.virtual_memory().used  # total used RAM in bytes
-        ram_usage_app_gb = ram_usage_app / 1e9  # (SI GB, as every size HeLab shows)
-        ram_usage_total_gb = ram_usage_total / 1e9
+        gib, unit = byte_unit(3, "ram")  # (GiB: RAM is in powers of 1024 on every OS, Q26.1)
+        ram_usage_app_gb = ram_usage_app / gib
+        ram_usage_total_gb = ram_usage_total / gib
 
         # HeLab's own use; the system totals are in the tooltip.
-        self.status_bar_message_right.setText(f"CPU {cpu_usage_app:.0f}% · RAM {ram_usage_app_gb:.1f} GB")
+        self.status_bar_message_right.setText(f"CPU {cpu_usage_app:.0f}% · RAM {ram_usage_app_gb:.1f} {unit}")
         self.status_bar_message_right.setToolTip(
-            f"HeLab: CPU {cpu_usage_app:.1f}% · RAM {ram_usage_app_gb:.2f} GB\n"
-            f"System: CPU {cpu_usage_total:.1f}% (summed over cores) · RAM {ram_usage_total_gb:.1f} GB used")
+            f"HeLab: CPU {cpu_usage_app:.1f}% · RAM {ram_usage_app_gb:.2f} {unit}\n"
+            f"System: CPU {cpu_usage_total:.1f}% (summed over cores) · RAM {ram_usage_total_gb:.1f} {unit} used")
 
         # self.status_bar_message_right.setToolTip("(App resource usage) / (system total resource usage)")
 
@@ -621,7 +622,7 @@ class HelabMainWindow(QMainWindow):
         """Whether to delete the ``count`` earlier recordings (``size`` bytes; Keep is the default)."""
         box = QMessageBox(QMessageBox.Icon.Question, "I/O trace",
                           f"{count:,} earlier I/O trace{'' if count == 1 else 's'} "
-                          f"({byte_size(size)}) in {folder}.", QMessageBox.StandardButton.NoButton, self)
+                          f"({byte_size(size, 'disk')}) in {folder}.", QMessageBox.StandardButton.NoButton, self)
         keep = box.addButton("Keep", QMessageBox.ButtonRole.RejectRole)
         delete = box.addButton("Delete old traces", QMessageBox.ButtonRole.DestructiveRole)
         box.setDefaultButton(keep)
@@ -712,7 +713,7 @@ class HelabMainWindow(QMainWindow):
         if dropped:
             size = sum(int(dataset.metadata.get("bytes", 0)) for dataset in dropped)
             self.show_status_notice(f"RAM budget lowered: dropped {len(dropped)} loaded "
-                                    f"folder{'' if len(dropped) == 1 else 's'} ({byte_size(size)}) not shown in tabs")
+                                    f"folder{'' if len(dropped) == 1 else 's'} ({byte_size(size, 'ram')}) not shown in tabs")
         if (budget := self.plots.ram_budget) is not None:
             budget.auto_reload = read_plot_auto_reload(settings)
             budget.check()  # The plots' share of a new budget.

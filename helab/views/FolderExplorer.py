@@ -2314,9 +2314,9 @@ class FolderExplorer(QWidget):
 
     def _ask_remove_cached(self, path: str, size: int | None) -> bool:
         name = os.path.basename(path.rstrip(os.sep)) or path
+        cached = f" ({byte_size(size, 'disk')})" if size else ""
         box = QMessageBox(QMessageBox.Icon.Question, "Don't cache this folder",
-                          f"{name} won't be cached from now on. Remove its cached data"
-                          f"{f' ({byte_size(size)})' if size else ''}?", parent=self)
+                          f"{name} won't be cached from now on. Remove its cached data{cached}?", parent=self)
         remove = box.addButton("Remove cached data", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("Keep it", QMessageBox.ButtonRole.RejectRole)
         box.exec()

@@ -494,7 +494,7 @@ def test_earlier_io_traces_ask_with_keep_as_the_default(
     monkeypatch.setattr(QMessageBox, "exec", run)
     assert main_window._ask_delete_old_traces(2, 3000, str(tmp_path)) is (choice == "Delete old traces")
     text, default, buttons = seen[0]
-    assert text == f"2 earlier I/O traces ({byte_size(3000)}) in {tmp_path}."
+    assert text == f"2 earlier I/O traces ({byte_size(3000, 'disk')}) in {tmp_path}."
     assert default == "Keep" and sorted(buttons) == ["Delete old traces", "Keep"]
 
 

@@ -7,7 +7,8 @@ table can't be read (``KeyError``) and no read has a default of its own
 reader still checks the value it gets (a malformed or out-of-range saved value is replaced by
 the default there, e.g. ``constants.read_disk_budget``).
 
-Standard library and QtCore only: ``helab.utils.constants`` and the I/O helpers import it.
+Standard library, QtCore and ``number_format`` (standard library only): ``helab.utils.constants``
+and the I/O helpers import it.
 """
 from __future__ import annotations
 
@@ -15,6 +16,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from PyQt6.QtCore import QSettings
+
+from helab.utils import number_format
 
 
 @dataclass(frozen=True)
@@ -59,6 +62,12 @@ TXY_SOURCE_SETTING = "txy_source"
 REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
 OPEN_PLOTS_SETTING = "open_plots"
 
+def default_disk_budget(platform: str | None = None) -> int:
+    """8 GB on macOS and Linux, 8 GiB on Windows (Q22.7, Q26.1): disk units follow the OS
+    (``number_format.byte_unit``). The table's row takes this platform's, at import."""
+    return 8 * number_format.byte_unit(3, "disk", platform)[0]
+
+
 SETTINGS: tuple[Setting, ...] = (
     Setting(DIR_TEMPS_SETTING, str, "",
             "Folder for temporary files (Settings → General). Unset: the first writable of the default "
@@ -77,10 +86,11 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(AUTO_SCAN_VISIBLE_SETTING, bool, False,
             "Check the status of visible folders without saved results automatically "
             "(Settings → General, View menu)."),
-    Setting(DISK_BUDGET_SETTING, int, 8 * 10**9,
-            "The disk cache budget in bytes (SI: 8 GB), at least 1 GB; live data only (Settings → Cache)."),
+    Setting(DISK_BUDGET_SETTING, int, default_disk_budget(),
+            "The disk cache budget in bytes: 8 GB on macOS and Linux, 8 GiB on Windows (default_disk_budget), "
+            "at least 1 GB or 1 GiB; live data only (Settings → Cache)."),
     Setting(RAM_BUDGET_SETTING, int, 16,
-            "The RAM budget in steps of 1/128 of the computer's RAM, at least max(1 GB, 1 step), at "
+            "The RAM budget in steps of 1/128 of the computer's RAM, at least max(1 GiB, 1 step), at "
             "most 64 (Settings → Cache)."),
     Setting(LIVE_INTERVAL_SETTING, float, 3.0,
             "Seconds from the end of one Live check to the start of the next, 0.5 to 600 "

@@ -29,6 +29,7 @@ from helab.views.FolderDetailsPanel import FolderDetailsPanel
 from helab.views.FolderExplorer import AUTO_LOAD_PAUSED, FolderExplorer
 
 GB = 10**9
+GiB = 2**30
 DAY = 86400.0
 
 
@@ -426,23 +427,55 @@ def test_the_helper_records_a_lower_budget_only_if_the_data_fits(tmp_path: Path)
     assert events[-1]["recorded"] is True
 
 
-def test_ram_budget_steps_of_1_128_of_ram(qtbot: QtBot, tmp_path: Path) -> None:
+def test_the_disk_budget_is_typed_in_gib_on_windows_and_a_saved_budget_keeps_its_bytes(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Q26.1: Windows shows disk sizes in GiB, the budget too. A budget saved as 8 GB shows 7.5 GiB
+    and, left as shown, is saved as it was (no rewrite of anyone's setting)."""
+    from helab.utils import number_format
+    monkeypatch.setattr(number_format, "PLATFORM", "win32")
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
-    total = 128 * GB
-    assert read_ram_budget_steps(settings, total) == 16 and read_ram_budget(settings, total) == 16 * GB
-    assert ram_step_range(total) == (1, 64) and ram_step_range(8 * GB) == (16, 64)
-    assert ram_step_range(16 * GB) == (8, 64)  # At least 1 GB.
+    settings.setValue(DISK_BUDGET_SETTING, 8 * GB)
+    tab = CacheTab(None, settings)
+    qtbot.addWidget(tab)
+    assert tab.disk_budget.suffix() == " GiB" and tab.disk_budget.value() == 7.5
+    assert tab.disk_budget_bytes() == 8 * GB
+    assert tab.apply_budget() is True
+    tab.save(settings)
+    assert read_disk_budget(settings) == 8 * GB
+    tab.disk_budget.setValue(4.0)  # Changed: whole steps of half a GiB.
+    assert tab.disk_budget_bytes() == 4 * GiB
+    tab.disk_budget.setValue(7.5)  # Back as shown: unchanged, still the saved bytes.
+    assert tab.disk_budget_bytes() == 8 * GB
+    tab.disk_budget.setValue(7.0)
+    assert tab.disk_budget_bytes() == 7 * GiB
+    tab.show_disk_budget(8 * GiB)  # ("Reset all settings…" on Windows: the default.)
+    assert tab.disk_budget.value() == 8.0 and tab.disk_budget_bytes() == 8 * GiB
+    monkeypatch.setattr(number_format, "PLATFORM", "darwin")
+    mac = CacheTab(None, settings)
+    qtbot.addWidget(mac)
+    assert mac.disk_budget.suffix() == " GB" and mac.disk_budget.value() == 8.0 and mac.disk_budget_bytes() == 8 * GB
+
+
+def test_ram_budget_steps_of_1_128_of_ram(qtbot: QtBot, tmp_path: Path) -> None:
+    """RAM is in GiB on every OS (Q26.1), the budget's minimum 1 GiB."""
+    settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
+    total = 128 * GiB
+    assert read_ram_budget_steps(settings, total) == 16 and read_ram_budget(settings, total) == 16 * GiB
+    assert ram_step_range(total) == (1, 64) and ram_step_range(8 * GiB) == (16, 64)
+    assert ram_step_range(16 * GiB) == (8, 64)  # At least 1 GiB.
+    assert ram_step_range(16 * GB) == (9, 64)  # (1 GiB is 8.6 steps of 125 MB.)
     for saved, expected in ((200, 64), (0, 1), ("junk", 16)):
         settings.setValue(RAM_BUDGET_SETTING, saved)
         assert read_ram_budget_steps(settings, total) == expected
     box = RamBudgetSpinBox(total)
     qtbot.addWidget(box)
     box.setValue(16)
-    assert box.text() == "16.0 GB (1/8 of 128 GB)"
+    assert box.text() == "16.0 GiB (1/8 of 128 GiB)"
     box.setValue(3)
-    assert box.text() == "3.0 GB (3/128 of 128 GB)"
-    # A typed size snaps to the nearest step, within range.
-    assert box.valueFromText("10.4 GB") == 10 and box.valueFromText("900") == 64
+    assert box.text() == "3.0 GiB (3/128 of 128 GiB)"
+    # A typed size (GiB) snaps to the nearest step, within range.
+    assert box.valueFromText("10.4 GiB") == 10 and box.valueFromText("900") == 64
 
 
 def test_ram_budget_drops_unshown_datasets_least_recently_used_first(
@@ -717,8 +750,8 @@ def test_saves_restored_from_the_store_ask_with_its_numbers(
         growth = update.bytes - 100_000
         now = int(events[0]["inventory"]["usage"])  # The store's usage now, not when the save was held.
         assert growth == 10_000 + _record_bytes(record) and _record_bytes(record) > 5000
-        assert question(dialogs).text() == (f"a changed: save the update to the disk cache (+{byte_size(growth)}, "
-                                            f"{byte_size(now + growth)} of {byte_size(budget)})?")
+        assert question(dialogs).text() == (f"a changed: save the update to the disk cache (+{byte_size(growth, 'disk')}, "
+                                            f"{byte_size(now + growth, 'disk')} of {byte_size(budget, 'disk')})?")
         next(b for b in question(dialogs).buttons() if b.text() == "Don't cache this update now").click()
         qtbot.waitUntil(lambda: dialogs._asking[0] == new.pending_id)
         assert "Make room removes cached data for 1 folder" in question(dialogs).informativeText()

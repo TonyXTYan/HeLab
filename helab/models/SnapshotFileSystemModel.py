@@ -457,8 +457,8 @@ class SnapshotFileSystemModel(QAbstractItemModel):
             lines.append("Auto-load paused — disk cache 80% full · right-click › Load data")
         elif node.path in self.large_paths:
             estimate, refused = self.large_paths[node.path]
-            lines.append(f"Too large to load · ~{byte_size(estimate)} in RAM, over 30% of RAM" if refused else
-                         f"Large folder · ~{byte_size(estimate)} in RAM · right-click › Load data")
+            lines.append(f"Too large to load · ~{byte_size(estimate, 'ram')} in RAM, over 30% of RAM" if refused else
+                         f"Large folder · ~{byte_size(estimate, 'ram')} in RAM · right-click › Load data")
         prefs = self.cache.folder_prefs(node.path)
         if prefs["no_cache"]:
             lines.append("Not cached: your choice")

@@ -7,7 +7,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QChe
     QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem, QDoubleSpinBox
 from PyQt6.QtCore import QSettings, QUrl
 
-from helab.utils import folder_cache
+from helab.utils import app_log, folder_cache
 from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import fnum
 from helab.utils.constants import (
@@ -21,7 +21,7 @@ from helab.utils.settings_defaults import (
     LOAD_MODE_SETTING, LOG_KEEP_SETTING, REOPEN_PLOTS_SETTING, RETIRED, SIMULTANEOUS_IO_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
-from helab.views.CacheTab import GB, CacheTab, read_result_reuse
+from helab.views.CacheTab import CacheTab, read_result_reuse
 from helab.views.ConverterTab import ConverterTab
 from helab.views.LabParametersTab import LabParametersTab
 
@@ -105,7 +105,7 @@ class SettingsDialog(QDialog):
         self.log_keep_spin = QSpinBox()
         self.log_keep_spin.setRange(1, MAX_LOG_KEEP)
         self.log_keep_spin.setToolTip(
-            "Each HeLab writes its own log file, renamed and started again every 1 MB. At startup HeLab "
+            f"Each HeLab writes its own log file, renamed and started again every 1 {app_log.MB_UNIT}. At startup HeLab "
             "deletes the oldest log files beyond this number, every session's counted, never a running "
             "HeLab's. Help › Show log folder shows them.")
         log_form.addRow("Log files to keep:", self.log_keep_spin)
@@ -366,7 +366,7 @@ class SettingsDialog(QDialog):
             settings.setValue(DIR_CACHES_SETTING, caches)
         self.load_settings()
         self.lab_tab.load(settings)
-        self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / GB)
+        self.cache_tab.show_disk_budget(read_disk_budget(settings))
         self.cache_tab.ram_budget.setValue(read_ram_budget_steps(settings, self.cache_tab.ram_budget.total))
         self.cache_tab.live_autosave.setValue(read_live_autosave(settings))
         self.cache_tab.plot_auto_reload.setChecked(read_plot_auto_reload(settings))
