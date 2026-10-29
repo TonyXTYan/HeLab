@@ -94,7 +94,22 @@ threshold; never printed as a number); comments that estimate memory in MB (`tre
 
 ## Checks
 
-(filled in below after the runs)
+On the merged state (`f58e161`: this work plus `origin/dev/v0.0.7` at `9f0b21f`), macOS, Python 3.13:
+
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: **8201 passed, 669 skipped,
+  2 warnings, no RERUN** (116 s).
+- The same without `--basetemp` (outside the checkout): **8201 passed, 669 skipped, 2 warnings, no
+  RERUN** (122 s).
+- `mypy helab/ --strict`, `mypy tests --strict`, both again with `--platform win32`: no issues;
+  `pyright helab tests` and `pyright --pythonplatform Windows helab tests`: 0 errors.
+- Every changed file parses with Python 3.11.16 (`ast.parse`; compat CI).
+- An earlier full run before the merge had one failure, mine: `test_memroyUsageWindow.py::
+  test_memory_usage_window_initialization` (`assert 0.95367431640625 == 1.0`, the window now in MiB);
+  its 5 RERUNs were that same assertion. Fixed in `37896da`; no RERUN since.
+- Offscreen render (floor-env sourced, a throwaway settings ini) with
+  `HELAB_UNITS_PLATFORM_OVERRIDE=win32` and `darwin`: Settings → Cache's budget shows "7.5 GiB" / "8.0 GB"
+  for a saved 8 GB; the RAM box "16.0 GiB (1/8 of 128 GiB)" on both; the large-folder dialog in GiB.
+  Real Windows not run (M~1).
 
 ## For the Reviewer
 
