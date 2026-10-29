@@ -126,7 +126,7 @@ Finding numbers refer to the [planning-docs audit](sessions/2026-10-28-claude-do
 
 ## Building the TXY converter (block 9)
 
-- **A9.1 Remove unused converter backends from the build** (Q9.2): every backend ships while the
+- [x] **A9.1 Remove unused converter backends from the build** (done in `134e2ec`: numpy, cython and the reference ship) (Q9.2): every backend ships while the
   converter is tested; once the default and the optional fast ones are settled, drop the rest
   from `requirements.txt`, the lock and `HeLab.spec`, and note the size saved. Input: the stage 2
   results (`sessions/2026-10-29-claude-txy-bench/results.md`) and Q11.2. Packaging's sizes (macOS app):
@@ -221,12 +221,12 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 
 ## Converter stage 4, packaging (block 16)
 
-- **A16.1 Rust build cache in CI**: every build job compiles the rust crate from cold (LTO fat,
+- [x] **A16.1 Rust build cache in CI** (moot: rust left CI, A9.1, `134e2ec`): every build job compiles the rust crate from cold (LTO fat,
   `codegen-units = 1`); if CI time matters, `Swatinem/rust-cache@v2` with `workspaces: native/rust`.
-- **A16.2 The compatibility jobs** (3.11, 3.12, 3.14, unpinned; PR-only, experimental) also build and
+- [x] **A16.2 The compatibility jobs** (moot: numba left CI, `134e2ec`) (3.11, 3.12, 3.14, unpinned; PR-only, experimental) also build and
   require cython, rust and numba: watch the first PR run, and make numba conditional there if a
   Python has no wheel.
-- **A16.3 `native/build.py`'s `--out`/`--prebuilt`** are no longer used by any workflow (Puffin): drop
+- [x] **A16.3 `native/build.py`'s `--out`/`--prebuilt`** (dropped in `134e2ec`) are no longer used by any workflow (Puffin): drop
   them, or fix the module docstring that says the test job takes a build job's `--out`.
 
 ## Tony's answers on the converter (block 17)
@@ -250,6 +250,17 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
   `converted_usage` and `clear_converted` over both places.
 - **A19.2 Clear converted TXY vs a running conversion** (audit K4): `clear_converted` takes a fence
   a conversion checks before each write, or the docs say a running conversion may write after it.
+
+## TXY ship (block 21)
+
+- **A21.1 Two stale backend strings** (not the ship floor's paths): `helab/convert/backends/numba_backend.py`'s
+  docstring says the helper passes a cache folder under `cache_dir()` (now the temp folder, Q18.1);
+  `helab/convert/backends/rust.py` (~:7, :80) says "build it with `maturin develop --release`", now
+  `python native/build.py --only rust`.
+- **A21.2 Developer venvs keep the unshipped packages**: `uv pip install -r requirements.lock` never
+  removes numba, llvmlite, mlx, mlx-metal or maturin from Ground's or floors' venvs (harmless: builds
+  exclude them, tests run where installed); `uv pip sync requirements.lock` then `uv pip install -e .`
+  gives the shipped set. Say so in the README's "updating dependencies" if worth it.
 
 ## Not AI work (stays in MANUAL_TODO)
 

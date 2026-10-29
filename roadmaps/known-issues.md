@@ -73,6 +73,13 @@ How to use it:
 
 ## Tests and CI
 
+- [ ] `test_gui_responsiveness.py::test_timeout_retry_releases_dead_helper_slot_while_artifact_reader_is_blocked[2]`:
+  `waitUntil timed out in 3000 milliseconds` at line 292 (the `finally`'s wait for the killed fake
+  helpers to exit after `service.shutdown()`), on Windows CI run 40803552596 (`agent/txy-ship`) and
+  once locally on macOS; passed on retry. A candidate: 3 s under load.
+- [ ] `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`: an
+  xdist worker crashed on Windows CI run 40803552596; passed on retry (no traceback; look for a
+  faulthandler dump).
 - [ ] `test_root_gui.py::test_the_gui_never_writes_the_saved_file_itself`: xdist worker gw0 crashed
   once on macOS CI (run 40790093719, `agent/quick-fixes-5` `ed0635c`, job 123172940859, 2026-10-29);
   passed on its rerun. A crash, not an assertion (a native fault in a GUI test?); cause unknown.

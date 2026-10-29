@@ -29,17 +29,18 @@ branch with an open PR to `main` runs only the detection job, since the PR's own
 run tests the same commit (if the PR lookup fails, everything runs). Separate
 Python 3.11, 3.12 and 3.14 compatibility matrices run only on PRs to `main`,
 with soft failures. `ci-test.yml` has two independent jobs per OS and Python (converter stage 4,
-2026-10-29): "Converter backends" (20 min) builds and requires every compiled backend
-(`native/build.py --ci`) and runs the converter tests that use a backend; "Tests" runs the whole
-suite in the environment it had before the backends shipped (the lock without numba, llvmlite, mlx,
-mlx-metal, Cython and maturin, nothing built, their tests skipping; a `pip list` guard fails the job
-if one is present). The build job builds them (`build.py --ci`) before PyInstaller and checks the
+2026-10-29): "Converter backends" (20 min) builds and requires cython (`native/build.py --ci`,
+`HELAB_REQUIRE_BACKENDS=cython`) and runs the converter tests that use a backend; "Tests" runs the
+whole suite in two groups, each a job of its own ("Tests (1/2)", "Tests (2/2)", Q16.2, A17.2):
+`pytest --test-group N/2` (see [testing](testing.md)); the caller's result, which the release gate
+needs, fails if either group does, and each macOS group uploads coverage for Codecov to merge. The
+Tests jobs install the lock without Cython, nothing built (a `pip list` guard fails the job if a
+backend package is present). The build job builds them (`build.py --ci`) before PyInstaller and checks the
 app after (`check_build.py --frozen`); its timeout is 25 min. `HELAB_REQUIRE_BACKENDS` reaches later
 steps through `$GITHUB_ENV`, so in the build job it also applies to "Test the older tagged commit
 before rebuilding recovery assets" (skipped, and the variable unset, for a tag from before
-`native/build.py`). Runners need Rust and a C compiler (MSVC on `windows-latest`); GitHub's macOS
-arm64 runners have Metal, so mlx is required there. Test-job times (Windows ~20-25 of 30 min) are
-Q16.2. Shared steps live in `ci-test.yml` and `ci-build.yml`, with
+`native/build.py`). Runners need a C compiler (MSVC on `windows-latest`). Group times on the first
+run (40803552596, pytest step): Windows 11:02 and 10:02, macOS 4:09 and 4:52, Ubuntu 2:56 and 5:09. Shared steps live in `ci-test.yml` and `ci-build.yml`, with
 Codecov uploads. Runs keep no artifacts: builds are uploaded (`upload`) only in a
 run that releases, for the release job; test results go to Codecov only. Compatibility matrices expand on pushes, but pass `enabled: false`
 to the called jobs, recording individual skips without starting runners. All

@@ -53,3 +53,4 @@ number.
 | 18 | 2026-10-29 | Side (claude), Ground | converter follow-ups (Tony in Chat) | dev/v0.0.7 | Q18.1–Q18.6, A18.1, M18.1 |
 | 19 | 2026-10-29 | Side (claude) subagent, Ground | caching audit after the converter (`sessions/2026-10-29-claude-caching-audit/audit.md`) | dev/v0.0.7 | Q19.1–Q19.9, A19.1, A19.2 |
 | 20 | 2026-10-29 | Rivet (claude), floor Quick Fixes 6; merged by CoCo | test_typing first (`sessions/2026-10-29-claude-quick-fixes-6/`) | agent/quick-fixes-6 | A~1 (future slow modules) folded into testing.md; Tern's finding 1→A20.1 (first numbered A19.1 in `6fcf012`, which clashed with the caching audit's block 19) |
+| 21 | 2026-10-29 | Bale (claude), floor TXY ship; merged by CoCo | ship numpy + cython, two test groups (`sessions/2026-10-29-claude-txy-ship/`) | agent/txy-ship | A~1→A21.1, A~2→known-issues, A~3 closes A16.1/A16.2, A~4→A21.2; A16.3, A9.1 done |
