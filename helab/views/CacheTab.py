@@ -54,7 +54,8 @@ RESULTS_TEXT = ("Plots shown now stay as they are; the next run of each plot com
 # HeLab's converted TXY (Q27.5): where they are, and what each folder holds (the row's tooltip).
 CONVERTED_TIP = ("TXY files HeLab converted from raw files, in the cache and temp folders' converted-txy folders, "
                  "with HeLab's index of what made them. They don't count toward the budget, and nothing removes "
-                 "them but this Clear. Those written beside the raw files aren't here (their records are, and stay).")
+                 "them but this Clear, which keeps the index (a few kB, counted here) and the records of TXY "
+                 "written beside the raw files (those TXY aren't here).")
 CONVERTED_BASES = {"cache": "Cache folder", "temp": "Temp folder"}
 
 
@@ -471,7 +472,8 @@ class CacheTab(QWidget):
         converted = inventory.get("converted_txy") or {"files": 0, "bytes": 0}
         if not self.confirm("Clear HeLab's converted TXY?",
                             f"Removes {plural(int(converted['files']), 'TXY file')} HeLab converted, with their "
-                            f"records ({byte_size(int(converted['bytes']))}), from the cache and temp folders. Raw "
+                            f"records ({byte_size(int(converted.get('clearable_bytes') or 0))}), from the cache and "
+                            "temp folders; HeLab's index of what made them stays. Raw "
                             "files, "
                             "MATLAB's TXY and HeLab's TXY written beside raw files are kept. Data loaded stays open; "
                             "plots on HeLab's TXY keep what they show, and shots are converted again when converting "
@@ -662,7 +664,8 @@ class CacheTab(QWidget):
             + (f" · a newer HeLab's index, {byte_size(int(base['newer']))}, which Clear leaves"
                if base.get("newer") else "")
             for name, base in (converted.get("bases") or {}).items()))))
-        self.converted_button.setEnabled(writable and bool(converted["files"] or converted["bytes"]))
+        # (Only when Clear would remove something: never the index itself, which the bytes include.)
+        self.converted_button.setEnabled(writable and bool(converted.get("clearable")))
         checked = f"Checked {datetime.fromtimestamp(inventory['checked_at']):%H:%M}"
         self.checked_label.setText(" · ".join(filter(None, (status or checked, self.message))))
         self._show_estimates()

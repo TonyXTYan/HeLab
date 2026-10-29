@@ -181,3 +181,59 @@ non-beside rows whose TXY is missing.
 - **Strict typing, win32 included:** all clean (above).
 - **Q~1–Q~4, A~1, A~2, M~1, M~2:** I agree with the proposals. Q~1 (size and mtime) is what makes
   "row before rename" safe.
+
+## Round 1 re-check (head `9691873`, `git diff 1e7329c..9691873`)
+
+**Result: no open findings.** High-1, Low-1 to Low-4 and Nit-1 and Nit-3 are fixed. Nit-2 is kept
+on purpose and I accept the reason. I add one new Nit (Nit-4), which doesn't block landing.
+
+| Finding | Status | What I checked |
+|---|---|---|
+| High-1 | **closed** | `contextlib.closing` plus `commit()` at `tests/test_convert_helab.py:172` and `:1330`. The `[newer]` case passes on both Windows jobs of run 40866574094. The new `test_an_index_that_cant_be_set_aside_fails_the_conversion_to_be_tried_again` covers a set-aside refused while another process has the file open. The handoff explains why that never retries in a fast loop: Live waits for Retry, `--watch` waits for its `--interval`, and IOService never retries a helper's `error`. |
+| Low-1 | **closed** | `clear_converted` opens the index for writing only when `index_schema(root) == SCHEMA`. `_index_files` puts a newer HeLab's live index and its `index-newer-…` files in a separate list, so Clear doesn't count them as ours and never removes them. Settings › Cache reports them as `newer` (typed in `events.ConvertedUsageField`; the tooltip has a line for them). `test_a_clear_leaves_a_newer_helabs_index_alone` checks the bytes are unchanged and the `newer` file stays, while a damaged set-aside file goes. |
+| Low-2 | **closed** | `_OWN_FILE` now includes `\.folder\.json\.[0-9a-f]{16}\.partial`. `own_partial()` is back to its pattern from before this branch (the TXY and JSON temporaries, and `folder.json`'s). Tests check the folder gets removed, that an uppercase-hex look-alike stays, and the full look-alike list for housekeeping. AGENTS.md's housekeeping line stays as it was. |
+| Low-3 | **closed** | `find` calls `provenance.read_shots(...)`. The handoff proposes adding it to io-and-browsing's list of patched names. |
+| Low-4 | **closed** | `provenance.py`'s docstring and the doc proposals now say the cache folder is never on a share (`cache_location` refuses one), and that a load moves its folder's `last_used` on. |
+| Nit-1 | **closed** | Every file is measured by its `stat`. `TxyIndex.held` is gone; nothing else used it. |
+| Nit-2 | **kept, accepted** | Orphan rows stay. Pruning would have to tell them apart from beside rows, which are the only provenance of their TXY. CoCo agreed. |
+| Nit-3 | **closed** | `read_shots` closes its index once on each path, before any set-aside (Windows can't rename an open file). |
+| Nit-4 (new) | open, Nit | `CacheTab` keeps Clear enabled whenever `bytes` > 0, and `bytes` always includes our live `index.sqlite`, which Clear keeps. So after a Clear the row shows "0 files · 12 kB" with Clear still enabled, and pressing it removes nothing. This dates from round 0. A damaged live index is likewise left by Clear now (for the next conversion to set aside) and still counted. Possible fix: enable on `files` alone, or count the index separately. |
+
+### Checks (floor venv, macOS)
+
+- Touched and new tests: `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`
+  on `test_convert_helab`, `test_converter_tab`, `test_txy_sources`, `test_helper_events`,
+  `test_cache_switch` and `test_headless_imports`: **150 passed, 0 reruns**.
+- `mypy helab/ --strict` (191 files), `mypy tests --strict` (159), and `mypy helab/ --strict --platform
+  win32` (191): no issues. `pyright helab tests` and `pyright --pythonplatform Windows helab tests`:
+  0 errors.
+
+### CI run 40866574094 (head `9691873`)
+
+**Attempt 1: failure.** I read every job's log. These jobs passed: macOS Converter backends
+(123422851803: 676 passed), Ubuntu Converter backends (123422851804: 676 passed), Windows Converter
+backends (123422851980: 675 passed), macOS Tests (2/2) (123422851805: 4115 passed), Ubuntu Tests
+(1/2) (123422851876: 4079 passed), Ubuntu Tests (2/2) (123422851827: 4116 passed), Windows Tests
+(1/2) (123422851982: 4069 passed), Windows Tests (2/2) (123422852009: 4099 passed), and the three
+Builds. **No RERUN in any job.**
+
+**macOS Tests (1/2) (123422851726): failure.** 3108 passed, then xdist stopped with
+`INTERNALERROR> AssertionError: ('tests/test_root_discovery.py::test_volume_check_alone_refreshes_hints_without_visiting_markers', <WorkerController gw2>)`.
+
+**Attempt 2: success.** "Re-run failed jobs" ran only macOS Tests (1/2) (123440148708: 4082 passed,
+322 skipped, no RERUN). The other jobs in attempt 2 have new IDs but carry attempt 1's logs (the
+same counts and times).
+
+**Ledger's diagnosis: I agree.** The worker's log shows the chain. `test_root_discovery.py:347`
+patches `os.lstat` for the whole process (`lambda *_: pytest.fail("visited a source folder")`). While
+that patch was in place, pytest's unraisable hook ran `tracemalloc_message`. Coverage's tracer
+(`_should_trace` → `canonical_filename` → `abs_file` → `os.path.realpath`) then called the patched
+`lstat`. That raised `Failed` inside `sys.unraisablehook` and the xdist worker crashed. A crashed
+worker is an INTERNALERROR, which `--reruns` never retries. This branch doesn't touch
+`test_root_discovery.py`, data roots or markers.
+
+It still needs a known-issues entry: neither the handoff nor `roadmaps/known-issues.md` names it.
+A fix would patch `os.lstat` only for the paths under test, or patch the name in `data_roots`
+rather than in `os`. Together with the Windows `test_writing_held_data_out_counts_as_progress`
+RERUN from run 40863356565 (already in the handoff for CoCo to file), that makes two known-issues
+entries for the landing.

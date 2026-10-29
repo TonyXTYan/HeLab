@@ -50,3 +50,11 @@ Final runs (after 35b50d0):
   tests`: 0 errors.
 - CI run 40863356565 (head 1e7329c) had failed on Windows only, on `[newer]` (High-1), plus one
   unrelated RERUN in `test_io_service_run.py` (quoted in the handoff for known-issues).
+
+## Review round 2 checks (Nit-4)
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
+  `8197 passed, 669 skipped, 2 warnings in 143.18s`, no RERUN.
+- The five type checks: clean (mypy strict helab 191 / tests 159, win32; pyright, Windows).
+- CI run 40866574094 (9691873): attempt 1 crashed one macOS worker (known-issue proposal in the
+  handoff); attempt 2 green on every job, no RERUN.

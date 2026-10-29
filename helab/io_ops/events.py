@@ -557,12 +557,16 @@ class ConvertedUsageField(TypedDict):
     """HeLab's converted TXY under one base's ``converted-txy`` (``helab_txy.converted_usage``): the TXY
     files, their bytes (the index and old builds' records included), the folders holding them, and when
     a conversion or load last used one (None: never, or no index says); ``newer``: the bytes of a newer
-    HeLab's index there (live or set aside), not counted in ``bytes`` and never cleared."""
+    HeLab's index there (live or set aside), not counted in ``bytes`` and never cleared;
+    ``clearable``/``clearable_bytes``: the files Settings › Cache's Clear would remove (never the index
+    itself), what enables its Clear."""
     files: int
     bytes: int
     folders: int
     last_used: float | None
     newer: int
+    clearable: int
+    clearable_bytes: int
 
 
 class ConvertedSummaryField(ConvertedUsageField):

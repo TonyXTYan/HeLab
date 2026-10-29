@@ -358,6 +358,15 @@ def _index_files(root: str) -> tuple[list[os.DirEntry[str]], list[os.DirEntry[st
     return ours, newer
 
 
+def _cleared(entries: list[os.DirEntry[str]]) -> list[os.DirEntry[str]]:
+    """Of a folder's own files (``_OWN_FILE``), those Clear removes: all but ``folder.json`` and an old
+    record whose TXY isn't here (a beside TXY's: its provenance). (``folder.json`` goes too when the
+    folder is left with it alone.)"""
+    here = {entry.name for entry in entries}
+    return [entry for entry in entries if entry.name != _FOLDER_RECORD and not (
+        entry.name.endswith(".json") and not {entry.name[:-len(".json")] + suffix for suffix in _TXY_SUFFIXES} & here)]
+
+
 def _size(entry: os.DirEntry[str]) -> int:
     try:
         return entry.stat(follow_symlinks=False).st_size
@@ -368,11 +377,15 @@ def _size(entry: os.DirEntry[str]) -> int:
 def converted_usage(root: str) -> ConvertedUsageField:
     """HeLab's TXY under ``root`` (a base's ``converted-txy``): their count and bytes (the index and old
     builds' records included), the folders holding them, when one was last used (from the index; None:
-    never, or unknown), and ``newer``: the bytes of a newer HeLab's index there, which Clear leaves.
+    never, or unknown), ``newer``: the bytes of a newer HeLab's index there, which Clear leaves, and
+    ``clearable``/``clearable_bytes``: the files Clear would remove (``clear_converted``'s rules: never
+    the index itself, nor old records of beside TXY).
     Each file is measured by its ``stat`` (a row's size may name a file a killed write never renamed in)."""
     import sqlite3
     from helab.convert.provenance import open_index
-    usage: ConvertedUsageField = {"files": 0, "bytes": 0, "folders": 0, "last_used": None, "newer": 0}
+    from helab.convert.provenance import SET_ASIDE_PATTERN
+    usage: ConvertedUsageField = {"files": 0, "bytes": 0, "folders": 0, "last_used": None, "newer": 0,
+                                  "clearable": 0, "clearable_bytes": 0}
     last_used: dict[str, float] = {}
     index = open_index(root, write=False)
     if index is not None:
@@ -390,19 +403,27 @@ def converted_usage(root: str) -> ConvertedUsageField:
     usage["bytes"] += sum(_size(entry) for entry in ours)
     usage["newer"] = sum(_size(entry) for entry in newer)
     newest: float | None = None
+    for entry in ours:
+        if SET_ASIDE_PATTERN.fullmatch(entry.name):  # (A damaged index set aside: Clear removes it.)
+            usage["clearable"] += 1
+            usage["clearable_bytes"] += _size(entry)
     for folder in folders:
-        holds = False
         try:
-            with os.scandir(folder.path) as entries:
-                for entry in entries:
-                    if not (entry.is_file(follow_symlinks=False) and _OWN_FILE.fullmatch(entry.name)):
-                        continue
-                    usage["bytes"] += entry.stat(follow_symlinks=False).st_size
-                    usage["files"] += int(entry.name.endswith(_TXY_SUFFIXES))
-                    holds = True
+            with os.scandir(folder.path) as listing:
+                names = {entry.name: entry for entry in listing}
+            own = [entry for entry in names.values()
+                   if entry.is_file(follow_symlinks=False) and _OWN_FILE.fullmatch(entry.name)]
+            sizes = {entry.name: entry.stat(follow_symlinks=False).st_size for entry in own}
         except OSError:
             continue
-        if holds:
+        cleared = _cleared(own)
+        if set(names) - {entry.name for entry in cleared} == {_FOLDER_RECORD}:
+            cleared.append(names[_FOLDER_RECORD])  # (Left alone in its folder, it goes with it.)
+        usage["bytes"] += sum(sizes.values())
+        usage["files"] += sum(entry.name.endswith(_TXY_SUFFIXES) for entry in own)
+        usage["clearable"] += len(cleared)
+        usage["clearable_bytes"] += sum(sizes.get(entry.name, 0) for entry in cleared)
+        if own:
             usage["folders"] += 1
             used = last_used.get(folder.name)
             if used is not None and (newest is None or used > newest):
@@ -419,7 +440,9 @@ def converted_summary(roots: Mapping[str, str]) -> ConvertedSummaryField:
             "bytes": sum(base["bytes"] for base in bases.values()),
             "folders": sum(base["folders"] for base in bases.values()),
             "last_used": max(used) if used else None,
-            "newer": sum(base["newer"] for base in bases.values()), "bases": bases}
+            "newer": sum(base["newer"] for base in bases.values()),
+            "clearable": sum(base["clearable"] for base in bases.values()),
+            "clearable_bytes": sum(base["clearable_bytes"] for base in bases.values()), "bases": bases}
 
 
 def clear_converted(root: str) -> dict[str, int]:
@@ -448,14 +471,9 @@ def clear_converted(root: str) -> dict[str, int]:
                            and _OWN_FILE.fullmatch(entry.name)]
             except OSError:
                 continue
-            here = {entry.name for entry in entries}
             gone: list[tuple[str, int, int]] = []
-            for entry in entries:
+            for entry in _cleared(entries):
                 name = entry.name
-                if name == _FOLDER_RECORD:
-                    continue
-                if name.endswith(".json") and not {name[:-len(".json")] + suffix for suffix in _TXY_SUFFIXES} & here:
-                    continue  # An old record of a TXY beside the raw files: kept (its provenance).
                 try:
                     info = entry.stat(follow_symlinks=False)
                     os.unlink(entry.path)
@@ -471,7 +489,10 @@ def clear_converted(root: str) -> dict[str, int]:
             try:
                 left = os.listdir(folder)
                 if left == [_FOLDER_RECORD]:
-                    os.unlink(os.path.join(folder, _FOLDER_RECORD))
+                    record = os.path.join(folder, _FOLDER_RECORD)
+                    size = os.lstat(record).st_size
+                    os.unlink(record)
+                    removed["bytes"] += size
                 if not os.listdir(folder):
                     os.rmdir(folder)
             except OSError:

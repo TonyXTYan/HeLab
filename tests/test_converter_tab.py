@@ -212,10 +212,13 @@ def test_the_helper_measures_and_clears_converted_txy(tmp_path: Path) -> None:
     index_bytes = os.path.getsize(Path(root) / provenance.INDEX_NAME)
     assert helab_txy.converted_usage(root) == {
         "files": 2, "bytes": 10 + 2 + 2 + 2 + 2 + 5 + 2 + 2 + 4 + 2 + 7 + index_bytes, "folders": 4, "last_used": 200.0,
-        "newer": 0}
-    assert helab_txy.converted_usage(str(tmp_path / "none")) == {"files": 0, "bytes": 0, "folders": 0, "last_used": None,
-                                                                 "newer": 0}
-    assert helab_txy.clear_converted(root) == {"files": 2, "bytes": 10 + 2 + 5 + 2 + 4 + 7}
+        "newer": 0, "clearable": 7, "clearable_bytes": 10 + 2 + 5 + 2 + 4 + 2 + 7}  # (What Clear removes, below.)
+    assert helab_txy.converted_usage(str(tmp_path / "none")) == {
+        "files": 0, "bytes": 0, "folders": 0, "last_used": None, "newer": 0, "clearable": 0, "clearable_bytes": 0}
+    assert helab_txy.clear_converted(root) == {"files": 2, "bytes": 10 + 2 + 5 + 2 + 4 + 2 + 7}
+    # Left: the index (Clear keeps it), the beside TXY's old record and folder.json: nothing more to clear.
+    after = helab_txy.converted_usage(root)
+    assert (after["files"], after["clearable"], after["clearable_bytes"]) == (0, 0, 0) and after["bytes"] > 0
     assert not leftover.exists()
     assert sorted(os.listdir(one)) == ["folder.json", "notes.txt"]  # Another's file stays, so its folder too.
     assert sorted(os.listdir(beside)) == ["d_txy_helab_m19v1_2.json", "folder.json"]  # A beside TXY's record stays.
@@ -246,11 +249,12 @@ def test_a_clear_leaves_a_newer_helabs_index_alone(tmp_path: Path) -> None:
     before = index.read_bytes()
     usage = helab_txy.converted_usage(root)
     assert usage["newer"] == len(before) + 5 and usage["bytes"] == 10 + 7 and usage["files"] == 1
+    assert (usage["clearable"], usage["clearable_bytes"]) == (2, 10 + 7)
     assert helab_txy.clear_converted(root) == {"files": 1, "bytes": 10 + 7}
     assert index.read_bytes() == before and newer_aside.exists() and not damaged.exists()
     assert sorted(os.listdir(root)) == [newer_aside.name, provenance.INDEX_NAME]
     assert helab_txy.converted_usage(root) == {"files": 0, "bytes": 0, "folders": 0, "last_used": None,
-                                               "newer": len(before) + 5}
+                                               "newer": len(before) + 5, "clearable": 0, "clearable_bytes": 0}
 
 
 def test_a_clear_keeps_the_row_of_a_txy_written_again_meanwhile(tmp_path: Path) -> None:
@@ -305,6 +309,17 @@ def test_the_cache_tab_shows_and_clears_converted_txy(qtbot: QtBot, monkeypatch:
         assert cleared[0] == {"kind": "removed", "kinds": ["converted_txy"], "paths": None, "datasets": 0,
                               "bytes": 1502 + 498}
         assert helab_txy.converted_usage(root)["files"] == 0 and helab_txy.converted_usage(str(temp.parent))["files"] == 0
+        # Nit-4: what is left is the temp folder's index, which Clear keeps: shown, but nothing to clear.
+        events.clear()
+        cache_admin(store_options(), "inventory", events.append, **request.payload["params"])
+        tab._job = ""  # (The Clear's job is done: the tab is writable again, as Clear all shows.)
+        tab.inventory = events[0]["inventory"]
+        tab._update()
+        assert tab.clear_all_button.isEnabled()
+        index_bytes = os.path.getsize(temp.parent / provenance.INDEX_NAME)
+        assert tab.converted_label.text() == f"0 files · {byte_size(index_bytes)}"  # (No folder left to be used.)
+        assert not tab.converted_button.isEnabled()
+        assert "keeps the index" in tab.converted_label.toolTip()
     finally:
         service.shutdown()
 

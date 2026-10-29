@@ -305,6 +305,25 @@ rows and old records of beside TXY stay; set-aside indexes go)."
   1)` with `where 2 = len([0.000682100000005903, 0.0014403000000129396])`, `tests\test_io_service_run.py:40`.
   Not this branch's code (IOService untouched): a Windows timing flake, two progress marks where one is
   expected.
+- **Known issue to file (Coordinator): an xdist worker crash in `tests/test_root_discovery.py`.**
+  CI run 40866574094 attempt 1, job 123422851726 ("macos + py3.13 / Tests (1/2)"), on 9691873:
+  `INTERNALERROR> AssertionError: ('tests/test_root_discovery.py::test_volume_check_alone_refreshes_hints_without_visiting_markers', <WorkerController gw2>)`,
+  run summary `3108 passed, 322 skipped, 12 warnings` with exit code 3, no RERUN (a crash isn't
+  rerun). The test patches `os.lstat` for the whole process
+  (`monkeypatch.setattr(os, "lstat", lambda *_: pytest.fail("visited a source folder"))`); while it
+  ran, an unraisable (a garbage-collected object's warning) reached pytest's unraisable hook, whose
+  `tracemalloc_message` ran coverage's `_should_trace` → `canonical_filename` → `os.path.realpath` →
+  the patched `lstat` → `Failed` inside the hook, and the worker died. The collected object is
+  unidentified (the hook failed before printing it). Attempt 2 (the failed job rerun) passed.
+  Proposed fix: patch the name the code under test calls (e.g. `data_roots`' or `infra`'s, not
+  `os.lstat` globally), or `gc.collect()` before patching.
+- **Known issue to file (Coordinator): SQLite connections leaked by store tests.** On the base
+  `9f0b21f` too, `tests/test_cache_switch.py` leaves three `sqlite3.Connection`s unclosed (Python
+  3.13 `ResourceWarning: unclosed database`, seen with `-W always::ResourceWarning` and
+  `PYTHONTRACEMALLOC`): two in `test_load_that_cannot_read_the_cache_leaves_its_flag_unknown`, one in
+  `test_newer_store_is_read_but_never_written` (the store's error paths, not this branch's code). They
+  surface whenever the GC collects them, in whatever test runs then: one way to land in the crash
+  above. This floor's test files leak none.
 - **M~1** (release smoke pass): on a machine with old-build `d_txy_helab_*.json` / `folder.json` in
   `converted-txy/`, open Settings › Cache: the row counts them, its tooltip lists Cache folder and Temp
   folder lines, Clear removes them; then convert a folder with Live on and see "last used just now".
@@ -324,3 +343,17 @@ rows and old records of beside TXY stay; set-aside indexes go)."
 - **Low-4**: doc proposals corrected (the cache folder is never on a share; loads move `last_used`).
 - **Nits**: `read_shots` closes once on each path (first, before a set-aside); sizes by `stat`
   (`TxyIndex.held` dropped, nothing else used it); orphan rows kept on purpose (above).
+
+## Review round 2 (Tern's re-check): Nit-4
+
+Settings › Cache's Clear was enabled whenever the row's bytes were above 0, and those always include
+the live index, which Clear keeps: after a Clear the row showed "0 files · N kB" with Clear enabled,
+doing nothing. Now `converted_usage` also reports `clearable` / `clearable_bytes`: exactly what
+`clear_converted` would remove, by the same rule (`_cleared`, shared by both: never the index, nor an
+old record of a beside TXY; `folder.json` when it would be left alone; damaged set-aside indexes).
+Clear is enabled only when `clearable` is above 0, its question names the clearable bytes and says
+the index stays, and the row's tooltip says Clear keeps the index (a few kB, counted in the row).
+`clear_converted` now also counts the `folder.json` it removes in its bytes, so the two agree. Tests:
+`test_the_helper_measures_and_clears_converted_txy` (clearable before, none after a Clear while bytes
+remain) and `test_the_cache_tab_shows_and_clears_converted_txy` (after a Clear: "0 files · <index
+size>", Clear all enabled, the converted row's Clear disabled; this assertion fails with the old gate).
