@@ -21,15 +21,20 @@ it is still its own (``forget``: another conversion may have written its own sin
 
 The index is rebuildable: missing, unreadable, busy for a reader or of another schema, it only means
 shots convert again. A writer that finds it damaged (SQLite's "malformed" or "not a database") or of
-a newer schema sets it aside, with its journal, as ``index-damaged-<UTC>-<8 hex>.sqlite`` (or
+a newer schema sets it aside, with its ``-wal``/``-shm``, as ``index-damaged-<UTC>-<8 hex>.sqlite`` (or
 ``index-newer-…``; ``SET_ASIDE_PATTERN``) and starts a new one (on Windows, not while another process
 has it open: the conversion then fails with ``IndexUnavailable`` and is tried again later). Settings ›
-Cache's Clear removes damaged ones; a newer HeLab's index, live or set aside, is never ours to clear. Journal mode DELETE (a rollback journal, SQLite's default): writes are rare and tiny (a
-row per shot), each a short ``BEGIN IMMEDIATE`` transaction with a busy timeout (and tried again
-where SQLite answers busy at once rather than risk a deadlock, ``_patient``), so the app's
-helpers and ``helab convert`` write side by side; WAL's shared memory would gain nothing here and
-leaves ``-wal``/``-shm`` files beside it. The cache folder is never on a network share
-(``cache_location`` refuses one), so the index is on a local disk.
+Cache's Clear removes damaged ones; a newer HeLab's index, live or set aside, is never ours to clear.
+
+**Journal mode WAL** (as the store's): each write is one short ``BEGIN IMMEDIATE`` transaction with a
+busy timeout, tried again where SQLite answers busy at once rather than risk a deadlock
+(``_patient``), so the app's helpers and ``helab convert`` write side by side. WAL because readers
+never block the writer and a commit deletes no journal file: with a rollback journal (DELETE), two
+processes writing a row each in turn starved each other past the 10 s timeout on Windows (CI run
+40879735789). WAL's shared memory needs a local disk: the cache folder is never on a network share
+(``cache_location`` refuses one), and the temp folder is the OS's. Its ``-wal``/``-shm`` files are
+SQLite's own: never housekeeping's, counted with the index's bytes, never removed by Clear; the last
+connection to close checkpoints the ``-wal`` into the index and removes both.
 
 ``stale`` says why a TXY no longer stands for its raw file and the profile asked for (no row, the
 raw file or the TXY changed, another profile hash), so a shot is converted again when a profile
@@ -62,7 +67,7 @@ INDEX_NAME = "index.sqlite"
 SCHEMA = 1
 # How long a statement waits for another process's transaction (each is a row or two).
 BUSY_SECONDS = 10.0
-# An index set aside (damaged, or of a newer schema), and its journal if it had one.
+# An index set aside (damaged, or of a newer schema), and its SQLite companions if it had any.
 SET_ASIDE_PATTERN = re.compile(
     r"^index-(?:damaged|newer)-[0-9]{8}T[0-9]{6}Z-[0-9a-f]{8}\.sqlite(?:-journal|-wal|-shm)?$", re.ASCII)
 _COMPANIONS = ("-journal", "-wal", "-shm")
@@ -191,8 +196,8 @@ def _patient(action: Callable[[], T]) -> T:
 
 
 def set_aside(path: str, reason: str) -> str:
-    """Rename the index at ``path`` (and its journal first, so a new index never takes it for its
-    own) to ``index-<reason>-<UTC>-<8 hex>.sqlite`` beside it; returns the new name's path."""
+    """Rename the index at ``path`` (and its ``-wal``/``-shm``/``-journal`` first, so a new index never
+    takes them for its own) to ``index-<reason>-<UTC>-<8 hex>.sqlite`` beside it; returns the new name's path."""
     stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
     aside = os.path.join(os.path.dirname(path), f"index-{reason}-{stamp}-{secrets.token_hex(4)}.sqlite")
     for suffix in _COMPANIONS:
@@ -343,7 +348,7 @@ def _prepare(conn: sqlite3.Connection) -> int:
     """The index's schema, its tables made first in a new file (``user_version`` 0)."""
     version = int(conn.execute("PRAGMA user_version").fetchone()[0])
     if version == 0:
-        conn.execute("PRAGMA journal_mode = DELETE")
+        conn.execute("PRAGMA journal_mode = WAL")  # (Kept in the file: every later connection uses it.)
         conn.execute("BEGIN IMMEDIATE")
         try:
             if conn.execute("PRAGMA user_version").fetchone()[0] == 0:  # (Not made meanwhile.)

@@ -62,3 +62,10 @@ Final runs (after 35b50d0):
   branch's two-writer test is fixed in the next commit (busy retried, `provenance._patient`).
 - After that fix: full suite `8198 passed, 669 skipped, 2 warnings in 139.30s`, no RERUN; the five
   type checks clean.
+
+## Review round 3 checks (WAL)
+
+- CI 40879735789 (0e79897, diagnostics): busy starvation (SQLITE_BUSY after 10.65-13.41 s) in the
+  two-writer test on Windows; quoted in the handoff's last section.
+- After WAL: full suite `8199 passed, 669 skipped, 2 warnings in 142.08s`, no RERUN; the five type
+  checks clean; local stress six writers x 300 rows, three trials, no error.

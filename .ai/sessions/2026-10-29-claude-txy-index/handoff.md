@@ -49,15 +49,24 @@ was: a beside conversion's row replaces a cache one of the same tag and shot, ex
 
 ### Journal mode, transactions, two writers
 
-**DELETE** (a rollback journal, SQLite's default). Writes are rare and tiny (a row per shot, plus the
-folder's), each one `BEGIN IMMEDIATE` transaction; `sqlite3.connect(timeout=BUSY_SECONDS)` = 10 s
-busy timeout (well inside the 60 s no-progress timeout). The app's helpers and `helab convert` open
+**WAL** (as the store's; changed from DELETE in review round 3, CoCo's approval on the CI evidence
+below). Writes are rare and tiny (a row per shot, plus the folder's), each one `BEGIN IMMEDIATE`
+transaction; `sqlite3.connect(timeout=BUSY_SECONDS)` = 10 s busy timeout (well inside the 60 s
+no-progress timeout), and the transaction is tried again where SQLite answers busy at once rather
+than risk a deadlock (`provenance._patient`, up to the same 10 s). **Why WAL:** with a rollback
+journal, every commit needs every reader gone and deletes the journal file; two processes writing a
+row each in turn starved each other on Windows CI (run 40879735789: `SQLITE_BUSY` after 10.65 s,
+10.67 s, 10.81 s and 13.41 s in the two-writer test). In WAL, readers never block the writer, a
+commit deletes nothing, and writers queue on one lock. The app's helpers and `helab convert` open
 the index per operation (a conversion holds one connection for its run, never a transaction between
 shots), so they write side by side; `test_two_writers_side_by_side_lose_nothing` runs two writer
 processes at once (150 rows each, each opening the index per row like a conversion), then checks every
-row and `PRAGMA integrity_check`. Why not WAL: nothing to gain at this write rate, and it leaves
-`-wal`/`-shm` files beside the index (the cache move's copy skips `-shm` and checkpoints only the
-store's database). **The index is on a local disk:** `cache_location.cache_location_problem` already
+row and `PRAGMA integrity_check` (its writer prints its error, SQLite code and wait in one line if it
+fails). **`-wal` and `-shm` are SQLite's own files:** never housekeeping's (`own_partial()` can't match
+them), measured with the index's bytes in Settings › Cache (never as TXY, never in `clearable`), never
+removed by Clear; the last connection to close checkpoints the `-wal` into the index and removes both,
+so between conversions there is normally only `index.sqlite`. WAL's shared memory needs a local disk,
+which the index always is. **The index is on a local disk:** `cache_location.cache_location_problem` already
 refuses a cache folder on a network drive or a UNC path, and the temp folder is the OS's. (A UNC
 *temp* override, a developer setting, would make every index open fail, since SQLite refuses a
 `file://server/share/…` URI: loads would find no rows and conversions fail with `IndexUnavailable`;
@@ -191,17 +200,21 @@ conversion writes to the cache folder; the temp folder's TXY stay until Settings
 `own_partial()` is unchanged from before the floor (review Low-2): the TXY's temporaries and those
 old builds gave their JSON (`.d_txy_helab_<tag>_<N>.json.<16 hex>.partial`, `.folder.json.<16
 hex>.partial`): new builds write no JSON, but an old build's leftovers are HeLab's own and still go
-once an hour old. SQLite's own `index.sqlite-journal` is SQLite's, never housekeeping's; set-aside
-indexes are the user's to clear.
+once an hour old. The index's `-wal`/`-shm` (and an older build's `-journal`) are SQLite's, never
+housekeeping's; set-aside indexes are the user's to clear.
 
 ### The cache-folder move (brief item 7)
 
 `converted-txy/` is **inside** the cache folder (`base = dirname(cache["directory"]) = cache_dir()`),
 so the move carries the index and TXY with it, by either route: a rename keeps everything; the copy
 (`cache_move._copy_tree`) uses `shutil.copy2`, which sets the copy's mtime from the source's
-`st_mtime_ns` (exact on APFS/ext4/NTFS-to-NTFS), skips only `-shm` files (none here), and copies a hot
-`-journal` too if a crash left one (consistent: no writer runs during a move; `helab convert`
-registers in `cache_locks`, so none starts). Test:
+`st_mtime_ns` (exact on APFS/ext4/NTFS-to-NTFS), and **copies the index's `-wal` with it** (it skips
+only `-shm`, which SQLite rebuilds; it checkpoints only the store's database). That is consistent: no
+writer runs during a move (helpers are stopped; `helab convert` registers in `cache_locks`, so none
+starts), and normally there is no `-wal` at all (the last close checkpoints it); one a killed helper
+left holds committed rows, which SQLite replays at the new place
+(`test_a_cache_move_carries_rows_still_in_the_wal`: five rows only in the `-wal`, all read after the
+copy). Test of the whole route:
 `test_the_index_moves_with_the_cache_folder_and_its_shots_stay_current[rename|copy]` (nothing
 converts again at the new place). **One route reconverts**: a copy onto a filesystem with coarser
 mtimes (FAT/exFAT target) rounds the TXY's mtimes, so every shot there converts once again (the TXY
@@ -216,8 +229,9 @@ outside it; the five type checks).
 
 ### `.ai/architecture/converter.md`
 
-(In "Provenance", for the journal mode: "DELETE; the index is on a local disk, the cache folder never
-being on a share (`cache_location` refuses one)". Not "works on a share".)
+(In "Provenance", for the journal mode: "WAL, as the store's (a rollback journal starved two writers
+on Windows); the index is on a local disk, the cache folder never being on a share (`cache_location`
+refuses one)". Not "works on a share".)
 
 - **"Where files go"**: replace the "Changing before v0.0.7's release (Q26.2 …)" and "Q19.5 (decided,
   not built, Q27.4)" paragraphs with: "`<base>/converted-txy/index.sqlite` (Q26.2) holds the
@@ -230,8 +244,8 @@ being on a share (`cache_location` refuses one)". Not "works on a share".)
   conversion stopped between them leaves a row that matches no TXY: the shot converts again".
   Leftovers: "`own_partial()` is `partial()`: TXY temporaries only (old builds' JSON temporaries are
   Settings › Cache's to clear)".
-- **"Provenance"**: replace with the schema above (short form), DELETE journal mode and why, 10 s busy
-  timeout, `BEGIN IMMEDIATE` per shot, readers never create or set aside, `stale(record, raw_size,
+- **"Provenance"**: replace with the schema above (short form), WAL journal mode and why, 10 s busy
+  timeout and `_patient`, `BEGIN IMMEDIATE` per shot, readers never create or set aside, `stale(record, raw_size,
   raw_mtime_ns, profile_hash, txy=(size, mtime))`, damaged/newer set aside as
   `index-{damaged,newer}-<UTC>-<8 hex>.sqlite` (pattern above) and kept until the user's Clear,
   `IndexUnavailable` fails the conversion to be tried again. Drop "Why a record per shot and not a
@@ -262,7 +276,7 @@ rows and old records of beside TXY stay; set-aside indexes go)."
 - Housekeeping list, last item: "every conversion with shots to convert deletes, by the same rules,
   its own leftovers in HeLab's `converted-txy/` folder (under the cache or temp folder):
   `io_ops.convert.own_partial()` (the TXY's temporaries, and those old builds gave their JSON records
-  and `folder.json`). The index's `-journal` is SQLite's; an index set aside
+  and `folder.json`). The index's `-wal`/`-shm` are SQLite's; an index set aside
   (`index-{damaged,newer}-<UTC>-<8 hex>.sqlite`) is never removed by housekeeping (Settings › Cache's
   Clear removes damaged ones, never a newer HeLab's)."
 - "The disk cache" invariants could gain one line: "HeLab's converted-TXY provenance is one SQLite
@@ -377,3 +391,24 @@ CI run 40874212130 (c546394) passed every job, with two RERUNs, quoted from "rer
   one rerun, then passed: `pytestqt.exceptions.TimeoutError: waitUntil timed out in 3000
   milliseconds` at `tests\test_gui_responsiveness.py:292`. Already in `roadmaps/known-issues.md`
   (line 94); not this branch's.
+
+## Review round 3: the two-writer RERUN on Windows, and WAL
+
+- CI 40877063866 (a0e313b) still reran `test_two_writers_side_by_side_lose_nothing` once on Windows
+  (Tests 2/2, Converter backends), inside `_patient` from `TxyIndex._write`, error cut off.
+- 0e79897 made the writer print its error. CI 40879735789 (0e79897), "rerun reasons", quoted:
+  - windows Converter backends (job 123467827392), 1 rerun: `shot 0: IndexUnavailable: HeLab's TXY
+    index couldn't be opened (database is locked) (cause OperationalError: database is locked; code
+    SQLITE_BUSY) after 13.41 s`.
+  - windows Tests (2/2) (job 123467827425), 4 reruns: `shot 14: … couldn't be written (database is
+    locked) (… code SQLITE_BUSY) after 10.65 s`, `shot 16: … after 10.81 s`, `shot 2: … after 10.67 s`.
+  - macos Tests (1/2) (job 123467827712), 1 rerun:
+    `tests/test_root_discovery.py::test_volume_check_alone_refreshes_hints_without_visiting_markers`
+    (`monkeypatch.setattr(os, "lstat", lambda *_: pytest.fail("visited a source folder"))`): the
+    known-issue proposal above, this time as a rerun rather than a crash.
+- Diagnosis: busy starvation past the 10 s timeout under a rollback journal on Windows. Fix (CoCo
+  approved WAL on exactly this evidence): `journal_mode = WAL` at the index's creation (kept in the
+  file). A load's `last_used` update waits at most 200 ms for a lock (`PRAGMA busy_timeout = 200` in
+  `_mark_used`). The busy test now expects the failure at the write ("couldn't be written"): in WAL an
+  exclusive writer no longer blocks opening and reading. Local stress: six writers × 300 rows, three
+  trials, 1.5 s each, no error, only `index.sqlite` left.

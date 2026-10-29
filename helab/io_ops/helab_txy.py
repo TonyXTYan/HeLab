@@ -214,6 +214,7 @@ def _mark_used(root: str, name: str) -> None:
     if index is None:
         return
     try:
+        index.conn.execute("PRAGMA busy_timeout = 200")  # (A load never waits on a conversion's write for it.)
         index.touch(name, time.time(), LAST_USED_STEP)
     except sqlite3.Error:
         pass
@@ -337,11 +338,13 @@ def converted_roots(cache_directory: str, temps: str) -> dict[str, str]:
 
 
 def _index_files(root: str) -> tuple[list[os.DirEntry[str]], list[os.DirEntry[str]]]:
-    """The index (and its journal) and indexes set aside (``provenance.SET_ASIDE_PATTERN``), regular
-    files: (this HeLab's or damaged ones, a newer HeLab's). A newer HeLab's index, live or set aside, is
-    never ours to clear (nor counted as ours)."""
+    """The index with SQLite's own files beside it (``-wal``, ``-shm``, an old ``-journal``: measured as
+    the index's bytes, never TXY, never removed by Clear), and indexes set aside
+    (``provenance.SET_ASIDE_PATTERN``), regular files: (this HeLab's or damaged ones, a newer HeLab's).
+    A newer HeLab's index, live or set aside, is never ours to clear (nor counted as ours)."""
     from helab.convert.provenance import INDEX_NAME, SCHEMA, SET_ASIDE_PATTERN, index_schema
     live_newer = (index_schema(root) or 0) > SCHEMA
+    live = {INDEX_NAME + suffix for suffix in ("", "-wal", "-shm", "-journal")}
     ours: list[os.DirEntry[str]] = []
     newer: list[os.DirEntry[str]] = []
     try:
@@ -349,7 +352,7 @@ def _index_files(root: str) -> tuple[list[os.DirEntry[str]], list[os.DirEntry[st
             for entry in entries:
                 if not entry.is_file(follow_symlinks=False):
                     continue
-                if entry.name in (INDEX_NAME, INDEX_NAME + "-journal"):
+                if entry.name in live:
                     (newer if live_newer else ours).append(entry)
                 elif SET_ASIDE_PATTERN.fullmatch(entry.name):
                     (newer if entry.name.startswith("index-newer-") else ours).append(entry)

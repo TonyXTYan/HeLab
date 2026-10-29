@@ -23,7 +23,7 @@ from pytestqt.qtbot import QtBot
 from helab.convert import provenance, raw, txy
 from helab.convert.pipeline import APP_BACKEND, convert_raw, convert_shot
 from helab.convert.profile import MATLAB_2019, MATLAB_2023_LAB_EDIT
-from helab.io_ops import convert, fingerprints, stores
+from helab.io_ops import convert, fingerprints, helab_txy, stores
 from helab.io_ops.admin import cache_admin
 from helab.io_ops.convert import ConvertRequest, convert_folder, folder_for
 from helab.utils import file_kinds
@@ -173,7 +173,7 @@ def test_provenance_rows_round_trip_and_say_what_is_stale(tmp_path: Path) -> Non
     # (``closing``: a connection's own ``with`` commits but doesn't close, and Windows renames no open file.)
     with contextlib.closing(sqlite3.connect(os.path.join(root, provenance.INDEX_NAME))) as conn:
         assert conn.execute("PRAGMA user_version").fetchone()[0] == provenance.SCHEMA == 1
-        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         conn.execute("UPDATE shots SET hits = 'two' WHERE shot = 4")  # A row of the wrong shape: none.
         conn.commit()
     assert list(index_rows(Path(root) / "f")) == [("m19v1", 3)]
@@ -1357,7 +1357,8 @@ def test_an_index_that_cant_be_written_fails_the_conversion_to_be_tried_again(
     holder = sqlite3.connect(index_file(tmp_path), isolation_level=None)
     holder.execute("BEGIN EXCLUSIVE")
     try:
-        with pytest.raises(provenance.IndexUnavailable, match="index couldn't be opened .database is locked"):
+        # (WAL: the index opens and reads; the row's write is what waits, then fails.)
+        with pytest.raises(provenance.IndexUnavailable, match="index couldn't be written .database is locked"):
             run(source, request_for(source, tmp_path))
     finally:
         holder.execute("ROLLBACK")
@@ -1455,6 +1456,59 @@ def test_two_writers_side_by_side_lose_nothing(tmp_path: Path) -> None:
                                                                  ("helper", sum(range(150)))]
         assert index.conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
     assert sorted(os.listdir(root)) == [provenance.INDEX_NAME]  # (No journal left between transactions.)
+
+
+KILLED_WRITER = """
+import os, sys, time
+from helab.convert import provenance
+root = sys.argv[1]
+index = provenance.open_index(root, write=True)
+index.conn.execute("PRAGMA wal_autocheckpoint = 0")  # (Every row stays in the -wal.)
+for shot in range(5):
+    index.record("f", "", "/data/run", provenance.Provenance(
+        shot=shot, raw_name=f"d{shot}.txt", raw_size=1, raw_mtime_ns=1, raw_sha256="", profile_name="p",
+        profile_version=1, profile_hash="h", profile_tag="m19v1", profile_calibrated=False, backend="numpy",
+        output="cache", txy_name=provenance.txy_name("m19v1", shot), txy_size=shot, txy_mtime_ns=shot,
+        txy_sha256="", hits=1, converted_at=time.time(), helab_version="0", read_seconds=0.0, parse_seconds=0.0,
+        reconstruct_seconds=0.0, format_seconds=0.0, write_seconds=0.0), time.time())
+os._exit(0)  # Killed: nothing closes the index, so nothing checkpoints its -wal.
+"""
+
+
+def test_a_cache_move_carries_rows_still_in_the_wal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """WAL (CI run 40879735789: a rollback journal starved two writers on Windows). A helper killed while
+    it held the index leaves rows in ``index.sqlite-wal``; the cache move's copy takes the ``-wal`` with
+    the index (``cache_move`` skips only ``-shm``, which SQLite rebuilds), so they are all there after it."""
+    from helab.utils import cache_move
+    from helab.utils.cache_store import CacheStore
+    app, cache, target = tmp_path / "app", tmp_path / "caches", tmp_path / "moved" / "caches"
+    with CacheStore(store_root(str(cache))):
+        pass
+    root = cache / convert.FOLDER_NAME
+    subprocess.run([sys.executable, "-c", KILLED_WRITER, str(root)], check=True, timeout=60)
+    assert (root / (provenance.INDEX_NAME + "-wal")).stat().st_size > 0
+    monkeypatch.setattr(cache_move, "same_disk", lambda source, target: False)
+    record = cache_move.move(cache_move.start(str(cache), str(target), str(app), "copy"), str(app),
+                             lambda done, total: None, lambda: False)
+    updated = cache_move.cutover(str(app), record, lambda value: True)
+    assert updated is not None and cache_move.cleanup(str(app), updated) == []
+    moved = target / convert.FOLDER_NAME
+    assert not (moved / (provenance.INDEX_NAME + "-shm")).exists()
+    assert sorted(shot for _, shot in provenance.read_shots(str(moved), "f")) == [0, 1, 2, 3, 4]
+    # The -wal and -shm are SQLite's: measured with the index's bytes, never as TXY nor cleared.
+    with provenance.open_index(str(moved), write=False) as index:  # type: ignore[union-attr]
+        index.conn.execute("PRAGMA wal_autocheckpoint = 0")
+        with contextlib.closing(sqlite3.connect(moved / provenance.INDEX_NAME)) as other:
+            other.execute("PRAGMA wal_autocheckpoint = 0")
+            other.execute("UPDATE folders SET last_used = 1.0")
+            other.commit()
+        companions = [moved / (provenance.INDEX_NAME + suffix) for suffix in ("-wal", "-shm")]
+        assert all(path.exists() for path in companions)
+        files = sum(os.path.getsize(path) for path in [moved / provenance.INDEX_NAME, *companions])
+        usage = helab_txy.converted_usage(str(moved))
+        assert (usage["files"], usage["clearable"], usage["bytes"]) == (0, 0, files)
+        assert helab_txy.clear_converted(str(moved)) == {"files": 0, "bytes": 0}
+        assert all(path.exists() for path in companions)
 
 
 def flag_no_cache(private_store: str, source: Path, on: bool = True) -> None:
