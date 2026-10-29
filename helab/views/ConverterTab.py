@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 )
 
 from helab.convert.profile import (BUILTIN_PROFILES, CANDIDATE_HANDLING, DEFAULT_PROFILE, PLATE_SWAPS, POSITION_FORMULAS,
-                                   UNCALIBRATED, DetectorProfile, ProfileError)
+                                   UNCALIBRATED, DetectorProfile, ProfileError, file_tag)
 from helab.convert.user_profiles import ProfileLibrary, Unreadable, check_name, duplicate
 from helab.utils.colours import AMBER
 from helab.utils.constants import (
@@ -84,6 +84,8 @@ class ProfileEditor(QDialog):
             editor: QWidget
             if field.name == "name":
                 editor = QLabel(profile.name)
+            elif field.name == "tag":
+                editor = QLabel()  # (Set by _check: a user profile is tagged by its hash.)
             elif field.name in CHOICE_FIELDS:
                 combo = QComboBox()
                 combo.addItems(list(CHOICE_FIELDS[field.name]))
@@ -125,7 +127,7 @@ class ProfileEditor(QDialog):
         values: dict[str, Any] = {"name": self.original.name}
         for field in dataclasses.fields(DetectorProfile):
             editor = self.editors[field.name]
-            if field.name == "name":
+            if field.name in ("name", "tag"):
                 continue
             if isinstance(editor, QComboBox):
                 values[field.name] = editor.currentText()
@@ -163,6 +165,9 @@ class ProfileEditor(QDialog):
                 save.setEnabled(False)
             return
         changed = profile.content_hash() != self.original.content_hash()
+        tag = self.editors["tag"]
+        if isinstance(tag, QLabel):
+            tag.setText(f"{file_tag(profile)} (from the content hash: d_txy_helab_{file_tag(profile)}_<N>.txt)")
         self.problem.setText("")
         self.hash_label.setText(f"Content hash: {profile.content_hash()}" + (
             f" (output changed: saved as v{profile.version})" if changed else " (same output)"))
@@ -293,7 +298,7 @@ class ConverterTab(QWidget):
         file = "" if builtin else f"\nFile: {self.library.file_for(profile.name)}"
         self.details.setText(
             f"{profile.notes}\n" + (f"Plates in since {since}.\n" if since else "")
-            + f"Content hash: {profile.content_hash()}" + file)
+            + f"Content hash: {profile.content_hash()}\nTXY files: d_txy_helab_{file_tag(profile)}_<N>.txt" + file)
 
     # Actions (each writes its file at once; every removal asks first)
 

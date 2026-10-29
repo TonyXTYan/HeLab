@@ -4,6 +4,7 @@
   "version": 1,
   "calibrated": false,
   "notes": "The front panel's copy synced from the lab on 2023-08-29: an x1 dead time of 0.5 \u00b5s (uniquetol), time sums 3390/3275 in T only, X/Y from the raw corner times.",
+  "tag": "m23v1",
   "bin_time": 2.5e-11,
   "channel_x1": 0,
   "channel_x2": 1,

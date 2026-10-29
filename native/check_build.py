@@ -161,7 +161,7 @@ def check_frozen(app: str, all_cases: list[Case], scratch: Path) -> dict[str, st
                 break
             differ = []
             for case in all_cases:
-                written = glob.glob(str(work / "temps" / "converted-txy" / "*" / f"d_txy_helab_{case.shot}.txy"))
+                written = glob.glob(str(work / "temps" / "converted-txy" / "*" / f"d_txy_helab_*_{case.shot}.txt"))
                 ours: bytes | str = Path(written[0]).read_bytes() if len(written) == 1 else f"{len(written)} TXY"
                 theirs = outcome(case.data, profile, "reference")
                 if isinstance(theirs, str) or not_done(case.data, BUILTIN_PROFILES[profile].channel_trigger):

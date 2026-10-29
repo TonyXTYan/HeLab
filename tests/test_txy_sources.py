@@ -17,6 +17,7 @@ from helab.analysis.budget_core import restore
 from helab.analysis.dataset_view import build_view, revise
 from helab.analysis.identity import AnalysisIdentity
 from helab.analysis.results import AnalysisContext, AnalysisResult, Coverage
+from helab.convert.pipeline import convert_raw
 from helab.convert.profile import MATLAB_2019, MATLAB_2023_LAB_EDIT
 from helab.io_ops import fingerprints, helab_txy, stores
 from helab.io_ops.convert import convert_folder, folder_for
@@ -66,10 +67,14 @@ def convert(source: Path, tmp_path: Path, private_store: str, profile: Any = MAT
     return events
 
 
+# The built-in tags by hash, as ``FolderCache.with_txy`` sends a profile's (Q18.4); "" any.
+TAGS = {PROFILE: "m19v1", MATLAB_2023_LAB_EDIT.content_hash(): "m23v1", "": ""}
+
+
 def options(tmp_path: Path, private_store: str, source: str = txy_sources.MATLAB,
             profile_hash: str = PROFILE) -> dict[str, Any]:
-    return {"source": source, "profile_hash": profile_hash, "cache_base": private_store,
-            "temps": str(tmp_path / "temps")}
+    return {"source": source, "profile_hash": profile_hash, "profile_tag": TAGS[profile_hash],
+            "cache_base": private_store, "temps": str(tmp_path / "temps")}
 
 
 def run_load(source: Path, tmp_path: Path, private_store: str | None, txy: dict[str, Any] | None,
@@ -163,10 +168,42 @@ def test_helabs_in_the_temp_folder_and_beside_are_found(tmp_path: Path, private_
     beside.mkdir()
     write_raw(beside, 7, raw_bytes(10_000, 20_000))
     convert(beside, tmp_path, private_store, beside=True, beside_confirmed=True)
-    assert (beside / "d_txy_helab_7.txy").is_file()
+    assert (beside / "d_txy_helab_m19v1_7.txt").is_file()
     events = run_load(beside, tmp_path, None, options(tmp_path, private_store))
     assert sorted(shots_read(events)) == [7]
-    assert loaded(events)["names"] == ["d_txy_helab_7.txy"]
+    assert loaded(events)["names"] == ["d_txy_helab_m19v1_7.txt"]
+
+
+def test_a_beside_txy_is_current_by_its_tag_and_date_alone(tmp_path: Path, private_store: str) -> None:
+    """Q18.4: no record beside the raw files, so another computer's TXY of the profile's tag counts while
+    it is newer than its raw file; one older, of another tag, or of HeLab's untagged names doesn't."""
+    source = tmp_path / "beside"
+    source.mkdir()
+    for shot in (1, 2, 3, 4):
+        write_raw(source, shot, raw_bytes(10_000, 20_000))
+    made = convert_raw(raw_bytes(10_000, 20_000), MATLAB_2019, "reference")
+    assert made
+    for name, mtime in (("d_txy_helab_m19v1_1.txt", OLD + 60), ("d_txy_helab_m19v1_2.txt", OLD - 60),
+                        ("d_txy_helab_m23v1_3.txt", OLD + 60), ("d_txy_helab_4.txy", OLD + 60)):
+        (source / name).write_bytes(made)
+        os.utime(source / name, (mtime, mtime))
+    found = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.HELAB_ONLY)))
+    assert found["names"] == ["d_txy_helab_m19v1_1.txt"]
+    assert found["txy"]["origins"] == {"1": txy_sources.helab_origin(PROFILE)}
+    # The other profile's tag, asked for, finds its own.
+    other = options(tmp_path, private_store, txy_sources.HELAB_ONLY, MATLAB_2023_LAB_EDIT.content_hash())
+    assert loaded(run_load(source, tmp_path, None, other))["names"] == ["d_txy_helab_m23v1_3.txt"]
+    # Beside ones need a tag asked for: "any" finds none of them.
+    with pytest.raises(ValueError, match="No current HeLab TXY"):
+        run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.HELAB_ONLY, ""))
+    # A conversion beside takes the current one as it is, keeps the older one, and converts the rest
+    # under the tagged name, leaving the untagged file alone.
+    events = convert(source, tmp_path, private_store, beside=True, beside_confirmed=True)
+    assert [event["shot"] for event in events if event["kind"] == "shot_kept"] == [2]
+    assert sorted(event["shot"] for event in events if event["kind"] == "shot_converted") == [3, 4]
+    assert sorted(path.name for path in source.glob("d_txy_helab_*")) == [
+        "d_txy_helab_4.txy", "d_txy_helab_m19v1_1.txt", "d_txy_helab_m19v1_2.txt", "d_txy_helab_m19v1_3.txt",
+        "d_txy_helab_m19v1_4.txt", "d_txy_helab_m23v1_3.txt"]
 
 
 def test_a_helab_txy_of_no_hits_is_an_empty_shot(tmp_path: Path, private_store: str) -> None:
@@ -448,7 +485,7 @@ def test_a_held_shot_converted_again_is_read_again(tmp_path: Path, private_store
     origins = first["txy"]["origins"]
     convert(source, tmp_path, private_store, profile=MATLAB_2023_LAB_EDIT)  # The profile changed.
     other = MATLAB_2023_LAB_EDIT.content_hash()
-    txy = {**options(tmp_path, private_store), "profile_hash": other, "key": _key(source, private_store)}
+    txy = {**options(tmp_path, private_store, profile_hash=other), "key": _key(source, private_store)}
 
     def check(**kwargs: Any) -> list[dict[str, Any]]:
         output = tmp_path / f"live-{time.monotonic_ns()}"

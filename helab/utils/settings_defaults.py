@@ -99,7 +99,7 @@ SETTINGS: tuple[Setting, ...] = (
             "at startup the oldest beyond it are deleted, never a running HeLab's, 1 to 100,000 "
             "(Settings → General)."),
     Setting(CONVERT_OUTPUT_SETTING, str, "cache",
-            "Where HeLab's own TXY files (d_txy_helab_<N>.txy) go: cache (the disk cache's folder, keyed by "
+            "Where HeLab's own TXY files (d_txy_helab_<tag>_<N>.txt) go: cache (the disk cache's folder, keyed by "
             "the folder's data root; a folder without one goes to temp) or temp (HeLab's temp folder). "
             "Folders set to write them beside the raw files do that instead."),
     Setting(CONVERT_PROFILE_SETTING, str, "matlab-2019",

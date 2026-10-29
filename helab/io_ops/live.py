@@ -101,14 +101,15 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     # HeLab's folders now: unchanged since the last check, nothing was converted since (``helab_since``).
     helab_key = ""
     helab_state: list[list[Any]] = []
-    wanted_hash = str(txy.get("profile_hash") or "")
+    wanted_hash, wanted_tag = str(txy.get("profile_hash") or ""), str(txy.get("profile_tag") or "")
     if txy_sources.wants_helab(txy_source):
         helab_key = _helab_key(path, txy)
         helab_state = helab_txy.folder_state(helab_txy.folders(path, txy, helab_key), time.time())
     since_helab = helab_since if isinstance(helab_since, dict) else {}
     # (No HeLab folder now nor then: nothing to compare, whatever the profile.)
     helab_same = (helab_txy.state_unchanged(since_helab.get("folders", []), helab_state)
-                  and (not helab_state or since_helab.get("profile_hash") == wanted_hash)) \
+                  and (not helab_state or (since_helab.get("profile_hash"), since_helab.get("profile_tag", ""))
+                       == (wanted_hash, wanted_tag))) \
         if txy_sources.wants_helab(txy_source) else True
 
     current_identity = ""
@@ -125,7 +126,8 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                 # The folder's mtime as of this check's listing (or the last one's), unless racy.
                 "live_listed_mtime": None if racy else folder.st_mtime_ns,
                 "live_identity_root": current_root,
-                "live_helab": {"folders": helab_state, "profile_hash": wanted_hash, "key": helab_key,
+                "live_helab": {"folders": helab_state, "profile_hash": wanted_hash, "profile_tag": wanted_tag,
+                               "key": helab_key,
                                "key_asked": bool(txy.get("key_asked")) or (not txy.get("key")
                                                                            and bool(txy.get("cache_directory")))}}
 
@@ -174,7 +176,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                     matlab[shot] = entry.path
                 elif kind is file_kinds.RAW:
                     raw_entries[shot] = entry
-                elif kind is file_kinds.HELAB_TXY:
+                elif kind is file_kinds.HELAB_TXY and helab_txy.beside_wanted(entry.name, txy):
                     beside_entries[shot] = entry
             elif not has_dirs and _is_dir(entry):
                 has_dirs = True

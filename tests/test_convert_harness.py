@@ -84,7 +84,7 @@ def test_the_checker_names_the_first_differing_line_and_the_hit_counts() -> None
 def test_timing_runs_each_stage_and_writes_the_txy(tmp_path: Path, parallelism: Parallelism) -> None:
     out = tmp_path / "out"
     out.mkdir()
-    jobs = [ShotJob(f"basic/{k}", CASE / "d1.txt", out / f"d_txy_helab_{k}.txy") for k in range(3)]
+    jobs = [ShotJob(f"basic/{k}", CASE / "d1.txt", out / f"d_txy_helab_m19v1_{k}.txt") for k in range(3)]
     timings = time_shots(jobs, MATLAB_2019, parallelism=parallelism, workers=2)
     assert [timing.label for timing in timings] == [job.label for job in jobs]
     for job, timing in zip(jobs, timings):

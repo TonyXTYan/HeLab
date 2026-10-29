@@ -850,13 +850,19 @@ class FolderCache(QObject):
     def convert_profile_hash(self) -> str:
         return self.convert_profile().content_hash()
 
+    def convert_profile_tag(self) -> str:
+        """The tag in the conversion profile's TXY names (Q18.4, ``profile.file_tag``)."""
+        from helab.convert.profile import file_tag
+        return file_tag(self.convert_profile())
+
     def set_convert_profile(self, profile: DetectorProfile) -> None:
         """The profile HeLab converts with changed (Settings → TXY converter)."""
         self._convert_profile = profile
 
     def with_txy(self, path: str, payload: dict[str, Any]) -> dict[str, Any]:
         """A load's payload with its ``txy`` options complete: the source (default unless given), the
-        profile hash, HeLab's folders' bases and the folder's root key (``io_ops.helab_txy``)."""
+        profile (hash, tag, and name, version and calibrated), HeLab's folders' bases and the folder's
+        root key (``io_ops.helab_txy``)."""
         from helab.analysis.dataset_view import root_key
         from helab.utils.constants import DIR_TEMPS
         given = payload.get(txy_sources.TXY_FIELD)
@@ -864,8 +870,13 @@ class FolderCache(QObject):
         source = str(txy.get("source") or txy_sources.DEFAULT_SOURCE)
         options = store_options()
         root = self.root_of(path)
+        if not txy.get("profile_hash"):
+            profile = self.convert_profile()
+            txy.update({"profile_hash": profile.content_hash(), "profile_tag": self.convert_profile_tag(),
+                        "profile": {"name": profile.name, "version": profile.version,
+                                    "calibrated": profile.calibrated}})
         txy.update({"source": source if source in txy_sources.SOURCES else txy_sources.DEFAULT_SOURCE,
-                    "profile_hash": str(txy.get("profile_hash") or self.convert_profile_hash()),
+                    "profile_hash": str(txy["profile_hash"]), "profile_tag": str(txy.get("profile_tag") or ""),
                     "cache_base": os.path.dirname(os.path.abspath(options["directory"])) if options else "",
                     "cache_directory": str(options.get("directory") or ""),
                     "temps": DIR_TEMPS, "key": root_key(root[0], root[1], path) if root else self._helab_key(path)})

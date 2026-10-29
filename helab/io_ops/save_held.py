@@ -92,7 +92,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
                         matlab[matched[1]] = entry.path
                     elif matched[0] is file_kinds.RAW:
                         raw_entries[matched[1]] = entry
-                    elif matched[0] is file_kinds.HELAB_TXY:
+                    elif matched[0] is file_kinds.HELAB_TXY and helab_txy.beside_wanted(entry.name, txy):
                         beside_entries[matched[1]] = entry
                 elif not has_dirs and _is_dir(entry):
                     has_dirs = True

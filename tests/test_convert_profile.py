@@ -11,7 +11,8 @@ import pytest
 
 from helab.convert.pipeline import convert_raw
 from helab.convert.profile import (BUILTIN_PROFILES, DEFAULT_PROFILE, DESCRIPTIVE, MATLAB_2019, MATLAB_2023_LAB_EDIT,
-                                   NEUTRAL, UNUSED_BY_OUTPUT, DetectorProfile, ProfileError, builtin_profile)
+                                   NEUTRAL, UNUSED_BY_OUTPUT, USER_TAG_DIGITS, DetectorProfile, ProfileError,
+                                   builtin_profile, file_tag)
 from helab.convert.reconstruct import NoRowsError
 
 CASES = Path(__file__).resolve().parents[1] / "tests" / "data" / "convert" / "cases"
@@ -30,7 +31,7 @@ def test_the_default_is_matlab_2019_with_matlabs_constants() -> None:
 def test_the_2023_lab_edit_differs_only_where_matlab_does() -> None:
     changed = {field.name for field in dataclasses.fields(DetectorProfile)
                if getattr(MATLAB_2019, field.name) != getattr(MATLAB_2023_LAB_EDIT, field.name)}
-    assert changed == {"name", "notes", "dead_time_x1", "time_sum_t_x", "time_sum_t_y", "position_formula",
+    assert changed == {"name", "notes", "tag", "dead_time_x1", "time_sum_t_x", "time_sum_t_y", "position_formula",
                        "write_empty_txy"}
     assert MATLAB_2023_LAB_EDIT.dead_time_x1 / MATLAB_2023_LAB_EDIT.bin_time == 20000.0
     assert sorted(BUILTIN_PROFILES) == ["matlab-2019", "matlab-2023-lab-edit", "plates-2017", "plates-2022",
@@ -68,9 +69,10 @@ def test_the_content_hash_is_stable_and_covers_only_what_changes_the_output() ->
 
 
 def test_a_field_at_its_neutral_default_is_optional_and_out_of_the_hash() -> None:
-    assert set(NEUTRAL) == {"dead_time_x1", "dead_time_x2", "dead_time_y1", "dead_time_y2", "x2_handling", "y_handling"}
+    assert set(NEUTRAL) == {"dead_time_x1", "dead_time_x2", "dead_time_y1", "dead_time_y2", "x2_handling", "y_handling",
+                            "tag"}
     data = json.loads(MATLAB_2019.to_json())
-    assert DetectorProfile.from_dict({k: v for k, v in data.items() if k not in NEUTRAL}) == MATLAB_2019
+    assert DetectorProfile.from_dict({k: v for k, v in data.items() if k not in NEUTRAL}) == MATLAB_2019.replace(tag="")
     # A field added later at its neutral value leaves the hash as it was: here, the hash with
     # dead_time_y2 present equals the canonical hash of the other fields alone.
     others = {k: v for k, v in data.items()
@@ -126,6 +128,8 @@ def test_every_field_that_changes_the_output_is_in_the_hash(name: str) -> None:
     {"name": ""}, {"notes": 3}, {"v_perp_x": float("nan")}, {"bin_time": float("inf")},
     {"search_window": -1}, {"match_tolerance_y": -200}, {"xy_sum_tolerance": -1}, {"time_sum_t_x": -3200},
     {"channel_x2": 0}, {"channel_y2": 2},
+    {"tag": "M19v1"}, {"tag": "m"}, {"tag": "1abc"}, {"tag": "m19_v1"}, {"tag": "abcdefghijklmnopq"}, {"tag": 1},
+    {"tag": "u0123abcd"},
 ])
 def test_invalid_values_are_refused(changes: dict[str, object]) -> None:
     with pytest.raises(ProfileError):
@@ -135,3 +139,29 @@ def test_invalid_values_are_refused(changes: dict[str, object]) -> None:
 def test_unknown_builtin_is_refused() -> None:
     with pytest.raises(ProfileError):
         builtin_profile("plates-2030")
+
+
+def test_a_builtins_tag_never_changes() -> None:
+    """Q18.4: HeLab's TXY are named by their profile's tag, frozen once used (a file named with one
+    stands for that profile on every computer). A new built-in adds its line here; none ever changes."""
+    assert {name: profile.tag for name, profile in BUILTIN_PROFILES.items()} == {
+        "matlab-2019": "m19v1", "matlab-2023-lab-edit": "m23v1", "plates-2017": "p17v1", "plates-2022": "p22v1",
+        "plates-2025": "p25t1"}
+    assert {name: file_tag(profile) for name, profile in BUILTIN_PROFILES.items()} == {
+        name: profile.tag for name, profile in BUILTIN_PROFILES.items()}
+    assert len({profile.tag for profile in BUILTIN_PROFILES.values()}) == len(BUILTIN_PROFILES)
+
+
+def test_any_other_profile_is_tagged_by_its_hash() -> None:
+    edited = MATLAB_2019.replace(search_depth=40)
+    assert file_tag(edited) == "u" + edited.content_hash()[:USER_TAG_DIGITS] and USER_TAG_DIGITS == 8
+    # A copy under another name, or a file claiming a built-in's tag, never writes under it.
+    assert file_tag(MATLAB_2019.replace(name="mine")) == "u" + MATLAB_2019.content_hash()[:8]
+    assert file_tag(MATLAB_2019.replace(name="mine", tag="m19v1")) == "u" + MATLAB_2019.content_hash()[:8]
+    assert file_tag(MATLAB_2019.replace(tag="p22v1")) == "u" + MATLAB_2019.content_hash()[:8]
+    assert file_tag(MATLAB_2019.replace(tag="")) == "u" + MATLAB_2019.content_hash()[:8]
+    # The tag is descriptive: out of the hash, and optional in JSON (a user profile has none).
+    assert MATLAB_2019.replace(tag="").content_hash() == MATLAB_2019.content_hash()
+    data = MATLAB_2019.to_dict()
+    del data["tag"]
+    assert DetectorProfile.from_dict(data) == MATLAB_2019.replace(tag="")

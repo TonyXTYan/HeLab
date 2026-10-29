@@ -24,8 +24,8 @@ def test_values_format_as_dlmwrite_precision_8() -> None:
 
 def test_no_hits_give_an_empty_file(tmp_path: Path) -> None:
     assert format_txy(np.zeros((0, 3))) == b""
-    write_txy(tmp_path / "d_txy_helab_1.txy", np.zeros((0, 3)))
-    assert (tmp_path / "d_txy_helab_1.txy").read_bytes() == b""
+    write_txy(tmp_path / "d_txy_helab_m19v1_1.txt", np.zeros((0, 3)))
+    assert (tmp_path / "d_txy_helab_m19v1_1.txt").read_bytes() == b""
 
 
 def test_hits_must_be_three_columns() -> None:
@@ -56,7 +56,7 @@ def test_hits_must_be_float64_at_every_size(rows: int) -> None:
 def test_the_write_is_atomic_and_leaves_no_temporary(tmp_path: Path) -> None:
     tmp_path = tmp_path / "out"  # conftest's tmp_path holds a .helab-root
     tmp_path.mkdir()
-    target = tmp_path / "d_txy_helab_1.txy"
+    target = tmp_path / "d_txy_helab_m19v1_1.txt"
     target.write_bytes(b"old")
     write_txy(target, np.array([[0.001, 0.002, -0.003]]))
     assert target.read_bytes() == b"0.001,0.002,-0.003\n"
@@ -66,7 +66,7 @@ def test_the_write_is_atomic_and_leaves_no_temporary(tmp_path: Path) -> None:
 def test_a_failed_write_keeps_the_old_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     tmp_path = tmp_path / "out"  # conftest's tmp_path holds a .helab-root
     tmp_path.mkdir()
-    target = tmp_path / "d_txy_helab_1.txy"
+    target = tmp_path / "d_txy_helab_m19v1_1.txt"
     target.write_bytes(b"old")
 
     def fail(source: str, destination: str) -> None:
@@ -81,7 +81,7 @@ def test_a_failed_write_keeps_the_old_file(tmp_path: Path, monkeypatch: pytest.M
 
 @pytest.mark.skipif(os.name == "nt", reason="POSIX file modes")
 def test_a_written_txy_gets_a_plain_files_mode(tmp_path: Path) -> None:
-    target = tmp_path / "d_txy_helab_1.txy"
+    target = tmp_path / "d_txy_helab_m19v1_1.txt"
     write_txy(target, np.array([[0.001, 0.002, -0.003]]))
     umask = os.umask(0o022)  # the only way to read it; restored at once
     os.umask(umask)

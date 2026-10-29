@@ -387,12 +387,13 @@ class TooLargeEvent(TypedDict):
 class TxyRecord(TypedDict):
     """Which TXY a dataset is made of (Q6.6, ``helab_txy.record``): the source asked for
     (``txy_sources.SOURCES``), HeLab's shots' origins (``{shot: "helab:<profile hash>"}``), those
-    profiles' name/version/calibrated by hash, the profile hash asked for ("" any) and HeLab's
+    profiles' name/version/calibrated by hash, the profile hash and tag asked for ("" any) and HeLab's
     folders' ``[[folder, mtime_ns]]`` as the listing found them."""
     source: str
     origins: dict[str, str]
     profiles: dict[str, dict[str, Any]]
     profile_hash: str
+    profile_tag: NotRequired[str]  # (Q18.4; absent in data saved before it.)
     folders: list[list[Any]]
 
 
@@ -868,6 +869,7 @@ class ConvertProfile(TypedDict):
     name: str
     version: int
     hash: str  # ``DetectorProfile.content_hash()``: equal hashes convert every file alike
+    tag: str  # ``profile.file_tag``: the tag in the TXY's names (Q18.4)
     calibrated: bool
 
 
@@ -995,7 +997,7 @@ class ConvertSummaryEvent(TypedDict):
 
 class PartialRemovedEvent(TypedDict):
     """A conversion of the source folder ``path`` removed a leftover temporary TXY of its own
-    (``.d_txy_helab_<N>.txy.<16 hex>.partial``, a regular file over ``io_ops.convert.PARTIAL_MAX_AGE``
+    (``.d_txy_helab_<tag>_<N>.txt.<16 hex>.partial``, a regular file over ``io_ops.convert.PARTIAL_MAX_AGE``
     old: a write a killed helper left) from ``folder``: ``path`` itself (beside) or HeLab's folder."""
     kind: Literal["partial_removed"]
     path: str

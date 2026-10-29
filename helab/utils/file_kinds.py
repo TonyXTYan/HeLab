@@ -26,11 +26,12 @@ class FileKind:
 
 RAW = FileKind("raw", re.compile(r"^d(\d+)\.txt$"), loaded=False, sized=False)
 TXY = FileKind("txy", re.compile(r"^d_txy_forc(\d+)\.txt$"), loaded=True, sized=True)
-# HeLab's own conversions (``helab.convert``), where the user writes them beside the raw files
-# (Q9.7). Counted only: which TXY a dataset loads (MATLAB's, HeLab's or both, Q6.6) is decided
-# later, so loads read MATLAB's alone for now. (The pattern is ``provenance.TXY_PATTERN``'s.)
-HELAB_TXY = FileKind("helab_txy", re.compile(r"^d_txy_helab_(0|[1-9][0-9]*)\.txy$", re.ASCII), loaded=False, sized=False,
-                     counted_empty=False)
+# HeLab's own conversions (``helab.convert``), ``d_txy_helab_<tag>_<N>.txt``, where the user writes them
+# beside the raw files (Q9.7, Q18.4). Not loaded as MATLAB's are: which TXY a dataset is made of
+# (``txy_sources``) and of which profile (the tag) is ``io_ops.helab_txy``'s choice. (The pattern is
+# ``provenance.TXY_PATTERN``'s, the tag not a group.)
+HELAB_TXY = FileKind("helab_txy", re.compile(r"^d_txy_helab_(?:[a-z][a-z0-9]{1,15})_(0|[1-9][0-9]*)\.txt$", re.ASCII),
+                     loaded=False, sized=False, counted_empty=False)
 FILE_KINDS: tuple[FileKind, ...] = (RAW, TXY, HELAB_TXY)
 
 

@@ -1,13 +1,16 @@
 """Finding HeLab's own TXY for a load or Live check (Q6.6): where ``convert`` put them, current only.
 
-``io_ops.convert`` writes a source folder's ``d_txy_helab_<N>.txy`` and its provenance
-``d_txy_helab_<N>.json`` to ``folder_for(base, identity)``: base the cache folder (output ``cache``,
-with a data root) or HeLab's temp folder (output ``temp``, or no data root), identity the folder's
-``root://`` key or ``path:<absolute path>``; or the TXY beside the raw files (its provenance still
-in that folder). A load looks in each of those folders that exists and takes a shot's HeLab TXY only
-when its provenance is **current** (``provenance.stale``: the raw file and TXY as recorded, and the
-profile the app converts with, ``profile_hash``; "" takes any). A shot the caller already holds from
-the same TXY (same size and mtime, ``trusted``) isn't looked up again: TXY are written once.
+``io_ops.convert`` writes a source folder's ``d_txy_helab_<tag>_<N>.txt`` (Q18.4: ``<tag>`` the profile's,
+``profile.file_tag``) and its provenance ``d_txy_helab_<tag>_<N>.json`` to ``folder_for(base, identity)``:
+base the cache folder (output ``cache``, with a data root) or HeLab's temp folder (output ``temp``, or no
+data root), identity the folder's ``root://`` key or ``path:<absolute path>``; or the TXY beside the raw
+files (its provenance, if this computer made it, in that folder). A load asks for one profile, by its
+tag and hash (``profile_tag``, ``profile_hash``; "" takes any in HeLab's folders), and takes a shot's
+HeLab TXY only when it is **current**: in HeLab's folders by its provenance (``provenance.stale``: the
+raw file and TXY as recorded, the profile's hash), beside the raw files by its name's tag and its date
+(``provenance.beside_stale``: newer than the raw file), as any computer can tell. A shot the caller
+already holds from the same TXY (same size and mtime, ``trusted``) isn't looked up again: TXY are
+written once. Untagged files of HeLab before Q18.4 (``d_txy_helab_<N>.txy``) are never taken.
 
 The folders' mtimes (``folder_state``) let a quick check or a Live check see that nothing was
 converted since, as the source folder's own mtime does for MATLAB's TXY (beside ones are in the
@@ -24,9 +27,9 @@ from helab.io_ops.fingerprints import _quick_mtime
 from helab.io_ops.infra import _entry_stat
 
 # The app's options in a load's payload (``txy``): ``source`` (txy_sources.SOURCES), ``profile_hash``
-# ("": any), ``cache_base`` (the cache folder's parent, as convert's base; "" when the cache is off)
-# and ``temps`` (HeLab's temp folder).
-PROVENANCE_PATTERN = re.compile(r"^d_txy_helab_(0|[1-9][0-9]*)\.json$", re.ASCII)
+# and ``profile_tag`` (the profile asked for; "": any, in HeLab's folders only), ``profile`` (its name,
+# version and calibrated, for TXY beside the raw files that have no record here), ``cache_base`` (the
+# cache folder's parent, as convert's base; "" when the cache is off) and ``temps`` (HeLab's temp folder).
 
 
 @dataclass(frozen=True)
@@ -42,6 +45,14 @@ class HelabShot:
     @property
     def fingerprint(self) -> tuple[int, int, int]:
         return self.shot, self.size, self.mtime_ns
+
+
+def beside_wanted(name: str, options: Mapping[str, Any]) -> bool:
+    """A source listing's ``d_txy_helab_<tag>_<N>.txt`` is of the profile asked for (its tag): only those
+    are kept as the listing's beside entries, one per shot."""
+    from helab.convert.provenance import parse_txy_name
+    parsed = parse_txy_name(name)
+    return parsed is not None and parsed[0] == str(options.get("profile_tag") or "")
 
 
 def folders(path: str, options: Mapping[str, Any], key: str) -> list[str]:
@@ -79,15 +90,16 @@ def state_unchanged(saved: Any, now: list[list[Any]]) -> bool:
 def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, os.DirEntry[str]],
          raw: Mapping[int, os.DirEntry[str]], trusted: Mapping[int, tuple[int, int, str]] | None = None,
          only: set[int] | None = None) -> dict[int, HelabShot]:
-    """This folder's current HeLab TXY by shot. ``beside``: the source listing's ``d_txy_helab_<N>.txy``
-    entries; ``raw``: its ``d<N>.txt`` entries (a shot needs its raw file to be current);
+    """This folder's current HeLab TXY by shot. ``beside``: the source listing's TXY of the profile asked
+    for (``beside_wanted``); ``raw``: its ``d<N>.txt`` entries (a shot needs its raw file to be current);
     ``trusted``: shot → (size, mtime, origin) the caller holds: the same TXY of the profile asked for (its
     record isn't read again: a TXY and its record are written once, and raw files are never rewritten,
     Tony 2026-10-20); ``only``: the shots the source could take from HeLab (``could_take``; None: all),
     so a check reads no record of a shot MATLAB's TXY wins."""
-    from helab.convert.provenance import Provenance, ProvenanceError, stale
+    from helab.convert.provenance import PROVENANCE_PATTERN, Provenance, ProvenanceError, beside_stale, stale, txy_name
     from helab.utils.txy_sources import HELAB_ORIGIN
     wanted = str(options.get("profile_hash") or "")
+    wanted_tag = str(options.get("profile_tag") or "")
     trusted = trusted or {}
     found: dict[int, HelabShot] = {}
     raw_stats: dict[int, tuple[int, int]] = {}
@@ -106,22 +118,47 @@ def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, o
 
     beside_stats: dict[int, tuple[str, int, int]] = {}
     for shot, entry in beside.items():
+        if only is not None and shot not in only:
+            continue
         try:
             info = _entry_stat(entry, "helab txy: beside")
         except OSError:
             continue
         beside_stats[shot] = (entry.path, info.st_size, info.st_mtime_ns)
 
+    def held_here(shot: int, candidate: tuple[str, int, int] | None) -> bool:
+        """Held from this very TXY (written once): taken without reading its record."""
+        held = trusted.get(shot)
+        if (candidate is None or held is None or held[:2] != candidate[1:] or not held[2].startswith(HELAB_ORIGIN)
+                or wanted and held[2] != HELAB_ORIGIN + wanted):
+            return False
+        found[shot] = HelabShot(shot, candidate[0], candidate[1], candidate[2], held[2][len(HELAB_ORIGIN):], {}, 0.0)
+        return True
+
+    # Beside the raw files: the profile's tag in the name, current while newer than the raw file.
+    if wanted_tag and wanted:
+        for shot, there in beside_stats.items():
+            if held_here(shot, there):
+                continue
+            stats = raw_stat(shot)
+            if stats is None or beside_stale(stats[1], there[2]) is not None:
+                continue
+            profile = options.get("profile")
+            found[shot] = HelabShot(shot, there[0], there[1], there[2], wanted,
+                                    dict(profile) if isinstance(profile, Mapping) else {"name": wanted_tag},
+                                    there[2] / 1e9)
+
     for folder in folders(path, options, key):
-        records: dict[int, str] = {}
+        records: dict[int, list[tuple[str, str]]] = {}
         txy_stats: dict[str, tuple[int, int]] = {}
         try:
             # HeLab's own folder (under the cache or temp folder), not a source folder: plain calls.
             with os.scandir(folder) as directory:
                 for entry in directory:
                     if matched := PROVENANCE_PATTERN.fullmatch(entry.name):
-                        records[int(matched.group(1))] = entry.path
-                    elif entry.name.startswith("d_txy_helab_") and entry.name.endswith(".txy"):
+                        if not wanted_tag or matched["tag"] == wanted_tag:
+                            records.setdefault(int(matched["shot"]), []).append((matched["tag"], entry.path))
+                    elif entry.name.startswith("d_txy_helab_") and entry.name.endswith(".txt"):
                         try:
                             info = entry.stat()
                         except OSError:
@@ -129,41 +166,35 @@ def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, o
                         txy_stats[entry.name] = (info.st_size, info.st_mtime_ns)
         except (FileNotFoundError, NotADirectoryError):
             continue
-        for shot, record_path in records.items():
+        for shot, tagged in records.items():
             if only is not None and shot not in only:
                 continue
-            name = f"d_txy_helab_{shot}.txy"
-            here = (os.path.join(folder, name), *txy_stats[name]) if name in txy_stats else None
-            there = beside_stats.get(shot)
-            held = trusted.get(shot)
-            # Held from this very TXY: written once, its record unchanged.
-            for candidate in (here, there):
-                if (candidate is not None and held is not None and held[:2] == candidate[1:]
-                        and held[2].startswith(HELAB_ORIGIN) and shot not in found
-                        and (not wanted or held[2] == HELAB_ORIGIN + wanted)):
-                    found[shot] = HelabShot(shot, candidate[0], candidate[1], candidate[2],
-                                            held[2][len(HELAB_ORIGIN):], {}, 0.0)
-            if shot in found and not found[shot].profile:
-                continue
-            try:
-                with open(record_path, "rb") as stream:
-                    record = Provenance.from_json(stream.read())
-            except (OSError, ProvenanceError):
-                continue
-            location = there if record.output == "beside" else here
-            if location is None or record.shot != shot:
-                continue
-            stats = raw_stat(shot)
-            if stats is None:
-                continue
-            if stale(record, raw_size=stats[0], raw_mtime_ns=stats[1],
-                     profile_hash=wanted or record.profile_hash, txy_size=location[1]) is not None:
-                continue
-            previous = found.get(shot)
-            if previous is None or previous.converted_at < record.converted_at:
-                found[shot] = HelabShot(shot, location[0], location[1], location[2], record.profile_hash,
-                                        {"name": record.profile_name, "version": record.profile_version,
-                                         "calibrated": record.profile_calibrated}, record.converted_at)
+            for tag, record_path in tagged:
+                name = txy_name(tag, shot)
+                here = (os.path.join(folder, name), *txy_stats[name]) if name in txy_stats else None
+                if shot not in found and held_here(shot, here):
+                    continue
+                if shot in found and not found[shot].profile:
+                    continue
+                try:
+                    with open(record_path, "rb") as stream:
+                        record = Provenance.from_json(stream.read())
+                except (OSError, ProvenanceError):
+                    continue
+                # (Beside ones were judged by their date above; their records only name them.)
+                if here is None or record.output == "beside" or record.shot != shot or record.profile_tag != tag:
+                    continue
+                stats = raw_stat(shot)
+                if stats is None:
+                    continue
+                if stale(record, raw_size=stats[0], raw_mtime_ns=stats[1],
+                         profile_hash=wanted or record.profile_hash, txy_size=here[1]) is not None:
+                    continue
+                previous = found.get(shot)
+                if previous is None or previous.converted_at < record.converted_at:
+                    found[shot] = HelabShot(shot, here[0], here[1], here[2], record.profile_hash,
+                                            {"name": record.profile_name, "version": record.profile_version,
+                                             "calibrated": record.profile_calibrated}, record.converted_at)
     return found
 
 
@@ -208,7 +239,8 @@ def record(source: str, origins: Mapping[int, str], helab: Mapping[int, HelabSho
     used = {origin.split(":", 1)[1] for origin in origins.values()}
     return {"source": source, "origins": {str(shot): origin for shot, origin in sorted(origins.items())},
             "profiles": {key: value for key, value in profiles.items() if key in used},
-            "profile_hash": str(options.get("profile_hash") or ""), "folders": state,
+            "profile_hash": str(options.get("profile_hash") or ""),
+            "profile_tag": str(options.get("profile_tag") or ""), "folders": state,
             # The root key HeLab's folders were found by (FolderCache sends it back when it knows no root).
             "key": str(options.get("key") or "")}
 
@@ -253,8 +285,12 @@ def default_record(source: str = "matlab") -> dict[str, Any]:
 # HeLab's TXY under the cache folder (Settings → Cache): outside the disk budget, and removed only when
 # the user asks (Q12.3): ``converted_usage`` measures them, ``clear_converted`` removes them.
 
-_OWN_FILE = re.compile(r"^(?:d_txy_helab_(0|[1-9][0-9]*)\.(?:txy|json)|\.d_txy_helab_(0|[1-9][0-9]*)\.txy\.[0-9a-f]{16}"
+# HeLab's own files there: the TXY and records (and their leftover temporaries) of the tagged names, and
+# of the untagged ones before Q18.4 (no longer loaded, but HeLab's: measured and cleared with the rest).
+_OWN_FILE = re.compile(r"^(?:d_txy_helab_(?:[a-z][a-z0-9]{1,15}_)?(?:0|[1-9][0-9]*)\.(?:txt|txy|json)"
+                       r"|\.d_txy_helab_(?:[a-z][a-z0-9]{1,15}_)?(?:0|[1-9][0-9]*)\.(?:txt|txy|json)\.[0-9a-f]{16}"
                        r"\.partial|folder\.json)$", re.ASCII)
+_TXY_SUFFIXES = (".txt", ".txy")
 
 
 def converted_root(cache_directory: str) -> str:
@@ -277,7 +313,7 @@ def converted_usage(root: str) -> dict[str, int]:
                 for entry in entries:
                     if entry.is_file(follow_symlinks=False) and _OWN_FILE.fullmatch(entry.name):
                         usage["bytes"] += entry.stat(follow_symlinks=False).st_size
-                        usage["files"] += int(entry.name.endswith(".txy"))
+                        usage["files"] += int(entry.name.endswith(_TXY_SUFFIXES))
         except OSError:
             continue
     return usage
@@ -286,7 +322,7 @@ def converted_usage(root: str) -> dict[str, int]:
 def clear_converted(root: str) -> dict[str, int]:
     """Remove HeLab's TXY under ``root`` (the user asked, Settings → Cache): each folder's TXY and their
     records, never a file of another name or a link. The record of a TXY written beside the raw files
-    (no TXY of its shot here) stays, so that TXY can still be loaded; a folder left with its
+    (no TXY of its shot here) stays: the only account of how that TXY was made; a folder left with its
     ``folder.json`` alone goes."""
     removed = {"files": 0, "bytes": 0}
     try:
@@ -304,14 +340,14 @@ def clear_converted(root: str) -> dict[str, int]:
             name = entry.name
             if name == "folder.json":
                 continue
-            if name.endswith(".json") and name[:-len(".json")] + ".txy" not in here:
-                continue  # The record of a TXY beside the raw files: kept.
+            if name.endswith(".json") and not {name[:-len(".json")] + suffix for suffix in _TXY_SUFFIXES} & here:
+                continue  # The record of a TXY beside the raw files: kept (its provenance).
             try:
                 size = entry.stat(follow_symlinks=False).st_size
                 os.unlink(entry.path)
             except OSError:
                 continue
-            removed["files"] += int(name.endswith(".txy"))
+            removed["files"] += int(name.endswith(_TXY_SUFFIXES))
             removed["bytes"] += size
         try:
             left = os.listdir(folder)

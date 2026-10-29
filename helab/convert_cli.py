@@ -1,6 +1,6 @@
 """``helab convert --watch <folder>``: HeLab's converter without the GUI (Q9.5).
 
-Watches a folder and converts its raw files to ``d_txy_helab_<N>.txy`` as they settle, by the
+Watches a folder and converts its raw files to ``d_txy_helab_<tag>_<N>.txt`` as they settle, by the
 same code as the app's helper (``io_ops.convert.convert_folder``, run in this process): the same
 settle checks, outputs and provenance. Logs to the terminal and to HeLab's log folder; Ctrl-C
 stops it between two writes (every TXY is written atomically, so none is left half-written).
@@ -37,7 +37,7 @@ def _arguments(argv: list[str]) -> argparse.Namespace:
     from helab.convert.reconstruct import _MODULES
     parser = argparse.ArgumentParser(
         prog="helab convert", description="Convert a folder's raw DLD files (d<N>.txt) to HeLab TXY files "
-        "(d_txy_helab_<N>.txy) as they arrive, without the GUI.")
+        "(d_txy_helab_<tag>_<N>.txt) as they arrive, without the GUI.")
     parser.add_argument("--watch", metavar="FOLDER", required=True, help="the folder of raw files")
     parser.add_argument("--once", action="store_true", help="convert what is there now, then exit")
     parser.add_argument("--profile", default=DEFAULT_PROFILE,

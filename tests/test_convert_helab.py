@@ -47,6 +47,15 @@ def write_raw(folder: Path, shot: int, data: bytes, mtime: float = OLD) -> Path:
     return path
 
 
+def older_beside(folder: Path, shot: int, data: bytes) -> Path:
+    """A TXY of matlab-2019's tag beside the raw file that is older than it (``write_raw``'s): one HeLab
+    doesn't stand behind (Q18.4: beside, a TXY is current while newer than its raw file)."""
+    path = folder / f"d_txy_helab_m19v1_{shot}.txt"
+    path.write_bytes(data)
+    os.utime(path, (OLD - 60, OLD - 60))
+    return path
+
+
 @pytest.fixture
 def source(tmp_path: Path) -> Path:
     folder = tmp_path / "source"
@@ -131,8 +140,8 @@ def provenance_record(**changes: Any) -> provenance.Provenance:
     values: dict[str, Any] = dict(
         shot=3, source_folder="/data/run", source_key="root://u/run", raw_name="d3.txt", raw_size=100,
         raw_mtime_ns=5, raw_sha256="ab", profile_name="matlab-2019", profile_version=1,
-        profile_hash=MATLAB_2019.content_hash(), profile_calibrated=False, backend="numpy", output="cache",
-        txy_name="d_txy_helab_3.txy", txy_size=40, txy_sha256="cd", hits=2, converted_at=1.5, helab_version="0",
+        profile_hash=MATLAB_2019.content_hash(), profile_tag="m19v1", profile_calibrated=False, backend="numpy", output="cache",
+        txy_name="d_txy_helab_m19v1_3.txt", txy_size=40, txy_sha256="cd", hits=2, converted_at=1.5, helab_version="0",
         read_seconds=0.1, parse_seconds=0.0, reconstruct_seconds=0, format_seconds=0.0, write_seconds=0.0)
     values.update(changes)
     return provenance.Provenance(**values)
@@ -153,14 +162,17 @@ def test_provenance_round_trips_and_says_what_is_stale() -> None:
     assert "another profile" in stale(record, profile_hash=MATLAB_2023_LAB_EDIT.content_hash())
     # Another backend or profile name with the same hash converts alike: still current.
     assert stale(provenance_record(backend="rust", profile_name="copy")) == ""
+    # (Version 1 is a record of the untagged names before Q18.4: no record of this HeLab's.)
+    versions = [json.dumps({**json.loads(record.to_json()), "version": version}) for version in (1, 3)]
+    assert provenance.VERSION == 2 and record.profile_tag == "m19v1"
     for broken in ("{", "[]", json.dumps({"helab": "x"}), record.to_json().replace('"hits": 2', '"hits": true'),
-                   record.to_json().replace('"version": 1', '"version": 2')):
+                   *versions):
         with pytest.raises(provenance.ProvenanceError):
             provenance.Provenance.from_json(broken)
 
 
 def test_write_atomic_without_replace_never_touches_an_existing_file(tmp_path: Path) -> None:
-    target = tmp_path / "d_txy_helab_1.txy"
+    target = tmp_path / "d_txy_helab_m19v1_1.txt"
     txy.write_atomic(target, b"new\n", replace=False)
     assert target.read_bytes() == b"new\n"
     with pytest.raises(FileExistsError):
@@ -168,7 +180,7 @@ def test_write_atomic_without_replace_never_touches_an_existing_file(tmp_path: P
     assert target.read_bytes() == b"new\n"
     folder = tmp_path / "out"
     folder.mkdir()
-    target = folder / "d_txy_helab_1.txy"
+    target = folder / "d_txy_helab_m19v1_1.txt"
     txy.write_atomic(target, b"new\n", replace=False)
     with pytest.raises(FileExistsError):
         txy.write_atomic(target, b"other\n", replace=False)
@@ -196,8 +208,8 @@ def test_a_folder_converts_to_the_temp_folder_with_provenance(source: Path, tmp_
     # No rows: unconvertible, no TXY, never silently skipped (Q10.2).
     [refused] = of(events, "shot_unconvertible")
     assert (refused["shot"], refused["reason"]) == (4, raw.NO_ROWS)
-    assert not (Path(folder) / "d_txy_helab_4.txy").exists()
-    record = provenance.Provenance.from_json((Path(folder) / "d_txy_helab_2.json").read_text())
+    assert not (Path(folder) / "d_txy_helab_m19v1_4.txt").exists()
+    record = provenance.Provenance.from_json((Path(folder) / "d_txy_helab_m19v1_2.json").read_text())
     assert (record.raw_name, record.raw_size, record.raw_mtime_ns) == ("d2.txt", len(datas[2]), OLD * 10**9)
     assert (record.profile_name, record.profile_hash, record.backend, record.hits) == (
         "matlab-2019", MATLAB_2019.content_hash(), "numpy", 2)
@@ -230,7 +242,7 @@ def test_files_that_may_still_be_written_wait(source: Path, tmp_path: Path, monk
     assert skew["path"] == str(source) and 100 < skew["seconds"] < 130
     assert [event["shot"] for event in of(events, "shot_converted")] == [5]
     folder = Path(of(events, "convert_plan")[0]["folder"])
-    assert sorted(path.name for path in folder.glob("*.txy")) == ["d_txy_helab_5.txy"]
+    assert sorted(path.name for path in folder.glob("d_txy_helab_*.txt")) == ["d_txy_helab_m19v1_5.txt"]
     # Looked at again with the summary sent back: shot 2, unchanged, isn't read again.
     reads: list[int] = []
     original = convert._read_raw
@@ -279,12 +291,16 @@ def test_a_file_changing_while_read_is_not_taken_as_done(source: Path, tmp_path:
     assert of(events, "shot_converted") == []
 
 
-def test_a_better_profile_converts_again_and_says_why(source: Path, tmp_path: Path) -> None:
+def test_a_better_profile_converts_again_under_its_own_tag(source: Path, tmp_path: Path) -> None:
     write_raw(source, 1, raw_bytes(10_000, 20_000))
-    run(source, request_for(source, tmp_path))
+    [first] = of(run(source, request_for(source, tmp_path)), "shot_converted")
     events = run(source, request_for(source, tmp_path, profile=MATLAB_2023_LAB_EDIT.to_dict()))
     [again] = of(events, "shot_converted")
-    assert "another profile" in again["replaced"] and again["profile"]["name"] == "matlab-2023-lab-edit"
+    # Its own names (Q18.4): the other profile's TXY stays as it was, nothing replaced.
+    assert again["replaced"] == "" and again["profile"]["name"] == "matlab-2023-lab-edit"
+    assert again["profile"]["tag"] == "m23v1" and Path(again["txy"]).name == "d_txy_helab_m23v1_1.txt"
+    assert Path(first["txy"]).name == "d_txy_helab_m19v1_1.txt" and Path(first["txy"]).is_file()
+    assert Path(again["provenance"]).name == "d_txy_helab_m23v1_1.json"
     assert of(run(source, request_for(source, tmp_path, profile=MATLAB_2023_LAB_EDIT.to_dict())),
               "shot_converted") == []
     forced = run(source, request_for(source, tmp_path, profile=MATLAB_2023_LAB_EDIT.to_dict(), redo="always"))
@@ -330,7 +346,7 @@ def test_cache_output_is_keyed_by_the_data_root(source: Path, tmp_path: Path, pr
     assert plan["output"] == "cache" and plan["fallback"] == ""
     assert plan["key"].startswith("root://") and plan["key"].endswith("/source")
     assert plan["folder"] == folder_for(private_store, plan["key"])
-    assert Path(plan["folder"], "d_txy_helab_1.txy").is_file()
+    assert Path(plan["folder"], "d_txy_helab_m19v1_1.txt").is_file()
 
 
 @pytest.mark.no_auto_data_root
@@ -402,12 +418,12 @@ def test_beside_needs_the_folders_flag(source: Path, tmp_path: Path, private_sto
 
 
 def test_beside_writes_only_its_txy_into_the_source_folder(source: Path, tmp_path: Path, private_store: str) -> None:
-    """AGENTS.md's write rule: in a source folder HeLab writes only ``d_txy_helab_<N>.txy`` (a
+    """AGENTS.md's write rule: in a source folder HeLab writes only ``d_txy_helab_<tag>_<N>.txt`` (a
     temporary name, then renamed) and never touches raw files or an existing TXY."""
     for shot in (1, 2, 3):
         write_raw(source, shot, raw_bytes(10_000 * shot))
     (source / "d_txy_forc1.txt").write_bytes(b"MATLAB's\n")
-    (source / "d_txy_helab_3.txy").write_bytes(b"someone else's\n")
+    older_beside(source, 3, b"someone else's\n")
     before = {path.name: path.read_bytes() for path in source.iterdir()}
     flag_beside(private_store, source)
     with Writes() as writes:
@@ -420,14 +436,15 @@ def test_beside_writes_only_its_txy_into_the_source_folder(source: Path, tmp_pat
     assert kept["shot"] == 3 and "never replaced" in kept["reason"]
     after = {path.name: path.read_bytes() for path in source.iterdir()}
     assert {name: data for name, data in after.items() if name in before} == before
-    assert sorted(set(after) - set(before)) == ["d_txy_helab_1.txy", "d_txy_helab_2.txy"]
+    assert sorted(set(after) - set(before)) == ["d_txy_helab_m19v1_1.txt", "d_txy_helab_m19v1_2.txt"]
     touched = {Path(path).name for path in writes.inside(source)}
     assert touched, "the audit saw the writes"
     for name in touched:
-        assert name in ("d_txy_helab_1.txy", "d_txy_helab_2.txy") or (
-            name.startswith((".d_txy_helab_1.txy.", ".d_txy_helab_2.txy.")) and name.endswith(".partial")), name
+        assert name in ("d_txy_helab_m19v1_1.txt", "d_txy_helab_m19v1_2.txt") or (
+            name.startswith((".d_txy_helab_m19v1_1.txt.", ".d_txy_helab_m19v1_2.txt."))
+            and name.endswith(".partial")), name
     # Provenance is in HeLab's own folder.
-    assert Path(plan["folder"], "d_txy_helab_1.json").is_file()
+    assert Path(plan["folder"], "d_txy_helab_m19v1_1.json").is_file()
     # The second time: current, nothing written there at all.
     with Writes() as writes:
         again = run(source, request_for(source, tmp_path, private_store, destination="cache", beside=True))
@@ -438,7 +455,7 @@ def test_the_command_lines_beside_needs_no_flag(source: Path, tmp_path: Path) ->
     write_raw(source, 1, raw_bytes(10_000))
     events = run(source, request_for(source, tmp_path, beside=True, beside_confirmed=True))
     assert of(events, "convert_plan")[0]["output"] == "beside"
-    assert (source / "d_txy_helab_1.txy").is_file()
+    assert (source / "d_txy_helab_m19v1_1.txt").is_file()
 
 
 # The converter flags in the store.
@@ -547,7 +564,7 @@ def test_a_killed_helpers_workers_exit(source: Path, tmp_path: Path) -> None:
     # takes most of each write, it usually does; a later conversion removes it once old), but no
     # TXY under its own name is ever half written.
     expected = convert_raw(raw_bytes(*range(10_000, 10_000 + 40_000 * 20_000, 40_000)), MATLAB_2019, "reference")
-    assert all(path.read_bytes() == expected for path in folder.glob("d_txy_helab_*.txy"))
+    assert all(path.read_bytes() == expected for path in folder.glob("d_txy_helab_*.txt"))
     assert all(convert.own_partial().match(name) for name in names if name.endswith(".partial"))
 
 
@@ -577,14 +594,21 @@ def test_an_unavailable_backend_fails_the_conversion_before_any_read(source: Pat
 
 
 def test_the_file_kind_is_counted_but_not_loaded() -> None:
-    assert file_kinds.match("d_txy_helab_12.txy") == (file_kinds.HELAB_TXY, 12)
+    assert file_kinds.match("d_txy_helab_m19v1_12.txt") == (file_kinds.HELAB_TXY, 12)
+    assert file_kinds.match("d_txy_helab_u0123abcd_3.txt") == (file_kinds.HELAB_TXY, 3)
+    assert provenance.parse_txy_name("d_txy_helab_p25t1_40.txt") == ("p25t1", 40)
     kind = file_kinds.HELAB_TXY
     assert not kind.loaded and not kind.counted_empty
-    assert file_kinds.match("d_txy_helab_12.txt") is None and file_kinds.match(".d_txy_helab_1.txy.ab.partial") is None
-    assert (kind.pattern.pattern, kind.pattern.flags) == (provenance.TXY_PATTERN.pattern, provenance.TXY_PATTERN.flags)
-    for name in ("d_txy_helab_07.txy", "d_txy_helab_\u0661.txy", "d_txy_helab_.txy"):
+    # The untagged names of before Q18.4 are no HeLab TXY any more: never matched, so never loaded or removed.
+    for name in ("d_txy_helab_12.txy", "d_txy_helab_12.txt", "d_txy_helab_m19v1_12.txy", ".d_txy_helab_m19v1_1.txt.ab.partial",
+                 "d_txy_helab_m19v1_07.txt", "d_txy_helab_m19v1_\u0661.txt", "d_txy_helab_m19v1_.txt",
+                 "d_txy_helab_m_1.txt", "d_txy_helab_M19v1_1.txt", "d_txy_helab_1x_1.txt", "d_txy_helab_m19v1_1_2.txt",
+                 "d_txy_helab_abcdefghijklmnopq_1.txt", "d_txy_helab_m19-v1_1.txt"):
         assert file_kinds.match(name) is None and not provenance.TXY_PATTERN.match(name), name
-    assert file_kinds.match("d_txy_helab_0.txy") == (file_kinds.HELAB_TXY, 0)
+    # The file kind and the provenance module agree (the tag a group only in the latter).
+    for name in ("d_txy_helab_m19v1_0.txt", "d_txy_helab_abcdefghijklmnop_9.txt"):
+        found = provenance.TXY_PATTERN.fullmatch(name)
+        assert found and file_kinds.match(name) == (file_kinds.HELAB_TXY, int(found["shot"])), name
     assert file_kinds.files_summary({"helab_txy": {1, 2}}, {})["helab_txy"] == {"count": 2}
     assert "helab_txy" not in file_kinds.files_summary({"raw": {1}}, {})  # (Summaries keep their shape.)
 
@@ -647,8 +671,8 @@ def test_convert_once_from_the_command_line(source: Path, tmp_path: Path) -> Non
     write_raw(source, 2, b"")
     done = cli("--watch", str(source), "--once", "--output", "beside")
     assert done.returncode == 0, done.stderr
-    assert (source / "d_txy_helab_1.txy").read_bytes() == convert_raw(data, MATLAB_2019, "reference")
-    assert "d1.txt -> d_txy_helab_1.txy: 2 hits" in done.stderr
+    assert (source / "d_txy_helab_m19v1_1.txt").read_bytes() == convert_raw(data, MATLAB_2019, "reference")
+    assert "d1.txt -> d_txy_helab_m19v1_1.txt: 2 hits" in done.stderr
     assert "d2.txt can't be converted" in done.stderr
     assert cli("--watch", str(tmp_path / "missing"), "--once").returncode == 2
     assert cli("--watch", str(source), "--once", "--profile", "no-such-profile").returncode == 2
@@ -678,9 +702,9 @@ def test_watch_converts_new_shots_and_stops_on_ctrl_c(source: Path, watching: su
     data = raw_bytes(10_000)
     write_raw(source, 7, data)
     deadline = time.monotonic() + 30
-    while not (source / "d_txy_helab_7.txy").exists() and time.monotonic() < deadline:
+    while not (source / "d_txy_helab_m19v1_7.txt").exists() and time.monotonic() < deadline:
         time.sleep(0.1)
-    assert (source / "d_txy_helab_7.txy").read_bytes() == convert_raw(data, MATLAB_2019, "reference")
+    assert (source / "d_txy_helab_m19v1_7.txt").read_bytes() == convert_raw(data, MATLAB_2019, "reference")
     watching.send_signal(signal.SIGINT)
     assert watching.wait(20) == 0
     assert watching.stderr is not None and "Stopped" in watching.stderr.read()
@@ -729,7 +753,7 @@ def test_a_single_check_wants_a_minute_of_age(source: Path, tmp_path: Path, monk
 def test_kept_shots_stay_kept_when_the_summary_is_sent_back(source: Path, tmp_path: Path) -> None:
     write_raw(source, 1, raw_bytes(10_000))
     write_raw(source, 2, raw_bytes(20_000))
-    (source / "d_txy_helab_1.txy").write_bytes(b"another computer's\n")
+    older_beside(source, 1, b"another computer's\n")
     request = request_for(source, tmp_path, beside=True, beside_confirmed=True, seen=[])
     events = run(source, request)
     assert [event["shot"] for event in of(events, "shot_kept")] == [1]
@@ -740,8 +764,8 @@ def test_kept_shots_stay_kept_when_the_summary_is_sent_back(source: Path, tmp_pa
         events = run(source, request)
         assert of(events, "shot_kept") == [] and all(event["shot"] != 1 for event in of(events, "shot_waiting"))
         assert [entry[0] for entry in summary(events)["kept"]] == ["d1.txt"]
-    assert (source / "d_txy_helab_1.txy").read_bytes() == b"another computer's\n"
-    assert (source / "d_txy_helab_2.txy").is_file()
+    assert (source / "d_txy_helab_m19v1_1.txt").read_bytes() == b"another computer's\n"
+    assert (source / "d_txy_helab_m19v1_2.txt").is_file()
 
 
 def test_a_beside_write_stopped_after_its_record_is_converted_again(source: Path, tmp_path: Path,
@@ -759,12 +783,12 @@ def test_a_beside_write_stopped_after_its_record_is_converted_again(source: Path
         run(source, request)
     monkeypatch.setattr(txy, "write_atomic", original)
     folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
-    assert (folder / "d_txy_helab_1.json").is_file() and not (source / "d_txy_helab_1.txy").exists()
+    assert (folder / "d_txy_helab_m19v1_1.json").is_file() and not (source / "d_txy_helab_m19v1_1.txt").exists()
     events = run(source, request)
     assert [event["shot"] for event in of(events, "shot_converted")] == [1] and of(events, "shot_kept") == []
 
 
-PARTIAL_NAME = ".d_txy_helab_1.txy.0123456789abcdef.partial"
+PARTIAL_NAME = ".d_txy_helab_m19v1_1.txt.0123456789abcdef.partial"
 
 
 def age(path: Path, seconds: float) -> None:
@@ -785,17 +809,19 @@ def test_the_partial_pattern_is_exactly_write_atomics_names(tmp_path: Path) -> N
         return real_open(path, *args, **kwargs)
     with pytest.MonkeyPatch.context() as patches:
         patches.setattr(os, "open", spy)
-        txy.write_atomic(tmp_path / "d_txy_helab_12.txy", b"")
+        txy.write_atomic(tmp_path / "d_txy_helab_m19v1_12.txt", b"")
     assert any(pattern.match(name) for name in made)
     assert pattern.match(PARTIAL_NAME)
-    for name in (".d_txy_helab_1.txy.0123456789abcdeg.partial", ".d_txy_helab_1.txy.0123456789abcde.partial",
+    for name in (".d_txy_helab_m19v1_1.txt.0123456789abcdeg.partial", ".d_txy_helab_m19v1_1.txt.0123456789abcde.partial",
                  PARTIAL_NAME + ".bak", "x" + PARTIAL_NAME, PARTIAL_NAME[1:], ".d_txy_forc1.txt.0123456789abcdef.partial",
-                 ".d_txy_helab_1.txy.0123456789ABCDEF.partial", ".d1.txt.0123456789abcdef.partial",
-                 ".d_txy_helab_07.txy.0123456789abcdef.partial", ".d_txy_helab_\u0661.txy.0123456789abcdef.partial"):
+                 ".d_txy_helab_m19v1_1.txt.0123456789ABCDEF.partial", ".d1.txt.0123456789abcdef.partial",
+                 ".d_txy_helab_m19v1_07.txt.0123456789abcdef.partial", ".d_txy_helab_\u0661.txy.0123456789abcdef.partial",
+                 # Before Q18.4's names: left alone (never removed).
+                 ".d_txy_helab_1.txy.0123456789abcdef.partial", ".d_txy_helab_m19v1_1.txy.0123456789abcdef.partial"):
         assert not pattern.match(name), name
 
 
-RECORD_PARTIAL = ".d_txy_helab_1.json.0123456789abcdef.partial"
+RECORD_PARTIAL = ".d_txy_helab_m19v1_1.json.0123456789abcdef.partial"
 FOLDER_PARTIAL = ".folder.json.0123456789abcdef.partial"
 
 
@@ -809,20 +835,21 @@ def test_the_own_folder_pattern_adds_exactly_the_records_temporary_names(tmp_pat
         return real_open(path, *args, **kwargs)
     with pytest.MonkeyPatch.context() as patches:
         patches.setattr(os, "open", spy)
-        for name in ("d_txy_helab_12.txy", provenance.provenance_name(12), convert.FOLDER_RECORD):
+        for name in ("d_txy_helab_m19v1_12.txt", provenance.provenance_name("m19v1", 12), convert.FOLDER_RECORD):
             txy.write_atomic(tmp_path / name, b"")
     assert sum(bool(pattern.match(name)) for name in made) == 3
-    for name in (PARTIAL_NAME, RECORD_PARTIAL, FOLDER_PARTIAL, ".d_txy_helab_0.json.fedcba9876543210.partial"):
+    for name in (PARTIAL_NAME, RECORD_PARTIAL, FOLDER_PARTIAL, ".d_txy_helab_m19v1_0.json.fedcba9876543210.partial"):
         assert pattern.match(name), name
     # Source folders keep the TXY's names only: no JSON is written there.
     assert not convert.partial().match(RECORD_PARTIAL) and not convert.partial().match(FOLDER_PARTIAL)
-    for name in (".d_txy_helab_1.json.0123456789abcdeg.partial", ".d_txy_helab_1.json.0123456789abcde.partial",
-                 ".d_txy_helab_1.json.0123456789ABCDEF.partial", ".d_txy_helab_07.json.0123456789abcdef.partial",
+    for name in (".d_txy_helab_m19v1_1.json.0123456789abcdeg.partial", ".d_txy_helab_m19v1_1.json.0123456789abcde.partial",
+                 ".d_txy_helab_m19v1_1.json.0123456789ABCDEF.partial", ".d_txy_helab_m19v1_07.json.0123456789abcdef.partial",
                  ".d_txy_helab_\u0661.json.0123456789abcdef.partial", RECORD_PARTIAL + ".bak", RECORD_PARTIAL[1:],
                  "x" + RECORD_PARTIAL, ".d_txy_forc1.json.0123456789abcdef.partial", ".d1.json.0123456789abcdef.partial",
                  FOLDER_PARTIAL + ".bak", FOLDER_PARTIAL[1:], ".xfolder.json.0123456789abcdef.partial",
                  ".Folder.json.0123456789abcdef.partial", ".folder.jsonl.0123456789abcdef.partial",
-                 ".folderxjson.0123456789abcdef.partial", ".notes.json.0123456789abcdef.partial"):
+                 ".folderxjson.0123456789abcdef.partial", ".notes.json.0123456789abcdef.partial",
+                 ".d_txy_helab_1.json.0123456789abcdef.partial"):
         assert not pattern.match(name), name
 
 
@@ -831,10 +858,10 @@ def test_a_beside_conversion_removes_only_its_own_old_leftovers(source: Path, tm
     old = source / PARTIAL_NAME
     old.write_bytes(b"half")
     age(old, 2 * 3600)
-    young = source / ".d_txy_helab_2.txy.fedcba9876543210.partial"
+    young = source / ".d_txy_helab_m19v1_2.txt.fedcba9876543210.partial"
     young.write_bytes(b"half")
     age(young, 600)
-    lookalikes = [source / name for name in (".d_txy_helab_3.txy.0123456789abcdeg.partial", PARTIAL_NAME + ".bak",
+    lookalikes = [source / name for name in (".d_txy_helab_m19v1_3.txt.0123456789abcdeg.partial", PARTIAL_NAME + ".bak",
                                              ".d_txy_forc1.txt.0123456789abcdef.partial", "notes.partial")]
     for path in lookalikes:
         path.write_bytes(b"keep")
@@ -842,7 +869,7 @@ def test_a_beside_conversion_removes_only_its_own_old_leftovers(source: Path, tm
     elsewhere = tmp_path / "elsewhere.txt"
     elsewhere.write_bytes(b"not HeLab's")
     age(elsewhere, 2 * 3600)
-    link = source / ".d_txy_helab_4.txy.aaaaaaaaaaaaaaaa.partial"
+    link = source / ".d_txy_helab_m19v1_4.txt.aaaaaaaaaaaaaaaa.partial"
     try:
         link.symlink_to(elsewhere)
         age(link, 2 * 3600)
@@ -875,14 +902,14 @@ def test_a_killed_beside_writes_leftover_goes_on_a_later_pass_once_old(source: P
     done = subprocess.run([sys.executable, "-c", KILLED_WRITE, json.dumps(request)], cwd=ROOT, env=dict(os.environ),
                           timeout=60, capture_output=True, text=True)
     leftovers = [path for path in source.iterdir() if convert.partial().match(path.name)]
-    assert done.returncode == 9 and len(leftovers) == 1 and not (source / "d_txy_helab_1.txy").exists(), done.stderr
+    assert done.returncode == 9 and len(leftovers) == 1 and not (source / "d_txy_helab_m19v1_1.txt").exists(), done.stderr
     events = run(source, request)  # Too young: left, and the shot converted beside it.
     assert of(events, "partial_removed") == [] and leftovers[0].exists()
-    assert (source / "d_txy_helab_1.txy").is_file()
+    assert (source / "d_txy_helab_m19v1_1.txt").is_file()
     age(leftovers[0], 2 * 3600)
     events = run(source, request)
     assert [event["file"] for event in of(events, "partial_removed")] == [leftovers[0].name]
-    assert sorted(path.name for path in source.iterdir()) == ["d1.txt", "d_txy_helab_1.txy"]
+    assert sorted(path.name for path in source.iterdir()) == ["d1.txt", "d_txy_helab_m19v1_1.txt"]
 
 
 def convert_clock(monkeypatch: pytest.MonkeyPatch) -> list[float]:
@@ -979,19 +1006,19 @@ def test_a_flag_that_cant_be_read_is_said_so(source: Path, tmp_path: Path, priva
 def test_a_kept_or_done_shot_whose_beside_txy_is_deleted_is_converted_again(source: Path, tmp_path: Path) -> None:
     write_raw(source, 1, raw_bytes(10_000))
     write_raw(source, 2, raw_bytes(20_000))
-    (source / "d_txy_helab_1.txy").write_bytes(b"another computer's\n")
+    older_beside(source, 1, b"another computer's\n")
     request = request_for(source, tmp_path, beside=True, beside_confirmed=True)
     events = run(source, request)
     assert [event["shot"] for event in of(events, "shot_kept")] == [1]
     assert [event["shot"] for event in of(events, "shot_converted")] == [2]
     # The user deletes both TXY; with the summary sent back, both are converted again.
-    (source / "d_txy_helab_1.txy").unlink()
-    (source / "d_txy_helab_2.txy").unlink()
+    (source / "d_txy_helab_m19v1_1.txt").unlink()
+    (source / "d_txy_helab_m19v1_2.txt").unlink()
     done = summary(events)
     request["seen"], request["done"], request["kept"] = done["waiting"], done["current"], done["kept"]
     again = run(source, request)
     assert sorted(event["shot"] for event in of(again, "shot_converted")) == [1, 2]
-    assert (source / "d_txy_helab_1.txy").read_bytes() == convert_raw(raw_bytes(10_000), MATLAB_2019, "reference")
+    assert (source / "d_txy_helab_m19v1_1.txt").read_bytes() == convert_raw(raw_bytes(10_000), MATLAB_2019, "reference")
 
 
 def test_a_lost_beside_race_leaves_the_other_conversions_record(source: Path, tmp_path: Path,
@@ -1001,7 +1028,7 @@ def test_a_lost_beside_race_leaves_the_other_conversions_record(source: Path, tm
     write_raw(source, 1, raw_bytes(10_000))
     request = request_for(source, tmp_path, beside=True, beside_confirmed=True)
     folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
-    record = folder / "d_txy_helab_1.json"
+    record = folder / "d_txy_helab_m19v1_1.json"
     theirs = provenance_record(shot=1, txy_sha256="theirs").to_json()
     original = txy.write_atomic
 
@@ -1016,7 +1043,7 @@ def test_a_lost_beside_race_leaves_the_other_conversions_record(source: Path, tm
     assert [event["shot"] for event in of(events, "shot_kept")] == [1]
     assert record.read_text() == theirs
     # Without a rival record, ours (unmatched by any TXY) goes.
-    (source / "d_txy_helab_1.txy").unlink()
+    (source / "d_txy_helab_m19v1_1.txt").unlink()
     record.unlink()
 
     def raced_txy_only(path: Any, data: bytes, *, replace: bool = True) -> None:
@@ -1062,10 +1089,10 @@ def test_a_conversion_removes_old_leftovers_in_helabs_own_folder(source: Path, t
     folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
     folder.mkdir(parents=True)
     old = [folder / name for name in (PARTIAL_NAME, RECORD_PARTIAL, FOLDER_PARTIAL)]
-    young = [folder / name for name in (".d_txy_helab_2.txy.fedcba9876543210.partial",
-                                        ".d_txy_helab_2.json.fedcba9876543210.partial",
+    young = [folder / name for name in (".d_txy_helab_m19v1_2.txt.fedcba9876543210.partial",
+                                        ".d_txy_helab_m19v1_2.json.fedcba9876543210.partial",
                                         ".folder.json.fedcba9876543210.partial")]
-    lookalikes = [folder / name for name in (".d_txy_helab_3.json.0123456789abcdeg.partial", RECORD_PARTIAL + ".bak",
+    lookalikes = [folder / name for name in (".d_txy_helab_m19v1_3.json.0123456789abcdeg.partial", RECORD_PARTIAL + ".bak",
                                              ".xfolder.json.0123456789abcdef.partial", "notes.partial")]
     for path, seconds in [(path, 2 * 3600) for path in old + lookalikes] + [(path, 60) for path in young]:
         path.write_bytes(b"half")
@@ -1073,7 +1100,7 @@ def test_a_conversion_removes_old_leftovers_in_helabs_own_folder(source: Path, t
     elsewhere = tmp_path / "elsewhere.json"
     elsewhere.write_bytes(b"not HeLab's")
     age(elsewhere, 2 * 3600)
-    link = folder / ".d_txy_helab_4.json.aaaaaaaaaaaaaaaa.partial"
+    link = folder / ".d_txy_helab_m19v1_4.json.aaaaaaaaaaaaaaaa.partial"
     try:
         link.symlink_to(elsewhere)
         age(link, 2 * 3600)

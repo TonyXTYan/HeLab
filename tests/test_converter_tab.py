@@ -165,17 +165,17 @@ def converted_folder(root: str, name: str, files: dict[str, bytes]) -> Path:
 
 def test_the_helper_measures_and_clears_converted_txy(tmp_path: Path) -> None:
     root = str(tmp_path / "converted-txy")
-    one = converted_folder(root, "a" * 24, {"d_txy_helab_1.txy": b"x" * 10, "d_txy_helab_1.json": b"{}",
+    one = converted_folder(root, "a" * 24, {"d_txy_helab_m19v1_1.txt": b"x" * 10, "d_txy_helab_m19v1_1.json": b"{}",
                                              "folder.json": b"{}", "notes.txt": b"theirs"})
-    beside = converted_folder(root, "b" * 24, {"d_txy_helab_2.json": b"{}", "folder.json": b"{}"})
-    gone = converted_folder(root, "c" * 24, {"d_txy_helab_3.txy": b"y" * 5, "d_txy_helab_3.json": b"{}",
+    beside = converted_folder(root, "b" * 24, {"d_txy_helab_m19v1_2.json": b"{}", "folder.json": b"{}"})
+    gone = converted_folder(root, "c" * 24, {"d_txy_helab_m19v1_3.txt": b"y" * 5, "d_txy_helab_m19v1_3.json": b"{}",
                                               "folder.json": b"{}"})
-    os.symlink(one / "d_txy_helab_1.txy", gone / "d_txy_helab_9.txy")
+    os.symlink(one / "d_txy_helab_m19v1_1.txt", gone / "d_txy_helab_m19v1_9.txt")
     assert helab_txy.converted_usage(root) == {"files": 2, "bytes": 10 + 2 + 2 + 2 + 2 + 5 + 2 + 2, "folders": 3}
     assert helab_txy.clear_converted(root) == {"files": 2, "bytes": 10 + 2 + 5 + 2}
     assert sorted(os.listdir(one)) == ["folder.json", "notes.txt"]  # Another's file stays, so its folder too.
-    assert sorted(os.listdir(beside)) == ["d_txy_helab_2.json", "folder.json"]  # A beside TXY's record stays.
-    assert sorted(os.listdir(gone)) == ["d_txy_helab_9.txy", "folder.json"]  # A link is never followed or removed.
+    assert sorted(os.listdir(beside)) == ["d_txy_helab_m19v1_2.json", "folder.json"]  # A beside TXY's record stays.
+    assert sorted(os.listdir(gone)) == ["d_txy_helab_m19v1_9.txt", "folder.json"]  # A link is never followed or removed.
 
 
 def test_the_cache_tab_shows_and_clears_converted_txy(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
@@ -183,7 +183,7 @@ def test_the_cache_tab_shows_and_clears_converted_txy(qtbot: QtBot, monkeypatch:
     service, cache = frozen(monkeypatch)
     try:
         root = helab_txy.converted_root(store_options()["directory"])
-        converted_folder(root, "a" * 24, {"d_txy_helab_1.txy": b"x" * 1500, "d_txy_helab_1.json": b"{}"})
+        converted_folder(root, "a" * 24, {"d_txy_helab_m19v1_1.txt": b"x" * 1500, "d_txy_helab_m19v1_1.json": b"{}"})
         tab = CacheTab(cache, settings(tmp_path))
         qtbot.addWidget(tab)
         asked: list[str] = []

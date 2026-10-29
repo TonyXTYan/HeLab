@@ -57,7 +57,7 @@ def main() -> int:
     for shot in shots:
         out = TEMP / "timing" / shot.set_name
         out.mkdir(parents=True, exist_ok=True)
-        jobs.append(ShotJob(shot.label, shot.raw_path, out / f"d_txy_helab_{shot.shot}.txy"))
+        jobs.append(ShotJob(shot.label, shot.raw_path, out / f"d_txy_helab_m19v1_{shot.shot}.txt"))
     start = time.perf_counter()
     timings = time_shots(jobs, profile, args.backend, Parallelism(args.parallelism), args.workers)
     wall = time.perf_counter() - start

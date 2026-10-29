@@ -122,7 +122,8 @@ def _helab_unchanged(path: str, store: CacheStore | None, txy: dict[str, Any], s
     if not txy_sources.wants_helab(source):
         return True
     state = helab_txy.folder_state(helab_txy.folders(path, txy, helab_txy.store_key(store, path)), time.time())
-    if (state or saved.get("origins")) and saved.get("profile_hash", "") != str(txy.get("profile_hash") or ""):
+    if (state or saved.get("origins")) and (saved.get("profile_hash", ""), saved.get("profile_tag", "")) != (
+            str(txy.get("profile_hash") or ""), str(txy.get("profile_tag") or "")):
         return False
     return helab_txy.state_unchanged(saved.get("folders") or [], state)
 
@@ -359,7 +360,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
                     matlab_stats[shot] = (entry_info.st_size, entry_info.st_mtime_ns)
                 elif kind is file_kinds.RAW:
                     raw_entries[shot] = entry
-                elif kind is file_kinds.HELAB_TXY:
+                elif kind is file_kinds.HELAB_TXY and helab_txy.beside_wanted(entry.name, txy):
                     beside_entries[shot] = entry
             elif not has_dirs and _is_dir(entry):
                 has_dirs = True

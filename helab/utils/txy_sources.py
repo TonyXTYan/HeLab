@@ -1,4 +1,4 @@
-"""Which TXY a dataset is made of (Q6.6): MATLAB's ``d_txy_forc<N>.txt``, HeLab's ``d_txy_helab_<N>.txy``,
+"""Which TXY a dataset is made of (Q6.6): MATLAB's ``d_txy_forc<N>.txt``, HeLab's ``d_txy_helab_<tag>_<N>.txt``,
 or both, per shot.
 
 A load is asked for one **source**:

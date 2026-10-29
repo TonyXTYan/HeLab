@@ -3,7 +3,8 @@
 Each user profile is one ``<name>.json`` file (``DetectorProfile.to_json``), so it can be copied,
 mailed or kept in Git as it is; import and export are copies of such files. A user profile's name
 never matches a built-in's (ignoring case: file systems may), and is plain enough to be its file's
-name on every OS. Nothing here removes a file unless asked: ``delete`` is called only after the user
+name on every OS. A user profile carries no tag (only built-ins do): its TXY are tagged by its hash
+(``profile.file_tag``), so ``save`` and ``duplicate`` drop a copied one. Nothing here removes a file unless asked: ``delete`` is called only after the user
 confirms (AGENTS.md).
 
 Qt-free; standard library only.
@@ -115,6 +116,7 @@ class ProfileLibrary:
             raise ProfileError(f"A profile named {profile.name!r} exists already")
         os.makedirs(self.folder, exist_ok=True)
         target = self.file_for(profile.name)
+        profile = profile.replace(tag="")
         handle, temporary = tempfile.mkstemp(prefix="." + profile.name, suffix=".partial", dir=self.folder)
         try:
             with os.fdopen(handle, "w", encoding="utf-8", newline="\n") as stream:
@@ -165,4 +167,4 @@ class ProfileLibrary:
 def duplicate(profile: DetectorProfile, name: str) -> DetectorProfile:
     """A copy of ``profile`` named ``name``, version 1, its notes saying where it came from."""
     origin = f"Copied from {profile.name} v{profile.version} (content hash {profile.content_hash()[:12]})."
-    return profile.replace(name=name, version=1, notes=f"{origin} {profile.notes}".strip())
+    return profile.replace(name=name, version=1, tag="", notes=f"{origin} {profile.notes}".strip())

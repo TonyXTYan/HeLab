@@ -677,7 +677,7 @@ class LiveController:
                "its .helab-root isn't confirmed yet (Review…)" if cache.pending_root(path) is not None else "")
         action.setEnabled(not why)
         action.setToolTip(f"Not available: {why}" if why else (
-            f"HeLab's TXY (d_txy_helab_<N>.txy) go into {name} itself, beside the raw files, instead of HeLab's "
+            f"HeLab's TXY (d_txy_helab_<tag>_<N>.txt) go into {name} itself, beside the raw files, instead of HeLab's "
             "own folder; HeLab writes nothing else there and never replaces a file. Saved for this folder."))
         action.toggled.connect(lambda on: self._set_write_beside(path, on))
         action = menu.addAction("Start Live and auto-convert here when HeLab launches")
@@ -700,7 +700,7 @@ class LiveController:
         name = os.path.basename(path.rstrip(os.sep)) or path
         if on and QMessageBox.question(
                 explorer, "Write TXY beside the raw files?",
-                f"HeLab will write its converted TXY files (d_txy_helab_<N>.txy) into {name} itself, beside the raw "
+                f"HeLab will write its converted TXY files (d_txy_helab_<tag>_<N>.txt) into {name} itself, beside the raw "
                 "files, for every shot it converts from now on. It writes nothing else there and never replaces "
                 f"or removes a file there (apart from its own unfinished temporary TXY).\n\n{path}") \
                 != QMessageBox.StandardButton.Yes:
