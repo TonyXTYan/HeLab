@@ -52,3 +52,4 @@ number.
 | 17 | 2026-10-29 | Side (claude), Ground | Tony's answers on the converter's open questions (Chat) | dev/v0.0.7 | A17.1, A17.2 |
 | 18 | 2026-10-29 | Side (claude), Ground | converter follow-ups (Tony in Chat) | dev/v0.0.7 | Q18.1–Q18.6, A18.1, M18.1 |
 | 19 | 2026-10-29 | Rivet (claude), floor Quick Fixes 6; merged by CoCo | test_typing first (`sessions/2026-10-29-claude-quick-fixes-6/`) | agent/quick-fixes-6 | A~1 (future slow modules) folded into testing.md; Tern's finding 1→A19.1 |
+| 19 | 2026-10-29 | Side (claude) subagent, Ground | caching audit after the converter (`sessions/2026-10-29-claude-caching-audit/audit.md`) | dev/v0.0.7 | Q19.1–Q19.8, A19.1, A19.2 |

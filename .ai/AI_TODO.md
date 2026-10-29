@@ -244,6 +244,13 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
   workers never see the command line's `--dist` (xdist sets `dist = 'no'` on every worker), so the
   `spread` check is always true under xdist; drop it and fix the comment. Harmless today (Tern).
 
+## Caching after the converter (block 19)
+
+- **A19.1 Settings › Cache shows and clears HeLab's TXY in the temp folder too** (audit I4, I6):
+  `converted_usage` and `clear_converted` over both places.
+- **A19.2 Clear converted TXY vs a running conversion** (audit K4): `clear_converted` takes a fence
+  a conversion checks before each write, or the docs say a running conversion may write after it.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:
