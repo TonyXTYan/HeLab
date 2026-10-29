@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import pytest
 
 from helab.utils.number_format import fnum
@@ -74,3 +76,60 @@ def test_duration_has_an_hour_unit(seconds: float, expected: str) -> None:
     """Tony (2026-10-26, C-14): ``duration`` gains an hour unit (it said "75 min 12 s")."""
     from helab.utils.time_format import duration
     assert duration(seconds) == expected
+
+
+# Run in a fresh interpreter: the disk budget's default and minimum, and the log sizes, are set when
+# helab is imported, so patching ``number_format.PLATFORM`` can't reach them.
+IMPORT_TIME_UNITS = """
+import json, sys
+from PyQt6.QtCore import QSettings
+from PyQt6.QtWidgets import QApplication
+from helab.utils import app_log, constants, number_format
+from helab.utils.settings_defaults import DISK_BUDGET_SETTING, setting_default
+from helab.views.CacheTab import CacheTab
+app = QApplication([])
+settings = QSettings(sys.argv[1], QSettings.Format.IniFormat)
+settings.setValue(DISK_BUDGET_SETTING, 10**9)  # 1 GB: the old minimum, under Windows' 1 GiB.
+read = constants.read_disk_budget(settings)
+tab = CacheTab(None, settings)
+shown = (tab.disk_budget.minimum(), tab.disk_budget.suffix(), tab.disk_budget.value())
+applied = tab.apply_budget()
+tab.save(settings)
+print(json.dumps({"platform": number_format.PLATFORM, "min": constants.MIN_DISK_BUDGET,
+                  "default": constants.DEFAULT_DISK_BUDGET, "row": setting_default(DISK_BUDGET_SETTING),
+                  "min_ram": constants.MIN_RAM_BUDGET, "read": read, "shown": shown, "applied": applied,
+                  "saved": int(settings.value(DISK_BUDGET_SETTING)), "mb": [app_log.MB, app_log.MB_UNIT]}))
+"""
+
+
+@pytest.mark.parametrize("override", ["win32", "darwin", None])
+def test_units_set_at_import_follow_the_platform(override: str | None, tmp_path: Path) -> None:
+    """Q26.1 in a fresh interpreter, with Windows' units (override ``win32``), macOS's, and this OS's
+    own (no override: ``sys.platform``, so Windows CI runs Windows' units here). Windows: 8 GiB by
+    default, at least 1 GiB, logs in MiB; a stored 1 GB reads as 1 GiB and the next Save writes it
+    (the minimum, Q26.1 (c)). RAM's minimum is 1 GiB everywhere."""
+    import json
+    import os
+    import subprocess
+    import sys
+    from helab.utils.number_format import UNITS_PLATFORM_OVERRIDE
+    env = dict(os.environ)  # (conftest's private folders and offscreen Qt.)
+    env.pop(UNITS_PLATFORM_OVERRIDE, None)
+    if override is not None:
+        env[UNITS_PLATFORM_OVERRIDE] = override
+    done = subprocess.run([sys.executable, "-c", IMPORT_TIME_UNITS, str(tmp_path / "settings.ini")], env=env,
+                          capture_output=True, text=True, timeout=120)
+    assert done.returncode == 0, done.stderr
+    found = json.loads(done.stdout.strip().splitlines()[-1])
+    platform = override or sys.platform
+    assert found["platform"] == platform and found["min_ram"] == 1 << 30
+    if platform == "win32":
+        assert found["min"] == 1 << 30 and found["default"] == found["row"] == 8 << 30
+        assert found["read"] == 1 << 30 and found["shown"] == [1.0, " GiB", 1.0]
+        assert found["applied"] is True and found["saved"] == 1 << 30  # (Rewritten to the minimum.)
+        assert found["mb"] == [1 << 20, "MiB"]
+    else:
+        assert found["min"] == 10**9 and found["default"] == found["row"] == 8 * 10**9
+        assert found["read"] == 10**9 and found["shown"] == [1.0, " GB", 1.0]
+        assert found["applied"] is True and found["saved"] == 10**9  # (Kept: the minimum here.)
+        assert found["mb"] == [10**6, "MB"]

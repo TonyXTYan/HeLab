@@ -451,10 +451,22 @@ def test_the_disk_budget_is_typed_in_gib_on_windows_and_a_saved_budget_keeps_its
     assert tab.disk_budget_bytes() == 7 * GiB
     tab.show_disk_budget(8 * GiB)  # ("Reset all settings…" on Windows: the default.)
     assert tab.disk_budget.value() == 8.0 and tab.disk_budget_bytes() == 8 * GiB
+    # Stepped from a stored budget off the half-GiB grid: the box goes to the grid it saves.
+    settings.setValue(DISK_BUDGET_SETTING, 20 * GB)
+    off_grid = CacheTab(None, settings)
+    qtbot.addWidget(off_grid)
+    assert off_grid.disk_budget.value() == 18.6 and off_grid.disk_budget_bytes() == 20 * GB
+    off_grid.disk_budget.stepBy(1)
+    assert off_grid.disk_budget.value() == 19.0  # (Not 19.1.)
+    assert off_grid.disk_budget.value() * off_grid.disk_unit == off_grid.disk_budget_bytes() == 19 * GiB
+    off_grid.disk_budget.stepBy(-3)
+    assert off_grid.disk_budget.value() == 17.5 and off_grid.disk_budget_bytes() == int(17.5 * GiB)
+    off_grid.show_disk_budget(20 * GB)  # Shown again: not snapped, still the stored bytes.
+    assert off_grid.disk_budget.value() == 18.6 and off_grid.disk_budget_bytes() == 20 * GB
     monkeypatch.setattr(number_format, "PLATFORM", "darwin")
     mac = CacheTab(None, settings)
     qtbot.addWidget(mac)
-    assert mac.disk_budget.suffix() == " GB" and mac.disk_budget.value() == 8.0 and mac.disk_budget_bytes() == 8 * GB
+    assert mac.disk_budget.suffix() == " GB" and mac.disk_budget.value() == 20.0 and mac.disk_budget_bytes() == 20 * GB
 
 
 def test_ram_budget_steps_of_1_128_of_ram(qtbot: QtBot, tmp_path: Path) -> None:

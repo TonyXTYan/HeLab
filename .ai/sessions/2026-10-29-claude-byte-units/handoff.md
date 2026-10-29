@@ -12,7 +12,8 @@ Worker: Gauge (Claude Code), 2026-10-29. Brief: [brief.md](brief.md). Decision Q
   the next unit past 999.5 in both systems, so at most three digits). Also `binary_units(kind,
   platform)`, `byte_unit(power, kind, platform)` (`(10**9, "GB")` / `(2**30, "GiB")`) and
   `scaled(num, kind, platform)`, which `time_format.byte_rate(per_second, *, platform=None)` uses
-  (rates are disk; same three significant figures).
+  (rates are disk; same three significant figures). Through `scaled`, rates now go up to TB/s
+  (TiB/s on Windows); before, they stopped at GB/s (review nit 5).
 - **How the platform is chosen at run time:** `number_format.PLATFORM`, set once at import to
   `sys.platform`, or to `HELAB_UNITS_PLATFORM_OVERRIDE` when that is set (`units_platform`).
   Windows is `"win32"`. A call with `platform=` uses that instead; a call without reads
@@ -32,8 +33,12 @@ Worker: Gauge (Claude Code), 2026-10-29. Brief: [brief.md](brief.md). Decision Q
 - **Spin boxes:** Settings → Cache's disk budget shows the platform's unit (`" GB"` / `" GiB"`, steps
   of half a unit, `CacheTab.disk_unit`). A stored budget keeps its bytes: `show_disk_budget(bytes)`
   remembers what it showed, and `disk_budget_bytes()` returns the stored bytes while the box still
-  shows that value (8 GB on Windows shows 7.5 GiB and is saved as 8 GB unless changed). "Reset all
-  settings…" uses `show_disk_budget` (`SettingsDialog`). `CacheTab.GB` is gone. The RAM budget box
+  shows that value (8 GB on Windows shows 7.5 GiB and is saved as 8 GB unless changed). Moved off a
+  stored value that isn't on the half-unit grid, the box snaps to the grid at once
+  (`_snap_disk_budget`), so the value shown is the value saved (20 GB on Windows shows 18.6 GiB; one
+  step up shows 19.0 and saves 19 GiB; review finding 1). A stored budget under the OS's minimum
+  (1 GB on Windows) reads as the minimum (1 GiB) and the next Save writes it (review finding 2;
+  Q~1). "Reset all settings…" uses `show_disk_budget` (`SettingsDialog`). `CacheTab.GB` is gone. The RAM budget box
   reads `"16.0 GiB (1/8 of 128 GiB)"` and a typed number is GiB.
 - **Hard-coded units:** the status bar's RAM (`HelabMainWindow.update_status_bar_right`) and the
   Debug memory window are GiB / MiB (RAM). Log sizes are disk: `app_log.MB, app_log.MB_UNIT =
@@ -111,14 +116,30 @@ On the merged state (`f58e161`: this work plus `origin/dev/v0.0.7` at `9f0b21f`)
   for a saved 8 GB; the RAM box "16.0 GiB (1/8 of 128 GiB)" on both; the large-folder dialog in GiB.
   Real Windows not run (M~1).
 
+### After the review ([review.md](review.md): 3 minor, 2 nits, all addressed)
+
+- Finding 1: `CacheTab._snap_disk_budget`, tested (`test_cache_tab.py`, Windows, 20 GB stored, `stepBy`).
+- Finding 2: accepted as (a), tested; handoff text corrected; Q~1; `cache-store.md` wording above.
+- Finding 3: `test_number_format.py::test_units_set_at_import_follow_the_platform`, a fresh
+  interpreter with the override `win32`, `darwin`, and unset (`sys.platform`, so Windows CI runs
+  Windows' units there): `MIN_DISK_BUDGET`, `DEFAULT_DISK_BUDGET`, the table row, `MIN_RAM_BUDGET`,
+  `read_disk_budget` of a stored 1 GB, the box's minimum and suffix, Save, `app_log.MB`/`MB_UNIT`.
+- Nits 4, 5: `testing.md` proposal (env seam), `byte_rate` up to TB/s noted.
+- Checks: strict mypy helab + tests (also `--platform win32`), pyright (also Windows): clean. Full
+  suite with `--basetemp=.ai/temp/pytest`: **8204 passed, 669 skipped, no RERUN** (125 s); without it:
+  **8204 passed, 669 skipped, no RERUN** (117 s).
+
 ## For the Reviewer
 
 - `kind` is required, positional or keyword; `platform` is keyword-only.
 - Log sizes follow the disk units, thresholds included (1/20/50 MiB on Windows). The alternative is
   to keep the SI thresholds and only relabel; I chose consistency with "defaults follow".
 - A stored disk budget under the new minimum (an old 1 GB on Windows) reads as 1 GiB
-  (`read_disk_budget`'s clamp, unchanged code), but the setting isn't rewritten unless Save applies a
-  change.
+  (`read_disk_budget`'s clamp, unchanged code), and **any Settings Save writes 1 GiB over it**, even
+  with the box untouched (the earlier text here said otherwise; the review's finding 2 corrected it).
+  Accepted (Coordinator, option (a)): Q26.1 (c) sets the minimum, the store already runs at 1 GiB from
+  startup, and values under the minimum were rewritten the same way before. Tested in a fresh
+  interpreter (`test_units_set_at_import_follow_the_platform`). For Tony: Q~1.
 - `LargeFolderDialog` line 20 says "in RAM (its TXY files' size on disk)": sorted RAM, since the
   number is the RAM estimate.
 - The Windows disk budget box shows a stored 8 GB as 7.5 GiB (one decimal); typing 7.5 back is
@@ -135,19 +156,31 @@ On the merged state (`f58e161`: this work plus `origin/dev/v0.0.7` at `9f0b21f`)
   10^9; a saved budget keeps its bytes (Tony, 2026-10-26)" → "Byte sizes are disk or RAM
   (`number_format.byte_size(n, kind)`): disk SI on macOS/Linux and KiB/MiB/GiB on Windows, RAM in
   GiB everywhere (Q26.1); Settings → Cache edits the disk budget in GB or GiB (half-unit steps) and
-  the RAM budget in GiB; a saved budget keeps its bytes while left as shown (`CacheTab.show_disk_budget`)."
+  the RAM budget in GiB; a saved budget keeps its bytes while left as shown (`CacheTab.show_disk_budget`),
+  and goes to the half-unit grid once changed; a budget under the OS's minimum (1 GB on Windows)
+  reads as the minimum and is saved as it on the next Save."
   The platform: `number_format.PLATFORM` (`sys.platform`, or `HELAB_UNITS_PLATFORM_OVERRIDE`).
 - **`settings.md`**: after "reads 8 GB wrong": "The disk budget's default is platform-dependent
   (`default_disk_budget()`, 8 GB / 8 GiB), evaluated once when the table is built; the RAM budget's
   minimum is 1 GiB."
 - **`app-runtime-and-ui.md`** line 27: "`number_format.py` (SI byte sizes)" → "`number_format.py`
   (byte sizes by kind and OS, Q26.1)"; the status bar's RAM is GiB.
-- **`testing.md`**: conftest pins `HELAB_UNITS_PLATFORM_OVERRIDE=darwin`, so labels compare the same
-  on every OS; test Windows' units with `platform="win32"` or by patching `number_format.PLATFORM`.
+- **`testing.md`**, in the list of environment seams production reads (line 11, beside
+  `HELAB_DIR_*_OVERRIDE`): "`HELAB_UNITS_PLATFORM_OVERRIDE` (`number_format.PLATFORM`, read once at
+  import): the platform whose byte units HeLab shows, `sys.platform` when unset. conftest pins
+  `darwin`, so labels compare the same on every OS; test Windows' units with `platform="win32"`, by
+  patching `number_format.PLATFORM` (call time), or in a fresh interpreter for what is set at import
+  (the disk budget's default and minimum, `app_log.MB`: `test_units_set_at_import_follow_the_platform`).
+  `HELAB_UNITS_PLATFORM_OVERRIDE=win32 helab` shows Windows' units on a Mac; helpers inherit it."
 - **Memory** `results/disk-cache-and-budgets.md` ("8 GB disk budget"): add "8 GiB on Windows
   (Q26.1)"; `caching-v2.md` already says units by OS.
 
 ## Follow-ups and manual checks (provisional IDs)
+
+- **Q~1** (for Tony, decided for now by the Coordinator as (a)) A disk budget saved under the OS's
+  minimum, in practice 1 GB on a Windows PC (the old minimum), becomes 1 GiB at the next Settings
+  Save. (a) Accept: the minimum is 1 GiB (Q26.1 (c)) and HeLab already uses 1 GiB from startup; (b)
+  keep 1 GB legal on Windows (the box's minimum 1 GiB, a stored 1 GB kept). Proposed: (a).
 
 - **M~1** On Windows (lab PC or CI artefact), Settings → Cache shows "8.0 GiB" for a fresh setting,
   and an existing 8 GB setting shows "7.5 GiB" and stays 8 000 000 000 after Save; Folder details'

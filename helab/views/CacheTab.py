@@ -152,6 +152,7 @@ class CacheTab(QWidget):
         self.disk_budget.setSingleStep(0.5)
         self.disk_budget.setSuffix(f" {unit}")
         self.show_disk_budget(read_disk_budget(settings))
+        self.disk_budget.valueChanged.connect(self._snap_disk_budget)
         self.disk_budget.setToolTip(
             "Counts live data: cached datasets, cached analysis and the records database. Removed files waiting out their "
             "10-minute grace period don't count. Nothing is removed to make room without asking. At 80%, "
@@ -662,8 +663,15 @@ class CacheTab(QWidget):
     def show_disk_budget(self, budget: int) -> None:
         """Shows ``budget`` bytes. Left as shown, it stays those bytes: a budget saved in the other
         units (8 GB on Windows shows 7.5 GiB) isn't rewritten."""
+        self._shown_budget = (-1.0, budget)  # (No snap: it shows the stored bytes.)
         self.disk_budget.setValue(budget / self.disk_unit)
         self._shown_budget = (self.disk_budget.value(), budget)
+
+    def _snap_disk_budget(self, value: float) -> None:
+        """Moved off a stored budget that isn't on the half-unit grid (most GB budgets on Windows),
+        the box goes to the grid at once, so the value shown is the value saved."""
+        if self._shown_budget[0] >= 0 and value != self._shown_budget[0] and value * 2 != round(value * 2):
+            self.disk_budget.setValue(round(value * 2) / 2)
 
     def disk_budget_bytes(self) -> int:
         shown, budget = self._shown_budget
