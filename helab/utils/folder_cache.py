@@ -268,6 +268,10 @@ class FolderCache(QObject):
         self._deferred_saves: dict[str, tuple[str, dict[str, Any]]] = {}
         # Quitting waits for saves (``cancel_for_quit``): no other folder work starts meanwhile.
         self.quitting = False
+        # Converted TXY's last uses loads didn't write (``txy_unmarked``): (root, folder) → when,
+        # written as HeLab quits (``flush_txy_marks``, Q~3); the flush's owner while it runs.
+        self.txy_unmarked: dict[tuple[str, str], float] = {}
+        self._mark_flush = ""
         # Each folder's flags, as the store or this session last said: {"no_cache", "no_auto_load", "set_at"}.
         self.prefs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         # What the store last confirmed for each folder (listings, saves): shown again if a choice fails.
@@ -2714,6 +2718,25 @@ class FolderCache(QObject):
         """A write of the folder's flags or constants is queued or running (``quit_saves``)."""
         return any(write[0] == path for write in (*self._pref_writes.values(), *self._constant_writes.values()))
 
+    def flush_txy_marks(self) -> bool:
+        """Quitting: write the last uses loads didn't (``txy_unmarked``) in one helper (``cache_admin``
+        ``mark_used``, the index only); whether one was submitted. Nothing to write: none."""
+        options = store_options()
+        if not self.txy_unmarked or not options or self.service.closed:
+            return False
+        owner = uuid4().hex
+        marks = [[root, folder, at] for (root, folder), at in self.txy_unmarked.items()]
+        if not self.service.submit(owner, 0, options["directory"], "cache_admin",
+                                   {"cache": options, "action": "mark_used", "params": {"marks": marks}},
+                                   priority=True):
+            return False
+        self.txy_unmarked.clear()
+        self._mark_flush = owner
+        return True
+
+    def txy_marks_flushing(self) -> bool:
+        return bool(self._mark_flush)
+
     def cancel_for_quit(self) -> None:
         """Quitting: stop the reads, listings and loads nothing will show, and data-root
         verification, so saves get the I/O (a save waiting for a load it doesn't join then
@@ -3667,6 +3690,14 @@ class FolderCache(QObject):
                 QTimer.singleShot(0, lambda: self._start_deferred(path))
 
     def _on_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        if event["kind"] == "txy_unmarked":
+            mark = (str(event["root"]), str(event["folder"]))
+            self.txy_unmarked[mark] = max(self.txy_unmarked.get(mark, 0.0), float(event["at"]))
+            return
+        if producer.owner == self._mark_flush and self._mark_flush:
+            if event["kind"] in ("done", "error", "cancelled"):
+                self._mark_flush = ""
+            return
         if self._on_root_event(producer, event) or self._on_verification_event(producer, event):
             return
         if event["kind"] == "clock_skew":

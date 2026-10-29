@@ -849,6 +849,16 @@ class ClockSkewEvent(TypedDict):
     location: str  # its share or volume (the mount's source), else the folder
 
 
+class TxyUnmarkedEvent(TypedDict):
+    """A load took a TXY from HeLab's folder ``folder`` (its 24-hex name) under ``root`` (a base's
+    ``converted-txy``) at ``at``, but didn't write that last use (``helab_txy.LAST_USED_STEP``, or the
+    index busy): the app writes it as it quits (``cache_admin`` ``mark_used``, Q~3)."""
+    kind: Literal["txy_unmarked"]
+    root: str
+    folder: str
+    at: float
+
+
 class MarkerSaveEvent(TypedDict):
     """The manual marker dialog's copy (``marker_save``): written, or a file already there (not replaced)."""
     kind: Literal["marker_saved", "marker_save_exists"]
@@ -1050,7 +1060,7 @@ HelperEvent = Union[
     MoveRecoveredEvent, TraceFolderEvent,
     RootFoundEvent, RootChangedEvent, RootDuplicateEvent, RootRekeyedEvent, RootConfirmedEvent, RootCreatedEvent,
     RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, ClockSkewEvent, MarkerSaveEvent,
-    MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
+    TxyUnmarkedEvent, MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
     ResultFoundEvent, ResultMissingEvent, ResultSavedEvent, ResultNotSavedEvent, ResultPendingEvent,
     ConvertPrefsEvent, ConvertPlanEvent, ShotConvertedEvent, ShotWaitingEvent, ShotUnconvertibleEvent, ShotKeptEvent,
     ConvertProgressEvent, ConvertSummaryEvent, PartialRemovedEvent,
@@ -1070,7 +1080,7 @@ KINDS = frozenset({
     "trace_folder",
     "root_found", "root_changed", "root_duplicate", "root_rekeyed", "root_confirmed", "root_created",
     "root_adopted", "root_manual", "root_reassigned", "root_removed", "root_remove_refused",
-    "clock_skew", "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified",
+    "txy_unmarked", "clock_skew", "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified",
     "roots_verified", "result_found", "result_missing", "result_saved", "result_not_saved",
     "result_pending",
     "convert_prefs", "convert_plan", "shot_converted", "shot_waiting", "shot_unconvertible", "shot_kept",

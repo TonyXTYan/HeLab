@@ -494,3 +494,42 @@ I read every job's log:
 | Three Builds, Detect branch | — | success |
 
 The `_patient` timing test passed with no rerun in every job.
+
+## Round 5 check (head `11389a9`, `git diff 1b71c37..11389a9`, Low-7 and Nit-8 only)
+
+**Result: 0 open findings.** Low-7 and Nit-8 are closed. From my side, the floor can land.
+
+| Finding | Status | What I checked |
+|---|---|---|
+| Low-7 | **closed** | `TxyIndex` keeps the `journal` it was opened with: `open_index` passes it on both its reader and writer paths. `_write`'s replacement after a set-aside reopens with `journal=self.journal` (`provenance.py:294`). `clear_converted` now opens with `journal_for(dirname(root))`, which covers the race I set aside. The new `test_a_damaged_index_replaced_mid_write_keeps_its_bases_journal` damages a DELETE index under its open connection: pages after the first are overwritten, and the change counter is bumped so the cached pages are dropped. The next `record` sets the damaged index aside and writes the row to a DELETE replacement. I checked that the test catches the old behaviour with a probe: forcing `journal = WAL` on the same `TxyIndex` gives a WAL replacement, and a DELETE one with the fix. |
+| Nit-8 | **closed** | The retry part now runs on a fake clock (`provenance.time` patched; time passes only by sleeps). It asserts the back-off sequence 5, 10, 20, 40, 80, 100 ms, the capped last sleep, sleeps adding up to exactly `BUSY_SECONDS`, shrinking per-attempt timeouts starting at 1000 ms (one more attempt than sleeps), and the timeout restored. The real-lock case uses a connection with `timeout=60`, so a regression would wait 60 s, against a bound of `BUSY_SECONDS + 5` s. That is loose enough for loaded runners and still catches the bug. The class-level `sleeps` list is new for each test call (the class is defined inside the test), so reruns don't share it. |
+
+### Checks (floor venv, macOS, head `11389a9`)
+
+- `test_convert_helab`, `test_converter_tab`, `test_txy_sources`, `test_cache_switch`,
+  `test_helper_events` and `test_headless_imports`, with `-n 4 --reruns 5 --reruns-delay 1
+  --basetemp=.ai/temp/pytest-review`: **159 passed, 0 reruns**. The two changed tests passed 5 times
+  out of 5 in a loop, each run about 1.35 s.
+- `mypy helab/ --strict` (191), `mypy tests --strict` (159), and `mypy helab/ --strict --platform
+  win32` (191): no issues. `pyright helab tests` and `pyright --pythonplatform Windows helab tests`:
+  0 errors.
+
+### CI run 40898587803 (head `11389a9`, attempt 1): success, no RERUN
+
+I read every job's log:
+
+| Job | ID | Result |
+|---|---|---|
+| Windows Converter backends | 123534527562 | 681 passed |
+| macOS Converter backends | 123534527796 | 682 passed |
+| Ubuntu Converter backends | 123534527985 | 682 passed |
+| Windows Tests (1/2) | 123534527631 | 4074 passed |
+| Windows Tests (2/2) | 123534528047 | 4103 passed |
+| macOS Tests (1/2) | 123534527835 | 4087 passed |
+| macOS Tests (2/2) | 123534527652 | 4119 passed |
+| Ubuntu Tests (1/2) | 123534527941 | 4085 passed |
+| Ubuntu Tests (2/2) | 123534527676 | 4119 passed |
+| Three Builds, Detect branch | — | success |
+
+**No RERUN in any job.** Both changed tests passed on all three OSes (Tests (1/2) on each). The
+compat matrix was skipped because this is a push.

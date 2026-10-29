@@ -83,3 +83,12 @@ Final runs (after 35b50d0):
 - Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
   `8206 passed, 669 skipped, 2 warnings in 117.25s`, no RERUN.
 - The five type checks clean. The Low-7 test fails with the old reopen (no journal passed).
+
+## Q~2 (cache-forced) and Q~3 (last uses at quit), 2026-10-30
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` (macOS):
+  `8222 passed, 669 skipped, 2 warnings in 146.18s`, no RERUN.
+- `mypy helab/ --strict` (191), `mypy tests --strict` (160), `mypy helab/ --strict --platform win32`
+  (191): no issues. `pyright helab tests`, `pyright --pythonplatform Windows helab tests`: 0 errors.
+- Probes: with `cache_confirmed` ignored in `_places`, the three cache cases of the Q~2 test fail;
+  with `MARK_FLUSH_GRACE = 0`, the real-flush quit test fails.

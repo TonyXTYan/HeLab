@@ -21,7 +21,7 @@ NO_ROOT_CONSTANTS = "no .helab-root found here or above"
 UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs",
-                 "convert_prefs", "clear_prefs", "clear_converted_txy",
+                 "convert_prefs", "clear_prefs", "clear_converted_txy", "mark_used",
                  "constants", "presets", "forget_root", "root_same", "clear_root", "clear_results",
                  "clear_root_results", "adopt_result", "discard_result", "identity")
 
@@ -39,6 +39,11 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     )
     if action not in ADMIN_ACTIONS:
         raise ValueError(f"Unknown cache action: {action}")
+    if action == "mark_used":
+        # Quitting (Q~3): the converted TXY's last uses loads didn't write; the index only, not the store.
+        helab_txy.mark_used(list(params.get("marks") or []))
+        send({"kind": "admin_result", "action": action, "next_deadline": None})
+        return
     root = cache_options["directory"]
     budget = params.get("budget", cache_options.get("budget"))
     # When the app set it: a budget set later (e.g. lowered while this job waited) wins.

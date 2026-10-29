@@ -1647,6 +1647,92 @@ def test_a_dont_cache_flag_that_cant_be_read_converts_to_the_temp_folder(
     assert plan["output"] == "temp" and plan["fallback"] == "the folder's Don't cache flag couldn't be read (locked)"
 
 
+class NoStdin:
+    """Tests never read the real stdin: any read fails the test."""
+
+    def isatty(self) -> bool:
+        raise AssertionError("the terminal check is patched in tests")
+
+    def readline(self) -> str:
+        raise AssertionError("stdin read in a test")
+
+
+def typed(source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch, *argv: str,
+          terminal: bool = False, answer: bool | None = None) -> tuple[ConvertRequest, list[str]]:
+    """``helab convert``'s request for ``argv``, its terminal and answer patched; the questions asked."""
+    from helab import convert_cli
+    asked: list[str] = []
+
+    def ask(question: str) -> bool:
+        asked.append(question)
+        assert answer is not None, "asked without a terminal"
+        return answer
+    monkeypatch.setattr(sys, "stdin", NoStdin())
+    monkeypatch.setattr(builtins, "input", NoStdin().readline)
+    monkeypatch.setattr(convert_cli, "_on_terminal", lambda: terminal)
+    monkeypatch.setattr(convert_cli, "_ask", ask)
+    args = convert_cli._arguments(["--watch", str(source), "--once", *argv])
+    request = convert_cli._request(args, str(source), MATLAB_2019.to_dict(), options(private_store))
+    request["temps"], request["workers"] = str(tmp_path / "temps"), 1
+    return request, asked
+
+
+@pytest.mark.parametrize("terminal, answer, output, cache", [
+    (True, True, "cache", True), (True, False, "cache", False), (False, None, "cache", False),
+    (False, None, "cache-forced", True), (True, None, "cache-forced", True)],
+    ids=["terminal-y", "terminal-N", "no-terminal", "forced", "forced-on-terminal"])
+def test_a_typed_output_cache_asks_before_writing_a_dont_cache_folder_to_the_cache(
+        source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+        terminal: bool, answer: bool | None, output: str, cache: bool) -> None:
+    """Q~2 (Tony): the command line stands for the user, as ``beside`` does (Q12.4). One line names the
+    folder; for a typed ``--output cache`` a terminal asks (no by default), without one it's temp;
+    ``cache-forced`` asks nothing."""
+    write_raw(source, 1, raw_bytes(10_000))
+    flag_no_cache(private_store, source)
+    with caplog.at_level("WARNING", logger="helab.convert"):
+        request, asked = typed(source, tmp_path, private_store, monkeypatch, "--output", output,
+                               terminal=terminal, answer=answer)
+    assert asked == (["Write to the cache folder anyway? [y/N] "] if answer is not None else [])
+    [warning] = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+    assert warning.startswith(f"{source}: you chose Don't cache for this folder")
+    assert ("cache-forced" in warning) == (not terminal or output == "cache-forced")
+    assert request.get("destination") == "cache"
+    assert request.get("cache_confirmed", False) is cache
+    [plan] = of(run(source, request), "convert_plan")
+    base = private_store if cache else str(tmp_path / "temps")
+    assert (plan["output"], plan["folder"]) == ("cache" if cache else "temp", folder_for(base, plan["key"]))
+    assert plan["fallback"] == ("" if cache else "you chose Don't cache for this folder")
+    assert Path(plan["folder"], "d_txy_helab_m19v1_1.txt").is_file()
+
+
+@pytest.mark.parametrize("argv", [(), ("--output", "temp")], ids=["setting", "temp"])
+def test_the_output_settings_default_leaves_dont_cache_the_last_word(
+        source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+        argv: tuple[str, ...]) -> None:
+    """Without a typed ``--output cache`` (the setting's default is cache) nothing is asked and the
+    folder's flag wins, as in the app; a typed ``--output cache`` without the flag asks nothing either."""
+    write_raw(source, 1, raw_bytes(10_000))
+    flag_no_cache(private_store, source)
+    with caplog.at_level("WARNING", logger="helab.convert"):
+        request, asked = typed(source, tmp_path, private_store, monkeypatch, *argv, terminal=True)
+    assert not asked and not caplog.records and "cache_confirmed" not in request
+    assert request.get("destination") == ("temp" if "temp" in argv else "cache")
+    [plan] = of(run(source, request), "convert_plan")
+    assert plan["output"] == "temp" and plan["folder"] == folder_for(str(tmp_path / "temps"), plan["key"])
+    flag_no_cache(private_store, source, on=False)
+    request, asked = typed(source, tmp_path, private_store, monkeypatch, "--output", "cache", terminal=True)
+    assert not asked and not caplog.records and "cache_confirmed" not in request
+
+
+def test_the_answer_is_no_unless_yes(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from helab import convert_cli
+    for typed_answer, yes in [("y\n", True), (" YES\n", True), ("\n", False), ("", False), ("n\n", False),
+                              ("yep\n", False)]:
+        monkeypatch.setattr(sys, "stdin", io.StringIO(typed_answer))
+        assert convert_cli._ask("Write? [y/N] ") is yes
+        assert capsys.readouterr().err == "Write? [y/N] "
+
+
 @pytest.mark.parametrize("method", ["rename", "copy"])
 def test_the_index_moves_with_the_cache_folder_and_its_shots_stay_current(
         source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str) -> None:

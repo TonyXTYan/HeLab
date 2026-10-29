@@ -350,12 +350,15 @@ class TxyIndex:
         the file): after a Clear, which the user asked for and which is rare."""
         _patient(self.conn, lambda: self.conn.execute("VACUUM"))
 
-    def touch(self, folder: str, now: float, older: float) -> None:
-        """Mark ``folder`` used now if its last use is ``older`` seconds ago or more (a load took a TXY
-        from it: one small write an hour at most). One statement, its own transaction; its errors are
-        the caller's (a load ignores them, and never sets the index aside)."""
-        self.conn.execute("UPDATE folders SET last_used = ? WHERE folder = ? AND last_used <= ?",
-                          (now, folder, now - older))
+    def touch(self, folder: str, now: float, older: float) -> bool:
+        """Mark ``folder`` used at ``now`` if its last use is ``older`` seconds before or more (a load took
+        a TXY from it: one small write an hour at most). False when that skipped it (its row is there,
+        used more recently); True when written or it has no row. One statement, its own transaction;
+        its errors are the caller's (a load ignores them, and never sets the index aside)."""
+        if self.conn.execute("UPDATE folders SET last_used = ? WHERE folder = ? AND last_used <= ?",
+                             (now, folder, now - older)).rowcount:
+            return True
+        return self.conn.execute("SELECT 1 FROM folders WHERE folder = ?", (folder,)).fetchone() is None
 
 
 def _uri(path: str) -> str:

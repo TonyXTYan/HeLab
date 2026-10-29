@@ -41,8 +41,8 @@ helper killed mid-write), only those matching exactly the name ``write_atomic`` 
 sent as ``partial_removed``.
 ``cache`` writes under the cache folder, keyed by the folder's data root like the store
 (``root://<uuid>/<relative>``); a folder without one, with the disk cache off, or marked Don't cache
-(Q19.5, Q27.4: the store's flag, read here) goes to ``temp`` (HeLab's temp folder) and
-``convert_plan`` says why (``fallback``). HeLab's folder for a source folder is
+(Q19.5, Q27.4: the store's flag, read here; unless ``cache_confirmed``, Q~2) goes to ``temp``
+(HeLab's temp folder) and ``convert_plan`` says why (``fallback``). HeLab's folder for a source folder is
 ``<base>/converted-txy/<hash of its key>/``; the base's ``converted-txy/index.sqlite`` names the key
 and path (its ``folders`` row, updated when the folder moved) and holds the shots' rows. A
 conversion there removes its leftover temporary TXY the same way, and old builds' JSON
@@ -79,6 +79,8 @@ from helab.io_ops.infra import Emit, Heartbeat, Pause, _entry_stat, _guard, _sca
 from helab.utils import file_kinds
 
 if TYPE_CHECKING:
+    from helab.utils.cache_store import CacheStore
+
     # A pipe's end: Windows' Pipe() gives PipeConnection, the others Connection.
     if sys.platform == "win32":
         from multiprocessing.connection import PipeConnection as Connection
@@ -119,7 +121,9 @@ class ConvertRequest(TypedDict):
     ``profile``: ``DetectorProfile.to_dict()`` (a built-in's or the user's). ``destination``: the
     setting (``cache``, default, or ``temp``). ``beside``: the app believes the folder's
     ``write_beside`` flag is on (checked again in the store here); ``beside_confirmed``: the user
-    asked for beside for this run (the command line only). ``temps``: HeLab's temp folder.
+    asked for beside for this run (the command line only). ``cache_confirmed``: the user typed
+    ``--output cache`` and confirmed it for a Don't cache folder (the command line only, Q~2; anywhere
+    else that folder's flag wins and its TXY go to the temp folder). ``temps``: HeLab's temp folder.
     ``cache``: ``store_options()``. ``shots``: only these (None: every raw file).
     ``seen`` (required): the previous conversion's ``waiting`` list, ``[]`` for a folder's first
     conversion (which then only records: every file waits for a second check); None only from
@@ -136,6 +140,7 @@ class ConvertRequest(TypedDict):
     destination: NotRequired[str]
     beside: NotRequired[bool]
     beside_confirmed: NotRequired[bool]
+    cache_confirmed: NotRequired[bool]
     cache: NotRequired[dict[str, Any]]
     shots: NotRequired[list[int] | None]
     done: NotRequired[list[list[Any]]]
@@ -244,6 +249,30 @@ class _Ticker:
         self.thread.join()
 
 
+def _not_cached(store: CacheStore, path: str) -> str:
+    """Why the folder's TXY don't go to the cache folder: its Don't cache flag (Q19.5, Q27.4, as for
+    its datasets), or that flag unread (then not the cache either); "" when they may."""
+    prefs = store.read_prefs([path])[path]
+    if prefs.status == "error":
+        return f"the folder's Don't cache flag couldn't be read ({prefs.error})"
+    if prefs.value and prefs.value.get("no_cache"):
+        return "you chose Don't cache for this folder"
+    return ""
+
+
+def dont_cache(path: str, cache: dict[str, Any]) -> str:
+    """``_not_cached`` before a conversion (``helab convert --output cache`` asks first, Q~2). "" also
+    when the store can't be read or the folder has no data root: those send it to temp anyway."""
+    from helab.utils.cache_paths import UnresolvedRemotePath
+    from helab.utils.cache_store import StoreError
+    try:
+        with stores._cache_store(cache["directory"], [path]) as store:
+            store._path_key(path)
+            return _not_cached(store, path)
+    except (UnresolvedRemotePath, StoreError, OSError):
+        return ""
+
+
 def _places(path: str, request: ConvertRequest) -> _Places:
     """Where this conversion writes (``convert_plan``'s fields)."""
     from helab.utils.cache_paths import UnresolvedRemotePath
@@ -258,13 +287,8 @@ def _places(path: str, request: ConvertRequest) -> _Places:
         try:
             with stores._cache_store(cache_options["directory"], [path]) as store:
                 key = store._path_key(path)
-                if output == "cache":
-                    # Don't cache (Q19.5): the store's flag, as for its datasets; unread, not the cache either.
-                    prefs = store.read_prefs([path])[path]
-                    if prefs.status == "error":
-                        not_cached = f"the folder's Don't cache flag couldn't be read ({prefs.error})"
-                    elif prefs.value and prefs.value.get("no_cache"):
-                        not_cached = "you chose Don't cache for this folder"
+                if output == "cache" and not request.get("cache_confirmed"):
+                    not_cached = _not_cached(store, path)
                 if request.get("beside") and not request.get("beside_confirmed"):
                     found = store.read_convert_prefs([path])[path]
                     if found.status == "error":

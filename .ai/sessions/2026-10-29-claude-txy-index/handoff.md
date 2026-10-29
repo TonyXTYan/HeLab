@@ -22,7 +22,10 @@ with CoCo: `helab/convert/txy.py` (the `before_rename` keyword), `helab/io_ops/a
   `index-newer-…`) and starts a new one. Housekeeping never deletes those; the user's Clear removes damaged ones, never a newer HeLab's.
 - Settings › Cache measures and clears through each base's index, in a helper, asked first.
 - Q27.4: the store's Don't cache flag, read by the conversion itself, sends the TXY to the temp
-  folder (the app and `helab convert` alike).
+  folder (the app and `helab convert` alike). Q~2 (Tony, decided): a typed `helab convert --output
+  cache` overrides it after a warning and a terminal's `[y/N]`; `--output cache-forced` without asking.
+- Q~3 (Tony, decided): a load still marks `last_used` at most hourly; the uses that limit (or a busy
+  index) left unwritten are written by one best-effort helper as HeLab quits.
 
 ## Design
 
@@ -201,6 +204,81 @@ cache folder, never a failed shot. A folder with **no data root** already went t
 them (`test_a_dont_cache_folders_txy_are_found_in_the_temp_folder`). Turning the flag off: the next
 conversion writes to the cache folder; the temp folder's TXY stay until Settings › Cache clears them.
 
+### Q~2: the command line may override Don't cache (Tony, via Side)
+
+The command line stands for the user's intent, as a typed `beside` does (Q12.4). The request tells
+the cases apart with `cache_confirmed` (set by `helab convert` only, like `beside_confirmed`): with
+it, `_places` doesn't read the flag. The app never sets it, and neither does `helab convert` without
+a typed `--output cache` / `cache-forced` (the setting's default), so there the flag still wins → temp.
+
+`helab convert` reads the flag **before the first check**, in its own process (it is the headless
+converter that may open the store, as `_discover_root` already does; no helper or GUI involved),
+through `io_ops.convert.dont_cache` (the same `_not_cached` as `_places`). When the flag is set or
+unreadable, one warning line names the folder and the reason, then:
+- `--output cache`, stdin a terminal: "Write to the cache folder anyway? [y/N] " on stderr (beside
+  the log, so a redirected stdout doesn't hide it); only `y`/`yes` writes to the cache, Enter or end
+  of input → temp. Ctrl-C at the question stops, as during the watch.
+- `--output cache`, no terminal: temp; the warning says `--output cache-forced` writes to the cache.
+- `--output cache-forced`: the cache folder, no question; the one line says so. (`--yes` is gone,
+  Tony's second answer.) The request's `destination` is then `cache`.
+
+Asked once per run (`helab convert` watches one folder), so `--watch` never asks per pass or per
+shot. If the user sets Don't cache **during** a run that wasn't confirmed, later passes go to temp
+(the flag wins, `convert_plan`'s fallback says so); a confirmed run keeps writing to the cache. When
+the store can't be read or the folder has no data root, nothing is asked: those go to temp anyway.
+Tests: `test_a_typed_output_cache_asks_before_writing_a_dont_cache_folder_to_the_cache` (terminal y,
+terminal N, no terminal, cache-forced, cache-forced on a terminal),
+`test_the_output_settings_default_leaves_dont_cache_the_last_word` (setting default, `--output temp`;
+and a typed cache without the flag asks nothing), `test_the_answer_is_no_unless_yes`. The terminal
+check and the question are patched (`convert_cli._on_terminal`, `_ask`) and `sys.stdin` replaced by
+one that fails on any read: no test reads the real stdin. Files: `helab/convert_cli.py`,
+`helab/io_ops/convert.py` (`_places`, `_not_cached`, `dont_cache`, the request's `cache_confirmed`),
+`tests/test_convert_helab.py`.
+
+### Q~3: last uses written at quit (Tony, via Side)
+
+A load still writes `last_used` at most every `LAST_USED_STEP` (1 h), waiting at most 200 ms. What it
+doesn't write, because of that step or a busy index, `_mark_used` sends as a new helper event
+`txy_unmarked` {root, folder, at} (`events.TxyUnmarkedEvent`; `touch` now says whether it skipped a
+row that is there, so a folder without a row sends nothing). `FolderCache._on_event` keeps the newest
+`at` per (root, folder) in memory (`txy_unmarked`). At quit, `_wait_for_saves` calls
+`FolderCache.flush_txy_marks()`: when anything is owed, **one** `cache_admin` `mark_used` request
+(local lane, priority) whose helper writes each `at` only if newer than the row's
+(`helab_txy.mark_used`, the index only: `admin.cache_admin` answers it before opening the store; busy
+timeout 500 ms; any error left alone). Nothing owed: nothing submitted. The GUI never opens the index.
+- **A quit window is up** (other saves): the flush runs meanwhile; when the window ends, `closeEvent`'s
+  `IOService.shutdown()` cancels it if it is still running.
+- **No quit window**: every top-level window hides at once (`QApplication.topLevelWidgets()`), then a
+  `QTimer` (50 ms) waits for the flush's `done`/`error`/`cancelled`, at most `MARK_FLUSH_GRACE` = 2 s,
+  and quits regardless (`_quit_after_saves`). The GUI thread never blocks; a second close meanwhile is
+  ignored (it ends within the grace anyway). Option (3), only while a window is up anyway: set
+  `MARK_FLUSH_GRACE = 0` (one line; the flush is then submitted and cancelled at shutdown).
+- With the disk cache off this session, `cache_admin` can't be sent: the marks are lost (as Q~4).
+- **A relaunch within those 2 s**: HeLab has no single-instance lock, so a new `helab` starts at once
+  beside the hidden, quitting process, as two HeLabs already may. The old one still holds its
+  `instances/<pid>.lock` until it exits, so a cache move asked in the new one in that moment sees
+  another HeLab running (the move's usual check). The flush holds the index's write lock for
+  milliseconds per base: the new instance's conversions wait for it (`_patient`, 10 s), and its loads'
+  200 ms marks may be skipped, and then owed at its own quit. A flush never moves a newer use back
+  (`last_used < at`). On macOS, clicking the Dock icon in those 2 s activates the hidden, quitting app
+  (LaunchServices reuses the running process) rather than starting one: nothing shows, and a click
+  after it exits starts HeLab.
+- Tests (`tests/test_txy_last_used_quit.py`): a load reports a mark skipped by the hour and one
+  skipped busy, and nothing when it wrote; the flush writes only newer uses and never opens the store;
+  FolderCache keeps the newest use and submits once, nothing when nothing was skipped; quit writes
+  the uses through a real helper with every window hidden and no quit window, within the grace; quit
+  ends within the grace when the helper hangs (it waited, no longer) or fails (at once); nothing
+  skipped → quits at once, no `mark_used` submitted; with a quit window up the flush runs meanwhile.
+  The grace probe: with `MARK_FLUSH_GRACE = 0` the real-flush test fails.
+- **Files outside the owned paths** (Tony approved, via CoCo): `helab/views/HelabMainWindow.py`
+  (the `FolderCache` import, line 10; `MARK_FLUSH_GRACE`/`MARK_FLUSH_POLL_MS`, lines 74-78;
+  `_marks_wait`, line 102; `closeEvent`'s condition, lines 1565-1566; `_wait_for_saves`, lines
+  1590-1601; `_wait_for_marks`, lines 1613-1631), `helab/utils/folder_cache.py` (`txy_unmarked` and
+  `_mark_flush`, lines 271-274; `flush_txy_marks`/`txy_marks_flushing`, lines 2721-2739;
+  `_on_event`'s first lines, 3693-3700). Also `helab/io_ops/events.py` (`TxyUnmarkedEvent`, the
+  union and `KINDS`), `helab/io_ops/admin.py` (`mark_used`), `helab/io_ops/helab_txy.py`,
+  `helab/convert/provenance.py` (`touch`'s answer). IOService is unchanged.
+
 ### Housekeeping (brief item 6)
 
 `own_partial()` is unchanged from before the floor (review Low-2): the TXY's temporaries and those
@@ -244,7 +322,9 @@ refuses one)". Not "works on a share".)
   provenance: a `folders` table (HeLab's folder by its 24-hex name → key, source path, TXY bytes,
   last used) and a `shots` table (the provenance rows); `helab.convert.provenance`. A Don't cache
   folder converts to the temp folder (Q19.5, Q27.4: the store's flag, read in `_places`; unreadable →
-  temp)." In the layout paragraph: `<…>/` "holds `d_txy_helab_<tag>_<N>.txt` (unless beside)"; drop
+  temp), unless `helab convert --output cache` was typed and confirmed (Q~2: a warning naming the folder,
+  then `[y/N]` on a terminal, temp without one; `--output cache-forced` without asking; the request's
+  `cache_confirmed`)." In the layout paragraph: `<…>/` "holds `d_txy_helab_<tag>_<N>.txt` (unless beside)"; drop
   the `.json` and `folder.json`; "the provenance row is written **before** the TXY's rename, for every
   output, pinning the size and mtime of the temporary file (`write_atomic(before_rename=)`); a
   conversion stopped between them leaves a row that matches no TXY: the shot converts again".
@@ -276,6 +356,30 @@ rows and old records of beside TXY stay; set-aside indexes go)."
   opens it."
 - Patched names (review Low-3): add `provenance.read_shots` (`helab.convert.provenance`, patched by
   `tests/test_txy_sources.py`; `helab_txy.find` and `convert` call it as `provenance.read_shots`).
+- Patched names: add `infra.emit` as `helab_txy._mark_used` calls it (`tests/test_txy_last_used_quit.py`
+  patches it to collect `txy_unmarked`).
+- That sentence, Q~3: "…at most hourly; a use it doesn't write (that step, or the index busy past
+  200 ms) is sent as `txy_unmarked`, kept in `FolderCache.txy_unmarked` (memory) and written as HeLab
+  quits (`cache_admin` `mark_used`, the index only)."
+
+### Quit (`.ai/architecture/live.md`'s quit sentence; `app-runtime-and-ui.md`)
+
+`app-runtime-and-ui.md` has no quit section; quitting is described in `live.md` ("Quitting turns
+Live off and waits for `FolderCache.quit_saves()` …"). Append there: "Quitting also writes the
+converted TXY's last uses loads skipped (Q~3, `FolderCache.flush_txy_marks`: one `cache_admin`
+`mark_used` helper, only when one was skipped). With a quit window up it runs meanwhile and is
+cancelled when the window ends; with none, every window hides at once and the process waits for it
+on the event loop at most `HelabMainWindow.MARK_FLUSH_GRACE` (2 s), then quits regardless
+(`_wait_for_marks`)." And in `app-runtime-and-ui.md`'s main-window part, one line: "Quit:
+`closeEvent` → `_wait_for_saves` (Live off, the quit window, the last-uses flush; live.md)".
+
+### `.ai/architecture/converter.md`, Q~2 and Q~3
+
+- `helab convert`: "`--output cache` on a Don't cache folder warns (naming the folder) and asks on a
+  terminal, `[y/N]`, temp by default and without a terminal; `--output cache-forced` writes to the
+  cache without asking (Q~2; the request's `cache_confirmed`, set by the command line only)."
+- "Provenance", `last_used`: "moved on by a conversion, and by a load at most hourly (200 ms wait);
+  a use a load skipped is written at quit (Q~3, `helab_txy.mark_used`, only if newer)."
 
 ### `AGENTS.md`
 
@@ -295,13 +399,17 @@ rows and old records of beside TXY stay; set-aside indexes go)."
 - **Q~1** (Tony): accept the tightening "a HeLab TXY is current only while its size **and mtime** are
   the row's" (was size alone)? Proposed: yes (it is what makes the row-before-rename order safe; the
   only cost is a reconversion after a copy onto a coarser-mtime filesystem).
-- **Q~2** (Tony): `helab convert --output cache` on a Don't cache folder converts to temp (the flag
-  wins; the request can't tell a typed `--output cache` from the setting's default). Q12.4 made a typed
-  `beside` override the folder's flag. Proposed: keep "the flag wins" for Don't cache (it is about the
-  cache folder's contents, not the source folder), say so in `--help`.
-- **Q~3** (Tony): `last_used` moves on with a conversion, and with a load taking a TXY from the folder
-  at most once an hour (one small write from the load's helper). Proposed: keep; Settings › Cache
-  shows "last used" per base.
+- **Q~2** (Tony, **decided** via Side, 2026-10-30, answered twice): the command line may override
+  a Don't cache folder (the user's intent, as Q12.4). A typed `--output cache`: a warning naming the
+  folder, then on a terminal "Write to the cache folder anyway? [y/N]" (default temp); without a
+  terminal, temp with the warning. `--output cache-forced`: the cache folder, no question, one line
+  naming the folder. The GUI and the setting's default keep "the flag wins" → temp. Built (Design ›
+  Q~2); for `.ai/memory/results/txy-converter.md`.
+- **Q~3** (Tony, **decided** via Side, 2026-10-30): keep the hourly mark, and write the uses it (or a
+  busy index) skipped at quit, by one best-effort helper, never delaying quit beyond the quit window:
+  with no window, every window hides and the process waits at most 2 s. Built (Design › Q~3). CoCo is
+  asking Tony to confirm the hidden 2 s; option (3) (only while a quit window is up anyway) is
+  `MARK_FLUSH_GRACE = 0`. For `.ai/memory/results/txy-converter.md`.
 - **Q~4** (Tony): with the disk cache off this session, Settings › Cache lists nothing, so the temp
   folder's converted TXY aren't shown or clearable then. Proposed: leave for caching v2 (rare: the
   cache is off only when its folder can't be used).
@@ -366,7 +474,12 @@ rows and old records of beside TXY stay; set-aside indexes go)."
   `converted-txy/`, open Settings › Cache: the row counts them, its tooltip lists Cache folder and Temp
   folder lines, Clear removes them; then convert a folder with Live on and see "last used just now".
 - **M~2**: mark a folder Don't cache, convert it (Live auto-convert or Settings › TXY converter) and
-  check its TXY appear under the temp folder's `converted-txy/` and still load as HeLab's.
+  check its TXY appear under the temp folder's `converted-txy/` and still load as HeLab's. Then in a
+  terminal, `helab convert --watch <it> --once --output cache`: the warning and `[y/N]`; Enter → the
+  temp folder, `y` → the cache folder; piped (`< /dev/null`) → temp; `--output cache-forced` → cache.
+- **M~3**: load a converted folder's TXY twice within the hour (Settings › Cache: "last used" from
+  the first), quit with nothing else saving: every window disappears at once and HeLab exits within
+  about 2 s; at the next start Settings › Cache shows the second load's time.
 
 ## Review round 1 (Tern, `review.md`): what changed
 
@@ -494,3 +607,14 @@ CI run 40874212130 (c546394) passed every job, with two RERUNs, quoted from "rer
   a 60 s timeout and allows `BUSY_SECONDS` + 5 s. The Nit-7 line above is corrected.
 - The `test_folder_cache` Windows rerun from CI 40894080358 is in the known-issue proposals above, with
   Tern's cause and fix.
+
+## Q~2 and Q~3 built (Tony's decisions via Side)
+
+- Q~2: `--output cache` asks on a terminal (temp without one); `--output cache-forced` writes to the
+  cache without asking; `--yes` was built first and dropped before any push (Tony's second answer).
+  `--help` and `convert_cli`'s docstring say so ("whatever the output asked" is gone). The flag is
+  read before the conversion in `helab convert`'s own process; no I/O rule is touched.
+- Q~3: the skipped last uses are written at quit (Design › Q~3, with the files and lines outside the
+  owned paths and how a relaunch within the 2 s behaves).
+- The proposals (converter.md, app-runtime-and-ui.md) and M~2, M~3 carry them. Tern's round 5 notes
+  (`review.md`) are committed with them.

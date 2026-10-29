@@ -20,6 +20,7 @@ source folder's listing).
 """
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 import os
 import re
@@ -27,6 +28,7 @@ from typing import Any, Mapping
 
 from helab.io_ops.events import ConvertedSummaryField, ConvertedUsageField
 from helab.io_ops.fingerprints import _quick_mtime
+from helab.io_ops import infra
 from helab.io_ops.infra import _entry_stat
 
 # A folder's ``last_used`` in the index is moved on by a load at most this often (seconds).
@@ -206,20 +208,48 @@ def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, o
 
 
 def _mark_used(root: str, name: str) -> None:
-    """Move the folder's ``last_used`` on (at most every ``LAST_USED_STEP``); a load never fails for it."""
+    """Move the folder's ``last_used`` on (at most every ``LAST_USED_STEP``); a load never fails for it.
+    A use not written (that step, or the index busy) is sent as ``txy_unmarked``: the app writes it as
+    it quits (Q~3, ``mark_used``)."""
     import sqlite3
     import time
     from helab.convert.provenance import open_index
     index = open_index(root, write=False)
     if index is None:
         return
+    now = time.time()
     try:
         index.conn.execute("PRAGMA busy_timeout = 200")  # (A load never waits on a conversion's write for it.)
-        index.touch(name, time.time(), LAST_USED_STEP)
+        written = index.touch(name, now, LAST_USED_STEP)
     except sqlite3.Error:
-        pass
+        written = False
     finally:
         index.close()
+    if not written:
+        infra.emit({"kind": "txy_unmarked", "root": root, "folder": name, "at": now})
+
+
+def mark_used(marks: list[list[Any]]) -> int:
+    """The last uses loads didn't write this session (``txy_unmarked``: [root, folder, at]), written as
+    the app quits (Q~3), each only if newer than the row's; how many were written. Best effort: a
+    missing, newer, damaged or busy index is left as it is (the shot rows never depend on it)."""
+    import sqlite3
+    from helab.convert.provenance import open_index
+    written = 0
+    for root in dict.fromkeys(str(mark[0]) for mark in marks):
+        index = open_index(root, write=False)
+        if index is None:
+            continue
+        try:
+            index.conn.execute("PRAGMA busy_timeout = 500")  # (Quitting waits at most a moment.)
+            for _, folder, at in (mark for mark in marks if mark[0] == root):
+                with contextlib.suppress(sqlite3.Error):
+                    written += index.conn.execute(
+                        "UPDATE folders SET last_used = ? WHERE folder = ? AND last_used < ?",
+                        (float(at), str(folder), float(at))).rowcount
+        finally:
+            index.close()
+    return written
 
 
 def could_take(source: str, raw: Mapping[int, Any], matlab: Mapping[int, Any],

@@ -6,15 +6,19 @@ settle checks, outputs and provenance. Logs to the terminal and to HeLab's log f
 stops it between two writes (every TXY is written atomically, so none is left half-written).
 
     helab convert --watch FOLDER [--once] [--profile NAME|FILE.json] [--backend NAME]
-                  [--output temp|cache|beside] [--workers N] [--interval SECONDS] [--again]
+                  [--output temp|cache|cache-forced|beside] [--workers N] [--interval SECONDS] [--again]
 
 The packaged app takes the same subcommand: ``HeLab convert --watch …`` (``helab/main.py``
 dispatches it before anything starts Qt widgets, caches or Dash).
 
 ``--output`` defaults to the setting (``converted_txy_output``: cache, else temp). ``beside``
 writes the TXY next to the raw files for this run, the command line standing for the folder's
-flag (Q9.7); a folder marked Don't cache converts to the temp folder whatever the output asked
-(Q27.4: the store's flag, read by the conversion). Its provenance rows go to the same
+flag (Q9.7). A folder marked Don't cache converts to the temp folder (Q27.4: the store's flag, read
+by the conversion), as with the setting's default, unless the command line asks for the cache (Q~2,
+standing for the user as in Q12.4). A typed ``--output cache``: one warning names the folder and, on
+a terminal, it asks once per run whether to write to the cache folder anyway (no by default: temp);
+without a terminal, temp. ``--output cache-forced``: the cache folder, said in one log line naming
+the folder, with no question. Its provenance rows go to the same
 ``converted-txy/index.sqlite`` as the app's, safely beside a running HeLab writing it too (SQLite
 transactions, ``helab.convert.provenance``). It registers as a running HeLab (``cache_locks``), so no cache move runs meanwhile,
 and finds the folder's data root (the nearest ``.helab-root`` at or above it) once at the start.
@@ -26,11 +30,16 @@ import logging
 import os
 import sys
 import time
-from typing import Any
+from typing import Any, TYPE_CHECKING
 
 from helab.io_ops.events import HelperEvent
 
+if TYPE_CHECKING:
+    from helab.io_ops.convert import ConvertRequest
+
 LOG = logging.getLogger("helab.convert")
+# The cache folder even for a folder marked Don't cache, without asking (Q~2; the command line only).
+CACHE_FORCED = "cache-forced"
 DEFAULT_INTERVAL = 3.0
 
 
@@ -47,8 +56,10 @@ def _arguments(argv: list[str]) -> argparse.Namespace:
                         help=f"a built-in detector profile's name or a profile JSON file (default {DEFAULT_PROFILE})")
     parser.add_argument("--backend", default=APP_BACKEND, choices=sorted(_MODULES),
                         help=f"the converter backend (default {APP_BACKEND})")
-    parser.add_argument("--output", choices=("temp", "cache", "beside"),
-                        help="where the TXY go (default: the setting, cache unless changed)")
+    parser.add_argument("--output", choices=("temp", "cache", CACHE_FORCED, "beside"),
+                        help="where the TXY go (default: the setting, cache unless changed). A folder marked "
+                        "Don't cache goes to the temp folder; a typed --output cache asks first on a terminal "
+                        f"(else temp); --output {CACHE_FORCED} writes to the cache folder without asking")
     parser.add_argument("--workers", type=int, help="processes converting at once (default: a few)")
     parser.add_argument("--interval", type=float, default=DEFAULT_INTERVAL,
                         help=f"seconds between checks of the folder (default {DEFAULT_INTERVAL:g})")
@@ -189,14 +200,65 @@ class _Log:
                         "then, so these TXY go to the temp folder)", event["path"])
 
 
+def _on_terminal() -> bool:
+    return sys.stdin.isatty()
+
+
+def _ask(question: str) -> bool:
+    """Yes only for "y" or "yes"; no by default (Enter, end of input). The question goes to stderr
+    with the log, so a redirected stdout doesn't hide it."""
+    sys.stderr.write(question)
+    sys.stderr.flush()
+    return sys.stdin.readline().strip().lower() in ("y", "yes")
+
+
+def _cache_anyway(folder: str, cache: dict[str, Any], forced: bool) -> bool:
+    """A typed ``--output cache`` or ``cache-forced`` on a folder marked Don't cache (Q~2): one line
+    naming the folder, then for ``cache`` the user's answer on a terminal (temp without one). Asked
+    once, before the first check, so ``--watch`` doesn't ask again per pass or per shot."""
+    from helab.io_ops import convert
+    reason = convert.dont_cache(folder, cache) if cache else ""
+    if not reason:
+        return False
+    if forced:
+        LOG.warning("%s: %s; writing to the cache folder anyway (--output %s)", folder, reason, CACHE_FORCED)
+        return True
+    if not _on_terminal():
+        LOG.warning("%s: %s; writing to the temp folder (--output %s writes to the cache folder)", folder, reason,
+                    CACHE_FORCED)
+        return False
+    LOG.warning("%s: %s, and --output cache asks for the cache folder", folder, reason)
+    return _ask("Write to the cache folder anyway? [y/N] ")
+
+
+def _request(args: argparse.Namespace, folder: str, profile: dict[str, Any], cache: dict[str, Any]) -> ConvertRequest:
+    from helab.utils.constants import DIR_TEMPS, read_convert_output
+    from helab.utils.settings_store import app_settings
+    typed = args.output
+    output = "cache" if typed == CACHE_FORCED else typed or read_convert_output(app_settings())
+    # --watch: the first pass only records each file (seen=[]), the second converts those unchanged
+    # since. --once: one check (seen None), so a file must be unmodified for ONCE_SETTLE_SECONDS.
+    request: ConvertRequest = {"path": folder, "profile": profile, "temps": DIR_TEMPS, "backend": args.backend,
+                               "seen": None if args.once else [],
+                               "destination": read_convert_output(app_settings()) if output == "beside" else output,
+                               "cache": cache, "redo": "always" if args.again else "stale"}
+    if output == "beside":
+        request["beside"] = request["beside_confirmed"] = True
+    # Only a typed --output cache: the setting's default leaves the folder's flag the last word.
+    if typed in ("cache", CACHE_FORCED) and _cache_anyway(folder, cache, typed == CACHE_FORCED):
+        request["cache_confirmed"] = True
+    if args.workers:
+        request["workers"] = args.workers
+    return request
+
+
 def main(argv: list[str]) -> int:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s", stream=sys.stderr)
     args = _arguments(argv)
     from helab.convert.profile import ProfileError
-    from helab.io_ops.convert import ConvertRequest, convert_folder
+    from helab.io_ops.convert import convert_folder
     from helab.utils import app_log
-    from helab.utils.constants import DIR_TEMPS, app_folder, read_convert_output
-    from helab.utils.settings_store import app_settings
+    from helab.utils.constants import app_folder
     app_log.start_log_file(app_folder())
     folder = os.path.abspath(args.watch)
     if not os.path.isdir(folder):
@@ -210,17 +272,11 @@ def main(argv: list[str]) -> int:
     cache, instance = _start_cache()
     log = _Log()
     _discover_root(folder, cache, log)
-    output = args.output or read_convert_output(app_settings())
-    # --watch: the first pass only records each file (seen=[]), the second converts those unchanged
-    # since. --once: one check (seen None), so a file must be unmodified for ONCE_SETTLE_SECONDS.
-    request: ConvertRequest = {"path": folder, "profile": profile, "temps": DIR_TEMPS, "backend": args.backend,
-                               "seen": None if args.once else [],
-                               "destination": read_convert_output(app_settings()) if output == "beside" else output,
-                               "cache": cache, "redo": "always" if args.again else "stale"}
-    if output == "beside":
-        request["beside"] = request["beside_confirmed"] = True
-    if args.workers:
-        request["workers"] = args.workers
+    try:
+        request = _request(args, folder, profile, cache)
+    except KeyboardInterrupt:
+        LOG.info("Stopped")
+        return 0
     LOG.info("Watching %s%s (Ctrl-C stops)", folder, " once (files unmodified for a minute)" if args.once
              else f" every {args.interval:g} s (a file is converted once unchanged between two checks)")
     status = 0
