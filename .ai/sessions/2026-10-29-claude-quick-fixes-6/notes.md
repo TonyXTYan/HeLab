@@ -73,7 +73,28 @@ best).
 
 ### CI
 
-(filled in after the push)
+Run 40797275638 on `bbf44fe`: success on all three OSes, no RERUN. Test job (wall clock), pytest's
+own time, and the tail (the last worker's last result after the first worker's last result), against
+02cda86's run 40790912863 and the base 4132e36's run 40793460604:
+
+| OS | 40790912863 | 40793460604 (base) | 40797275638 (this) |
+|---|---|---|---|
+| Windows | 30:13 cancelled; tail ≥126 s, typing serially on gw1 | 24:04; pytest 22:14; tail 174 s (gw2) | **23:38; pytest 21:47; tail 19 s** |
+| Ubuntu | 11:09; pytest 9:43; tail 172 s (gw1) | 10:39; pytest 9:29; tail 139 s (gw2) | **10:05; pytest 8:52; tail 22 s** |
+| macOS | 11:59; pytest 10:28; tail 219 s (gw2) | 4:59; pytest 3:50; tail 42 s (gw1, gw2) | **5:44; pytest 4:44; tail 86 s** |
+
+Where the typing tests ran in 40797275638: the four mypy tests one on each of gw0-gw3 at the start,
+the two pyright tests next on gw0 and gw1, all done 25 s (macOS), 68 s (Ubuntu) and 82 s (Windows)
+after the first result. No typing test hit the 120-s `--timeout` (each now runs beside three busy
+workers).
+
+The tail of the type checkers is gone everywhere (Windows 174 → 19 s, Ubuntu 139 → 22 s). Pytest's
+own time fell less than the tail did (Windows −27 s, Ubuntu −37 s): the checkers still take the same
+CPU, now at the start, and these runners vary by a minute or more between runs (macOS 3:50 to 10:28
+for the same suite). macOS's 86-s tail in this run is not the typing tests: gw2 still held an
+already-sent batch of 63 `test_result_*`/`test_root_*` tests (none over 15 s) when the others ran
+out, the ordinary end of `load` scheduling. Windows' test job, 23-24 min, stays near the 30-min
+limit (Q16.2, Tony's).
 
 ### Proposed `roadmaps/known-issues.md` line (fixed)
 
