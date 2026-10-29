@@ -25,11 +25,11 @@ permissions:
   contents: read
 
 jobs:
-  # The converter's backends (Q9.2): cython's kernel and rust's module built for this Python,
-  # numba and mlx installed, all of them required (HELAB_REQUIRE_BACKENDS: one that can't load
-  # fails, as does a test that skips naming one), checked against the reference, and the
-  # converter's backend tests run with them. In a job of its own: the main test job runs without them, as
-  # before the backends shipped, so its time is what it was (their tests skip there).
+  # The converter's compiled backend (Q11.2: numpy, cython and the reference ship): cython's kernel
+  # built for this Python and required (HELAB_REQUIRE_BACKENDS=cython: a kernel that can't load
+  # fails, as does a test that skips naming it), checked against the reference, and the converter's
+  # backend tests run with it. Numba, mlx and rust don't ship (A9.1): not installed, their tests skip.
+  # In a job of its own: the main test job runs without Cython, as before the backends shipped.
   backends:
     name: Converter backends
     if: inputs.enabled
@@ -83,7 +83,7 @@ jobs:
           fi
           pip install -e .
 
-      - name: Build and check the converter backends
+      - name: Build and check the converter's cython backend
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -93,7 +93,7 @@ jobs:
           fi
           python native/build.py --ci
 
-      - name: Run the converter's tests with every backend
+      - name: Run the converter's tests with the cython backend
         shell: bash
         run: |
           if [ "$RUNNER_OS" = "Windows" ]; then
@@ -102,7 +102,7 @@ jobs:
             source venv/bin/activate
           fi
           # The converter's tests that run a backend (each backend's own, the helper's and the
-          # within-shot split, which go through every available one); the reader, writer,
+          # within-shot split, which go through every available one; the unshipped ones skip); the reader, writer,
           # profile and reference tests use none and run in the main job.
           pytest tests/test_convert_backend_*.py tests/test_convert_required_backends.py \
             tests/test_convert_helab.py tests/test_convert_split.py \
@@ -110,12 +110,19 @@ jobs:
 
   test:
     # Skipped jobs may leave input expressions unevaluated in their names.
-    # The caller's matrix name identifies the OS and Python version.
+    # The caller's matrix name identifies the OS and Python version; GitHub adds the group: "Tests (1/2)".
     name: Tests
     if: inputs.enabled
     runs-on: ${{ inputs.os }}-latest
-    # The suite takes about 5-10 min by OS and runner (Windows 20-24); the limit catches a hang:
-    # 30 min on Windows (Q2.6), 20 elsewhere.
+    # The suite in two groups, each a job of its own (Q16.2): every test is in exactly one, by a
+    # hash of its node ID (tests/conftest.py, --test-group), and the caller's result (the release
+    # gate's needs) is a failure if either group fails. Both keep running if the other fails.
+    strategy:
+      fail-fast: false
+      matrix:
+        group: ['1/2', '2/2']
+    # The whole suite took about 5-10 min by OS and runner (Windows 20-25), so a group about half;
+    # the limit catches a hang: 30 min on Windows (Q2.6), 20 elsewhere.
     timeout-minutes: ${{ inputs.os == 'windows' && 30 || 20 }}
     continue-on-error: ${{ inputs.experimental }}
     env:
@@ -191,9 +198,9 @@ jobs:
           else
             source venv/bin/activate
           fi
-          # One run gives the results and the coverage (pytest-cov merges the xdist workers' data);
-          # macOS uploads its coverage.xml below.
-          pytest -n 4 --verbose -rR --cache-clear --cov=helab --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
+          # One run gives the group's results and coverage (pytest-cov merges the xdist workers'
+          # data); macOS uploads each group's coverage.xml below, and Codecov merges the two uploads.
+          pytest -n 4 --test-group "${{ matrix.group }}" --verbose -rR --cache-clear --cov=helab --cov-report=xml --cov-report=term --junitxml=junit.xml -o junit_family=legacy --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
 
       - name: Upload test results to Codecov
         if: ${{ !cancelled() }}
@@ -214,14 +221,16 @@ jobs:
         env:
           MATRIX_OS: ${{ inputs.os }}
           PYTHON_MINOR: ${{ inputs.python-minor }}
+          TEST_GROUP: ${{ matrix.group }}
         run: |
-          echo "::error title=Python 3.${PYTHON_MINOR} test failed on ${MATRIX_OS}::Required test job failed on ${MATRIX_OS}-latest (${RUNNER_OS}/${RUNNER_ARCH}) with Python 3.${PYTHON_MINOR}. Other configurations will continue; inspect this job's failed step for the cause."
+          echo "::error title=Python 3.${PYTHON_MINOR} test group ${TEST_GROUP} failed on ${MATRIX_OS}::Required test job (group ${TEST_GROUP}) failed on ${MATRIX_OS}-latest (${RUNNER_OS}/${RUNNER_ARCH}) with Python 3.${PYTHON_MINOR}. Other configurations will continue; inspect this job's failed step for the cause."
           {
             echo "### Required test job failed"
             echo ""
             echo "- **OS target:** ${MATRIX_OS}-latest"
             echo "- **Python target:** 3.${PYTHON_MINOR}"
+            echo "- **Test group:** ${TEST_GROUP}"
             echo "- **Runner:** ${RUNNER_OS} / ${RUNNER_ARCH}"
             echo ""
-            echo "Other configurations will continue. Inspect **${MATRIX_OS} + py3.${PYTHON_MINOR} / Tests** in the [job logs](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}) for the failed step."
+            echo "Other configurations will continue. Inspect **${MATRIX_OS} + py3.${PYTHON_MINOR} / Tests (${TEST_GROUP})** in the [job logs](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}/attempts/${GITHUB_RUN_ATTEMPT}) for the failed step."
           } >> "$GITHUB_STEP_SUMMARY"

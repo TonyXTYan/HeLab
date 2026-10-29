@@ -385,10 +385,9 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     places = _places(path, request)
     numba_folder = ""
     if backend == "numba":
-        cache_options = request.get("cache") or {}
-        base = (os.path.dirname(os.path.abspath(cache_options["directory"])) if cache_options
-                else request["temps"])
-        numba_folder = os.path.join(base, "numba")
+        # Its compiled code goes in HeLab's temp folder (Q18.1): numba no longer ships (Q11.2), so
+        # only a developer who installed it has any.
+        numba_folder = os.path.join(request["temps"], "numba")
         from helab.convert.backends import numba_backend
         numba_backend.set_cache_folder(numba_folder)
     reason = get_backend(backend).unavailable(profile)

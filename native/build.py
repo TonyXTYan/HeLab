@@ -1,41 +1,42 @@
 """Build the TXY converter's compiled backends for the running Python.
 
-    python native/build.py [--only cython|rust] [--force]
-    python native/build.py --out DIR          # build both, save the kernel and the wheel in DIR
-    python native/build.py --ci [--prebuilt DIR]
+    python native/build.py [--force]          # cython's kernel, the compiled backend that ships
+    python native/build.py --only rust        # rust's module, for a developer trying it
+    python native/build.py --ci
 
 - ``cython``: ``native/cython/build.py`` compiles ``_kernel.pyx`` in place as
   ``helab/convert/backends/cython/_kernel<EXT_SUFFIX>`` (needs Cython, setuptools and a C
   compiler: Xcode's clang, GCC or clang, MSVC from VS 2022 17.0 or later).
 - ``rust``: maturin builds ``native/rust/`` as an abi3 wheel (``helab-convert-rs``, one per OS and
-  architecture for CPython 3.11 and later) and pip installs it into this Python (needs maturin and
-  a Rust toolchain; MSVC's on Windows).
+  architecture for CPython 3.11 and later) and pip installs it into this Python (needs maturin,
+  which isn't in the requirements, and a Rust toolchain; MSVC's on Windows). Opt-in only: rust
+  doesn't ship (A9.1, Q11.2), CI doesn't build it, and ``HeLab.spec`` leaves its module out.
 
-Both are part of HeLab's build (Q9.2), not of ``pip install -e .``: HeLab and its tests work
-without them, so a lab PC with no compiler can still install it. CI runs ``--ci`` before the tests
-and before PyInstaller (``.github/workflows/``): both built, ``HELAB_REQUIRE_BACKENDS`` set for the
-later steps, and ``native/check_build.py`` checking every backend against the reference. The test
-job takes what a build job of its own made with ``--out`` (``--prebuilt``: the kernel copied into
-place, the wheel installed), so it doesn't pay for the compilers. Nothing it builds is committed.
-The flags that keep the doubles exact (no FMA contraction, no fast-math, no ``target-cpu=native``)
-are in the two builds' own files.
+Cython's kernel is part of HeLab's build, not of ``pip install -e .``: HeLab and its tests work
+without it, so a lab PC with no compiler can still install it. CI runs ``--ci`` in the converter
+backends job and before PyInstaller (``.github/workflows/``): the kernel built,
+``HELAB_REQUIRE_BACKENDS=cython`` set for the later steps, and ``native/check_build.py`` checking
+every backend against the reference. Nothing it builds is committed. The flags that keep the
+doubles exact (no FMA contraction, no fast-math, no ``target-cpu=native``) are in the two builds'
+own files.
 """
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import os
 from pathlib import Path
 import shutil
 import subprocess
 import sys
-import sysconfig
 import tempfile
 
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 RUST = HERE / "rust" / "Cargo.toml"
 TARGETS = ("cython", "rust")
-KERNEL = ROOT / "helab" / "convert" / "backends" / "cython" / f"_kernel{sysconfig.get_config_var('EXT_SUFFIX')}"
+DEFAULT_TARGETS = ("cython",)  # what ships (Q11.2)
+CI_REQUIRED = ("cython",)
 
 
 def run(command: list[str]) -> None:
@@ -52,17 +53,16 @@ def rust_wheel(out: Path) -> Path:
     if "target-cpu" in os.environ.get("RUSTFLAGS", ""):
         # The lab's Windows PC is a Sandy Bridge (no AVX2): a wheel for this CPU only won't load there.
         raise SystemExit("RUSTFLAGS sets target-cpu; build for the default target instead")
+    if importlib.util.find_spec("maturin") is None:
+        raise SystemExit("maturin isn't installed (rust doesn't ship, so it isn't in the requirements): "
+                         "install it into this Python, with a Rust toolchain, to build the rust backend")
     # maturin's own entry point is a binary beside this Python's scripts; the module form finds it
     # from any shell, activated or not.
     run([sys.executable, "-m", "maturin", "build", "--release", "--locked", "-m", str(RUST), "--out", str(out),
          "--interpreter", sys.executable])
-    return one_wheel(out)
-
-
-def one_wheel(folder: Path) -> Path:
-    wheels = sorted(folder.glob("helab_convert_rs-*.whl"))
+    wheels = sorted(out.glob("helab_convert_rs-*.whl"))
     if len(wheels) != 1:
-        raise SystemExit(f"expected one helab_convert_rs wheel in {folder}, found {[wheel.name for wheel in wheels]}")
+        raise SystemExit(f"expected one helab_convert_rs wheel in {out}, found {[wheel.name for wheel in wheels]}")
     return wheels[0]
 
 
@@ -81,56 +81,12 @@ def build_rust() -> None:
         install_wheel(rust_wheel(Path(out)))
 
 
-def save(out: Path) -> None:
-    """Build both into ``out`` (the kernel for this Python's version, the wheel), installing neither."""
-    for tool in (["rustc", "--version"], ["cargo", "--version"]):
-        run(tool)
-    out.mkdir(parents=True, exist_ok=True)
+def ci() -> None:
+    """CI: build cython's kernel, require it (``HELAB_REQUIRE_BACKENDS`` for the later steps, as the
+    tests read it) and check every backend against the reference (the unshipped ones are
+    unavailable there, which passes)."""
     build_cython(force=True)
-    shutil.copy2(KERNEL, out / KERNEL.name)
-    rust_wheel(out)
-    print(f"saved {', '.join(sorted(path.name for path in out.iterdir()))} in {out}", flush=True)
-
-
-def install_prebuilt(folder: Path) -> None:
-    """What ``save`` made, for this Python: the kernel copied into place, the wheel installed."""
-    kernel = folder / KERNEL.name
-    if not kernel.is_file():
-        raise SystemExit(f"no {KERNEL.name} in {folder} (built for another Python?): "
-                         f"{sorted(path.name for path in folder.iterdir())}")
-    shutil.copy2(kernel, KERNEL)
-    print(f"+ copied {kernel} -> {KERNEL.relative_to(ROOT)}", flush=True)
-    install_wheel(one_wheel(folder))
-
-
-def ci_required() -> list[str]:
-    """The backends a CI job must have: the compiled ones and numba everywhere, mlx where Metal is
-    (GitHub's macOS runners are VMs that may have none: then its GPU tests skip with the reason)."""
-    required = ["cython", "rust", "numba"]
-    if sys.platform == "darwin":
-        probe = subprocess.run([sys.executable, "-c", "import mlx.core as mx; print(mx.metal.is_available())"],
-                               capture_output=True, text=True)
-        metal = probe.stdout.strip() if probe.returncode == 0 else (probe.stderr.strip().splitlines() or ["?"])[-1]
-        print(f"mx.metal.is_available(): {metal}", flush=True)
-        if metal == "True":
-            required.append("mlx")
-        else:
-            print(f"::notice title=mlx not required::No Metal on this runner (mx.metal.is_available(): {metal}): "
-                  "the mlx backend's GPU tests skip with the reason", flush=True)
-    return required
-
-
-def ci(prebuilt: Path | None) -> None:
-    """CI: build both (or install ``prebuilt``'s), require the backends (``HELAB_REQUIRE_BACKENDS``
-    for the later steps, as the tests read it) and check each against the reference."""
-    if prebuilt is not None:
-        install_prebuilt(prebuilt)
-    else:
-        for tool in (["rustc", "--version"], ["cargo", "--version"]):
-            run(tool)
-        build_cython(force=True)
-        build_rust()
-    required = ",".join(ci_required())
+    required = ",".join(CI_REQUIRED)
     print(f"Required converter backends: {required}", flush=True)
     github_env = os.environ.get("GITHUB_ENV")
     if github_env:
@@ -141,24 +97,16 @@ def ci(prebuilt: Path | None) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--only", choices=TARGETS, action="append", help="build only this one (repeatable)")
+    parser.add_argument("--only", choices=TARGETS, action="append",
+                        help="build this one (repeatable; default: cython, the one that ships)")
     parser.add_argument("--force", action="store_true", help="rebuild the cython kernel even when up to date")
     parser.add_argument("--ci", action="store_true",
-                        help="CI: build both, set HELAB_REQUIRE_BACKENDS in $GITHUB_ENV, run check_build.py")
-    parser.add_argument("--prebuilt", metavar="DIR", type=Path,
-                        help="with --ci: install what --out saved in DIR instead of building")
-    parser.add_argument("--out", metavar="DIR", type=Path,
-                        help="build both and save the cython kernel and the rust wheel in DIR, installing neither")
+                        help="CI: build cython, set HELAB_REQUIRE_BACKENDS in $GITHUB_ENV, run check_build.py")
     args = parser.parse_args()
-    if args.prebuilt is not None and not args.ci:
-        parser.error("--prebuilt goes with --ci")
     if args.ci:
-        ci(args.prebuilt)
+        ci()
         return 0
-    if args.out is not None:
-        save(args.out)
-        return 0
-    targets = args.only or list(TARGETS)
+    targets = args.only or list(DEFAULT_TARGETS)
     if "cython" in targets:
         build_cython(args.force)
     if "rust" in targets:
