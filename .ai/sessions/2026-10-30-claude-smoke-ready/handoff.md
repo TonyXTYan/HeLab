@@ -70,6 +70,49 @@ choice (see the runbook line below). **A new window or dialog:** add a builder t
 case with `@covers`), with synthetic data if its controls need a folder or a plot; a new message box
 built where it asks: an entry in `ASKS`.
 
+## Phase B items 5 and 6: Quit that confirms, and the quit window's list
+
+Merged `origin/dev/v0.0.7` at c492242 (TXY Index) first: one conflict, `QuitSaveDialog`'s imports
+(both kept); its CacheTab changes (the converted row's texts and tooltip) bring no new control.
+
+- **The quit window lists every operation** (`FolderCache.quit_entries()`, the approved sibling of
+  `quit_saves()`, which still returns the folders as strings and is derived from it): a typed
+  `QuitSave(kind, path, state, started)` per operation. Kinds `QUIT_*`: Live's new shots, a load's save
+  (`its data`), a folder's flags, its constants, a plot's result, Make room for one, presets, the
+  converted TXY's last uses (`TXY_LAST_USED`), and a conversion still running. States: reading,
+  writing, waiting (for the folder's previous save, or for the saved presets), held (for the store's
+  identity check: `_probe_held`, the brief's "held writes"), converting. Starts from what the cache
+  already keeps (`SharedJob.created`, `_finishing_created`, `_started`, `_result_ops`, the flush's
+  start) plus two hooks: `_deferred_since` (when a save began waiting) and `_finishing_live` (whether
+  a finishing write is Live's). `quit_save_started(entry)` now gives any entry's earliest start.
+  `QuitSaveDialog` shows one line each, `<folder> — <kind>, <state> · <m:ss>`, updated in place every
+  250 ms from memory, and closes by itself when none is left; Quit now as before.
+  - **One new wait:** a conversion still running (auto-convert's `convert` job) is now waited for;
+    before, quitting killed it with the helpers. It writes each TXY under a temporary name, so Quit
+    now loses only the shot in progress. Tony may prefer it listed but not waited for: **Q~4**.
+- **Quit that confirms** (`helab/views/quit_watch.py`, called from `main.py` once `app.exec()`
+  returns): the process ends within `GRACE` (1 s) of its event loop ending; if Python's teardown still
+  runs then (a non-daemon thread, an exit handler, a stuck pipe), it logs every thread's stack and ends
+  with the same exit code (`os._exit`). Before the loop ends, nothing changed: with nothing to save
+  the window closes at once (a test: under 1 s); with saves pending the quit window shows why,
+  closing itself when they end or on Quit now. **The flush's grace fits before it:** the last uses'
+  flush is a quit save like the others (shown in the window, `MARK_FLUSH_TIMEOUT` 5 s without progress,
+  Quit now skips it), so the 1 s watch only starts after the window has closed. The known issue "File ›
+  Quit sometimes left the process running": its cause isn't known (a click landing before the menu
+  opened may have quit nothing, and the runner then started a second HeLab); whichever it was, a HeLab
+  whose windows have closed can no longer stay running more than a second, and a runner confirms the
+  quit by the process exiting (or reads Dump State's `window.closing` while the quit window waits).
+- **Tests**: `tests/test_quit_confirms.py`: the watch (in-process, and a real process with a
+  60 s non-daemon thread ending with its exit code in under the grace), quitting with nothing to save
+  in under a second, every kind as an entry with its state and start, the window's lines and closing by
+  itself, Quit now. Four existing tests' expected lines updated to the new format (`test_live.py`,
+  `test_result_cache_quit.py`, `test_presets_store.py`, `test_txy_last_used_quit.py`).
+- **Docs proposals:** `live.md`'s quit paragraph: "Quitting waits for every operation
+  `FolderCache.quit_entries` lists (Live's new shots, a load's save, flags, constants, a result or Make
+  room, presets, last uses, a running conversion); the quit window shows each with its folder, state and
+  run time and closes when they end; Quit now skips them; the process then ends within 1 s
+  (`quit_watch`)." The dialog's docstring is updated in the code. An AGENTS.md line is not needed.
+
 ## Review fixes (Wren, review.md)
 
 - **H1** (the rerun on all three OSes): **a real bug since 0.0.6a1, fixed.** `DockTabCloser`
@@ -218,6 +261,8 @@ built where it asks: an entry in `ASKS`.
 - **Q~3** A Debug › Close Folder Tab › <title> item (as for plots), for a runner closing folder tabs?
 - **M~4** On the Mac: `helab --geometry 1600x928+0+39` opens the window there (content 1600×928, the
   frame's top-left at 0,39); Debug › Dump State… writes a JSON naming the open folder and plot tabs.
+- **Q~4** A conversion running at quit: wait for it in the quit window (as built: its shot finishes;
+  Quit now skips), or list it and let quitting end it as before?
 - **Q~2** IDs of a folder tab's own controls are the same in every tab (`folder_path`, `folder_tree`;
   only the shown tab's are on screen), while the tab bar's close buttons carry the tab's number. Keep
   it so (a runner needn't know the tab's number), or prefix every tab's controls?

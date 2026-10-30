@@ -4,6 +4,8 @@ datasets (results waiting for Make room stay for the next session); and an answe
 recreated at the cache folder since never says a result is saved in the one in use."""
 from __future__ import annotations
 
+import re
+
 import shutil
 from pathlib import Path
 from typing import Any, Iterator, cast
@@ -108,7 +110,7 @@ def test_the_quit_window_waits_for_a_result_save_after_the_presets_are_saved(qtb
     dialog.open()
     assert dialog.label.text() == "Saving 1 folder and presets to the disk cache before HeLab quits:"
     item = dialog.folders.item(0)
-    assert item is not None and item.text() == "run — saving a plot's result" and item.toolTip() == RUN
+    assert item is not None and re.sub(r" · \d+:\d\d$", "", item.text()) == "run — a plot's result, writing" and item.toolTip() == RUN
     presets = job(cache, "cache_admin", "presets")
     answer(cache, presets, {"kind": "presets", "saved": [], "rows": [], "store": "A"}, {"kind": "done"})
     for _ in range(5):

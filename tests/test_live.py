@@ -4,6 +4,8 @@ Helpers run in-process: each queued request gets the real helper's events (``rep
 """
 from __future__ import annotations
 
+import re
+
 import json
 import os
 from pathlib import Path
@@ -889,7 +891,7 @@ def test_quit_window_waits_for_saves_and_quit_now_skips_them(
     dialog.finished.connect(results.append)
     dialog.open()
     item = dialog.folders.item(0)
-    assert dialog.folders.count() == 1 and item is not None and item.text() == "run — waiting for its previous save"
+    assert dialog.folders.count() == 1 and item is not None and re.sub(r" · \d+:\d\d$", "", item.text()) == "run — its data, waiting for its previous save"
     dialog.reject()  # Esc keeps waiting.
     assert dialog.isVisible() and not results
     del cache._deferred_saves[path]

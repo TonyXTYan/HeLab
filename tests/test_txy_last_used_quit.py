@@ -5,6 +5,8 @@
 Synthetic folders under ``tmp_path`` only."""
 from __future__ import annotations
 
+import re
+
 import contextlib
 import os
 from pathlib import Path
@@ -154,7 +156,8 @@ def test_quit_writes_the_skipped_last_uses_in_the_quit_window(qtbot: QtBot, tmp_
     window.close()
     dialog = window._quit_dialog
     assert not window._closing and dialog is not None
-    assert [dialog.folders.item(row).text() for row in range(dialog.folders.count())] == [  # type: ignore[union-attr]
+    assert [re.sub(r" · \d+:\d\d$", "", dialog.folders.item(row).text())  # type: ignore[union-attr]
+            for row in range(dialog.folders.count())] == [
         f"{TXY_LAST_USED} — recording when HeLab's converted TXY were last used"]
     assert dialog.label.text() == "Recording when converted TXY were last used before HeLab quits:"
     qtbot.waitUntil(lambda: window._closing, timeout=30000)
