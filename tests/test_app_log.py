@@ -86,7 +86,8 @@ def test_a_broken_notice_is_logged_too(hooks: list[str], caplog: pytest.LogCaptu
 def test_the_log_file_keeps_tracebacks_and_rotates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(app_log, "LOG_BYTES", 4096)
     root = logging.getLogger()
-    monkeypatch.setattr(root, "level", logging.INFO)
+    level = root.level
+    root.setLevel(logging.INFO)  # (Not the attribute: setLevel clears the loggers' cached "INFO is off".)
     handler = app_log.start_log_file(str(tmp_path))
     assert handler is not None
     try:
@@ -106,6 +107,21 @@ def test_the_log_file_keeps_tracebacks_and_rotates(tmp_path: Path, monkeypatch: 
     finally:
         root.removeHandler(handler)
         handler.close()
+        root.setLevel(level)
+
+
+def test_the_rotation_test_holds_after_an_info_line_at_warning(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Regression (macOS CI 41095142656, xdist gw3, all 6 tries): an INFO line logged while the root logger is at
+    WARNING caches "INFO is off" in it, which only ``setLevel`` clears; raising the level by setting the attribute
+    then dropped every line, so the log never rotated (as ``15c907c`` for the test below)."""
+    root = logging.getLogger()
+    level = root.level
+    root.setLevel(logging.WARNING)
+    logging.info("cached as off")
+    try:
+        test_the_log_file_keeps_tracebacks_and_rotates(tmp_path, monkeypatch)
+    finally:
+        root.setLevel(level)
 
 
 def test_no_log_file_where_it_cant_be_written(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
