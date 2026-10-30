@@ -183,10 +183,17 @@ Each rule names the area file with the detail.
     matching exactly `io_ops.convert.partial()` (`.d_txy_helab_<tag>_<N>.txt.<16 hex>.partial`),
     regular files over an hour old, never through a link (Q12.7, Q18.6);
   - every conversion with shots to convert deletes, by the same rules, its own leftovers in
-    HeLab's `converted-txy/` folder (under the cache or temp folder): `io_ops.convert.own_partial()`.
+    HeLab's `converted-txy/` folder (under the cache or temp folder): `io_ops.convert.own_partial()`
+    (the TXY's temporaries, and those old builds gave their JSON records and `folder.json`). The
+    index's `-wal`/`-shm` are SQLite's; an index set aside (`index-{damaged,newer}-<UTC>-<8 hex>.sqlite`)
+    is never removed by housekeeping (Settings › Cache's Clear removes damaged ones, never a newer
+    HeLab's).
 
   Any other removal is the user's choice, asked first, and sends `removed` (Q3.3).
 - Read the cache folder with `cache_dir()`, never `DIR_CACHES`: it can move while HeLab runs.
+- HeLab's converted-TXY provenance is one SQLite file per base (`converted-txy/index.sqlite`),
+  opened only by helpers and `helab convert`; its row goes in before the TXY's rename; missing or
+  damaged, shots only convert again (Q26.2).
 - Every byte size shown is SI (kB/MB/GB, powers of 1000) (Tony, 2026-10-26); Q26.1 changes this
   by OS (A26.1).
 
@@ -242,7 +249,7 @@ one line, with detail in tooltips.
 | `helab/views/` | main window, `FolderExplorer` and `explorer_live.py` (Live, auto-convert), `live_launch.py` (one launch folder), Folder details, Settings tabs (`ConverterTab.py`: TXY converter), dialogs | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [live](.ai/architecture/live.md), [converter](.ai/architecture/converter.md) |
 | `helab/views/plots/` | `PlotWorkspace`, docks, settings panel, presets, arrangements, cached results, each plot's TXY row (`txy_source.py`) | [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |
 | `helab/analysis/` | analysis core, mostly Qt-free (`QT` in `tests/test_headless_imports.py` lists the rest): `DatasetView`, runner, parameters, selection, fits and other numerics, presets, result cache | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
-| `helab/convert/`, `native/` | the TXY converter (Qt-free): `raw`, `profile`, `reconstruct` and `backends/` (numpy the default; cython ships; reference; rust, numba, mlx for developers only, A9.1), `txy`, `fastio`, `split`, `pipeline`, `provenance`, `user_profiles`, built-in profiles as JSON; harness `samples`, `check`, `timing` (scripts in `dev/txy/`); compiled backends' sources in `native/`; TXY sources' four modes `helab/utils/txy_sources.py` | [converter](.ai/architecture/converter.md) |
+| `helab/convert/`, `native/` | the TXY converter (Qt-free): `raw`, `profile`, `reconstruct` and `backends/` (numpy the default; cython ships; reference; rust, numba, mlx for developers only, A9.1), `txy`, `fastio`, `split`, `pipeline`, `provenance` (the converted-TXY index), `user_profiles`, built-in profiles as JSON; harness `samples`, `check`, `timing` (scripts in `dev/txy/`); compiled backends' sources in `native/`; TXY sources' four modes `helab/utils/txy_sources.py` | [converter](.ai/architecture/converter.md) |
 | `helab/scripts/standard/`, `helab/scripts/dld/` | Basic plots v1; the DLD Front Panel Port | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
 | `helab/utils/settings_store.py`, `settings_defaults.py`, `lab_parameters.py` | settings | [settings](.ai/architecture/settings.md) |
 | `helab/utils/app_log.py`, `gui_watchdog.py`, `events.py`, `dash_server.py` | logging, stall dumps, notifications, the Plotly server | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |

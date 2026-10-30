@@ -33,7 +33,7 @@ no Qt, plotting library or `helab.utils.constants`: every module below but `back
 | `fastio` | The fast strict parse (SWAR digits, GIL-free in NumPy) and the TXY formatter; `raw` and `txy` use them. |
 | `split` | Within-shot pieces at safe gaps for any backend, merged byte for byte (`reconstruct_split`); see Backends. |
 | `pipeline` | `convert_raw(bytes, profile, backend) -> bytes | None` (None: no file, as the 2019 wrapper for no hits); `convert_shot`: HeLab's own (timed; 0-byte TXY for no hits; pieces with an executor); `APP_BACKEND` = `numpy`. |
-| `provenance` | `Provenance`, HeLab's JSON record per shot (raw fingerprint, profile name/version/hash/tag, backend, TXY size and SHA-256), `stale`, the file names. |
+| `provenance` | The converted-TXY index (`converted-txy/index.sqlite`: `TxyIndex`, `read_shots`, set-aside, `IndexUnavailable`); `Provenance`, one row per shot (raw fingerprint, profile name/version/hash/tag, backend, TXY size, mtime and SHA-256), `stale`, the file names. |
 | `samples` | The sample manifest (`~/HeLab-samples/txy-v1/manifest.json`, SHA-256 checked on read); held-in/held-out positions. |
 | `check` | `check_txy(ours, reference)`: identical, or the first differing line (`ENDED`, `NO_FINAL_NEWLINE`) and both hit counts; `ReferenceFault` and `prove_fault`. |
 | `timing` | `time_shot`/`time_shots` with `Parallelism` (serial, processes, threads, within-shot through `split`); `summarise` (SI MB/s per stage, latency). |
@@ -241,7 +241,7 @@ table summarises them.
 | Kind | When | Fields (besides `kind`, `path`) |
 |---|---|---|
 | `convert_plan` | once, after the listing | `output` (`beside`/`cache`/`temp`), `fallback` (why not the one asked), `folder` (HeLab's folder: provenance, and the TXY unless beside), `txy_folder`, `key` (root key or ""), `profile` {name, version, hash, tag, calibrated}, `backend`, `workers`, `raw`, `todo` |
-| `shot_converted` | a TXY written | `shot`, `raw_name`, `raw_size`, `raw_mtime_ns`, `raw_sha256`, `output`, `txy`, `txy_size`, `provenance` (its JSON path), `hits` (Live's low-count check reads this), `replaced` (why an older HeLab TXY was replaced, or ""), `profile`, `backend`, `seconds` {read, parse, reconstruct, format, write} |
+| `shot_converted` | a TXY written | `shot`, `raw_name`, `raw_size`, `raw_mtime_ns`, `raw_sha256`, `output`, `txy`, `txy_size`, `provenance` (the index's path), `hits` (Live's low-count check reads this), `replaced` (why an older HeLab TXY was replaced, or ""), `profile`, `backend`, `seconds` {read, parse, reconstruct, format, write} |
 | `shot_waiting` | not converted yet | `shot`, `raw_name`, `raw_size`, `raw_mtime_ns`, `reason` (`settling`, `future`, `changed`, `no_final_newline`, `not_trigger_first`, `no_rows`, `read_failed`), `message` |
 | `shot_unconvertible` | settled, can't be converted | same fields; `reason` `damaged` (with `problem`: `no_final_newline`, `not_trigger_first` or `no_rows`), `failed`, or `no_rows` (`NoRowsError` while computing) |
 | `shot_kept` | beside: a HeLab TXY already there that this conversion doesn't stand behind | `shot`, `txy`, `reason` |
@@ -256,25 +256,28 @@ the converter's kinds); `convert_prefs` is matched by `FolderCache`.
 
 #### Where files go
 
-**Changing before v0.0.7's release (Q26.2, Tony 2026-10-29):** one SQLite file per base,
-`converted-txy/index.sqlite`, replaces `folder.json` and the per-shot `.json` records: a `folders`
-table (hash → key, source path, bytes, last used; Settings › Cache lists it) and a `shots` table
-(the provenance rows). SQLite's transactions keep the helper and `helab convert` safe side by
-side; a missing or damaged index only means shots convert again. Caching v2 later moves the
-provenance into the store's `txy_layers`. This section and the next change with that floor.
-**Q19.5 (decided, not built, Q27.4):** a Don't-cache folder still converts into the cache folder;
-it is to convert to temp.
+**The index (Q26.2, `agent/txy-index`, landed `460360b`):** `<base>/converted-txy/index.sqlite` holds
+the provenance: a `folders` table (HeLab's folder by its 24-hex name → key, source path, TXY bytes,
+last used) and a `shots` table (the provenance rows), in `helab.convert.provenance`. Caching v2
+later moves the provenance into the store's `txy_layers`. **A Don't cache folder converts to the
+temp folder** (Q19.5, Q27.4): `_places` reads the store's `no_cache` flag for the folder when the
+output is `cache`; flagged, or the flag unreadable → temp. **Unless typed** (Q30.2): `helab convert
+--output cache` on a Don't cache folder warns (naming the folder) and asks on a terminal, `[y/N]`,
+temp by default and without a terminal; `--output cache-forced` writes to the cache without asking
+(one log line). The request's `cache_confirmed` is set by the command line only; the app and the
+setting's default keep "the flag wins".
 
 `<base>/converted-txy/<sha256(identity)[:24]>/` (`io_ops.convert.folder_for(base, identity)`),
 `base` = the cache folder (`dirname(cache["directory"])`, i.e. `cache_dir()`) for `cache`, else
 `temps`; `identity` = the folder's `root://<uuid>/<relative>` key, else `path:<absolute path>`. It
-holds `d_txy_helab_<tag>_<N>.txt` (unless beside), `d_txy_helab_<tag>_<N>.json` (always) and `folder.json`
-(`{"helab": "converted-txy-folder", "version": 1, "key", "source", "updated_at"}`). Beside: only
+holds `d_txy_helab_<tag>_<N>.txt` (unless beside); no `.json` record or `folder.json` is written any
+more (old builds' are ignored, measured and cleared by Settings › Cache only). Beside: only
 `d_txy_helab_<tag>_<N>.txt` in the source folder (temporary `.d_txy_helab_<tag>_<N>.txt.<16 hex>.partial`, then
-a no-replace rename); never a raw file, an existing TXY, or the provenance, which is written
-**before** the beside TXY (a conversion stopped between them leaves a stale record: the shot is
-converted again, never kept for good; Gannet L2; in the cache or temp the TXY goes first, so an old
-record no longer matches it). **Leftovers** (Gannet M1, Q12.7, Q18.6): a beside conversion removes its own
+a no-replace rename), and HeLab's folder for that source isn't created. **The provenance row is
+written before the TXY's rename, for every output**, pinning the size and mtime of the temporary
+file (`txy.write_atomic(before_rename=)`; a rename keeps the mtime on all three OSes); a conversion
+stopped between them leaves a row that matches no TXY, so the shot converts again (Gannet L2). A
+failed write removes the row only if it is still its own. **Leftovers** (Gannet M1, Q12.7, Q18.6): a beside conversion removes its own
 leftover temporary TXY in that source folder: only names matching exactly the pattern `write_atomic`
 makes (`txy.partial_pattern`; `convert.partial()`: `^\.d_txy_helab_[a-z][a-z0-9]{1,15}_(?:0|[1-9][0-9]*)\.txt\.[0-9a-f]{16}\.partial$`, ASCII, from `BARE_NAME`),
 regular files by `lstat` (a link is left alone, never followed), unmodified for `PARTIAL_MAX_AGE`
@@ -282,25 +285,42 @@ regular files by `lstat` (a link is left alone, never followed), unmodified for 
 `partial_removed` (and traced). **Every** conversion with shots to convert also removes its own
 leftovers in HeLab's `converted-txy/` folder for the source folder (`places["folder"]`: under the cache
 folder or, when the output is temp, the temp folder), whatever its output, where a kill on Windows
-often lands inside `write_atomic`: `own_partial()` matches the TXY's, the records' and `folder.json`'s
-temporaries, with the same `lstat`, regular-file and age rules (`_remove_own_partials`).
+often lands inside `write_atomic`: `own_partial()` matches the TXY's temporaries and those old builds
+gave their JSON records and `folder.json`, with the same `lstat`, regular-file and age rules
+(`_remove_own_partials`). The index's `-wal`/`-shm` (and an older build's `-journal`) are SQLite's,
+never housekeeping's.
 
 #### Provenance (`helab.convert.provenance`)
 
-A JSON record per shot (`{"helab": "helab-txy-provenance", "version": 2, …}`; `VERSION` 2 since the
-tagged names, Q18.4: a version-1 record belongs to an untagged `d_txy_helab_<N>.txy`): shot, source folder
-and key, raw name/size/mtime/SHA-256, profile name/version/hash/tag (`profile_tag`)/calibrated, backend, output, TXY
-name/size/SHA-256, hits, `converted_at`, HeLab version, seconds per step. `stale(record, raw_size,
-raw_mtime_ns, profile_hash, txy_size)` says why a TXY is out of date (no TXY or record, the raw
-file or TXY changed, another profile hash); backend and profile name/version don't make it stale
-(equal hashes convert alike). Why a record per shot and not a manifest: each is written once by
-the conversion that made its TXY, atomically, so two conversions never rewrite each other's, and
-Live writes one small file per shot instead of the folder's whole list each time.
+`converted-txy/index.sqlite` per base, `PRAGMA user_version` 1 (`provenance.SCHEMA`): `folders`
+(`folder` 24-hex name, `key`, `source`, `bytes`, `last_used`) and `shots` (`Provenance`'s fields: shot,
+raw name/size/mtime/SHA-256, profile name/version/hash/tag/calibrated, backend, output, TXY
+name/size/mtime/SHA-256, hits, `converted_at`, HeLab version, seconds per step; one row per (folder,
+tag, shot)). Every row written also upserts its folder's `key` and `source` (the folder moved).
+`stale(record, raw_size, raw_mtime_ns, profile_hash, txy=(size, mtime))` says why a TXY is out of date
+(no TXY or row, the raw file or TXY changed, another profile hash); a TXY is current only while its
+size **and mtime** are the row's (Q30.1); backend and profile name/version don't make it stale.
+**Journal:** WAL, as the store's (a rollback journal starved two writers on Windows); where
+`cache_location_problem(base)` objects (a temp folder on a share or synced folder, Q30.5) a new index
+uses a rollback journal (`io_ops.convert.journal_for`). Every open is a fully quoted `file:` URI
+(`provenance._uri`). Each shot is one `BEGIN IMMEDIATE` transaction (`_prepare` takes the schema's only
+at `user_version` 0); 10 s busy timeout, retried where SQLite answers busy at once (`_patient`). A
+conversion holds one connection for its run. **Readers** (loads, Live checks, `save_held`, Settings ›
+Cache) never create or set aside an index and get no rows on any error; a load that takes a TXY moves
+its folder's `last_used` on at most hourly (`LAST_USED_STEP`, a 200 ms wait), and a use it skips is
+sent as `txy_unmarked`, kept in `FolderCache` memory and written as HeLab quits (Q30.3: one `cache_admin`
+`mark_used` helper, only if newer, a quit save; [live](live.md)). **Damaged** (`SQLITE_CORRUPT`/`NOTADB`)
+or **newer** (`user_version` > 1): a conversion sets it aside as `index-{damaged,newer}-<UTC>-<8 hex>.sqlite`
+(`provenance.SET_ASIDE_PATTERN`, with its `-journal`/`-wal`/`-shm`) and starts a new one; housekeeping
+never removes those (Settings › Cache's Clear removes damaged ones, never a newer HeLab's). An index
+that can't be set aside (held open on Windows), is busy past 10 s or can't be written:
+`IndexUnavailable` fails the conversion before that shot's rename, to be tried again. Missing or
+damaged, shots only convert again.
 
 #### Tags in HeLab's TXY names (Q18.4)
 
 HeLab's TXY are `d_txy_helab_<tag>_<N>.txt` (`.txt`, like MATLAB's `d_txy_forc<N>.txt`), beside the raw
-files and in HeLab's folders (records `d_txy_helab_<tag>_<N>.json`). Built-in tags are frozen once used
+files and in HeLab's folders (provenance in the index; old builds' `.json` records are ignored). Built-in tags are frozen once used
 and pinned by a test: `m19v1` (matlab-2019), `m23v1` (matlab-2023-lab-edit), `p17v1` (plates-2017),
 `p22v1` (plates-2022), `p25t1` (plates-2025, testing; prefixes `a`/`b`/`t` for alpha, beta, testing;
 Q23.1); other profiles are tagged `u` + 8 hex digits of their content hash (`file_tag`: a built-in's tag

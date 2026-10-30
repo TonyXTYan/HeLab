@@ -32,7 +32,16 @@ Q25.4).
 - **Where** (Tony, 2026-10-29): Q12.1 a folder without a data root converts to temp; Q12.4 a
   typed `--output beside` overrides the folder's setting; Q12.3 converted TXY in the cache get
   their own budget, beside TXY none; Q19.7 the temp output stays; Q26.2 one
-  `converted-txy/index.sqlite` replaces the per-shot JSON before v0.0.7's release.
+  `converted-txy/index.sqlite` replaces the per-shot JSON before v0.0.7's release (built,
+  landed `460360b`); Q19.5/Q27.4 a Don't cache folder converts to temp.
+- **The command line may override Don't cache** (Q30.2, Tony 2026-10-30, answered twice): a typed
+  `helab convert --output cache` warns and asks `[y/N]` on a terminal (temp by default and without
+  one); `--output cache-forced` writes to the cache without asking. The app and the setting's
+  default keep "the flag wins".
+- **Last used** (Q30.3, 2026-10-30): a load marks a folder's `last_used` at most hourly; the uses it
+  skipped are written at quit, a quit save like the others (quit window, 5 s, Quit now skips), and
+  ("(a)+(c)") also in the background every ~10 min (A30.4). A TXY is current only while its size and
+  mtime match the index (Q30.1).
 - **Name** (Q18.4, 2026-10-29, "agree with your suggestions"): `d_txy_helab_<tag>_<N>.txt` (`.txt`
   like MATLAB's `d_txy_forc<N>.txt`). Short fixed tags, frozen once used: `m19v1` matlab-2019,
   `p22v1` plates-2022 v1, `p25t1` plates-2025 testing (prefixes `a`/`b`/`t` for alpha, beta,

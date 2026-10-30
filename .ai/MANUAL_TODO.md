@@ -237,6 +237,23 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
 - [ ] **M23.3 Damaged raw files on the acquisition PC**: a deliberately truncated raw file is reported
   damaged after ~20 s with one notification; later shots convert.
 
+- [ ] **M30.1 The converted-TXY index in Settings › Cache** (block 30): on a machine with old-build
+  `d_txy_helab_*.json` / `folder.json` in `converted-txy/`, open Settings › Cache: the row counts
+  them, its tooltip has Cache folder and Temp folder lines, Clear removes them; then convert a folder
+  with Live on and see "last used just now".
+- [ ] **M30.2 Don't cache and the command line** (Q30.2): mark a folder Don't cache and convert it
+  (Live auto-convert or Settings › TXY converter): its TXY go under the temp folder's
+  `converted-txy/` and still load as HeLab's. Then `helab convert --watch <it> --once --output cache`:
+  the warning and `[y/N]`; Enter → temp, `y` → cache; piped (`< /dev/null`) → temp;
+  `--output cache-forced` → cache, no question.
+- [ ] **M30.3 Last uses written at quit** (Q30.3): load a converted folder's TXY twice within the hour,
+  quit with nothing else saving: the quit window shows briefly and closes by itself; at the next start
+  Settings › Cache shows the second load's time. Wording, Tony's to change: header "Recording when
+  converted TXY were last used before HeLab quits:" (with other saves: "Saving 1 folder to the disk
+  cache and recording when converted TXY were last used before HeLab quits:"); entry "Converted TXY
+  last used — recording when HeLab's converted TXY were last used". The window shows on most quits
+  after working with converted folders (A30.4's background write will make that rarer).
+
 ## Data roots (v0.0.5a1, added 2026-10-18)
 
 Native checks of the data-roots stages D1–D4 ([plan](sessions/2026-10-16-claude-data-roots/plan.md)).

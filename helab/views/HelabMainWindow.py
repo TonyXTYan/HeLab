@@ -1831,6 +1831,7 @@ class HelabMainWindow(QMainWindow):
         for _, explorer in self._explorers():
             explorer.stop_live()
         cache = get_folder_cache(get_io_service())
+        cache.flush_txy_marks()  # Converted TXY's last uses loads didn't write (Q~3): a save like the others.
         if not cache.quit_saves():
             return False
         # Nothing else will be shown: the saves get the I/O. The cache's questions (Make room,

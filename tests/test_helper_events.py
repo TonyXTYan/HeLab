@@ -152,3 +152,24 @@ def test_the_apps_own_kinds_are_made_by_the_app_and_never_by_a_helper() -> None:
     made = set().union(*produced(GUI).values())
     assert GUI_KINDS <= made
     assert GUI_KINDS & events.KINDS == set()
+
+
+def test_the_converted_txy_summary_is_the_declared_shape(tmp_path: Path, private_store: str) -> None:
+    """Q26.2/Q27.5: ``converted_txy`` (an inventory's, and a Clear's ``admin_result``) has exactly
+    ``ConvertedSummaryField``'s keys, and each base ``ConvertedUsageField``'s."""
+    from typing import Any
+    from helab.io_ops.admin import cache_admin
+    from helab.utils.cache_store import store_root
+    sent: list[Any] = []
+    cache_admin({"directory": store_root(private_store)}, "inventory", sent.append, temps=str(tmp_path / "temps"))
+    cache_admin({"directory": store_root(private_store)}, "clear_converted_txy", sent.append,
+                temps=str(tmp_path / "temps"))
+    summaries = [event["inventory"]["converted_txy"] for event in sent if event["kind"] == "inventory"]
+    summaries += [event["converted_txy"] for event in sent
+                  if event["kind"] == "admin_result" and event["action"] == "clear_converted_txy"]
+    assert len(summaries) == 2
+    for summary in summaries:
+        assert set(summary) == set(get_type_hints(events.ConvertedSummaryField))
+        assert sorted(summary["bases"]) == ["cache", "temp"]
+        for base in summary["bases"].values():
+            assert set(base) == set(get_type_hints(events.ConvertedUsageField))
