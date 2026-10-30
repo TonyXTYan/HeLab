@@ -1,0 +1,76 @@
+# Brief: Quick Fixes 7, Codex's review of PR #10 (on Ground)
+
+Coordinator: CoCo, 2026-10-31. Tony (Chat): "launch a quick fixer terminal on the ground floor to fix
+then reply to codex for further review". Codex's automatic review of
+[PR #10](https://github.com/TonyXTYan/HeLab/pull/10) (HeLab 0.0.7a1, head `release/v0.0.7a1` = `dev/v0.0.7`
+`2960680` + the bump `a31edff`), review 5714055695, found three bugs in v0.0.7's new code. CoCo read each
+against the code and all three look real. Fix them before the merge.
+
+## Where you work: Ground, by Tony's explicit go
+
+You run on **Ground** (`~/GitHub-Local/HeLab`, branch `dev/v0.0.7`), not a floor. Your role prompt says to stop
+on Ground: Tony's go above overrides that for this brief only. Because Ground is shared:
+
+- **Side (the Assistant) also works on Ground.** Before every commit, run `git status` and stage only the files
+  you changed (`git add <path>`, never `-A` or `.`). Never stash, reset, check out over or discard anything you
+  didn't change; if a file you need has someone else's uncommitted change, stop and ask CoCo.
+- You may commit on `dev/v0.0.7` (Tony's go for these fixes): one commit per finding, plus this folder's notes and
+  handoff. Push `dev/v0.0.7` once, at the end, after the full suite and type checks pass.
+- No GUI launch is needed. `HELAB_*` overrides as `tests/conftest.py` sets them; tests never touch real data.
+
+## Read first
+
+`AGENTS.md` (I/O rules: "HeLab writes nothing into source folders except …", "Never modify raw `d*.txt` or an
+existing TXY"; the converter rules; tests and typing); `.ai/architecture/converter.md` (write_atomic, beside
+writes), `.ai/architecture/io-and-browsing.md` and `.ai/architecture/live.md` (Live saves, held shots,
+signatures), `.ai/architecture/testing.md`.
+
+## The three findings (Codex's text is on the PR; IDs are its comment IDs)
+
+1. **P1, `helab/convert/txy.py` `_rename_new` (comment 4424923871).** `replace=False` (the beside writes) must
+   never replace an existing TXY. Where `os.link` fails with an OSError other than FileExistsError (filesystems
+   without hard links: FAT, and often macOS SMB mounts, i.e. the lab share), it checks `os.path.lexists` and then
+   `os.rename`s: on macOS and Linux that rename silently overwrites a file another writer created in between
+   (Windows' `os.rename` refuses an existing target, so it is safe there). Fix: an atomic no-replace rename where
+   the OS has one (macOS `renamex_np(old, new, RENAME_EXCL)`; Linux `renameat2(AT_FDCWD, old, AT_FDCWD, new,
+   RENAME_NOREPLACE)`, via `ctypes`, standard library only, `helab/convert/` stays Qt-free), and where neither works
+   (unsupported by the filesystem or the libc) **refuse** rather than overwrite: say what the user sees then (the
+   shot's conversion fails with a clear reason?) and whether that loses beside conversion on a filesystem HeLab
+   wrote to before; propose it in the handoff if it's Tony's choice (`Q~1`). Windows keeps `os.rename`. Tests:
+   the race (a file appearing between the check and the rename) is never overwritten, with `os.link` patched to
+   fail as on such a filesystem; each fallback path; Windows behaviour by patching `convert.PLATFORM` or the
+   module's own seam. Byte-for-byte output is unchanged.
+2. **P2, `helab/io_ops/save_held.py` (comment 4424923880).** A held shot read from HeLab's TXY whose TXY has since
+   gone (cleared, converted again) with no MATLAB TXY to fall back on is in `fingerprint` but not in `chosen`, so
+   it has no `file_names` entry; line ~192 `names = [file_names[shot] for shot, _, _ in fingerprint]` raises
+   KeyError and the whole Live save fails, including the save at quit. Fix: keep a name for such held shots (the
+   one it was read from, from the held record) or handle its absence, so the save goes on and the shot counts as
+   unsettled as the comment above `helab_off` intends. Test: a Live save whose held HeLab shot's TXY was removed
+   saves the others and doesn't raise (fails on today's code).
+3. **P2, `helab/io_ops/save_held.py` (comment 4424923889).** `_write_dataset(...)` isn't passed the `signature`
+   computed just above it (`matlab_print`, which includes a shadowed MATLAB TXY), so `_write_dataset` recomputes
+   it with `helab_txy.matlab_signature` and the saved cache's signature differs from the `loaded` event's: the tab
+   can't match `cache_saved` and restored data looks out of date. Fix: pass `signature=signature`, as
+   `loading.py`'s ordinary load does. Test: a held HeLab shot with a settled MATLAB TXY: the `loaded` event's
+   signature equals the saved dataset's (fails on today's code).
+
+Each test must fail on today's code (say so in the handoff). Smallest change; no refactors.
+
+## Done means
+
+- The touched tests pass; then the full suite (`pytest -n 12 --reruns 5 --reruns-delay 1
+  --basetemp=.ai/temp/pytest-qf7`) and the five type checks (`mypy helab/ --strict`, `mypy tests --strict`,
+  `mypy helab/ --strict --platform win32`, `pyright helab tests`, `pyright --pythonplatform Windows helab tests`),
+  output kept whole; every RERUN reported with its reason.
+- Commits on `dev/v0.0.7` (one per finding; the message says what, why, how checked, and the Codex comment ID),
+  then `git push origin dev/v0.0.7`.
+- `handoff.md` in this folder: what changed per finding, the tests and that they failed before, the checks, the
+  pushed hash and its CI run ID, doc proposals (`converter.md`'s write_atomic paragraph; `live.md` if the held-shot
+  rule changes) and provisional `Q~`/`A~`/`M~`. Don't edit `AGENTS.md`, `.ai/architecture/`, `roadmaps/` or the
+  `.ai/*_TODO.md` lists; CoCo applies your proposals.
+- Report back: `maestri ask "CoCo" "QF7 pushed at <hash>, CI <run id>; handoff in .ai/sessions/2026-10-31-claude-quick-fixes-7/handoff.md"`.
+  CoCo then merges `dev/v0.0.7` into `release/v0.0.7a1`, replies to Codex on the PR and asks it to review again.
+  You don't touch the PR or `release/v0.0.7a1`.
+
+No version bump, release, tag or PR. Ask CoCo (`maestri ask "CoCo" "…"`) before any file outside
+`helab/convert/txy.py`, `helab/io_ops/save_held.py`, their tests and this folder.
