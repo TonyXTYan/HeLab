@@ -33,7 +33,7 @@ def destroyed_connections_to_callables() -> list[str]:
             if (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "connect"
                     and isinstance(node.func.value, ast.Attribute) and node.func.value.attr == "destroyed"
                     and node.args and not isinstance(node.args[0], ast.Attribute)):
-                found.append(f"{path.relative_to(HELAB.parent)}:{node.lineno}: {ast.unparse(node)}")
+                found.append(f"{path.relative_to(HELAB.parent).as_posix()}:{node.lineno}: {ast.unparse(node)}")
     return found
 
 
