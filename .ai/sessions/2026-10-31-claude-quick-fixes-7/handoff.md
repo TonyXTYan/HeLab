@@ -191,6 +191,27 @@ whose current message starts with `DAMAGED_TEXT`.
 
 **Pushed:** `dev/v0.0.7` with `d9a154d` and this session commit on top (hash and CI run in the report).
 
+**CI reruns (correction, CoCo 2026-10-31).** I reported this round's run and round 3's as passing from the
+jobs' conclusions without reading their logs; the logs of every Tests and Converter backends job of the four
+runs, read since, show three RERUNs, all on Windows, each passing on rerun:
+
+- **New, round 4's run 41086378298** (`9de3e19`), windows + py3.13 Tests (1/2), job 124168617741, gw0:
+  `tests/test_accessible_names.py::test_every_script_and_each_library`: "Controls without an accessible name:
+  Basic plots v1 › Plot T, X, Y histograms: QTabBar < QMainWindow < QSplitter < HelabMainWindow: no ID". Not a
+  worker crash: a Qt-made tab bar (the plot area's dock tabs) walked before it got its ID, it seems. Not in
+  known-issues; CoCo files it at the tidy-up. Proposed line: "`test_accessible_names.py::test_every_script_and_each_library`:
+  'QTabBar < QMainWindow < QSplitter < HelabMainWindow: no ID' (Basic plots v1 › Plot T, X, Y histograms),
+  Windows CI 41086378298 (job 124168617741, gw0, `dev/v0.0.7` `9de3e19`); passed on rerun. Likely a dock tab
+  bar Qt makes when docks tabify, walked before `identify` names it."
+- **Known, round 3's run 41084197666** (`dd540cd`), windows + py3.13 Tests (2/2), job 124161029996:
+  `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]` ("worker 'gw3'
+  crashed", the QtWebEngine worker-crash entry) and `test_io_service_run.py::test_writing_held_data_out_counts_as_progress`
+  (`assert (2 == 1)`, two progress marks 0.96 ms and 1.5 ms, at line 40). Both already in known-issues: add this
+  run as another occurrence.
+- Rounds 1 and 2 (41078799066, 41081757658): no RERUN in any job's log.
+
+None touches the files this brief changed.
+
 **Doc proposals:** `live.md` Auto-convert parenthesis (extending round 2's): "(`seen`/`done`/`kept`/`skip`;
 `done`/`kept`/`skip` only for the same profile, and under another `seen` without its reasons: a file waiting or
 unconvertible under one profile is read again under the next)". `converter.md`'s `seen` row, if it names the
