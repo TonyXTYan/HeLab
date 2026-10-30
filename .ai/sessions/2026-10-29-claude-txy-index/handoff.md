@@ -264,9 +264,15 @@ and quit is as before. The GUI never opens the index.
   every base). Its start time is `FolderCache.quit_save_started(entry)`: `time.monotonic()` at submit
   for `TXY_LAST_USED`, None for entries whose start this cache doesn't track yet (Beacon can extend it
   to the others: saves' `_started`, `_finishing`). `QuitSaveDialog.state()` labels it "recording when
-  HeLab's converted TXY were last used", and the header counts it apart from the folders ("Saving 1
-  folder and converted TXY's last use to the disk cache before HeLab quits:").
+  HeLab's converted TXY were last used", and the header names it apart from the folders, without "to
+  the disk cache" (the index may be under the temp folder; Tern's Nit-10): "Recording when converted
+  TXY were last used before HeLab quits:" alone, "Saving 1 folder to the disk cache and recording when
+  converted TXY were last used before HeLab quits:" beside other saves. Wording for Tony at M~3.
 - With the disk cache off this session, `cache_admin` can't be sent: the marks are lost (as Q~4).
+- **One flush, best effort** (Tern's Nit-9): `_wait_for_saves` turns Live off and then flushes at once.
+  A mark that arrives after that (Live's closing save, or a load still running, sends `txy_unmarked`)
+  stays in memory and is not written: there is no second flush. The cost is a `last_used` up to an
+  hour old, which only orders Settings › Cache's list; nothing is removed by it.
 - A relaunch while the quit window is up: as with any quit save (the old HeLab still runs). The flush
   holds the index's write lock for milliseconds per base; the new instance's conversions wait for it
   (`_patient`), and its loads' 200 ms marks may be skipped and then owed at its own quit. A flush
@@ -427,6 +433,19 @@ limit, `MARK_FLUSH_TIMEOUT`)". In `app-runtime-and-ui.md`'s main-window part, on
   the index doesn't know). If converted-txy grows to tens of thousands of TXY, measure by the index
   alone and list folders only on Clear.
 - **A~3**: done in review round 4 (the quoted `file:` URI above); dropped.
+- **A~4** (CoCo): one index connection for longer, so WAL's `-wal` isn't rebuilt so often. A conversion
+  already keeps one connection per run (`convert_folder` opens it once, for all its shots, and closes it
+  in its `finally`), so per-shot churn exists only in the test. What is left: `helab convert --watch`
+  opens it again each pass (every 3 s), and the app's helper once per convert request (each Live
+  auto-convert check). Proposed: `helab convert` keeps one connection for its whole run, reopening only
+  after an `IndexUnavailable` or a set-aside (the app's helpers end with their request, so they can't).
+  Would it help the real helper + `helab convert` case? A little. While `helab convert` holds its
+  connection, it is never the last to close, so the helper's close neither checkpoints nor deletes the
+  `-wal`, and the next open has none to rebuild. That leaves the two contending only for write
+  transactions, which a conversion spaces by a shot's work. It changes nothing in the write lock's
+  fairness, so (3) above stays the fix if starvation is ever seen outside the test. Cost: the `-wal`
+  then stays between passes (checkpointed every 1000 pages by SQLite), and Settings › Cache already
+  counts it. Not urgent: no starvation has been seen outside this test.
 - **Q~5** (Tony): Settings › General lets the temp folder be set anywhere, and nothing checks it
   (only Help › Record I/O trace warns). On a network drive, a UNC path or a synced folder, HeLab's
   converted TXY of folders without a data root or marked Don't cache go there, and the index there now
@@ -453,20 +472,24 @@ limit, `MARK_FLUSH_TIMEOUT`)". In `app-runtime-and-ui.md`'s main-window part, on
   Converter backends" (123807566257), then passed: `AssertionError: shot 36: IndexUnavailable: HeLab's
   TXY index couldn't be written (database is locked) (cause OperationalError: database is locked; code
   SQLITE_BUSY) after 10.75 s`, `tests\test_convert_helab.py:1556`. It hadn't rerun in the four
-  earlier Windows runs since WAL that I read (40890989136, 40894080358, 40898587803, 40975825607). Not caused by `0b00fdc` (Q~2/Q~3 don't touch the index's writes). Cause:
-  SQLite's write lock isn't fair. Each of the test's two processes opens the index and writes a row
-  150 times back to back, with no work between, so it takes two write transactions per shot (`open_index`'s
-  `_prepare` under `BEGIN IMMEDIATE`, then `record`). The waiter retries with sleeps of up to 100 ms
-  (`_patient`, and SQLite's own busy handler), and on Windows it can keep missing the other writer's gaps
-  for the whole `BUSY_SECONDS`. A real conversion spends tens of milliseconds or more converting each shot
-  between its writes, and a failed write only fails that conversion, so its shots convert again on the
-  next pass; nothing is lost or damaged (the test's integrity check passes on the rerun). Proposed, in
-  order: (1) `_prepare` skips its `BEGIN IMMEDIATE` when `user_version` already equals `SCHEMA` (a read),
-  which halves the write transactions per shot; (2) the test's writers pause a few milliseconds between
-  shots, as a conversion does, so the test keeps checking "nothing lost" rather than lock fairness;
-  (3) if it stays, serialize writers with a blocking OS lock on `converted-txy/index.lock` around each
-  write transaction (`LockFileEx`/`flock` queue waiters, so none starves). (1) and (2) are small, and
-  on this branch I would do them in the next round if wanted.
+  earlier Windows runs since WAL that I read (40890989136, 40894080358, 40898587803, 40975825607). Not
+  caused by `0b00fdc` (Q~2/Q~3 don't touch the index's writes). Cause (corrected after CoCo's review):
+  SQLite's write lock isn't fair, and the test churned it far more than a conversion does. Each of its two
+  processes opened the index, wrote one row and closed it, 150 times back to back with no work between.
+  That is **one** write transaction per shot (`_prepare` takes `BEGIN IMMEDIATE` only for a new file,
+  `user_version` 0, re-checked inside the transaction so two creators are safe; I first wrote "two",
+  wrongly). But in WAL mode the last connection to close checkpoints and deletes the `-wal` (the test
+  checks none is left), and the next open rebuilds it, so every shot also took those locks. The waiter
+  retries with sleeps of up to 100 ms (`_patient`, and SQLite's own busy handler), and on Windows it could
+  miss every gap for the whole `BUSY_SECONDS`. A conversion opens the index **once per run**
+  (`convert_folder`; closed in its `finally`) and spends tens of milliseconds or more on each shot between
+  rows; a failed write only fails that conversion, whose shots convert again on the next pass. Nothing is
+  lost or damaged (the integrity check passes on the rerun). **Done in the next round:** the test's writers
+  pause 5 ms after each row (`PAUSE`, with a comment saying why), still opening per shot, the harder case;
+  a probe that drops one row (shot 7 of one writer) fails it (`149 == 150`). Its docstring no longer says
+  a conversion opens per shot. **Last resort**, if it reruns again: serialize writers with a blocking OS
+  lock on `converted-txy/index.lock` around each write transaction (`LockFileEx`/`flock` queue waiters,
+  so none starves); see also A~4.
 - **Known issue to file (Coordinator):** `tests/test_io_service_run.py::test_writing_held_data_out_counts_as_progress`,
   one RERUN in CI run 40863356565, job "windows Tests (2/2)" (123411955603), then passed: `assert (2 ==
   1)` with `where 2 = len([0.000682100000005903, 0.0014403000000129396])`, `tests\test_io_service_run.py:40`.
@@ -511,8 +534,14 @@ limit, `MARK_FLUSH_TIMEOUT`)". In `app-runtime-and-ui.md`'s main-window part, on
   terminal, `helab convert --watch <it> --once --output cache`: the warning and `[y/N]`; Enter → the
   temp folder, `y` → the cache folder; piped (`< /dev/null`) → temp; `--output cache-forced` → cache.
 - **M~3**: load a converted folder's TXY twice within the hour (Settings › Cache: "last used" from
-  the first), quit with nothing else saving: the quit window shows "Converted TXY last used" briefly
-  and closes by itself; at the next start Settings › Cache shows the second load's time.
+  the first), quit with nothing else saving: the quit window shows briefly and closes by itself; at the
+  next start Settings › Cache shows the second load's time. Its wording, Tony's to change: header
+  "Recording when converted TXY were last used before HeLab quits:" (with other saves: "Saving 1
+  folder to the disk cache and recording when converted TXY were last used before HeLab quits:"); the
+  entry "Converted TXY last used — recording when HeLab's converted TXY were last used". Note (Tern):
+  every load after the first within the hour, and every Live check that takes a HeLab TXY, owes a
+  mark, so the window shows briefly on **most** quits after working with converted folders, not now
+  and then. CoCo may ask Tony to change when the flush runs; until then it is as built.
 
 ## Review round 1 (Tern, `review.md`): what changed
 
@@ -652,3 +681,20 @@ CI run 40874212130 (c546394) passed every job, with two RERUNs, quoted from "rer
   2 s grace; the next commit replaces it.
 - The proposals (converter.md, live.md, app-runtime-and-ui.md) and M~2, M~3 carry them. Tern's round 5
   notes (`review.md`) were committed in `c6277f0`.
+
+## The two-writer RERUN (CI 40977028554): the test paced
+
+- CoCo's (1), `_prepare` skipping `BEGIN IMMEDIATE` when the schema is current, was already the code; no
+  change. The known-issue proposal's cause is corrected: one write transaction per shot, plus WAL's
+  rebuild on each open in that test.
+- (2): `test_two_writers_side_by_side_lose_nothing`'s writers pause `PAUSE` = 5 ms after each row, with a
+  comment saying why; it still fails if a row is lost (probe: `149 == 150`). (3) stays the last resort.
+- A~4 (one connection for a whole `helab convert` run) added for later.
+- Tern's round 6 (`review.md`, committed): **Low-8** fixed: `_on_terminal` is `sys.stdin is not None
+  and sys.stdin.isatty()`, a closed stdin's ValueError caught (the windowed Windows app has no stdin,
+  `console=False`, and crashed with `AttributeError` there on a Don't cache folder). Tests: two
+  `no-stdin` cases of the Q~2 test with `_on_terminal` itself running (temp and the warning; forced to
+  the cache), and `test_a_missing_or_closed_stdin_is_no_terminal`; with the old line both fail.
+  **Nit-9**: documented, one best-effort flush (Design › Q~3). **Nit-10**: the header no longer says
+  "to the disk cache" for the last uses; wording at M~3 for Tony.
+

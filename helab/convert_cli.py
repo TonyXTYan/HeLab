@@ -201,7 +201,12 @@ class _Log:
 
 
 def _on_terminal() -> bool:
-    return sys.stdin.isatty()
+    """Whether stdin is a terminal. It is None in the windowed app (``console=False``) and when closed
+    (``0<&-``); a closed file object raises ValueError."""
+    try:
+        return sys.stdin is not None and sys.stdin.isatty()
+    except ValueError:
+        return False
 
 
 def _ask(question: str) -> bool:

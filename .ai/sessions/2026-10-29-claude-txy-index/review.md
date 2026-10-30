@@ -533,3 +533,131 @@ I read every job's log:
 
 **No RERUN in any job.** Both changed tests passed on all three OSes (Tests (1/2) on each). The
 compat matrix was skipped because this is a push.
+
+## Round 6 review (head `0b00fdc`, `git diff 11389a9..0b00fdc`: Q~2 and Q~3 as Tony decided)
+
+**Result: no blocker. One new Low (Low-8) and two Nits (Nit-9, Nit-10).** Q~2 and Q~3 are built as
+the handoff describes. The quit path and the FolderCache hook change nothing else: IOService and
+`io_helper` are untouched.
+
+| Finding | Status | Where |
+|---|---|---|
+| Low-8 (new) | open, Low | `helab/convert_cli.py:204`, `_on_terminal` |
+| Nit-9 (new) | open, Nit | `helab/views/HelabMainWindow.py:1585–1587`, marks sent after the flush |
+| Nit-10 (new) | open, Nit | `helab/views/QuitSaveDialog.py:88–91`, the header's wording |
+
+### Low-8: `helab convert --output cache` crashes when there is no stdin (the packaged Windows app)
+
+- **Where:** `convert_cli.py:204`: `return sys.stdin.isatty()`.
+- **Why:** `HeLab.spec` builds with `console=False`, and `converter.md:358` says so: "on Windows the
+  windowed exe has no console, so lines go only to the log". In that process `sys.stdin` is `None`.
+  So `HeLab.exe convert --watch F --output cache`, on a folder marked Don't cache, raises
+  `AttributeError: 'NoneType' object has no attribute 'isatty'` in `_request`, before the first check.
+  `main` catches only `KeyboardInterrupt`, and the windowed bootloader shows "Unhandled exception in
+  script". Q~2 says "without a terminal, temp with the warning". The same happens on any OS when
+  stdin is closed (`0<&-`).
+- **Probe:** with `sys.stdin = None`, `_on_terminal()` raised that `AttributeError`; `python -c …
+  0<&-` prints `sys.stdin` as `None`.
+- **Fix:** `return sys.stdin is not None and sys.stdin.isatty()`, plus a parametrised case in
+  `test_a_typed_output_cache_asks_before_writing_a_dont_cache_folder_to_the_cache` with `sys.stdin`
+  set to `None` and `_on_terminal` *not* patched (expect temp and the warning). `_ask` writes to
+  `sys.stderr`, but it is reached only on a terminal.
+
+### Nit-9: a last use reported after the flush is dropped
+
+`_wait_for_saves` calls `stop_live()` and then `flush_txy_marks()` straight away. Live's closing
+save (`save_held`, which calls `helab_txy.find`), or a load still running, can send `txy_unmarked`
+after the one flush was submitted. That mark stays in `FolderCache.txy_unmarked` and is never
+written. The cost is a `last_used` up to an hour old, which is best effort as designed. Either say so
+in the handoff's Q~3 paragraph, or flush again from `_on_event` when a mark arrives while
+`quitting` (still one helper at a time).
+
+### Nit-10: the quit window's header says "to the disk cache"
+
+With other saves the header reads "Saving 1 folder and converted TXY's last use to the disk cache
+before HeLab quits:", and the index may be under the temp folder. Wording is Tony's: the M~3 check
+could show him the text. (A three-way " and " join, "1 folder and presets and converted TXY's last
+use", is possible but rare.)
+
+### For Tony (not a finding)
+
+Every load after the first within the hour, and every Live check that takes a HeLab TXY, is skipped
+by `LAST_USED_STEP` and so owes a mark. So the quit window will show briefly on most quits after
+working with converted folders, not now and then. M~3 shows it; CoCo may want Tony to know it is the
+usual case when he runs M~3.
+
+### What I checked and found sound
+
+- **Q~2:** `cache_confirmed` is set only by `_request`, and only for a typed `cache`/`cache-forced`.
+  The setting's default and `--output temp` never ask (tested), and the app never sets it. `_places`
+  skips only the Don't cache read with it, so beside's check and the data-root fallback are
+  unchanged. `dont_cache` returns "" for a store it can't read or for no data root, as documented
+  (those go to temp anyway). The question goes to stderr; only `y`/`yes` writes, and EOF or Enter
+  doesn't (tested). Ctrl-C at the question stops cleanly. It is asked once per run. Tests never read
+  the real stdin.
+- **Q~3, the helper side:** `touch` returns False only for a row that is there but newer. A busy
+  index (200 ms) raises, so `written = False`. `_mark_used` sends `txy_unmarked` through
+  `infra.emit` (stdout, the helper's channel). Its three callers (`loading`, `save_held`, `live`) all
+  run in helpers whose `send` is that `emit`. `mark_used` writes only `last_used < at`, so it never
+  moves a use back. A reader `open_index` returns None for a missing, damaged or newer index, and
+  each statement's error is suppressed. `cache_admin` answers `mark_used` before it opens the store.
+  `ADMIN_ACTIONS` has no other user.
+- **Q~3, the GUI side:** the only listener that takes every producer is `FolderCache._on_event`
+  (`main.py`, `CacheMover`, `HelabMainWindow`'s drive and trace handlers and `DataRootsTab` filter by
+  owner). It keeps the newest `at` and returns before anything else, so the new kind reaches no
+  other handler. The flush's events stop at its owner check. They end on `done`, `error` or
+  `cancelled`, which is all IOService sends for a non-load: a no-progress timeout is `error` with no
+  retry, since retries are only for loads' files. `flush_txy_marks` submits once; a failed submit
+  keeps the marks. `quit_saves()` gains the entry only while it runs. `cancel_for_quit` doesn't
+  cancel `cache_admin`. Quit now → `shutdown()` cancels it.
+- **Outside the owned paths:** `HelabMainWindow` changes by one line, `QuitSaveDialog` by its
+  `state` line, header and count, and `folder_cache` by its additions and the first lines of
+  `_on_event`. `quit_save_started` and `txy_marks_flushing` are used only by tests and are kept for
+  Beacon's quit window, as the handoff says.
+
+### Checks (floor venv, macOS)
+
+- **Full suite**, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8222 passed, 669 skipped, 0 reruns** (2 min 5 s).
+  - The suite was collected at 11:18:04 from HEAD 2213dcc. That HEAD is 0b00fdc plus two
+    handoff-only commits, so `helab/` and `tests/` were identical to 0b00fdc.
+  - Ledger's uncommitted edit to `tests/test_convert_helab.py` (the writers' `PAUSE`) landed at
+    11:20:04, after collection, so this run didn't test it.
+- **Type checks:** `mypy helab/ --strict` (191), `mypy tests --strict` (160) and `mypy helab/ --strict
+  --platform win32` (191) found no issues. `pyright helab tests` and `pyright --pythonplatform
+  Windows helab tests` found 0 errors.
+
+### CI run 40977028554 (head `0b00fdc`, attempt 1): success, one RERUN
+
+I read every job's log:
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123807566083 | 4097 passed |
+| Ubuntu Tests (2/2) | 123807565984 | 4123 passed |
+| macOS Tests (1/2) | 123807566050 | 4100 passed |
+| macOS Tests (2/2) | 123807567065 | 4122 passed |
+| Windows Tests (1/2) | 123807566077 | 4087 passed |
+| Windows Tests (2/2) | 123807566128 | 4106 passed |
+| Ubuntu Converter backends | 123807566151 | 690 passed |
+| macOS Converter backends | 123807566381 | 690 passed |
+| Windows Converter backends | 123807566257 | 689 passed, **1 rerun** |
+| Detect branch; ubuntu, windows, macos Build | 123807485147; 123807565170, 123807565171, 123807565363 | success |
+
+The compat matrix was skipped (a push, not a PR). Every new Q~2/Q~3 test passed on every OS.
+
+- **The rerun, quoted from "rerun reasons":** `tests/test_convert_helab.py::test_two_writers_side_by_side_lose_nothing`.
+  `AssertionError: shot 36: IndexUnavailable: HeLab's TXY index couldn't be written (database is
+  locked) (cause OperationalError: database is locked; code SQLITE_BUSY) after 10.75 s`, at
+  `tests\test_convert_helab.py:1556`. It passed on the rerun.
+- **Not caused by round 6:** Q~2 and Q~3 don't touch the index's writes, and this test doesn't run
+  `mark_used`.
+- **Ledger's proposal** (e259c43) is in the handoff for known-issues. Ledger blames writer starvation:
+  SQLite's lock isn't fair, and two processes write back to back with no gap. That fits the evidence:
+  10.75 s is `BUSY_SECONDS` plus the last attempt, and the integrity check passes on the rerun.
+  - Proposal (1), `_prepare` skipping `BEGIN IMMEDIATE` when `user_version` is already `SCHEMA`,
+    fixes the cause: two write transactions per shot become one. I'd prefer it to (2), which only
+    makes the test gentler.
+  - Ledger is making (2) now (uncommitted). It's acceptable as a test fix if the known-issues entry
+    keeps (1) and (3) open.
+  - Whichever lands needs its own green CI run before landing.

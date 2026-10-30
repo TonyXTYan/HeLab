@@ -156,7 +156,7 @@ def test_quit_writes_the_skipped_last_uses_in_the_quit_window(qtbot: QtBot, tmp_
     assert not window._closing and dialog is not None
     assert [dialog.folders.item(row).text() for row in range(dialog.folders.count())] == [  # type: ignore[union-attr]
         f"{TXY_LAST_USED} — recording when HeLab's converted TXY were last used"]
-    assert dialog.label.text() == "Saving converted TXY's last use to the disk cache before HeLab quits:"
+    assert dialog.label.text() == "Recording when converted TXY were last used before HeLab quits:"
     qtbot.waitUntil(lambda: window._closing, timeout=30000)
     assert last_used(root) == 200.0
 
@@ -213,6 +213,7 @@ def test_beside_other_saves_the_flush_is_one_more_entry(qtbot: QtBot, tmp_path: 
     window.close()
     dialog = window._quit_dialog
     assert dialog is not None and cache.quit_saves()[0] == path
-    assert dialog.label.text() == "Saving 1 folder and converted TXY's last use to the disk cache before HeLab quits:"
+    assert dialog.label.text() == ("Saving 1 folder to the disk cache and recording when converted TXY were last "
+                                   "used before HeLab quits:")
     del cache._deferred_saves[path]
     qtbot.waitUntil(lambda: window._closing, timeout=30000)

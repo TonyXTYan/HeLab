@@ -1521,7 +1521,7 @@ def test_an_index_where_the_folder_may_not_be_local_uses_a_rollback_journal(
 WRITER = """
 import sys, time
 from helab.convert import provenance
-root, name, count, start = sys.argv[1], sys.argv[2], int(sys.argv[3]), float(sys.argv[4])
+root, name, count, start, pause = sys.argv[1], sys.argv[2], int(sys.argv[3]), float(sys.argv[4]), float(sys.argv[5])
 while time.time() < start:
     time.sleep(0.001)
 for shot in range(count):
@@ -1541,15 +1541,21 @@ for shot in range(count):
               f"code {getattr(cause, 'sqlite_errorname', None)}) after {time.monotonic() - began:.2f} s",
               file=sys.stderr)
         raise
+    # A conversion reads, converts and writes a TXY between two rows (tens of milliseconds or more), so
+    # two converters leave each other gaps. Back to back, with no pause, the test measured SQLite's
+    # write lock, which isn't fair: on Windows one writer could miss every gap for BUSY_SECONDS (CI
+    # 40977028554). The pause keeps both writing at once, and every row is still checked.
+    time.sleep(pause)
 """
+PAUSE = 0.005
 
 
 def test_two_writers_side_by_side_lose_nothing(tmp_path: Path) -> None:
-    """The app's helper and ``helab convert`` (two processes) writing one index at once, each opening it per
-    shot as a conversion does: every row lands, and the file stays sound."""
+    """The app's helper and ``helab convert`` (two processes) writing one index at once: every row lands,
+    and the file stays sound. Each opens it per shot, harder than a conversion (one connection per run)."""
     root = str(tmp_path / "converted-txy")
     start = time.time() + 1.0
-    writers = [subprocess.Popen([sys.executable, "-c", WRITER, root, name, "150", str(start)],
+    writers = [subprocess.Popen([sys.executable, "-c", WRITER, root, name, "150", str(start), str(PAUSE)],
                                 stderr=subprocess.PIPE, text=True) for name in ("helper", "command line")]
     for writer in writers:
         _, errors = writer.communicate(timeout=120)
@@ -1658,8 +1664,10 @@ class NoStdin:
 
 
 def typed(source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch, *argv: str,
-          terminal: bool = False, answer: bool | None = None) -> tuple[ConvertRequest, list[str]]:
-    """``helab convert``'s request for ``argv``, its terminal and answer patched; the questions asked."""
+          terminal: bool | None = False, answer: bool | None = None,
+          stdin: Any = None) -> tuple[ConvertRequest, list[str]]:
+    """``helab convert``'s request for ``argv``, its terminal and answer patched; the questions asked.
+    ``terminal`` None: not patched, ``sys.stdin`` being ``stdin`` (``NoStdin`` by default)."""
     from helab import convert_cli
     asked: list[str] = []
 
@@ -1667,9 +1675,10 @@ def typed(source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.
         asked.append(question)
         assert answer is not None, "asked without a terminal"
         return answer
-    monkeypatch.setattr(sys, "stdin", NoStdin())
+    monkeypatch.setattr(sys, "stdin", NoStdin() if terminal is not None else stdin)
     monkeypatch.setattr(builtins, "input", NoStdin().readline)
-    monkeypatch.setattr(convert_cli, "_on_terminal", lambda: terminal)
+    if terminal is not None:
+        monkeypatch.setattr(convert_cli, "_on_terminal", lambda: terminal)
     monkeypatch.setattr(convert_cli, "_ask", ask)
     args = convert_cli._arguments(["--watch", str(source), "--once", *argv])
     request = convert_cli._request(args, str(source), MATLAB_2019.to_dict(), options(private_store))
@@ -1679,19 +1688,21 @@ def typed(source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.
 
 @pytest.mark.parametrize("terminal, answer, output, cache", [
     (True, True, "cache", True), (True, False, "cache", False), (False, None, "cache", False),
-    (False, None, "cache-forced", True), (True, None, "cache-forced", True)],
-    ids=["terminal-y", "terminal-N", "no-terminal", "forced", "forced-on-terminal"])
+    (False, None, "cache-forced", True), (True, None, "cache-forced", True),
+    (None, None, "cache", False), (None, None, "cache-forced", True)],
+    ids=["terminal-y", "terminal-N", "no-terminal", "forced", "forced-on-terminal", "no-stdin", "no-stdin-forced"])
 def test_a_typed_output_cache_asks_before_writing_a_dont_cache_folder_to_the_cache(
         source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
-        terminal: bool, answer: bool | None, output: str, cache: bool) -> None:
+        terminal: bool | None, answer: bool | None, output: str, cache: bool) -> None:
     """Q~2 (Tony): the command line stands for the user, as ``beside`` does (Q12.4). One line names the
     folder; for a typed ``--output cache`` a terminal asks (no by default), without one it's temp;
-    ``cache-forced`` asks nothing."""
+    ``cache-forced`` asks nothing. No stdin at all (the windowed Windows app, ``console=False``; terminal
+    None: ``_on_terminal`` itself runs) is no terminal (Tern's Low-8)."""
     write_raw(source, 1, raw_bytes(10_000))
     flag_no_cache(private_store, source)
     with caplog.at_level("WARNING", logger="helab.convert"):
         request, asked = typed(source, tmp_path, private_store, monkeypatch, "--output", output,
-                               terminal=terminal, answer=answer)
+                               terminal=terminal, answer=answer, stdin=None)
     assert asked == (["Write to the cache folder anyway? [y/N] "] if answer is not None else [])
     [warning] = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
     assert warning.startswith(f"{source}: you chose Don't cache for this folder")
@@ -1722,6 +1733,17 @@ def test_the_output_settings_default_leaves_dont_cache_the_last_word(
     flag_no_cache(private_store, source, on=False)
     request, asked = typed(source, tmp_path, private_store, monkeypatch, "--output", "cache", terminal=True)
     assert not asked and not caplog.records and "cache_confirmed" not in request
+
+
+def test_a_missing_or_closed_stdin_is_no_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tern's Low-8: ``sys.stdin`` is None in the windowed app and when closed (``0<&-``); a closed file
+    object raises ValueError. Neither is a terminal, and neither raises."""
+    from helab import convert_cli
+    closed = io.StringIO("y\n")
+    closed.close()
+    for stdin in (None, closed):
+        monkeypatch.setattr(sys, "stdin", stdin)
+        assert convert_cli._on_terminal() is False
 
 
 def test_the_answer_is_no_unless_yes(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:

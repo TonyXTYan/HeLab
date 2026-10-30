@@ -100,3 +100,10 @@ Final runs (after 35b50d0):
 - The five type checks clean (mypy strict helab 191, tests 160, win32 191; pyright macOS and Windows 0 errors).
 - `tests/test_txy_last_used_quit.py` 3 runs in a row: 8 passed each. The no-progress test holds the
   index's write lock (the helper answers in ~60 ms otherwise, too fast for a timeout to be sure).
+
+## Paced two-writer test, Tern's round 6, 2026-10-30
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` (macOS):
+  `8225 passed, 669 skipped, 2 warnings in 132.29s`, no RERUN. The five type checks clean.
+- Probes: one row dropped by a writer fails the two-writer test (`149 == 150`); the old `_on_terminal`
+  fails the two stdin tests.
