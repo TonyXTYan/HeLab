@@ -850,6 +850,64 @@ def test_a_shot_held_from_matlabs_keeps_it_when_helabs_is_converted(tmp_path: Pa
     assert loaded(restored)["cache_reason"] == "Reused 2 shots from disk cache; 1 new or changed TXY file to read"
 
 
+def aged(*folders: str | Path) -> None:
+    """Folders' mtimes moved back, so a quick check trusts them (a fresh mtime is too recent to)."""
+    old = time.time() - 600
+    for folder in folders:
+        if os.path.isdir(folder):
+            os.utime(folder, (old, old))
+
+
+def test_the_quick_check_never_reuses_ram_of_another_kind(tmp_path: Path, private_store: str) -> None:
+    """Codex 4425801677 (P1): this HeLab holds shots 1-3 from MATLAB's TXY; another HeLab on this computer (the
+    same store) converts shot 3 and saves the dataset with it from HeLab's TXY. The signature (the folder's
+    MATLAB TXY) is the same, so the cached quick check passed and RAM's MATLAB shot 3 was reused labelled
+    HeLab's. It must be read."""
+    source = tmp_path / "run"
+    source.mkdir()
+    old = time.time() - 600
+    for shot in (1, 2, 3):
+        write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 1))))
+        os.utime(matlab_txy(source, shot), (old, old))
+    aged(source)
+    priority = options(tmp_path, private_store, txy_sources.HELAB_PRIORITY)
+    first = loaded(run_load(source, tmp_path, private_store, priority))
+    assert first["txy"]["origins"] == {}
+    # The other HeLab: shot 3 converted, the folder loaded and saved.
+    convert(source, tmp_path, private_store, shots=[3])
+    aged(source, *helab_txy.folders(str(source), priority, _key(source, private_store)))
+    other = loaded(run_load(source, tmp_path, private_store, priority))
+    assert sorted(other["txy"]["origins"]) == ["3"] and other["signature"] == first["signature"]
+    # This one asks again with what it holds.
+    events = run_load(source, tmp_path, private_store, priority, memory=first["fingerprint"],
+                      base_signature=first["signature"], memory_origins=first["txy"]["origins"])
+    result = loaded(events)
+    assert 3 not in result["memory_shots"] and sorted(result["txy"]["origins"]) == ["3"]
+    assert result["memory_shots"] == [1, 2] and result["source"] != "memory"
+
+
+def test_helab_only_leaves_out_matlabs_shots_without_a_mismatch(tmp_path: Path, private_store: str) -> None:
+    """Codex 4425801688: shots cached (or held) from MATLAB's TXY that HeLab only leaves out aren't deleted: their
+    MATLAB TXY are there. The load gives HeLab's shots, with no ``shots_missing``."""
+    source = tmp_path / "run"
+    source.mkdir()
+    old = time.time() - 600
+    for shot in (1, 2, 3):
+        write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 1))))
+        os.utime(matlab_txy(source, shot), (old, old))
+    convert(source, tmp_path, private_store, shots=[3])
+    first = loaded(run_load(source, tmp_path, private_store, options(tmp_path, private_store, txy_sources.MATLAB_ONLY)))
+    assert first["txy"]["origins"] == {} and [entry[0] for entry in first["fingerprint"]] == [1, 2, 3]
+    only = options(tmp_path, private_store, txy_sources.HELAB_ONLY)
+    for kwargs in ({}, {"memory": first["fingerprint"], "base_signature": first["signature"]}):
+        events = run_load(source, tmp_path, private_store, only, **kwargs)
+        assert "shots_missing" not in kinds_of(events), kwargs
+        result = loaded(events)
+        assert [entry[0] for entry in result["fingerprint"]] == [3] and sorted(result["txy"]["origins"]) == ["3"]
+        # (Counted as removed from the data shown: the shots the source leaves out.)
+        assert result["total_files"] == result["files"] == 1 and result["load_counts"]["removed"] == 2
+
+
 def test_live_asks_the_store_for_a_key_once_a_session(tmp_path: Path, private_store: str,
                                                       monkeypatch: pytest.MonkeyPatch) -> None:
     from helab.io_ops import live as live_module

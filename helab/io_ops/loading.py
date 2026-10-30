@@ -135,7 +135,8 @@ def _helab_unchanged(path: str, store: CacheStore | None, txy: dict[str, Any], s
 
 def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
                            base_signature: str, memory: list[list[int]], check_level: str,
-                           txy: dict[str, Any] | None = None) -> bool | None:
+                           txy: dict[str, Any] | None = None, held_origins: dict[int, str] | None = None
+                           ) -> bool | None:
     """One folder stat instead of listing and checking every file.
 
     When the caller holds the cached dataset (``base_signature``), the cache has
@@ -143,7 +144,10 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
     listing saw (``_mtime_unchanged``), nothing can have been added or
     removed: ``loaded`` names the caller's shots and True is returned. None: the
     check doesn't apply (no such cached dataset), and the folder wasn't looked at. HeLab's TXY
-    (``txy``) count as unchanged only while HeLab's folders are (``_helab_unchanged``).
+    (``txy``) count as unchanged only while HeLab's folders are (``_helab_unchanged``). The signature is
+    the folder's MATLAB TXY only, so the cached dataset is the one held only while every shot both have
+    has the same (size, mtime) and kind in each (``held_origins``: the held shots' HeLab origins): another
+    HeLab on this computer may have saved the folder with a shot from another TXY (Codex on PR #10).
     """
     found = store.read_dataset_row(path)
     if found.value is None:
@@ -153,10 +157,16 @@ def _unchanged_since_cache(path: str, send: Emit, store: CacheStore,
     as_of = _as_of(info)
     if info.get("signature") != base_signature or info.get("unsettled") or as_of is None:
         return None
-    folder = _stat(path, "cached check: folder")
-    modified = folder.st_mtime
     fingerprint = [list(entry) for entry in _saved_fingerprint(row)]
     record = _txy_record(info)
+    cached = {int(entry[0]): (int(entry[1]), int(entry[2])) for entry in fingerprint}
+    cached_origins = helab_txy.origins_from(record.get("origins"))
+    for shot, size, modified_ns in memory:
+        if int(shot) in cached and (cached[int(shot)] != (int(size), int(modified_ns))
+                                    or (held_origins or {}).get(int(shot), "") != cached_origins.get(int(shot), "")):
+            return None
+    folder = _stat(path, "cached check: folder")
+    modified = folder.st_mtime
     if (not _mtime_unchanged(info, folder, as_of)
             or not _samples_unchanged(path, fingerprint, info.get("names"), check_level)
             or not _helab_unchanged(path, store, txy or {}, record)):
@@ -318,7 +328,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     quick: bool | None = None
     if (not no_cache and not full_check and base_signature and store is not None and memory
             and expected in ("", base_signature)):
-        quick = _unchanged_since_cache(path, send, store, base_signature, memory, check_level, txy)
+        quick = _unchanged_since_cache(path, send, store, base_signature, memory, check_level, txy, held_origins)
         if quick:
             return
     if (quick is None and memory_check and not full_check and base_signature and memory
@@ -446,7 +456,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # TXY files are written once: shots cached (or held in RAM) that the folder no longer has mean
     # another folder now sits at this path, or files were deleted. Stop before reading anything,
     # or unpacking the cache; the user decides (``allow_missing``: load the folder as it is now).
-    listed = set(chosen)
+    # A shot the source leaves out (HeLab only) whose MATLAB TXY is there isn't missing: the load is without it.
+    listed = set(chosen) | set(matlab)
     # Only MATLAB's TXY, written once, feed the mismatch rule (Q6.6): a shot held or cached from HeLab's TXY
     # may go (cleared) or change (converted again) legitimately; it is then read anew, or removed.
     from_helab = set(held_origins)

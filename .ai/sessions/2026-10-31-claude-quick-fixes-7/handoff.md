@@ -191,7 +191,68 @@ whose current message starts with `DAMAGED_TEXT`.
 
 **Pushed:** `dev/v0.0.7` with `d9a154d` and this session commit on top (hash and CI run in the report).
 
+**CI reruns (correction, CoCo 2026-10-31).** I reported this round's run and round 3's as passing from the
+jobs' conclusions without reading their logs; the logs of every Tests and Converter backends job of the four
+runs, read since, show three RERUNs, all on Windows, each passing on rerun:
+
+- **New, round 4's run 41086378298** (`9de3e19`), windows + py3.13 Tests (1/2), job 124168617741, gw0:
+  `tests/test_accessible_names.py::test_every_script_and_each_library`: "Controls without an accessible name:
+  Basic plots v1 › Plot T, X, Y histograms: QTabBar < QMainWindow < QSplitter < HelabMainWindow: no ID". Not a
+  worker crash: a Qt-made tab bar (the plot area's dock tabs) walked before it got its ID, it seems. Not in
+  known-issues; CoCo files it at the tidy-up. Proposed line: "`test_accessible_names.py::test_every_script_and_each_library`:
+  'QTabBar < QMainWindow < QSplitter < HelabMainWindow: no ID' (Basic plots v1 › Plot T, X, Y histograms),
+  Windows CI 41086378298 (job 124168617741, gw0, `dev/v0.0.7` `9de3e19`); passed on rerun. Likely a dock tab
+  bar Qt makes when docks tabify, walked before `identify` names it."
+- **Known, round 3's run 41084197666** (`dd540cd`), windows + py3.13 Tests (2/2), job 124161029996:
+  `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]` ("worker 'gw3'
+  crashed", the QtWebEngine worker-crash entry) and `test_io_service_run.py::test_writing_held_data_out_counts_as_progress`
+  (`assert (2 == 1)`, two progress marks 0.96 ms and 1.5 ms, at line 40). Both already in known-issues: add this
+  run as another occurrence.
+- Rounds 1 and 2 (41078799066, 41081757658): no RERUN in any job's log.
+
+None touches the files this brief changed.
+
 **Doc proposals:** `live.md` Auto-convert parenthesis (extending round 2's): "(`seen`/`done`/`kept`/`skip`;
 `done`/`kept`/`skip` only for the same profile, and under another `seen` without its reasons: a file waiting or
 unconvertible under one profile is read again under the next)". `converter.md`'s `seen` row, if it names the
 reasons, the same.
+
+# Round 5 (Codex's fifth review 5715183970 on `b836b56`)
+
+Detail in `notes.md` (Round 5). Round 4's CI and its RERUN: above (Round 4, CI reruns).
+
+| Finding | Commit | Files |
+|---|---|---|
+| P1 4425801677, cached quick check reused RAM of another kind | `8e11ffe` | `helab/io_ops/loading.py`, `tests/test_txy_sources.py` |
+| P2 4425801688, HeLab only: MATLAB-origin cached shots "missing" | `924109a` | `helab/io_ops/loading.py`, `tests/test_txy_sources.py` |
+
+8. **Verified first: it can happen.** Two HeLab instances on one computer share the store (no single-instance
+   guard), and the signature is the folder's MATLAB TXY, so B saving shot 3 from HeLab's TXY leaves it as it was.
+   Reproduced: "Folder not modified since cached", `memory_shots` [1, 2, 3] with origins {3: helab}. **Fix:** the
+   quick check applies only while every shot held and cached has the same (size, mtime) and kind in both; else
+   the load compares each file (RAM reused only for matching shots).
+9. `listed` also has the shots whose MATLAB TXY are listed, so a shot HeLab only leaves out isn't missing. **The
+   user sees** the HeLab subset (shots and total HeLab's, the source line HeLab only, the folder's status still its
+   MATLAB TXY count) and, in Folder details' load line, "N files removed" for the shots left out (Q~3).
+
+**Tests (fail on `3a30bbd`, pass now):** `test_the_quick_check_never_reuses_ram_of_another_kind` (3 in
+`memory_shots`); `test_helab_only_leaves_out_matlabs_shots_without_a_mismatch` (`shots_missing` [1, 2]).
+
+**Checks:** full suite -n 12: 8509 passed, 672 skipped, no RERUN; five type checks clean.
+
+**Pushed:** `dev/v0.0.7` with `8e11ffe`, `924109a` and this session commit (with `3a30bbd` before them); hash, CI
+run and its job logs' RERUNs in the report.
+
+**Doc proposals:** `cache-store.md` or `io-and-browsing.md`, the cached quick check: "the held dataset is the
+cached one only while its signature matches **and** every shot both have has the same (size, mtime) and kind
+(another HeLab on this computer may have saved the folder with a shot from another TXY)". `converter.md`'s TXY
+sources: "HeLab only leaves out shots that have only MATLAB's TXY: not missing (no mismatch), removed from the
+data shown".
+
+**Q~3** (Tony, wording): after switching to HeLab only, Folder details' load line counts the shots left out as
+"N files removed". Proposed: say "N left out (TXY source)" for them, apart from files really gone (needs a
+`load_counts` key and `FolderExplorer.load_count_details`).
+
+**Memory note:** my Claude memory folder links to the repo's `.ai/memory/`, so a memory I saved in round 4
+(`feedback_ci_reruns_in_logs.md` and its `MEMORY.md` line) landed there, uncommitted. Per CoCo, left as is, not
+staged; CoCo folds it in at the tidy-up.
