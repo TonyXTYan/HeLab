@@ -160,6 +160,24 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   each shot's last write (its mtime) to its TXY and the plot update (the log's `MILESTONE
   convert_done` / `plot_done` once Runner Tools lands), for a few dozen shots; then choose the Live
   interval and settle time defaults (Q33.7; now 3 and 5 s, so ~5–8 s).
+- [ ] **M36.4 The settle time setting on a live run** (block 36; with M33.1): Settings › General, set
+  "Read files unmodified for" to 10 s and watch Live on a run being written: shots appear ~10 s after
+  their file stops changing.
+
+## UI polish (added 2026-10-30, block 36)
+
+- [ ] **M36.1 The main split on a real screen** (Mac and a lab PC): open two plots: folders 380, settings
+  ~330, plots the rest; drag the splitters, quit, relaunch: the widths come back; Live on still collapses
+  the folder panel. On the lab PC (Segoe UI 9 pt) nothing in the settings panel is cut at 320 px; drag it to
+  its least (250 px) and note what is cut (Q36.3); at a large display scale the Scripts row's button may be.
+- [ ] **M36.2 Floating plots** (Mac): float two plots from their title's float button: they open 800×600 a
+  step apart; a double-click on a title does the same; the Dock button docks each. With one floating and
+  the main window active, the panel names the docked plot and its title's Float floats that one. Pick the
+  floating plot from the Settings panel's chooser and check the panel ends on it (the popup's close gives
+  focus back to the main window first; offscreen tests can't show which wins).
+- [ ] **M36.3 A path too long on Windows** (a lab PC without long paths): a user profile converting beside
+  raw files in a deep folder shows "Path too long for Windows …" in the Live line's tooltip; or check
+  `LongPathsEnabled` there and note it.
 
 ## Post-2025 plates, in the lab (added 2026-10-29, block 25)
 

@@ -47,7 +47,7 @@ compute is postponed until the converter works well (Q6.2).
 - [ ] Release v0.0.7 (Q9.9: stages 1, 2 and 4 plus the smoke pass). Left: the smoke pass on a Mac
   and a lab PC (M1.1–M1.10; the converter step is M1.9, Q24.3); byte units by OS (A26.1) done
   (landed `8bf810f`); the runner aids for the smoke pass (Smoke ready landed `4ad8ac5`; Runner Tools landed
-  `0316bae`); UI polish (block 33) after Smoke ready; `converted-txy/index.sqlite` with Q19.5 and A19.1 (Q26.2, Q27.4, Q27.5) done (landed
+  `0316bae`); UI polish (block 33) done (landed `c104502`, 2026-10-30); `converted-txy/index.sqlite` with Q19.5 and A19.1 (Q26.2, Q27.4, Q27.5) done (landed
   `460360b`, 2026-10-30), its follow-up A30.4; saved results off by default (Q27.1, done); Q23.1 confirmed;
   the version bump on the PR branch to the pre-release **`0.0.7a1`** (Tony, 2026-10-29; then v0.0.8
   development straight away); the PR to `main`; the release tidy-up (Q8.3) (2026-10-29).

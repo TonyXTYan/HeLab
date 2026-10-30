@@ -328,8 +328,23 @@ HeLab's TXY are `d_txy_helab_<tag>_<N>.txt` (`.txt`, like MATLAB's `d_txy_forc<N
 files and in HeLab's folders (provenance in the index; old builds' `.json` records are ignored). Built-in tags are frozen once used
 and pinned by a test: `m19v1` (matlab-2019), `m23v1` (matlab-2023-lab-edit), `p17v1` (plates-2017),
 `p22v1` (plates-2022), `p25t1` (plates-2025, testing; prefixes `a`/`b`/`t` for alpha, beta, testing;
-Q23.1); other profiles are tagged `u` + 8 hex digits of their content hash (`file_tag`: a built-in's tag
-only while its name, tag and hash are the built-in's). No metadata goes beside the raw files: a beside
+Q23.1); other profiles are tagged `u` + 32 hex digits of their content hash (Q23.6, `agent/ui-polish`,
+landed `c104502`; `USER_TAG_DIGITS`; `file_tag`: a built-in's tag only while its name, tag and hash are the
+built-in's). Name patterns take a tag of 1 + 1–32 characters (`profile.NAME_TAG`, spelled out in
+`file_kinds.HELAB_TXY`, `provenance._NAME`/`BARE_NAME` and so `partial()`/`own_partial()`, and
+`helab_txy._OWN_FILE`; a test checks each); `TAG_PATTERN` (built-ins) stays at 16. A name is 50 characters
+plus the shot's digits, 26 more while temporary. TXY from the first builds' `u` + 8 tags still match as
+HeLab's, of another tag: a load for the profile ignores them, its shots convert again under the new tag, and
+the old files are never deleted or replaced (Settings › Cache measures and clears them with HeLab's own).
+**A path too long** (`io_ops.convert.path_too_long`, the OS's own refusal only): ENAMETOOLONG anywhere; on
+Windows WinError 206, or WinError 3 / FileNotFoundError on a path of 260+ characters while the target's
+folder still exists (a traced stat; gone, the run fails as before and the next check retries;
+`convert.PLATFORM`, read at call time, lets tests try Windows' rules). A shot's `txy.write_atomic` refused so
+becomes `shot_unconvertible` ("failed") with "Path too long for Windows (N characters; the limit is 259
+unless long paths are turned on in Windows): <path>. Choose a shorter cache or temp folder (Settings), or a
+shorter folder path", in the Live line's "N unconvertible" and its tooltip, a log warning and
+`helab convert`'s output; the run goes on, and the shot isn't tried again while its raw file is unchanged,
+this session. HeLab's folder that can't be made (`os.makedirs`) fails that conversion with the same wording. No metadata goes beside the raw files: a beside
 TXY is current while newer than its raw file (`provenance.beside_stale`). Untagged
 `d_txy_helab_<N>.txy` from before are ignored and never removed (converted again under the new names).
 MATLAB's `tdc_autoconverter` skips HeLab's beside TXY only through its first-line check, not by name,

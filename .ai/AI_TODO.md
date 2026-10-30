@@ -338,15 +338,15 @@ From the TXY Index floor's [handoff](sessions/2026-10-29-claude-txy-index/handof
 ## Provisional UI pass (block 33)
 
 From the [findings](sessions/2026-10-30-claude-ui-provisional-0.0.7/findings.md); in the UI polish
-floor (Q33.6).
+floor (Q33.6). All four done on `agent/ui-polish` (landed `c104502`).
 
-- [ ] **A33.1** Tab out of a plot setting opens the next row's editor (an empty wide box until the
+- [x] **A33.1** Tab out of a plot setting opens the next row's editor (an empty wide box until the
   next click); Tab should commit and stop, like Return after Smoke ready.
-- [ ] **A33.2** Offline, Folder details says "Loaded from cache · not checked yet" beside "checked,
+- [x] **A33.2** Offline, Folder details says "Loaded from cache · not checked yet" beside "checked,
   unchanged"; make the two agree with the summary's "not checked (offline)".
-- [ ] **A33.3** Settings › General labels the temp folder "DIR_TEMPS:" (the constant's name); word it
+- [x] **A33.3** Settings › General labels the temp folder "DIR_TEMPS:" (the constant's name); word it
   like the cache folder's row.
-- [ ] **A33.4** After a plot floats, the settings panel's Float button floats whichever plot the panel
+- [x] **A33.4** After a plot floats, the settings panel's Float button floats whichever plot the panel
   names, not the one just floated; make it act on (or show) the right plot.
 
 ## Smoke ready (block 34)
@@ -369,6 +369,21 @@ From the Runner Tools floor's [handoff](sessions/2026-10-30-claude-runner-tools/
   --timeout S`, built on `app_log.parse_milestone`), if the runbook's waits want more than `grep`.
 - **A35.2 `--geometry` through the dev stub**: `open …/HeLab-dev.app --args --geometry …` (Smoke ready
   has landed it); check once.
+
+## UI polish (block 36)
+
+From the UI polish floor's [handoff](sessions/2026-10-30-claude-ui-polish/handoff.md) and Ibis's
+[review](sessions/2026-10-30-claude-ui-polish/review.md) (landed `c104502`). Its A~1, the Plotly SIGSEGV fix,
+was done on the floor.
+
+- **A36.1** `read_settle_seconds` could move from `SettingsDialog.py` to `constants.py`, beside
+  `read_live_interval`.
+- **A36.2** `events.ShotUnconvertibleEvent`'s docstring could name the path-too-long message among the
+  "failed" reasons.
+- **A36.3** (Ibis R3-1) `helab/analysis/panes.py` `update_figure` after `release_figure()` could put a
+  released figure back on the Dash server; nothing calls it so today. A guard (ignore, or log) would close it.
+- **A36.4** (Ibis R3-2) `tests/test_main_split.py` would accept a settings panel collapsed to zero width;
+  check `0 < right` too.
 
 ## Not AI work (stays in MANUAL_TODO)
 

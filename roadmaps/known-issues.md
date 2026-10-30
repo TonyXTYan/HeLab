@@ -102,12 +102,14 @@ How to use it:
   mechanism the other entries lacked: **SIGTRAP (EXC_BREAKPOINT) on a QtWebEngineCore thread** (a
   Chromium check failing, frames all in QtWebEngineCore under an NSRunLoop source), not Python or
   HeLab's code. That test now closes each web-view plot once walked (at most one renderer open).
+  A second mechanism, now fixed (below): a SIGSEGV on the main thread when a Plotly plot's dock was
+  deleted; some of these worker crashes may have been it. Watch whether they recur after `c104502`.
 - [ ] `test_gui_responsiveness.py::test_timeout_retry_releases_dead_helper_slot_while_artifact_reader_is_blocked[2]`:
   `waitUntil timed out in 3000 milliseconds` at line 292 (the `finally`'s wait for the killed fake
   helpers to exit after `service.shutdown()`), on Windows CI run 40803552596 (`agent/txy-ship`) and
   once locally on macOS; passed on retry. Again on Windows: Ground CI 40861772277 (`9f0b21f`) and
-  `agent/txy-index` CI 40874212130; Ground CI 40988453930 (`c492242`, Windows Tests 1/2) and 41000437956 (`43cb202`). A
-  candidate: 3 s under load.
+  `agent/txy-index` CI 40874212130; Ground CI 40988453930 (`c492242`, Windows Tests 1/2) and 41000437956 (`43cb202`);
+  the `[1]` case on Windows, `agent/ui-polish` CI 41005221588 (same line). A candidate: 3 s under load.
 - [ ] `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`: an
   xdist worker crashed on Windows CI run 40803552596; passed on retry (no traceback; look for a
   faulthandler dump). Again: the Plotly case on `agent/byte-units` CI 40865344851 (job 123418722344,
@@ -215,6 +217,15 @@ crashed" on CI with no traceback is usually CI's 120 s timeout, whose stacks
 ## Fixed
 
 Landed in `dev/v0.0.7`:
+
+- [x] **A crash (SIGSEGV) when a Plotly plot's dock was deleted**: `PlotlyPane` connected a lambda to its
+  `destroyed` (`helab/analysis/panes.py`), which Qt called while deleting the dock's children (main thread,
+  `PyQtSlotProxy::unislot` → Python → segfault). It crashed xdist workers in
+  `test_accessible_names.py::test_every_script_and_each_library` (Sable found it; Beacon pinned it: a
+  three-file set crashed 7/7 at `43cb202`, 0/10 with the fix). Fixed on `agent/ui-polish` (`86d32ce`,
+  `2c13796`; landed `c104502`): `weakref.finalize` and `PlotlyPane.release_figure()` at close, and AGENTS.md's
+  rule against Python callables on `destroyed` (`tests/test_destroyed_connections.py`). Could a user hit it?
+  Closing a Plotly plot in the app went the same path, so possibly (0.0.6a1 onwards, untested by hand).
 
 - [x] `test_app_log.py::test_each_helab_writes_its_own_log_file` failed all 5 reruns once in seven `-n 4`
   runs (`assert 'from 101' in ''`): it raised the root level with `monkeypatch.setattr(root, "level",

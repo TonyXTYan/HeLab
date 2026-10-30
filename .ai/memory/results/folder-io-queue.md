@@ -103,7 +103,8 @@ nothing appeared.
 - Selecting a folder with saved counts and a disk cache skips the listing.
 - Check failure keeps the cached data: `Check failed`, error on line 1, Retry.
 - **Files still being written:** TXY written once and never modified, but
-  another PC may be writing one right now. Files modified within 5 s, or whose
+  another PC may be writing one right now. Files modified within the settle time
+  (a setting since Q33.7, 2026-10-30: default 5 s, 2–60 s), or whose
   size/mtime changes while read, are not read or cached; loads and scans leave
   them out of signatures (otherwise scan and load disagree and the data is
   dropped and reloaded until the file settles). Line 1:

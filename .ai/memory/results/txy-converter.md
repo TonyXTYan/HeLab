@@ -46,7 +46,8 @@ Q25.4).
 - **Name** (Q18.4, 2026-10-29, "agree with your suggestions"): `d_txy_helab_<tag>_<N>.txt` (`.txt`
   like MATLAB's `d_txy_forc<N>.txt`). Short fixed tags, frozen once used: `m19v1` matlab-2019,
   `p22v1` plates-2022 v1, `p25t1` plates-2025 testing (prefixes `a`/`b`/`t` for alpha, beta,
-  testing); app-tweaked profiles `u<hash>`. `m23v1` and `p17v1` are still to confirm (Q23.1).
+  testing); app-tweaked profiles `u<hash>`, 32 hex digits (Q23.6, 2026-10-30: "so it's really annoying,
+  also pushes the user to make a proper frozen profile"). `m23v1` and `p17v1` are still to confirm (Q23.1).
 - **Where** (Q9.3, Q9.7, 2026-10-29): a setting, the disk cache by default or the temp folder;
   writing beside the raw files is an option per folder. This amended Q8.2 ("HeLab still never
   writes to source folders"): HeLab writes nothing else beside them, no metadata either (Q18.4:

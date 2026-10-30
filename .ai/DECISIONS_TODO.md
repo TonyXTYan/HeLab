@@ -309,6 +309,7 @@ polish" floor after Smoke ready lands (Q33.6):
   2 s HeLab can't tell a file still being written: `RACY_SECONDS`). It applies to every read (browse,
   load, cache), so its help says so and AGENTS.md's "5 s" becomes the default. Measured again on a
   live lab run (M33.1).
+- Q33.1–Q33.5, Q23.6 and Q33.7 built on `agent/ui-polish` (landed `c104502`; block 36).
 
 Tony in Chat, 2026-10-30, on the byte units floor (block 32,
 [handoff](sessions/2026-10-29-claude-byte-units/handoff.md)):
@@ -327,6 +328,26 @@ Tony in Chat, 2026-10-30, via the Assistant, on the Smoke ready floor (block 34,
   ("tabs switchable by name"): yes, built.
 - **Q34.4** a conversion running at quit is waited for in the quit window (its shot finishes; Quit now
   skips it): yes, as built.
+
+Tony in Chat, 2026-10-30, via the Assistant, on the UI polish floor (block 36,
+[handoff](sessions/2026-10-30-claude-ui-polish/handoff.md)):
+
+- **Q36.1** A33.4: while the shown plot floats and the main window is active, the panel shows the docked
+  plot in front, so the title's Float acts on the plot the panel names: (a), as built (not (b), the old
+  behaviour with only the away line naming the plot).
+- **Q36.2** offering a restart after a temp folder change (or applying it live): **v0.0.8** (open below).
+
+## UI polish (block 36)
+
+From the UI polish floor's [handoff](sessions/2026-10-30-claude-ui-polish/handoff.md) and Ibis's
+[review](sessions/2026-10-30-claude-ui-polish/review.md) (landed `c104502`).
+
+- **Q36.2** (v0.0.8, Tony) Settings › General's temp folder row says a change applies at the next start:
+  offer to restart, or apply it live like the cache folder's move? Proposed: leave it (rarely changed).
+- **Q36.3** The settings panel's least width is a fixed 250 px (nothing cut at macOS's default font; a
+  row may be cut below 320 px on a wider font until the panel is widened). Never cut on any font instead:
+  `max(250, min(the contents' least width, 320))`, but then a wider font can't go below 320. Proposed: keep
+  250 and look on a lab PC (M36.1).
 
 ## Converter stage 4, HeLab core (block 12)
 

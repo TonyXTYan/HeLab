@@ -417,3 +417,139 @@ connection to a label that is gone does nothing (`shown()` checks the weak ref).
   - the "no Python callable on `destroyed`" rule (the handoff already proposes it for AGENTS.md).
 - **testing.md:** a test of freeing on close must not call `gc.collect()` in its wait, or it can't tell
   "freed at close" from "freed by a full collection".
+
+---
+
+# Round 3 (Reviewer, 2026-10-30): `3af2791..9d19098`
+
+**Verdict: nothing open that blocks landing.** Round 2's High R2-1, Low R2-2 and Nit R2-3 are all fixed. CI
+41016672207 is green on every job with no RERUN. I have two optional nits (below); they don't need a code
+change before landing and could go to AI_TODO.
+
+## Checks rerun here (macOS, HEAD 9d19098)
+
+- **Full suite:** `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review -rR` gave
+  **8473 passed, 669 skipped, 0 RERUN** (146 s; `.ai/temp/review-r3-suite.log`).
+- **Type checks, all clean:**
+  - `mypy helab/ --strict`: 195 files.
+  - `mypy tests --strict`: 173 files.
+  - Both again with `--platform win32`.
+  - `pyright helab tests`, and again with `--pythonplatform Windows`: 0 errors.
+- **Round 2's probe again** (a real window, 3D scatter in Plotly, Close Plot Tab, posted deletes, **no
+  `gc.collect()`**): the figure is off the server **at once (0.0 s)**, with GC enabled and with GC disabled.
+  Before this fix it was still there after 30 s.
+
+## R2-1 (2c13796): fixed
+
+- **What changed:**
+  - `PlotlyPane.release_figure()` (`helab/analysis/panes.py:58`) calls the stored `weakref.finalize`.
+  - `release_figures()` (`helab/views/plots/dock.py:178`) runs from two places:
+    - `AnalysisDock.setWidget` (`dock.py:315`), on the plot it replaces;
+    - `LinkedAnalysisInstance.close` (`instance.py:153`), before `deleteLater`.
+  - The finalizer stays as the fallback, for a dock deleted unclosed.
+  - No Python callable sits on `destroyed`, and the guard still passes.
+- **Tests:**
+  - The four older Plotly tests are back to their original form (971c348 reverted).
+  - The real-window test checks `snapshot is None` straight after the close, while it still holds the pane.
+  - New: release twice frees the figure once; a wrapper around the same pane keeps it; a plot drawn anew frees it.
+
+**Your two questions:**
+- **Closed twice: safe.** `LinkedAnalysisInstance.close` returns early once `is_closed` is set. A
+  `weakref.finalize` runs at most once, so later calls, and the pane's own collection, do nothing (the new test
+  checks this).
+- **Replaced while Live updates it: safe on every path I traced.**
+  - **Live update in place:** `script.update` calls `server.update_plot` on the same pane, and
+    `set_plot_result` keeps the wrapper (`content.parentWidget() is old`). So there's no `setWidget` and nothing
+    is released.
+  - **A wrapper around the same pane:** `_wrap_plot` moves the pane into the new wrapper *before*
+    `dock.setWidget(wrapper)`. So the old wrapper's `findChildren` no longer holds the pane, and it isn't
+    released.
+  - **Another library, an error message, or a RAM-budget release:** the old pane is released at once and
+    `_content` points to the new widget. A Live result that lands after that updates the new widget:
+    `_updated` uses `self._content`, and skips when `released` is set or the library differs.
+  - **After close:** `_finished` returns on `is_closed`, so no update reaches a closed pane.
+
+### Nit R3-1: `update_figure` after `release_figure` would put the figure back for good (unreachable today)
+
+`helab/analysis/panes.py:53`: `update_figure` calls `server.update_plot`, which is `add_plot`. If it ever ran
+after `release_figure`, the figure would go back on the server, and the spent finalizer would never remove it.
+
+Probed: `release_figure()` then `update_figure(go.Figure())` leaves `snapshot` present, with
+`_free.alive == False`.
+
+None of the app's callers can do this (the paths above). A one-line guard would make it impossible:
+`if not self._free.alive: return` at the top of `update_figure`.
+
+## R2-2 (e0afa54, 9d19098): fixed
+
+- **What changed:**
+  - `MIN_SETTINGS_WIDTH = 250` (`HelabMainWindow.py:1272`) is now the panel's least width.
+  - `read_split` and `_remember_panel_widths` use the same threshold. The settings row's help says "settings
+    250 to 4000".
+  - The Presets and Scripts combos shrink to 3–4 characters, and their buttons to their text + 8 px.
+- **The new test** (`test_the_settings_panel_goes_no_narrower_than_its_controls_need`) drags the panel shut. It
+  checks that the panel stops at 250 and that no button or combo outside a scroll area is cut.
+  - It runs on macOS only, with the reason in the skip.
+  - CI: PASSED on macOS, SKIPPED on Windows and Ubuntu.
+  - `read_split` cases `80,249` → default and `80,250` → kept are added.
+
+**Your question, a fixed 250 vs a least width per platform:**
+
+**Keep the fixed 250. A per-platform constant isn't worth it.**
+- **The default holds.** It is 320 everywhere and the split test checks it exactly on all three OSes. A width
+  under 320 only happens if the user drags it there, and dragging back fixes it.
+- **CI's fonts aren't the lab's.** CI's Windows and Ubuntu runs use the offscreen platform's fonts, not
+  Segoe UI at the lab PC's scale. A Windows constant tuned to CI ("Load Scripts… is 188 px") would be a guess
+  about the real PCs. The handoff's M~1 (look at the lab PC) is the right check.
+- **At 250 on those fonts, only one row end is cut.** Windows CI cuts "Load Scripts…"; Ubuntu cuts Delete… by
+  3 px. Both are still recognisable and come back when the panel is widened. Round 2's ×1.5 screenshot shows
+  the same kind of cut.
+- **If Tony wants "never cut" everywhere:** the adaptive form `max(250, min(contents' least width, 320))` does it
+  on every font without per-platform numbers. On a wider font that means the panel can't go below 320. That is a
+  behaviour choice, so it would be a DECISIONS_TODO line, not something to do before landing.
+
+### Nit R3-2: the wider-font test lost its lower bound again
+
+`tests/test_main_split.py:100` is now `assert right <= 320`. Round 2 had `0 < right <= 320 and left > 0`. A
+settings panel collapsed to 0 at the doubled font would pass now. Restoring `0 < right` would still pass on
+Windows CI, which gave 154 px in round 2's run. Optional.
+
+## R2-3 (2c13796): fixed
+
+The guard now catches:
+- `connect(slot=…)`;
+- `destroyed[QObject].connect(…)`;
+- a signal stored in a name first.
+
+The scan test covers each form, and also that `w.clicked.connect(gone)` is not flagged. The only form still
+passing is an attribute that holds a lambda (`self.cb`). An AST scan can't tell that from a bound method, so
+that's fine. helab still has exactly the two `@pyqtSlot` connections.
+
+## CI 41016672207 (9d19098, agent/ui-polish): success
+
+| Job | ID | Result |
+|---|---|---|
+| Detect branch and version bump | 123934455895 | success |
+| macos / ubuntu / windows Build | 123934534910 / 123934534892 / 123934534744 | success |
+| macos Tests (1/2) | 123934534900 | 4225 passed, 322 skipped, no RERUN |
+| macos Tests (2/2) | 123934534856 | 4248 passed, 347 skipped, no RERUN |
+| ubuntu Tests (1/2) | 123934534703 | 4221 passed, 325 skipped, no RERUN |
+| ubuntu Tests (2/2) | 123934534669 | 4249 passed, 347 skipped, no RERUN |
+| windows Tests (1/2) | 123934534729 | 4209 passed, 336 skipped, no RERUN |
+| windows Tests (2/2) | 123934534888 | 4230 passed, 363 skipped, no RERUN |
+| Converter backends macos / ubuntu / windows | 123934534717 / 123934534777 / 123934534755 | 696 / 696 / 695 passed, no RERUN |
+
+- **No RERUN:** no "RERUN" appears in any of the nine test logs.
+- **On all three OSes:**
+  - `test_closing_a_plotly_plot_frees_its_figure_as_it_closes` and
+    `test_a_plot_drawn_anew_in_its_dock_frees_the_old_figure` PASSED;
+  - the 250 px test PASSED on macOS and was SKIPPED on Windows and Ubuntu.
+- **Skipped:** the compat and release jobs. This isn't a PR.
+
+## Still to apply at landing (from earlier rounds)
+
+- Add `test_gui_responsiveness …[1]` to its known-issues entry (round 1; no rerun since).
+- The docs proposals from rounds 1 and 2, including:
+  - AGENTS.md: the "no Python callable on `destroyed`" rule;
+  - testing.md: a test of freeing on close doesn't call `gc.collect()` in its wait.
+- M~1: a look at the lab PC at 250–320 px.

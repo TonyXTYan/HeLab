@@ -150,8 +150,9 @@ Each rule names the area file with the detail.
 - A helper holds its slot **until its exit is confirmed** by the reaper's exit flag; never free
   a slot on message delivery. A retry never runs beside the attempt it replaces.
 - Timeouts measure time **without progress** (helpers send heartbeats).
-- Files still being written (modified within `SETTLE_SECONDS` = 5 s, dated in the future, or
-  changing while read) are never read, cached, fingerprinted or counted in signatures.
+- Files still being written (modified within the settle time: Settings › General, default 5 s,
+  2–60 s, sent with every request as `settle_seconds`; dated in the future; or changing while read)
+  are never read, cached, fingerprinted or counted in signatures.
 - Every automatic status scan goes through `FolderCache.submit`, which honours the scan-failure
   flag; only a fresh successful scan clears it.
 - `helab/io_ops/` never imports `helab.io_helper` (it runs as `__main__`). A name tests patch is
@@ -231,6 +232,8 @@ one line, with detail in tooltips. Every interactive control has an accessible n
 (`helab/utils/accessible.py`, `identify`; test-enforced: `tests/test_accessible_names.py`). Never
 connect a lambda (or `partial`) that captures its sender when Qt made the sender (`findChildren`,
 `tabBar()`, `widgetForAction`): a garbage collection empties it; use a bound slot and `sender()`.
+Never connect a Python callable (lambda, function, `partial`) to a Qt object's `destroyed`: cleanup
+that needs Python uses `weakref.finalize` (`tests/test_destroyed_connections.py`).
 
 **Versions and releases** ([release-and-ci](.ai/architecture/release-and-ci.md)):
 - `helab/_version.py` is the only version source (PEP 440, no `v`).
