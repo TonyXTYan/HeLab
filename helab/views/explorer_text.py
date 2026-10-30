@@ -12,5 +12,5 @@ def plural(count: int, noun: str) -> str:
 def large_text(estimate: int, refused: bool) -> str:
     """How the summary line, Folder details and the status bar name a large folder."""
     if refused:
-        return f"Too large to load · ~{byte_size(estimate)} in RAM, over 30% of RAM"
-    return f"Large folder · ~{byte_size(estimate)} in RAM"
+        return f"Too large to load · ~{byte_size(estimate, 'ram')} in RAM, over 30% of RAM"
+    return f"Large folder · ~{byte_size(estimate, 'ram')} in RAM"

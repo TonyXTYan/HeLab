@@ -56,6 +56,10 @@ START_FOLDER = tempfile.mkdtemp(prefix=f"helab_test_start_{_worker_id}_")
 # Tests write TXY files and load them at once; helpers would otherwise treat
 # them as still being written. Settling has its own tests.
 os.environ["HELAB_SETTLE_SECONDS"] = "0"
+# Sizes on disk show in SI on macOS and Linux, in KiB… on Windows (Q26.1): every OS runs the tests
+# with macOS's units, so labels compare the same everywhere; tests of Windows' units pass
+# ``platform`` or patch ``number_format.PLATFORM`` (test_number_format.py).
+os.environ["HELAB_UNITS_PLATFORM_OVERRIDE"] = "darwin"
 
 
 import pytest  # noqa: E402  (after the environment above is set)

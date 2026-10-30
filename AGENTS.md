@@ -194,8 +194,9 @@ Each rule names the area file with the detail.
 - HeLab's converted-TXY provenance is one SQLite file per base (`converted-txy/index.sqlite`),
   opened only by helpers and `helab convert`; its row goes in before the TXY's rename; missing or
   damaged, shots only convert again (Q26.2).
-- Every byte size shown is SI (kB/MB/GB, powers of 1000) (Tony, 2026-10-26); Q26.1 changes this
-  by OS (A26.1).
+- Byte sizes go through `number_format.byte_size(n, kind)` (`kind` "disk" or "ram", required):
+  disk sizes and rates SI (kB/MB/GB) on macOS and Linux and KiB/MiB/GiB on Windows, RAM in GiB
+  everywhere (Q26.1).
 
 **Settings** ([settings](.ai/architecture/settings.md)): open QSettings only through
 `app_settings()` (helpers: `cache_setting.open_settings`). Every key HeLab reads is a row in
