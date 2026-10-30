@@ -15,7 +15,6 @@ from helab.utils.gui_watchdog import GUIWatchdog
 from helab.utils.lab_parameters import read_lab_constants
 from helab.utils import app_log, events
 from datetime import datetime
-from sys import getsizeof
 from typing import Any, Callable, Optional
 
 import psutil
@@ -34,11 +33,11 @@ from helab.views.plots.workspace import PlotWorkspace
 from helab.resources.icons import ToolIcons
 from helab.utils.constants import (
     APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, DEFAULT_LOAD_MODE, DIR_TEMPS, LOAD_MODE_LABELS,
-    QSPLITTER_STYLESHEET, TOOLBAR_STYLESHEET_LR, assert_warn, cache_dir_refused, read_check_level,
+    QSPLITTER_STYLESHEET, TOOLBAR_STYLESHEET_LR, cache_dir_refused, read_check_level,
     read_disk_budget, read_io_concurrency, read_live_autosave, read_live_interval, read_load_mode,
     app_folder, read_plot_auto_reload, read_ram_budget,
 )
-from helab.utils.number_format import byte_size, byte_unit, fnum
+from helab.utils.number_format import byte_size, byte_unit
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, MAIN_SPLIT_SETTING, WORK_OFFLINE_SETTING, read_setting,
     setting_default)
@@ -507,11 +506,6 @@ class HelabMainWindow(QMainWindow):
         menu_debug = self.menu_bar.addMenu('Debug')
         if menu_debug is not None:
             self._create_runner_menus(menu_debug)
-            debug_action_2 = QAction('Draw a line in debug console', self)
-            debug_action_2.triggered.connect(lambda: logging.debug("="*80))
-
-            menu_debug.addAction(debug_action_2)
-
             menu_debug.addSeparator()
 
             action_debug_icons = QAction("Show all Icons", self)
@@ -524,11 +518,6 @@ class HelabMainWindow(QMainWindow):
 
             menu_debug.addSeparator()
 
-            action_debug_3 = QAction('Debug - validate tab status', self)
-            action_debug_3.triggered.connect(self.action_debug_validate_tab_status)
-            menu_debug.addAction(action_debug_3)
-
-
             action_debug_4 = QAction('Debug - show current visible rows', self)
             action_debug_4.triggered.connect(self.action_debug_show_current_visible_rows)
             menu_debug.addAction(action_debug_4)
@@ -536,12 +525,6 @@ class HelabMainWindow(QMainWindow):
             action_debug_gc_collect = QAction('gc.collect()', self)
             action_debug_gc_collect.triggered.connect(gc.collect)
             menu_debug.addAction(action_debug_gc_collect)
-
-            action_debug_6 = QAction('Debug - 6', self)
-            action_debug_6.triggered.connect(lambda: logging.debug("Debug action 6"))
-            menu_debug.addAction(action_debug_6)
-
-
 
         else:
             logging.error("menu_debug is None")
@@ -909,30 +892,6 @@ class HelabMainWindow(QMainWindow):
             action = QAction(path, self)
             action.triggered.connect(lambda checked=False, p=path: self.add_new_folder_explorer_tab(target_path=p))
             self._drive_menu.addAction(action)
-
-    def action_debug_validate_tab_status(self) -> None:
-        logging.info("action_debug_validate_tab_status: called")
-        logging.info(f"  {self.current_tracking_folder_path = }")
-        logging.info(f"  {self.tab_widget.count() = }")
-        logging.info(f"  {self.tab_widget.currentIndex() = }")
-        ic = self.tab_widget.currentIndex()
-        for i in range(self.tab_widget.count()):
-            tab = self.tab_widget.widget(i)
-            if isinstance(tab, FolderExplorer):
-                ps = tab.selected_path_globally
-                op = tab.folder_opened_path
-                od = tab.folder_opened_data
-                logging.info(f"  tab {i}: {ps = }, {op = }, {fnum(getsizeof(od)) = }B")
-                assert_warn(ps == self.current_tracking_folder_path, f"tab {i} {ps = } != {self.current_tracking_folder_path = }")
-                if i == ic:
-                    assert_warn(op == self.current_tracking_folder_path, f"tab {i} {op = } != {self.current_tracking_folder_path = }")
-                    assert_warn(ps == self.current_tracking_folder_path, f"tab {i} {ps = } != {self.current_tracking_folder_path = }")
-                    assert_warn(od is not None, f"tab {i} {od = } is None")
-
-            else:
-                logging.warning(f"action_debug_validate_tab_status: tab {i} is not a FolderExplorer")
-
-        pass
 
     def action_debug_show_current_visible_rows(self) -> None:
         current_file_explorer = self.tab_widget.currentWidget()
