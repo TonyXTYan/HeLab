@@ -84,24 +84,30 @@ How to use it:
     reached ~7.3 GB RSS with Velocity distributions running beside it. It needs progress or an
     ETA, or a cap on the bootstrap for big folders.
   - File › Quit sometimes left the process running, so two instances ran at once. It was seen
-    when the click landed before the menu opened; cause unknown.
-  - In the plot settings panel, Return doesn't commit a typed value (the editor stays open);
-    Tab does.
-  - A plot tab's "x" didn't respond to computer-use clicks (the dock title's "x" did). It may
-    be only an accessibility gap.
+    when the click landed before the menu opened; cause still unknown (perhaps a click that quit
+    nothing, after which the runner started a second HeLab). Since Smoke ready (`4ad8ac5`) a HeLab
+    whose windows have closed ends within 1 s (`quit_watch`), and the quit window shows what quitting
+    waits for; a click that quits nothing isn't covered.
   - Saving an arrangement preset kept plot 19's unsaved Log Y. Possibly intended; Tony to judge.
 
 ## Tests and CI
 
 - [ ] `test_live_plots.py::test_each_plot_keeps_its_scripts_minimum_size[Scatter3D]` reran once on
   Windows CI (run 40808815122, `agent/txy-followups` `ec1338a`, group 1/2), no reason in the log (a
-  worker crash?); passed on retry.
+  worker crash?); passed on retry. Also a macOS local worker crash (gw2, `agent/txy-index` `0f69731`,
+  2026-10-30). Likely the QtWebEngine crash below.
+- [ ] **QtWebEngine crashes xdist workers** (the Plotly and Scatter3D entries here):
+  `test_accessible_names.py::test_every_script_and_each_library` crashed its worker once in a local
+  full run (2026-10-30, `agent/smoke-ready`), passed on rerun; macOS's crash report gives the
+  mechanism the other entries lacked: **SIGTRAP (EXC_BREAKPOINT) on a QtWebEngineCore thread** (a
+  Chromium check failing, frames all in QtWebEngineCore under an NSRunLoop source), not Python or
+  HeLab's code. That test now closes each web-view plot once walked (at most one renderer open).
 - [ ] `test_gui_responsiveness.py::test_timeout_retry_releases_dead_helper_slot_while_artifact_reader_is_blocked[2]`:
   `waitUntil timed out in 3000 milliseconds` at line 292 (the `finally`'s wait for the killed fake
   helpers to exit after `service.shutdown()`), on Windows CI run 40803552596 (`agent/txy-ship`) and
   once locally on macOS; passed on retry. Again on Windows: Ground CI 40861772277 (`9f0b21f`) and
-  `agent/txy-index` CI 40874212130; Ground CI 40988453930 (`c492242`, Windows Tests 1/2). A candidate: 3 s
-  under load.
+  `agent/txy-index` CI 40874212130; Ground CI 40988453930 (`c492242`, Windows Tests 1/2) and 41000437956 (`43cb202`). A
+  candidate: 3 s under load.
 - [ ] `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`: an
   xdist worker crashed on Windows CI run 40803552596; passed on retry (no traceback; look for a
   faulthandler dump). Again: the Plotly case on `agent/byte-units` CI 40865344851 (job 123418722344,
@@ -109,7 +115,8 @@ How to use it:
   123480992297, gw1).
 - [ ] `test_io_service_run.py::test_writing_held_data_out_counts_as_progress`: `assert (2 == 1)` at
   line 40 (two progress marks, 0.7 ms and 1.4 ms, where one is expected), Windows CI 40863356565
-  (job 123411955603, `agent/txy-index`); passed on retry. A Windows timing flake; IOService untouched.
+  (job 123411955603, `agent/txy-index`); passed on retry. Again: `agent/runner-tools` CI 40989399407
+  (Windows). A Windows timing flake; IOService untouched.
 - [ ] `test_root_discovery.py::test_volume_check_alone_refreshes_hints_without_visiting_markers`:
   xdist worker gw2 crashed on macOS CI 40866574094 attempt 1 (job 123422851726, `agent/txy-index`
   `9691873`; `INTERNALERROR> AssertionError: (…, <WorkerController gw2>)`, exit code 3, no RERUN);
@@ -208,6 +215,31 @@ crashed" on CI with no traceback is usually CI's 120 s timeout, whose stacks
 ## Fixed
 
 Landed in `dev/v0.0.7`:
+
+- [x] `test_app_log.py::test_each_helab_writes_its_own_log_file` failed all 5 reruns once in seven `-n 4`
+  runs (`assert 'from 101' in ''`): it raised the root level with `monkeypatch.setattr(root, "level",
+  INFO)`, which skips `Logger.setLevel`'s cache clear, so after an INFO line logged at WARNING earlier in
+  the worker the log came out empty. Fixed on `agent/runner-tools` (`15c907c`, landed `0316bae`):
+  `root.setLevel(INFO)` restored in its `finally`; the repro is
+  `test_milestones.py::test_the_log_file_tests_hold_after_an_info_line_at_warning`.
+
+- [x] **A plot tab's × stopped responding** soon after the tabs appeared (0.0.6a1 to 0.0.7a1; the smoke
+  pass's "didn't respond to computer-use clicks", which were pointer clicks): `DockTabCloser` connected
+  each Qt-made dock tab bar's `tabCloseRequested` to a lambda capturing the bar (9c477c2); the first full
+  `gc.collect()` emptied it. Fixed on `agent/smoke-ready` (landed `4ad8ac5`) by a bound slot reading
+  `sender()`; `test_a_plot_tabs_close_button_closes_that_plot_when_clicked` collects before its click.
+  The same cause made `test_analysis_gui.py::test_plots_close_from_their_tab_and_the_settings_panel`
+  rerun on all three OSes (CI 40978424279). **Release notes:** "A plot tab's × works again: it stopped
+  responding soon after the tabs appeared (0.0.6a1–0.0.7a1)." Separately (not a bug): an accessibility
+  press can't reach a tab's ×, since Qt's tab bar never exposes close buttons; runners use the Debug
+  menu.
+- [x] In the plot settings panel, Return committed a typed value but left its editor open, so it looked
+  untaken: now Return or Enter commits and closes it, and Escape cancels for real (`agent/smoke-ready`,
+  `helab/analysis/parameter_tree.py`, `tests/test_parameter_return.py`).
+- [x] `test_debug_runner_menu.py::test_show_and_close_folder_tab` reran once on Windows (CI 40995895223,
+  job 123868892347): its window's teardown waited 30 s for quitting, which waited on the closed tab's
+  disk cache save. Fixed before landing (`ffabdd2`): window tests that don't check caching use RAM-only
+  folders, the test waits until nothing is pending, and a teardown timeout names what quit waited for.
 
 - [x] `test_convert_helab.py::test_two_writers_side_by_side_lose_nothing` starved on Windows
   (`IndexUnavailable … database is locked … SQLITE_BUSY` after 10.75 s; one RERUN in CI 40977028554,

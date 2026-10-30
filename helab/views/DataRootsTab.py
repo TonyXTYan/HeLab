@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabe
                              QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from helab.utils import folder_cache
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache, marker_path
 from helab.utils.number_format import byte_size
 from helab.utils.io_service import IORequest
@@ -140,6 +141,14 @@ class DataRootsTab(QWidget):
         self.review_button.clicked.connect(self.review_selected)
         footer.addWidget(self.review_button)
         layout.addLayout(footer)
+        # IDs and names (helab/utils/accessible.py).
+        for widget, ident, name in (
+                (self.list, "data_roots_list", "Data roots"), (self.path_line, "data_root_path", "Data root path"),
+                (self.uuid_line, "data_root_id", "Data root ID"), (self.refresh_button, "data_roots_refresh", ""),
+                (self.forget_button, "data_root_forget", ""), (self.delete_button, "data_root_delete", ""),
+                (self.clear_button, "data_root_clear", ""), (self.clear_results_button, "data_root_clear_results", ""),
+                (self.review_button, "data_root_review", "")):
+            identify(widget, ident, name)
         if cache is not None:
             cache.cacheAdminResult.connect(self._on_result)
             cache.cacheAdminDone.connect(self._on_done)
@@ -170,6 +179,7 @@ class DataRootsTab(QWidget):
         cancel = box.addButton(QMessageBox.StandardButton.Cancel)
         if cancel is not None:
             box.setDefaultButton(cancel)  # Return never forgets or deletes.
+        identify_buttons(box, "data_root_confirm")
         box.exec()
         return box.clickedButton() is accept
 

@@ -145,10 +145,15 @@ class _Log:
         self.skewed: set[str] = set()
         self.summary: dict[str, Any] = {}  # The last ``convert_summary``.
         self.plans = 0
+        # For the ``convert_done`` milestone: this run's no-hit shots, and the last line's unconvertible,
+        # waiting and kept counts (None: none yet). A run that changed nothing logs none.
+        self.no_hits = 0
+        self.logged_counts: tuple[int, int, int] | None = None
 
     def __call__(self, event: HelperEvent) -> None:
         if event["kind"] == "convert_plan":
             self.plans += 1
+            self.no_hits = 0
             if event["todo"] or self.plans == 1:
                 profile = event["profile"]
                 workers = (f"; {event['workers']} worker{'' if event['workers'] == 1 else 's'}" if event["todo"]
@@ -160,6 +165,7 @@ class _Log:
                 LOG.warning("Writing to %s: %s", event["output"], event["fallback"])
         elif event["kind"] == "shot_converted":
             self.waiting.pop(event["raw_name"], None)
+            self.no_hits += event["hits"] == 0
             times = event["seconds"]
             seconds = times["read"] + times["parse"] + times["reconstruct"] + times["format"] + times["write"]
             LOG.info("%s -> %s: %d hit%s (%.2f s)%s", event["raw_name"], os.path.basename(event["txy"]),
@@ -181,6 +187,13 @@ class _Log:
             if event["converted"]:
                 LOG.info("%d converted, %d current, %d waiting, %d unconvertible (%.1f s)", event["converted"],
                          len(event["current"]), len(event["waiting"]), len(event["unconvertible"]), event["seconds"])
+            counts = (len(event["unconvertible"]), len(event["waiting"]), len(event["kept"]))
+            if event["converted"] or self.no_hits or counts != self.logged_counts:
+                from helab.utils import app_log
+                app_log.milestone("convert_done", folder=event["path"], by="cli", converted=event["converted"],
+                                  no_hit=self.no_hits, unconvertible=counts[0], waiting=counts[1], kept=counts[2],
+                                  output=event["output"], seconds=event["seconds"])
+                self.logged_counts = counts
         elif event["kind"] == "partial_removed":
             LOG.info("Removed a leftover temporary file of an interrupted conversion: %s (%d bytes, %.0f h old)",
                      os.path.join(event["folder"], event["file"]), event["size"], event["age"] / 3600)

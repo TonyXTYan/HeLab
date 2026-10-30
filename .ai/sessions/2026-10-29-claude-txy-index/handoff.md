@@ -809,3 +809,35 @@ on through `FolderCache.resultReady`. `test_quitting_takes_over_from_the_backgro
 Q23.7" with "`--once` goes by the mtime alone and wants 60 s, `ONCE_SETTLE_SECONDS`, as its settle rule
 does: Q23.7 (c)". At about line 382: "`--once` (one check: files unmodified for 60 s, to be read and to
 be called damaged)". `DECISIONS_TODO.md` Q23.7: decided (c), built.
+
+## Addendum: merge of `origin/dev/v0.0.7` (`cb05f27`: Smoke ready, Runner Tools)
+
+Tony OK'd landing A30.4 and Q23.7 (`0f69731`), but the branch conflicted with dev, so I merged
+`origin/dev/v0.0.7` at `cb05f27`. Two files conflicted.
+
+- **`helab/utils/folder_cache.py`**, two hunks: dev's side taken.
+  - The first hunk is `quit_saves`, which now derives from `quit_entries()`. Dev's typed `QuitSave` and
+    `QUIT_*` kinds come in, and `TXY_LAST_USED` is one of them (`QUIT_LAST_USED`). Its start is
+    `_mark_flush_started`, and dev's generic `quit_save_started` reads it from there.
+  - The second hunk is the kinds and the dataclass, beside the constants.
+  - Dev's `(Q~3)` comments in those hunks are written `Q30.3`. Everything else of A30.4 merged without
+    a conflict: the state, the timer, `_schedule_marks`, `_marks_due`, `_on_marks_written`, the
+    `_on_event` hook, `flush_txy_marks`'s takeover with cancel first (Nit-11), and `shutdown`.
+- **`helab/views/QuitSaveDialog.py`**, two hunks (the module docstring and `_show`'s header): dev's
+  side taken (conversions counted apart, joined with ", " and " and "), with `Q30.3` written for
+  `Q~3`.
+- The `Q~1`/`Q~3` in `HelabMainWindow.py` and `tests/test_debug_runner_menu.py` are Runner Tools'
+  provisional IDs, not this floor's. They are left as they are.
+- **Checked:**
+  - The background write is not a quit entry: `quit_entries() == []` while it runs.
+  - The quit flush is one: `QuitSave(QUIT_LAST_USED, TXY_LAST_USED, "writing", started)`, its
+    `started` equal to `quit_save_started`. Both are asserted in `tests/test_txy_last_used_quit.py`.
+  - `HelabMainWindow._wait_for_saves` still calls `flush_txy_marks()` before `quit_saves()`.
+  - Q23.7's `max(ONCE_SETTLE_SECONDS, DAMAGED_SECONDS)` is intact.
+- **A test fix the merge exposed:** the `frozen` fixture (a FolderCache whose service never
+  dispatches) now requests `qapp`. Without it, a frozen test run first in its worker had no
+  `QApplication`. Its `QTimer` didn't start ("QObject::startTimer: current thread's event dispatcher
+  has already been destroyed"), so `test_the_background_write_waits_while_offline_cache_off_or_the_
+  foreground_works` failed in the first targeted run: 5 reruns, the same failure each time. This was
+  the test's missing dependency, not the code.
+- Tern's round 9 `review.md` (0 open findings) is committed with this merge.

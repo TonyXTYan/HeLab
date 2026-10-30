@@ -11,6 +11,7 @@ from PyQt6.QtWebEngineWidgets import QWebEngineView
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from helab.utils.dash_server import DashServer, dash_server
+from helab.utils.accessible import identify
 
 
 class PlotlyPane(QWidget):
@@ -37,7 +38,7 @@ class PlotlyPane(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         self.note = QLabel(note, self)
         row.addWidget(self.note, 1)
-        self.open_button = QPushButton("Open in browser", self)
+        self.open_button = identify(QPushButton("Open in browser", self), "plotly_open_in_browser")
         self.open_button.setToolTip(f"Show this plot in your web browser\n{self.url}")
         self.open_button.clicked.connect(self.open_in_browser)
         row.addWidget(self.open_button)

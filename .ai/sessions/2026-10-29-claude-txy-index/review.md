@@ -816,3 +816,96 @@ I read every job's log. None has a "rerun reasons" section or a RERUN line.
 
 The compat matrix was skipped (a push). All 13 tests in `test_txy_last_used_quit.py` passed on each OS
 (7 in Tests (1/2), 6 in Tests (2/2)).
+
+## Round 9 review (head `0f69731`, `git diff 18514ff..0f69731` without the merge `b8e1022`)
+
+**Result: 0 open findings, no blocker.** Q23.7 (c) and Nit-11 are as described, the merge changed no
+code of its own, and CI is green with no rerun.
+
+### The merge `b8e1022` changed no code of its own
+
+- No conflict hunks: `git show --cc b8e1022` prints none.
+- Its `helab/` and `tests/` equal dev's tip (`e74a5cf`) plus this branch's A30.4 change, line for line:
+  - the added and removed lines of `git diff e74a5cf b8e1022 -- helab tests` and of `git diff c492242
+    18514ff -- helab tests` are identical, and only hunk offsets and `index` lines differ;
+  - both are 10 files, +241 −35.
+- `e74a5cf` itself adds one findings doc. The merge does bring in Byte Units' code (`c5f99ba` …
+  `bc9375a`), but that had already landed on dev and been reviewed there, not on this floor.
+
+### Q23.7 (c): `max(ONCE_SETTLE_SECONDS, DAMAGED_SECONDS)` against Tony's wording
+
+Tony's wording: "only at 60 s by mtime, not 20 s; Live/`--watch` unchanged". The code
+(`convert.py:508–520`): with `seen` None the limit is `max(ONCE, DAMAGED)` on the mtime age. With
+`seen` given it is `DAMAGED` on `min(mtime age, first-seen age)`, exactly as before.
+
+| Values | `--once` limit | Live / `--watch` | Matches the wording? |
+|---|---|---|---|
+| Real: 60, 20 | 60 s by mtime | 20 s, mtime and first seen | **yes** |
+| `DAMAGED` patched 1e9 (`test_files_that_may_still_be_written_wait`, `test_live_convert.py:167`) | 1e9: never | 1e9 | yes, it's the patch's "not damaged here". With `ONCE` alone, shots 2 and 3 (dated long ago) became damaged: Ledger's reason for `max`. |
+| `DAMAGED` patched 5 (`test_convert_helab.py:367`) | 60 s (that test's `--once` file is now dated `ONCE` + 1 s) | 5 s | yes |
+| `DAMAGED` patched 0 (`test_live_convert.py:332`) | 60 s | 0 | yes (that test is Live) |
+| `ONCE` lowered below 20 (nothing does this) | `DAMAGED`, not `ONCE` | 20 s | outside the wording. `max` keeps "one look is never quicker than two", which is the safer reading; it's in the docstring. |
+
+**In production the change can't be seen.** With `fingerprints.SETTLE_SECONDS` 5 > 0, `--once`
+settles for `max(5, 60)` = 60 s by the same mtime (`convert.py:480–482`, `:564`). So a file under 60 s
+waits as `settling` before its content is read. A file that reaches `unfinished_or_damaged` is
+already ≥ 60 s old and both limits agree: damaged at once, as before.
+
+The new limit decides only when the settle age is 0: tests (`HELAB_SETTLE_SECONDS=0` in conftest) or a
+developer's override. Ledger's note says the same. The boundaries are both `>=` at 60 s, so settle and
+damaged can't disagree.
+
+**Tests:**
+- `test_once_calls_a_file_damaged_only_after_the_once_settle_age`: 30 s waits (`no_final_newline`), 61 s
+  is damaged. It also pins (60, 20).
+- `test_live_and_watch_still_call_a_file_damaged_after_20_s`: with `seen` aged 30 s, the file is damaged.
+- The damaged test's `--once` case is re-dated. Ledger's probe: the old limit fails `30s-waits`.
+
+### Nit-11: closed
+
+`flush_txy_marks` cancels `_mark_background` before clearing it. The synchronous `cancelled` reaches
+`_on_marks_written`, which keeps every mark owed, and its `_schedule_marks()` refuses because
+`_marks_quit` is already set. The takeover test connects to `cache.resultReady` before
+`flush_txy_marks()` and asserts the background owner isn't passed on.
+
+### The handoff addendum
+
+It's accurate. The proposed `converter.md` lines (about 232 and 382) and `DECISIONS_TODO` Q23.7 → (c),
+built, match the code.
+
+### Checks (floor venv, macOS, head `0f69731`)
+
+- **Full suite**, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8258 passed, 669 skipped, 1 rerun** (2 min 9 s). The tree was clean and HEAD was `0f69731`,
+  before and after the run.
+- **The rerun, quoted from the output:** `[gw2] darwin -- Python 3.13.15 …` / `worker 'gw2' crashed while running
+  'tests/test_live_plots.py::test_each_plot_keeps_its_scripts_minimum_size[Scatter3D]'`, with no
+  traceback. It passed on the rerun.
+  - This branch doesn't touch plots.
+  - It is the test in `roadmaps/known-issues.md:96`, which so far names only Windows CI (run
+    40808815122). Widen that entry to a macOS local worker crash too (`agent/txy-index` `0f69731`,
+    2026-10-30).
+
+- **Type checks:** `mypy helab/ --strict` (191), `mypy tests --strict` (160) and `mypy helab/ --strict
+  --platform win32` (191) found no issues. `pyright helab tests` and `pyright --pythonplatform Windows
+  helab tests` found 0 errors.
+
+### CI run 40994921961 (head `0f69731`, attempt 1): success, no RERUN
+
+I read every job's log. None has a "rerun reasons" section or a RERUN line.
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123865772715 | 4111 passed |
+| Ubuntu Tests (2/2) | 123865772580 | 4144 passed |
+| macOS Tests (1/2) | 123865772401 | 4114 passed |
+| macOS Tests (2/2) | 123865772535 | 4144 passed |
+| Windows Tests (1/2) | 123865772519 | 4101 passed |
+| Windows Tests (2/2) | 123865772502 | 4128 passed |
+| Ubuntu Converter backends | 123865772569 | 696 passed |
+| macOS Converter backends | 123865772457 | 696 passed |
+| Windows Converter backends | 123865772414 | 695 passed |
+| Detect branch; ubuntu, macos, windows Build | 123865704593; 123865772393, 123865772463, 123865772402 | success |
+
+The compat matrix was skipped (a push). The new and changed tests (the two Q23.7 tests, three cases,
+and the takeover test) passed on each OS.

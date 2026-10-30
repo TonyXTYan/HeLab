@@ -10,18 +10,21 @@ from __future__ import annotations
 import contextlib
 import os
 from pathlib import Path
+import re
 import sqlite3
 import time
 from typing import Any, Iterator
 
 import pytest
+from PyQt6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
 from helab.convert import provenance
 from helab.io_ops import helab_txy, infra
 from helab.io_ops.admin import cache_admin
 from helab.utils import folder_cache
-from helab.utils.folder_cache import MARK_FLUSH_TIMEOUT, TXY_LAST_USED, FolderCache, get_folder_cache, store_options
+from helab.utils.folder_cache import (MARK_FLUSH_TIMEOUT, QUIT_LAST_USED, TXY_LAST_USED, FolderCache, get_folder_cache,
+                                     store_options)
 from helab.utils.io_service import IOService, get_io_service
 from helab.views.HelabMainWindow import HelabMainWindow
 from test_txy_sources import _key, loaded, make_run, options, run_load
@@ -106,7 +109,8 @@ def test_the_flush_writes_only_newer_last_uses_and_never_the_store(tmp_path: Pat
 
 
 @pytest.fixture
-def frozen() -> Iterator[FolderCache]:
+def frozen(qapp: QApplication) -> Iterator[FolderCache]:
+    """A FolderCache whose service never dispatches (its timers need the application's event loop)."""
     service = IOService()
     service.timer.stop()
     service._dispatch = lambda: None  # type: ignore[method-assign]
@@ -163,7 +167,8 @@ def test_quit_writes_the_skipped_last_uses_in_the_quit_window(qtbot: QtBot, tmp_
     window.close()
     dialog = window._quit_dialog
     assert not window._closing and dialog is not None
-    assert [dialog.folders.item(row).text() for row in range(dialog.folders.count())] == [  # type: ignore[union-attr]
+    assert [re.sub(r" · \d+:\d\d$", "", dialog.folders.item(row).text())  # type: ignore[union-attr]
+            for row in range(dialog.folders.count())] == [
         f"{TXY_LAST_USED} — recording when HeLab's converted TXY were last used"]
     assert dialog.label.text() == "Recording when converted TXY were last used before HeLab quits:"
     qtbot.waitUntil(lambda: window._closing, timeout=30000)
@@ -250,7 +255,7 @@ def test_owed_last_uses_are_written_in_the_background_about_every_ten_minutes(fr
     assert (request.operation, request.payload["action"], request.timeout, request.priority) == (
         "cache_admin", "mark_used", MARK_FLUSH_TIMEOUT, False)
     assert request.payload["params"]["marks"] == [["/c", FOLDER, 5.0], ["/c", "f" * 24, 6.0]]
-    assert cache.quit_saves() == []  # In the background: not a quit save, no window.
+    assert cache.quit_saves() == [] and cache.quit_entries() == []  # In the background: no quit entry, no window.
     # Owed until written: one at a time, and a newer skip meanwhile waits for it.
     owed(cache, "/c", 7.0)
     assert not cache._marks_timer.isActive()
@@ -313,6 +318,10 @@ def test_quitting_takes_over_from_the_background_write(frozen: FolderCache) -> N
     assert background.cancelled.is_set() and flush is not background and flush.priority
     assert flush.payload["params"]["marks"] == [["/c", FOLDER, 5.0], ["/c", "f" * 24, 6.0]]
     assert cache.quit_saves() == [TXY_LAST_USED] and not cache._marks_timer.isActive()
+    # The quit flush is a quit entry of its own kind, with its start (the background one never was).
+    [entry] = cache.quit_entries()
+    assert (entry.kind, entry.path, entry.state) == (QUIT_LAST_USED, TXY_LAST_USED, "writing")
+    assert entry.started == cache.quit_save_started(TXY_LAST_USED) is not None
     owed(cache, "/c", 7.0)  # (A save's load still ending.) No more background writes this session.
     cache._marks_due()
     assert list(cache.service.pending) == [flush] and not cache._marks_timer.isActive()

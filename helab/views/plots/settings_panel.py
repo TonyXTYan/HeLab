@@ -10,6 +10,7 @@ from PyQt6.QtGui import QGuiApplication, QWindow
 from PyQt6.QtWidgets import (QApplication, QComboBox, QDockWidget, QHBoxLayout, QLabel, QMainWindow, QPushButton,
                              QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
+from helab.utils.accessible import identify
 from helab.views.plots.dock import AnalysisDock
 
 
@@ -87,10 +88,12 @@ class PlotSettingsPanel(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self.chooser = QComboBox()
+        self.chooser = identify(QComboBox(), "plot_chooser", "Plot shown in settings",
+                                "Choose the plot these settings are for")
         self.chooser.setToolTip("The plot these settings are for; click a plot to show its settings")
         self.chooser.activated.connect(lambda index: self.show_plot(self._order[index], raise_dock=True))
-        self.close_button = QToolButton()
+        self.close_button = identify(QToolButton(), "close_plot", "Close plot",
+                                     "Close the plot these settings are for")
         self.close_button.setText("✕")
         self.close_button.setToolTip("Close this plot")
         self.close_button.clicked.connect(self.close_current)
@@ -110,7 +113,7 @@ class PlotSettingsPanel(QWidget):
         away_row = QHBoxLayout(self.away)
         away_row.setContentsMargins(4, 0, 4, 0)
         away_row.addWidget(QLabel("Settings are in this plot's window"))
-        self.away_button = QPushButton("Show plot window")
+        self.away_button = identify(QPushButton("Show plot window"), "show_plot_window")
         self.away_button.setToolTip("Bring this plot's window to the front, with its settings open")
         self.away_button.clicked.connect(self.raise_current)
         away_row.addWidget(self.away_button)

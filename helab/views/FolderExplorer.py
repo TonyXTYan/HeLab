@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (QApplication, QMessageBox, QHBoxLayout, QLineEdit, 
 from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemModel
 from helab.models.StatusReport import StatusReport
 from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.io_service import IORequest
 from helab.utils import large_folder
 from helab.utils.colours import AMBER as AMBER  # Shared; the views import it from here too.
@@ -280,7 +281,7 @@ class FolderExplorer(QWidget):
         if not self.model.cache.foreground_owners:
             # The first tab; FolderTabWidget hands the foreground to the current tab.
             self.claim_foreground()
-        self.tree = QTreeView(self)
+        self.tree = identify(QTreeView(self), "folder_tree", "Folders", "This tab's folders, their status and counts")
         self.tree.setModel(self.model)
         self.model.view = self.tree
         self.tree.setUniformRowHeights(True)
@@ -292,7 +293,8 @@ class FolderExplorer(QWidget):
         self.tree.setColumnWidth(self.model.COLUMN_STATUS_ICON, 150)
         self.delegate = ScanDelegate(self.tree)
         self.tree.setItemDelegateForColumn(self.model.COLUMN_STATUS_ICON, self.delegate)
-        self.path_edit = QLineEdit(self.view_path, self)
+        self.path_edit = identify(QLineEdit(self.view_path, self), "folder_path", "Folder path",
+                                  "Type a folder's path and press Return to show it")
         self.path_edit.returnPressed.connect(self._navigate_input)
         # Tab activity (basic scans, background loads) is shown in the main window's status bar.
         self.activity_text = ""
@@ -301,15 +303,19 @@ class FolderExplorer(QWidget):
         # Three fixed-height lines: the tree's rows never move when the summary changes.
         self.summary_widget = QWidget(self)
         self.folder_counts_row = QWidget(self.summary_widget)
-        self.selected_folder_label = ElidedLabel("", self.folder_counts_row, Qt.TextElideMode.ElideMiddle)
-        self.folder_summary_label = ElidedLabel("Scanning folder content for TXY files…", self.folder_counts_row)
+        self.selected_folder_label = identify(ElidedLabel("", self.folder_counts_row, Qt.TextElideMode.ElideMiddle),
+                                              "summary_selected")
+        self.folder_summary_label = identify(ElidedLabel("Scanning folder content for TXY files…",
+                                                         self.folder_counts_row), "summary_counts")
         # _fit_selected_label sets its width; the counts label takes the rest of the line.
         self.selected_folder_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.folder_cache_label = ElidedLabel("Cache not checked", self.summary_widget)
-        self.folder_freshness_label = ElidedLabel("Live updates off", self.summary_widget)
+        self.folder_cache_label = identify(ElidedLabel("Cache not checked", self.summary_widget), "summary_cache")
+        self.folder_freshness_label = identify(ElidedLabel("Live updates off", self.summary_widget),
+                                               "summary_freshness")
         # Shown at the Live line's end once Live is on (Q6.8): auto-convert on or off, and its menu.
         self.live_row = QWidget(self.summary_widget)
-        self.auto_convert_button = QToolButton(self.live_row)
+        self.auto_convert_button = identify(QToolButton(self.live_row), "auto_convert",
+                                            description="Convert new shots' raw files to TXY while Live watches")
         self.auto_convert_button.setText("Auto-convert")
         self.auto_convert_button.setCheckable(True)
         self.auto_convert_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
@@ -318,31 +324,38 @@ class FolderExplorer(QWidget):
         self.auto_convert_menu.aboutToShow.connect(lambda: self.live_control.fill_convert_menu(self.auto_convert_menu))
         self.auto_convert_button.setMenu(self.auto_convert_menu)
         self.auto_convert_button.hide()
-        self.cancel_load_button = QToolButton(self.folder_counts_row)
+        self.cancel_load_button = identify(QToolButton(self.folder_counts_row), "summary_cancel",
+                                           "Cancel loading", "Cancel loading in this tab")
         self.cancel_load_button.setText("Cancel")
         self.cancel_load_button.setToolTip("Cancel loading in this tab (Esc)")
         self.cancel_load_button.clicked.connect(self.cancel_loading)
-        self.retry_button = QToolButton(self.folder_counts_row)
+        self.retry_button = identify(QToolButton(self.folder_counts_row), "summary_retry",
+                                     description="Check or load the selected folder again")
         self.retry_button.setText("Retry")
         self.retry_button.clicked.connect(self._retry)
         # Shown with Retry while the selected folder's cached data doesn't match it (shots missing).
-        self.review_button = QToolButton(self.folder_counts_row)
+        self.review_button = identify(QToolButton(self.folder_counts_row), "summary_review_mismatch",
+                                      "Review mismatched data", "Show the folders whose cached data doesn't match them")
         self.review_button.setText("Review…")
         self.review_button.setToolTip(MISMATCH_REVIEW_TOOLTIP)
         self.review_button.clicked.connect(lambda: self.reviewMismatchRequested.emit(self.selected_path_globally))
         # The selected folder is below a location whose .helab-root is also elsewhere (pending).
-        self.root_review_button = QToolButton(self.folder_counts_row)
+        self.root_review_button = identify(QToolButton(self.folder_counts_row), "summary_review_root",
+                                           "Review data root", "Say whether this .helab-root's other location is the "
+                                           "same folder or a copy")
         self.root_review_button.setText("Review…")
         self.root_review_button.setToolTip(REVIEW_ROOT_TOOLTIP)
         self.root_review_button.clicked.connect(self._review_root)
         # Offered with the large-folder warning (S10): stop it coming up at all.
-        self.no_auto_load_button = QToolButton(self.folder_counts_row)
+        self.no_auto_load_button = identify(QToolButton(self.folder_counts_row), "summary_no_auto_load",
+                                            description="Stop loading this folder when it is selected")
         self.no_auto_load_button.setText("No auto-load")
         self.no_auto_load_button.setToolTip("Don't auto-load this folder: selecting it won't load it again "
                                             "(right-click to change).")
         self.no_auto_load_button.clicked.connect(
             lambda: self.set_folder_flag(self.selected_path_globally, "no_auto_load", True))
-        self.deselect_button = QToolButton(self.folder_counts_row)
+        self.deselect_button = identify(QToolButton(self.folder_counts_row), "summary_deselect",
+                                        description="Clear the subfolder selection and show the displayed path")
         self.deselect_button.setText("Deselect")
         self.deselect_button.setToolTip("Clear subfolder selection and view the displayed path")
         self.deselect_button.clicked.connect(self.clear_selection)
@@ -2319,6 +2332,7 @@ class FolderExplorer(QWidget):
                           f"{name} won't be cached from now on. Remove its cached data{cached}?", parent=self)
         remove = box.addButton("Remove cached data", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("Keep it", QMessageBox.ButtonRole.RejectRole)
+        identify_buttons(box, "no_cache_confirm")
         box.exec()
         return box.clickedButton() is remove
 

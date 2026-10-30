@@ -121,3 +121,13 @@ Final runs (after 35b50d0):
   with `max(ONCE_SETTLE_SECONDS, DAMAGED_SECONDS)` (handoff).
 - Full suite after the fix: 8258 passed, 669 skipped, 2 warnings in 126.48s; no rerun.
 - mypy strict helab (191) / tests (160) / win32 (191): no issues; pyright and pyright Windows: 0 errors.
+
+## Merge of origin/dev/v0.0.7 (cb05f27)
+
+- First targeted run (test_quit_confirms, test_txy_last_used_quit, test_live, test_convert_helab, -n 4):
+  1 failed, 134 passed, 5 reruns. All 5 were the same deterministic failure,
+  `test_the_background_write_waits_while_offline_cache_off_or_the_foreground_works`: no QApplication
+  for the `frozen` fixture's QTimer. Fixed by having the fixture request `qapp` (handoff).
+- Those files after the fix: 50 passed (quit_confirms, txy_last_used_quit, live).
+- Full suite: 8361 passed, 669 skipped, 2 warnings in 169.36s; no rerun.
+- mypy strict helab (194) / tests (167) / win32 (194): no issues; pyright and pyright Windows: 0 errors.

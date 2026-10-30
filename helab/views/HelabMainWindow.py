@@ -1,11 +1,14 @@
 import gc
+import json
 import logging
 import os
 import platform
+import re
 import signal
 import sys
 import types
 import time
+from helab.utils.accessible import id_part, identify, identify_action, identify_buttons
 from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, io_trace_folder, io_trace_refused
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
@@ -16,10 +19,12 @@ from sys import getsizeof
 from typing import Any, Callable, Optional
 
 import psutil
+from PyQt6 import sip
 from PyQt6.QtCore import Qt, QSize, QTimer, QItemSelection, QUrl, QDateTime, QSettings, QRect
 from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplication, QPainter, QPixmap, QKeySequence
 from PyQt6.QtWidgets import QMainWindow, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
-    QLabel, QToolBar, QSizePolicy, QMenu, QApplication, QInputDialog, QProgressBar, QToolButton, QMessageBox
+    QLabel, QToolBar, QSizePolicy, QMenu, QApplication, QInputDialog, QProgressBar, QToolButton, QMessageBox, \
+    QDockWidget, QFileDialog, QPushButton
 
 from helab.views.plots.arrangement import PlotReopen
 from helab.views.plots.presets import ArrangementPresets
@@ -49,7 +54,7 @@ from helab.views.FolderExplorer import (
 )
 from helab.views.explorer_text import large_text
 from helab.views.FolderTabWidget import FolderTabWidget
-from helab.views import live_launch
+from helab.views import live_launch, state_dump
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.MissingShotsWindow import MissingShotsWindow
 from helab.views.QuitSaveDialog import QuitSaveDialog
@@ -184,29 +189,32 @@ class HelabMainWindow(QMainWindow):
         self.status_bar_spinner.setFixedSize(16, 16)
         self.status_bar_spinner_angle = 0
         self.status_bar.addWidget(self.status_bar_spinner)
-        self.status_bar_message_left = ElidedLabel("...")
+        self.status_bar_message_left = identify(ElidedLabel("..."), "status_activity")
         self.status_bar.addWidget(self.status_bar_message_left, 1)
         self.status_bar_progress = QProgressBar()
         self.status_bar_progress.setFixedSize(120, min(16, self.status_bar_message_left.fontMetrics().height()))
         self.status_bar_progress.setTextVisible(False)
         self.status_bar_progress.hide()
         self.status_bar.addWidget(self.status_bar_progress)
-        self.status_bar_message_right = QLabel(f"Please wait. GUI loading... v{APP_VERSION} ({APP_COMMIT_HASH})")
+        self.status_bar_message_right = identify(
+            QLabel(f"Please wait. GUI loading... v{APP_VERSION} ({APP_COMMIT_HASH})"), "status_resources")
         self.status_bar_message_last_update = datetime.now()
         # A one-time notice shown before the tab's activity until it expires (monotonic time).
         self._status_notice: tuple[str, float] | None = None
 
         # Shown while folders' cached data doesn't match them; opens their list.
-        self.mismatch_button = QToolButton()
+        self.mismatch_button = identify(QToolButton(), "mismatched_folders", "Mismatched folders",
+                                        "Show the folders whose cached data doesn't match them")
         self.mismatch_button.setAutoRaise(True)
         self.mismatch_button.hide()
         self.status_bar.addPermanentWidget(self.mismatch_button)
-        self.roots_button = QToolButton()
+        self.roots_button = identify(QToolButton(), "roots_to_confirm", "Data roots to confirm",
+                                     "Show the locations whose .helab-root is also elsewhere")
         self.roots_button.setAutoRaise(True)
         self.roots_button.hide()
         self.status_bar.addPermanentWidget(self.roots_button)
         # Shown while working offline (File › Work Offline); a click offers Work Online.
-        self.offline_button = QToolButton()
+        self.offline_button = identify(QToolButton(), "work_online", description="Offer to work online again")
         self.offline_button.setAutoRaise(True)
         self.offline_button.setText(OFFLINE_STATUS)
         self.offline_button.setToolTip(OFFLINE_STATUS_TOOLTIP)
@@ -216,7 +224,7 @@ class HelabMainWindow(QMainWindow):
         # Shown from 50 % of the RAM budget (loaded folders and plots); opens their sizes.
         self.status_bar.addPermanentWidget(self.plots.ram_button)
         # Shown while Help › Record I/O trace is on.
-        self.io_trace_label = QLabel("● I/O trace")
+        self.io_trace_label = identify(QLabel("● I/O trace"), "status_io_trace")
         self.io_trace_label.hide()
         self.status_bar.addPermanentWidget(self.io_trace_label)
         self.status_bar.addPermanentWidget(self.status_bar_message_right)
@@ -497,6 +505,7 @@ class HelabMainWindow(QMainWindow):
 
         menu_debug = self.menu_bar.addMenu('Debug')
         if menu_debug is not None:
+            self._create_runner_menus(menu_debug)
             debug_action_2 = QAction('Draw a line in debug console', self)
             debug_action_2.triggered.connect(lambda: logging.debug("="*80))
 
@@ -564,6 +573,255 @@ class HelabMainWindow(QMainWindow):
             action_log_folder.triggered.connect(self._show_log_folder)
             menu_help.addAction(action_log_folder)
 
+    # Items for a test runner (roadmaps/smoke-automation.md, items 1 and 2): a menu bar item works with
+    # no cursor and no popup. Each submenu is filled from memory as it shows, and each item calls the
+    # code path of the control it stands for.
+
+    def _create_runner_menus(self, menu: QMenu) -> None:
+        menu.setToolTipsVisible(True)
+        menu.aboutToShow.connect(self._remember_screenshot_target)
+        for title, fill in (("Run Plot", self._fill_run_menu), ("Script Group", self._fill_group_menu),
+                            ("Show Plot Tab", self._fill_show_plot_menu), ("Close Plot Tab", self._fill_close_plot_menu),
+                            ("Show Folder Tab", self._fill_show_folder_menu),
+                            ("Close Folder Tab", self._fill_close_folder_menu),
+                            ("Settings Tab", self._fill_settings_tab_menu)):
+            submenu = menu.addMenu(title)
+            if submenu is not None:
+                submenu.setToolTipsVisible(True)
+                submenu.aboutToShow.connect(lambda fill=fill, submenu=submenu: fill(submenu))
+                # Filled now too, so it is never empty (not in a test's window without the Scripts panel).
+                if hasattr(self, "panel_right_bottom_script_selector"):
+                    fill(submenu)
+        menu.addSeparator()
+        self.action_screenshot = QAction("Save Window Screenshot…", self)
+        self.action_screenshot.setToolTip("Save a picture of the HeLab window in front (when this menu opened) "
+                                          "as a PNG file")
+        self.action_screenshot.setObjectName("debug_save_screenshot")
+        self.action_screenshot.triggered.connect(lambda: self.save_window_screenshot(self.screenshot_target()))
+        menu.addAction(self.action_screenshot)
+        # Q~1 (Tony): no dialog, for a runner: the same window, a fixed name in the temp folder's screenshots.
+        self.action_screenshot_temp = QAction("Save Window Screenshot to Temp Folder", self)
+        self.action_screenshot_temp.setObjectName("debug_save_screenshot_temp")
+        self.action_screenshot_temp.setToolTip("Save a picture of the HeLab window in front (when this menu opened) "
+                                               "in the temp folder's screenshots folder, without asking where; "
+                                               "the status bar and the log name the file")
+        self.action_screenshot_temp.triggered.connect(lambda: self.save_window_screenshot_to_temp())
+        menu.addAction(self.action_screenshot_temp)
+        screenshot_of = menu.addMenu("Save Screenshot of Window")
+        if screenshot_of is not None:
+            screenshot_of.aboutToShow.connect(lambda: self._fill_screenshot_menu(screenshot_of))
+        self.action_dump_state = QAction("Dump State…", self)
+        self.action_dump_state.setObjectName("debug_dump_state")
+        self.action_dump_state.setToolTip("Save what this window shows (summary lines, Folder details, the status "
+                                          "bar, folder and plot tabs, Live) as a JSON file, from memory")
+        self.action_dump_state.triggered.connect(lambda: self.dump_state())
+        menu.addAction(self.action_dump_state)
+        menu.addSeparator()
+        self._screenshot_target: QWidget | None = None
+
+    @staticmethod
+    def _unavailable(menu: QMenu, reason: str) -> None:
+        """A menu with nothing to do now says why, in a disabled item."""
+        action = menu.addAction(f"({reason})")
+        if action is not None:
+            action.setEnabled(False)
+
+    def _fill_run_menu(self, menu: QMenu) -> None:
+        """Debug › Run Plot: the Scripts panel's run buttons for the shown group ("Plot Counts per
+        shot"); each clicks its button. Disabled until the current tab shows a folder's data."""
+        menu.clear()
+        tree = self.panel_right_bottom_script_selector.tree_widget
+        loaded = self.plots.current_dataset_view() is not None
+        if not loaded:
+            self._unavailable(menu, "load a folder's data first")
+        groups = [tree.topLevelItem(index) for index in range(tree.topLevelItemCount())]
+        items = [group.child(index) for group in groups if group is not None for index in range(group.childCount())]
+        buttons = [tree.itemWidget(item, column) for item in items if item is not None for column in (1, 2)]
+        for button in buttons:
+            if isinstance(button, QPushButton):
+                action = menu.addAction(button.accessibleName() or button.text())
+                if action is not None:
+                    action.setEnabled(loaded and button.isEnabled())
+                    # (An item pressed without the menu opening may outlive its button: then nothing.)
+                    action.triggered.connect(lambda _=False, b=button: None if sip.isdeleted(b) else b.click())
+        if menu.isEmpty():
+            self._unavailable(menu, "no scripts in this group")
+
+    def _fill_group_menu(self, menu: QMenu) -> None:
+        """Debug › Script Group: the Scripts panel's groups; one sets its Group selector."""
+        menu.clear()
+        selector = self.panel_right_bottom_script_selector.group_selector
+        for index in range(selector.count()):
+            action = menu.addAction(selector.itemText(index))
+            if action is not None:
+                action.setCheckable(True)
+                action.setChecked(index == selector.currentIndex())
+                action.triggered.connect(lambda _=False, i=index: selector.setCurrentIndex(i))
+
+    def _open_plot_docks(self) -> list[QDockWidget]:
+        return [instance.dock_widget for instance in self.panel_right_bottom_script_selector.instances()
+                if instance.dock_widget is not None]
+
+    def _fill_show_plot_menu(self, menu: QMenu) -> None:
+        """Debug › Show Plot Tab: each open plot; one shows it, as picking it in the Settings panel does."""
+        menu.clear()
+        settings = self.plots.panel_right_top_plot_settings
+        for dock in self._open_plot_docks():
+            action = menu.addAction(dock.windowTitle())
+            if action is not None:
+                action.setObjectName(f"debug_show_plot_tab_{getattr(dock, 'plot_id', '')}")
+                action.setCheckable(True)
+                action.setChecked(dock is settings.current_plot())
+                action.triggered.connect(
+                    lambda _=False, d=dock: None if sip.isdeleted(d) else settings.show_plot(d, raise_dock=True))
+        if menu.isEmpty():
+            self._unavailable(menu, "no plots open")
+
+    def _fill_close_plot_menu(self, menu: QMenu) -> None:
+        """Debug › Close Plot Tab: each open plot; one closes it, as its tab's × does."""
+        menu.clear()
+        for dock in self._open_plot_docks():
+            action = menu.addAction(dock.windowTitle())
+            if action is not None:
+                action.setObjectName(f"debug_close_plot_tab_{getattr(dock, 'plot_id', '')}")
+                action.triggered.connect(lambda _=False, d=dock: None if sip.isdeleted(d) else d.close())
+        if menu.isEmpty():
+            self._unavailable(menu, "no plots open")
+
+    def _fill_show_folder_menu(self, menu: QMenu) -> None:
+        """Debug › Show Folder Tab: each folder tab; one shows it, as clicking its tab does."""
+        menu.clear()
+        for index, explorer in self._explorers():
+            action = menu.addAction(self.tab_widget.tabText(index))
+            if action is not None:
+                action.setObjectName(f"debug_show_{explorer.objectName()}")  # debug_show_folder_tab_<n>
+                action.setCheckable(True)
+                action.setChecked(explorer is self.tab_widget.currentWidget())
+                action.triggered.connect(lambda _=False, e=explorer: self._folder_tab_action(e, close=False))
+        if menu.isEmpty():
+            self._unavailable(menu, "no folder tabs open")
+
+    def _fill_close_folder_menu(self, menu: QMenu) -> None:
+        """Debug › Close Folder Tab: each folder tab; one closes it, as its tab's × does."""
+        menu.clear()
+        for index, explorer in self._explorers():
+            action = menu.addAction(self.tab_widget.tabText(index))
+            if action is not None:
+                action.setObjectName(f"debug_close_{explorer.objectName()}")  # debug_close_folder_tab_<n>
+                action.triggered.connect(lambda _=False, e=explorer: self._folder_tab_action(e, close=True))
+        if menu.isEmpty():
+            self._unavailable(menu, "no folder tabs open")
+
+    def _folder_tab_action(self, explorer: FolderExplorer, *, close: bool) -> None:
+        """Show or close ``explorer``'s tab where it is now (tabs move), by the tab's own paths: the tab
+        widget's current tab (a click on the tab), or its close request (the tab's ×). Nothing if it
+        has closed meanwhile."""
+        index = -1 if sip.isdeleted(explorer) else self.tab_widget.indexOf(explorer)
+        if index < 0:
+            return
+        if close:
+            self.tab_widget.tabCloseRequested.emit(index)
+        else:
+            self.tab_widget.setCurrentIndex(index)
+
+    def _fill_settings_tab_menu(self, menu: QMenu) -> None:
+        """Debug › Settings Tab: Settings opened on each tab (File › Settings… with that tab shown)."""
+        menu.clear()
+        available = not self._closing and QApplication.activeModalWidget() is None
+        if not available:
+            self._unavailable(menu, "close the open dialog first")
+        for title in SettingsDialog.TAB_TITLES:
+            action = menu.addAction(title)
+            if action is not None:
+                action.setEnabled(available)
+                action.triggered.connect(lambda _=False, t=title: self.show_settings_dialog(tab=t))
+
+    def _remember_screenshot_target(self) -> None:
+        """The HeLab window in front as the Debug menu opens: on macOS the menu bar leaves it in front
+        (a floating plot, a tool window); elsewhere the menu is the main window's own, so it is this
+        window (Save Screenshot of Window › picks another)."""
+        active = QApplication.activeWindow()
+        self._screenshot_target = active if active is not None and not isinstance(active, QMenu) else None
+
+    def screenshot_target(self) -> QWidget:
+        target = self._screenshot_target
+        return target if target is not None and not sip.isdeleted(target) and target.isVisible() else self
+
+    def _screenshot_windows(self) -> list[QWidget]:
+        """HeLab's visible windows (this one first): floating plots, tool windows, dialogs."""
+        windows = [widget for widget in QApplication.topLevelWidgets()
+                   if widget is not self and widget.isVisible() and not isinstance(widget, QMenu)
+                   and widget.windowType() in (Qt.WindowType.Window, Qt.WindowType.Dialog, Qt.WindowType.Tool)]
+        return [self, *windows]
+
+    def _fill_screenshot_menu(self, menu: QMenu) -> None:
+        menu.clear()
+        for window in self._screenshot_windows():
+            action = menu.addAction(window.windowTitle() or type(window).__name__)
+            if action is not None:
+                action.triggered.connect(
+                    lambda _=False, w=window: None if sip.isdeleted(w) else self.save_window_screenshot(w))
+
+    def save_window_screenshot(self, window: QWidget, path: str = "") -> str:
+        """Debug › Save Window Screenshot…: ``window.grab()`` as a PNG, to ``path`` or one chosen in a
+        save dialog (first offered in the temp folder's ``screenshots``). Plots come out as shown,
+        QtWebEngine's (Plotly) too; where QtWebEngine can't paint (the lab PCs) they are black there as
+        on screen. A floating plot is a window of its own. The file written ("": none)."""
+        path = path or self._runner_file_path("Save window screenshot", window.windowTitle() or type(window).__name__,
+                                              "png", "PNG images (*.png)")
+        if not path:
+            return ""
+        if not window.grab().save(path, "PNG"):
+            QMessageBox.warning(self, "Screenshot", f"The screenshot couldn't be saved to {path}.")
+            return ""
+        self.show_status_notice(f"Screenshot saved: {path}")
+        return path
+
+    def save_window_screenshot_to_temp(self) -> str:
+        """Debug › Save Window Screenshot to Temp Folder (Q~1): as Save Window Screenshot…, without a
+        dialog: ``helab-<window>-<time>.png`` in the temp folder's ``screenshots`` (``-2``, ``-3`` … if
+        that name is taken), logged and named in the status bar. The file written ("": none)."""
+        window = self.screenshot_target()
+        path = self._runner_file_path("", window.windowTitle() or type(window).__name__, "png", "", ask=False)
+        written = self.save_window_screenshot(window, path)
+        if written:
+            logging.info("Screenshot saved: %s", written)
+        return written
+
+    def dump_state(self, path: str = "") -> str:
+        """Debug › Dump State…: ``state_dump.dump_state`` (memory only) as JSON, to ``path`` or one
+        chosen as for a screenshot. The file written ("": none)."""
+        state = state_dump.dump_state(self)  # Taken before the save dialog shows.
+        path = path or self._runner_file_path("Save HeLab's state", "state", "json", "JSON (*.json)")
+        if not path:
+            return ""
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                json.dump(state, file, indent=2, ensure_ascii=False)
+        except OSError as error:
+            QMessageBox.warning(self, "Dump state", f"The state couldn't be saved to {path}: {error}")
+            return ""
+        self.show_status_notice(f"State saved: {path}")
+        return path
+
+    def _runner_file_path(self, caption: str, name: str, suffix: str, filter: str, *, ask: bool = True) -> str:
+        """A file for a runner's screenshot or state, chosen in a save dialog that offers
+        ``helab-<name>-<time>.<suffix>`` in the temp folder's ``screenshots`` ("": cancelled), or
+        without ``ask``, that name itself (``-2``, ``-3`` … if taken)."""
+        # On the GUI thread: one folder in HeLab's own temp folder and one small file the user asked for
+        # (a debug item, as Settings' profile export), never a source folder or the store.
+        folder = os.path.join(DIR_TEMPS, "screenshots")
+        os.makedirs(folder, exist_ok=True)
+        stem = os.path.join(folder, f"helab-{id_part(name).lower()[:40]}-{datetime.now():%Y%m%d-%H%M%S}")
+        suggested = f"{stem}.{suffix}"
+        if not ask:
+            taken = 1
+            while os.path.exists(suggested):
+                taken += 1
+                suggested = f"{stem}-{taken}.{suffix}"
+            return suggested
+        return QFileDialog.getSaveFileName(self, caption, suggested, filter)[0]
+
     def show_about_dialog(self) -> None:
         QMessageBox.about(self, "About HeLab", APP_BUILD_INFO.description())
 
@@ -626,6 +884,7 @@ class HelabMainWindow(QMainWindow):
         keep = box.addButton("Keep", QMessageBox.ButtonRole.RejectRole)
         delete = box.addButton("Delete old traces", QMessageBox.ButtonRole.DestructiveRole)
         box.setDefaultButton(keep)
+        identify_buttons(box, "io_trace_old")
         box.exec()
         return box.clickedButton() is delete
 
@@ -683,7 +942,9 @@ class HelabMainWindow(QMainWindow):
                 logging.info(f"{r = }")
 
 
-    def show_settings_dialog(self, purge: bool = False) -> None:
+    def show_settings_dialog(self, purge: bool = False, *, tab: str = "") -> None:
+        """Settings, modal: at its Cache tab's Remove old entries (``purge``), or at the tab titled
+        ``tab`` (Debug › Settings Tab)."""
         if self._closing or QApplication.activeModalWidget() is not None:
             return
         cache = get_folder_cache(get_io_service())
@@ -692,6 +953,8 @@ class HelabMainWindow(QMainWindow):
             roots.reviewRequested.connect(self.review_root)
         if purge:
             self.settings_dialog.show_purge()
+        elif tab:
+            self.settings_dialog.show_tab(tab)
         self.settings_dialog.exec()
         self._set_root_window_modality(Qt.WindowModality.NonModal)  # Review… from Settings made it modal.
         settings = app_settings()
@@ -799,6 +1062,8 @@ class HelabMainWindow(QMainWindow):
         self.toggle_left_panel_action.setChecked(True)
         self.toggle_left_panel_action.triggered.connect(self.toggle_left_panel)
         self.sidebar_toolbar_left.addAction(self.toggle_left_panel_action)
+        identify_action(self.sidebar_toolbar_left, self.toggle_left_panel_action, "toggle_left_panel",
+                        "Show or hide the folder panel")
 
         # Left panel
         self.left_panel = QWidget()
@@ -876,7 +1141,8 @@ class HelabMainWindow(QMainWindow):
         status_layout = QVBoxLayout(status_control)
         status_layout.setContentsMargins(0, 0, 0, 0)
         status_layout.setSpacing(0)
-        self.folder_status_button = QToolButton(status_control)
+        self.folder_status_button = identify(QToolButton(status_control), "check_folder_status",
+                                             description="Check the folders in view, or cancel a check")
         self.folder_status_button.setAutoRaise(True)
         self.folder_status_button.setDefaultAction(self.action_tab_rescan)
         self.folder_status_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
@@ -893,7 +1159,8 @@ class HelabMainWindow(QMainWindow):
         self.folder_status_scope_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.folder_status_scope_button.setToolTip(
             "Choose folders to check\nHover or click to open the status check options.")
-        self.folder_status_scope_button.setAccessibleName("Choose folders to check")
+        identify(self.folder_status_scope_button, "check_folder_status_scope", "Choose folders to check",
+                 "Open the folder status check options")
         self.action_tab_rescan.changed.connect(
             lambda: self.folder_status_scope_button.setEnabled(self.action_tab_rescan.isEnabled()))
         self.folder_status_scope_button.setEnabled(self.action_tab_rescan.isEnabled())
@@ -902,6 +1169,13 @@ class HelabMainWindow(QMainWindow):
         self.sidebar_toolbar_left.addWidget(status_control)
         self.sidebar_toolbar_left.addAction(self.action_tab_cancel)
         self.sidebar_toolbar_left.addAction(self.action_tab_live)
+        for action, ident, description in (
+                (self.action_tab_new, "new_tab", "Open a new folder tab"),
+                (self.action_tab_folder_up, "folder_up", "Show the folder above in this tab"),
+                (self.action_tab_refresh, "refresh", "Update the folder names and expanded folders in view"),
+                (self.action_tab_cancel, "cancel_loading", "Cancel loading in this tab"),
+                (self.action_tab_live, "live", "Watch the selected folder for new shots, or stop")):
+            identify_action(self.sidebar_toolbar_left, action, ident, description)
 
     def _setup_left_side(self) -> None:
 
@@ -934,6 +1208,7 @@ class HelabMainWindow(QMainWindow):
         action_settings = QAction(ToolIcons.ICON_SETTINGS, "Settings", self)
         action_settings.triggered.connect(self.show_settings_dialog)
         self.sidebar_toolbar_left.addAction(action_settings)
+        identify_action(self.sidebar_toolbar_left, action_settings, "settings", "Open Settings")
 
         self.sidebar_toolbar_left.addSeparator()
 
@@ -942,6 +1217,8 @@ class HelabMainWindow(QMainWindow):
         self.toggle_folder_details_action.setCheckable(True)
         self.toggle_folder_details_action.setChecked(True)
         self.sidebar_toolbar_left.addAction(self.toggle_folder_details_action)
+        identify_action(self.sidebar_toolbar_left, self.toggle_folder_details_action, "toggle_folder_details",
+                        "Show or hide Folder details")
         self.toggle_folder_details_action.triggered.connect(self.toggle_folder_details)
 
         # Folder details below the tab_widget: the current tab's selected folder, load and I/O.
@@ -960,6 +1237,8 @@ class HelabMainWindow(QMainWindow):
         self.toggle_right_panel_action.setChecked(True)
         self.toggle_right_panel_action.triggered.connect(self.toggle_right_panel)
         self.sidebar_toolbar_right.addAction(self.toggle_right_panel_action)
+        identify_action(self.sidebar_toolbar_right, self.toggle_right_panel_action, "toggle_right_panel",
+                        "Show or hide the plot settings and scripts panel")
         spacer_right = QWidget()
         spacer_right.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.sidebar_toolbar_right.addWidget(spacer_right)
@@ -987,6 +1266,8 @@ class HelabMainWindow(QMainWindow):
         toggle_right_bottom_panel_action.setChecked(True)
         toggle_right_bottom_panel_action.triggered.connect(self.toggle_right_bottom_panel)
         self.sidebar_toolbar_right.addAction(toggle_right_bottom_panel_action)
+        identify_action(self.sidebar_toolbar_right, toggle_right_bottom_panel_action, "toggle_scripts_panel",
+                        "Show or hide the Scripts panel")
 
         self.right_splitter.addWidget(self.plots.panel_right_top_plot_settings)
         self.right_splitter.addWidget(self.panel_right_bottom_script_selector)
@@ -1016,6 +1297,41 @@ class HelabMainWindow(QMainWindow):
         self.splitter.addWidget(self.plots.middle_mainwindow)
 
         self.plots.update_placeholder_visibility()
+
+    GEOMETRY = re.compile(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)")
+
+    @staticmethod
+    def take_geometry(argv: list[str]) -> tuple[Optional[QRect], list[str]]:
+        """``--geometry WxH+X+Y`` (or ``--geometry=WxH+X+Y``) in ``argv``: the main window's size W×H and
+        its frame's top-left at X,Y (screen points; a sign each, "-" for a screen left of or above the
+        main one), for this run only. The rectangle (None: not given, or not of that form, which is
+        logged) and ``argv`` without the option (Qt reads its own ``-geometry`` on Linux)."""
+        rest, value, found = [], None, False
+        args = iter(argv)
+        for arg in args:
+            if arg == "--geometry":
+                value, found = next(args, ""), True
+                if value.startswith("-") and not HelabMainWindow.GEOMETRY.fullmatch(value):
+                    rest.append(value)  # (Another option, not a value: kept.)
+                    value = ""
+            elif arg.startswith("--geometry="):
+                value, found = arg.partition("=")[2], True
+            else:
+                rest.append(arg)
+        if not found:
+            return None, rest
+        match = HelabMainWindow.GEOMETRY.fullmatch(value or "")
+        if match is None:
+            logging.warning("--geometry %r ignored: give WxH+X+Y, e.g. 1600x928+0+39", value)
+            return None, rest
+        width, height, x, y = (int(group) for group in match.groups())
+        return QRect(x, y, width, height), rest
+
+    def apply_geometry(self, geometry: QRect) -> None:
+        """Size and place the window as ``--geometry`` asks (no less than its minimum size); nothing
+        is saved."""
+        self.resize(geometry.size())
+        self.move(geometry.topLeft())
 
     def _start_with_rhi_surface(self) -> None:
         """The 3D scatter's web view needs the window drawn through Qt's RHI; Qt switches a shown

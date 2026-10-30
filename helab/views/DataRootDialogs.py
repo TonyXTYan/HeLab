@@ -12,6 +12,7 @@ from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QAbstractButton, QApplication, QDialog, QDialogButtonBox, QFileDialog, QLabel,
                              QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
+from helab.utils.accessible import identify
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, PLACE_ROOT_ACTION, FolderCache, marker_path
 from helab.utils.io_service import IORequest
 
@@ -111,6 +112,10 @@ class PlaceRootBox(QMessageBox):
         self.here: QAbstractButton | None = self.addButton("Place here" if self.top else "Place .helab-root",
                                                            QMessageBox.ButtonRole.AcceptRole)
         cancel = self.addButton(QMessageBox.StandardButton.Cancel)
+        for button, ident in ((self.at_top, "place_root_at_top"), (self.here, "place_root_here"),
+                              (cancel, "place_root_cancel")):
+            if button is not None:
+                identify(button, ident)
         if warnings and cancel is not None:
             self.setDefaultButton(cancel)
         elif isinstance(self.here, QPushButton):
@@ -154,7 +159,7 @@ class ManualMarkerDialog(QDialog):
         intro.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         layout.addWidget(intro)
         layout.addWidget(QLabel(f"File name: {name}"))
-        self.text = QPlainTextEdit(contents)
+        self.text = identify(QPlainTextEdit(contents), "marker_contents", "File contents")
         self.text.setReadOnly(True)
         self.text.setFont(QFontDatabase.systemFont(QFontDatabase.SystemFont.FixedFont))
         layout.addWidget(self.text)
@@ -172,6 +177,10 @@ class ManualMarkerDialog(QDialog):
         buttons.addButton(copy, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.addButton(self.save, QDialogButtonBox.ButtonRole.ActionRole)
         buttons.rejected.connect(self.close)
+        identify(copy, "marker_copy")
+        identify(self.save, "marker_save")
+        if (close := buttons.button(QDialogButtonBox.StandardButton.Close)) is not None:
+            identify(close, "marker_close")
         layout.addWidget(buttons)
         cache.resultReady.connect(self._result)
 

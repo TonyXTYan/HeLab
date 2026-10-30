@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QProgressBar, QScrollAr
 
 from helab.models.StatusReport import StatusReport
 from helab.utils import txy_sources
+from helab.utils.accessible import identify
 from helab.utils.folder_cache import analysis_cached_text, data_root_row
 from helab.utils.number_format import fnum
 from helab.utils.io_service import IOService
@@ -136,7 +137,7 @@ class FolderDetailsPanel(QScrollArea):
         for key, name in self.ROWS:
             label = QLabel(name)
             label.setEnabled(False)  # Dimmed, like a form's field names.
-            value = ElidedLabel()
+            value = identify(ElidedLabel(), f"details_{key}")  # (Named by its text; the ID finds the row.)
             grid.addWidget(label, row, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             grid.addWidget(value, row, 1)
             self.names[key], self.values[key] = label, value

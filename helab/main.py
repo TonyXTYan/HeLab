@@ -53,6 +53,7 @@ from helab.utils import app_log
 from helab.utils.constants import (
     APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, app_folder, read_log_keep, start_cache_dir)
 from helab.utils.settings_store import app_settings
+from helab.views import quit_watch
 from helab.views.HelabMainWindow import HelabMainWindow
 
 
@@ -162,7 +163,9 @@ def main() -> None:
 
     # font_db = QFontDatabase()
 
-    app = QApplication(sys.argv)
+    # --geometry WxH+X+Y: this run's window size and place (a test runner's fixed coordinates).
+    geometry, argv = HelabMainWindow.take_geometry(sys.argv)
+    app = QApplication(argv)
     app.setStyle("Fusion")
     # app.setStyleSheet("QWidget { background-color: #fafafa; }")
     if "SF Mono" in QFontDatabase.families():
@@ -180,6 +183,8 @@ def main() -> None:
     moved = _start_cache()
 
     main_window = HelabMainWindow()
+    if geometry is not None:
+        main_window.apply_geometry(geometry)
     app_log.catch_unhandled(main_window.show_status_notice)
     main_window.show()
     # Registered as a running instance by now, so other HeLabs keep its log file.
@@ -187,7 +192,9 @@ def main() -> None:
     if moved:
         QTimer.singleShot(0, lambda: QMessageBox.information(main_window, "Disk cache", moved))
 
-    sys.exit(app.exec())
+    code = app.exec()
+    quit_watch.exit_soon(code)  # Never left running without windows (helab/views/quit_watch.py).
+    sys.exit(code)
 
 
 if __name__ == "__main__":

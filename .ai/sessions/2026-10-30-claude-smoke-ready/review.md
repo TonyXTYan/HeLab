@@ -1,0 +1,660 @@
+# Review: smoke ready, phase A (Wren, Reviewer; `agent/smoke-ready`, 9f0b21f..94ed478)
+
+Reviewed the diff itself (`git diff 9f0b21f...94ed478`), not the handoff's account of it. Phase B
+commits after 94ed478 are out of scope.
+
+## Checks run
+
+- **Full suite** on 94ed478, in a detached worktree of that commit (so Beacon's phase B edits on the
+  floor don't mix in), `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8200 passed, 669 skipped, no RERUN** (the same as the handoff). (A first try from a `git archive`
+  copy had 3 failures and 15 reruns, all from `test_versioning`/`test_release_recovery` needing
+  `.git`: my setup, not the branch.)
+- `mypy helab/ --strict`, `--platform win32`, `mypy tests --strict`: clean (192, 192, 161 files).
+  `pyright helab tests`, `pyright --pythonplatform Windows helab tests`: 0 errors.
+- **CI run 40978424279** (head 94ed478): completed, success, every job green. Tests jobs:
+  macOS (1/2) 123812163730 4089 passed, 322 skipped, **1 rerun**; macOS (2/2) 123812163733 4111 passed;
+  Ubuntu (1/2) 123812163884 4086 passed, 324 skipped, **1 rerun**; Ubuntu (2/2) 123812163905 4111 passed;
+  Windows (1/2) 123812163773 4076 passed, 333 skipped, **1 rerun**; Windows (2/2) 123812163931 4095
+  passed; Converter backends 123812163744 / 123812163861 / 123812163779 clean. The three reruns: H1.
+- A probe (scratch, not committed): the main window on a synthetic folder with **every script of
+  every group** open (16 plots), then the test's own `unnamed()` on every visible top-level window;
+  and a `MatplotlibPane` on its own. Results in H2.
+
+## High
+
+**H1. CI: the same test reran on all three OSes, after the new test ran on that worker.**
+`tests/test_analysis_gui.py::test_plots_close_from_their_tab_and_the_settings_panel`, Tests (1/2) on
+macOS, Ubuntu and Windows (jobs above), each the same reason:
+
+```
+E       assert (False)
+E        +  where False = <helab.views.plots.instance.AnalysisInstance object at …>.is_closed
+tests/test_analysis_gui.py:359: AssertionError
+```
+
+It fails on its first attempt and passes on the rerun. Each time it ran on `gw0` right after 9 tests of
+`tests/test_accessible_names.py` (Settings, 7 dialogs, the self-test) and `tests/test_analysis.py`. In
+the 30 Tests jobs of the 5 latest CI runs of other branches (40977894008, 40977028554, 40975825607,
+40898587803, 40894080358) it never reran, and it isn't in known-issues. The test closes a plot through
+its tab's `tabCloseRequested`, the path this commit changed in `DockTabCloser`
+(`helab/views/plots/dock.py:299` `windowTitleChanged` → `schedule_fit`; `:316` `tabMoved` →
+`schedule_fit`; `:310-325` `identify_tabs` on every fit). I couldn't reproduce it locally: the exact `gw0` order
+replayed 3× in one process and 2× with `-n 1 --cov=helab --timeout=120 --timeout-method=thread`, and the
+test 48× in parallel, all passed. The landing rule needs every RERUN explained or in known-issues;
+3 of 3 OSes points at an order dependency or a regression from this commit. Find the cause (e.g.
+log, in that test, every `QTabBar` under `middle_mainwindow` with its count, `tabsClosable`, the
+`helabClosable` property and `dock_at` for each index at the failure), fix it, or add it to
+known-issues with what's known.
+
+**H2. The walk doesn't reach controls that plots draw, and four of them fail its own rule today.**
+The main-window case opens two PyQtGraph scripts only (`Counts per shot`, `T, X, Y histograms`), and
+`widget_classes()` guards `helab/views` only, so widget classes in `helab/analysis` and `helab/scripts`
+(`PlotlyPane`, `MatplotlibPane`, `ReleasePlot`, the density images' widget, `UnitSpinBox` in other
+places) are outside the guard. With every script open, the walk reports:
+
+- `helab/scripts/dld/release_time.py:383` "Use for this folder…" (`QPushButton < ReleasePlot`): no ID.
+- `helab/analysis/panes.py:40` "Open in browser" (`QPushButton < PlotlyPane`), twice (two Plotly
+  plots: 3D scatter, Correlations): no ID. One fixed ID would also repeat when two Plotly plots are
+  shown side by side in the plot area (same window), so it needs the plot's number.
+- `helab/analysis/backends.py:97` `MatplotlibPane`'s `NavigationToolbar2QT`: 8 `QToolButton`s (Home,
+  Back, Forward, Pan, Zoom, Subplots, Customize, Save): no ID. Any plot whose Library is set to
+  Matplotlib has them. (Named by Qt from their text; the ID is what's missing.)
+- Probably `helab/scripts/dld/density_images.py:422` "Copy circles" too (not shown on synthetic data).
+
+Brief item 1 ("every interactive control … each script's …"), item 2 ("with synthetic data where a
+control only appears with a folder or a plot") and phase B item 1 (an ID on every control the test
+walks). These files are outside the owned paths, so this needs CoCo: either approve names/IDs there, or
+give them IDs from the view side after render (e.g. in `instance.py`, `plot_<n>_…`). Either way the test
+should open each script once (all groups) and one plot per Library, and the guard should cover widget
+classes in `helab/analysis` and `helab/scripts` (or say in `SKIPPED` why not).
+
+**H3. On macOS (and Linux) Qt names a combo box by its current text, not its accessible name.**
+`QAccessibleComboBox::text(Name)` (`.ai/temp/qtsrc/complexwidgets.cpp:416`, `#ifndef Q_OS_UNIX`) uses
+the widget rule only on Windows; on Q_OS_UNIX, which includes macOS (notes.md says so), Name is the
+Value: the current choice. The Cocoa bridge gives Name as AXTitle (`cocoa.mm:571`) and the description
+as AXDescription (`cocoa.mm:707`). So on the Mac, where `app_ax_find` searches by title, the Group combo
+is titled by its current group, the Preset combo by the preset, and so on. Smoke-automation item 4 names
+the Group combo explicitly ("so `app_ax_find` finds them by title"); that isn't met on macOS, and can't
+be from PyQt6 (no `QAccessible` binding to override the interface). What's wrong today is the account:
+
+- handoff, runbook proposal: "`app_ax_find` by name ('Folder path', …, 'Preset', 'Apply preset',
+  'TXY source')": "Preset" and "TXY source" are combos; on macOS a runner finds combos by AXIdentifier
+  (`script_group`, `preset_combo`, `txy_source`, `txy_profile`, `plot_chooser`, the Settings combos), or
+  uses Debug › Script Group. Say so, and add it to M~3 (check AXTitle of `script_group` on the Mac).
+- `tests/test_accessible_names.py` module docstring: "though Qt on Linux names a combo by its current
+  text" → "on macOS and Linux"; and say the test checks the Windows name for combos.
+- The proposed `app-runtime-and-ui.md` paragraph should carry the same caveat.
+
+## Low
+
+**L1. Stale Debug items when an item is pressed without its menu opening.** The submenus are filled at
+construction and refilled only on `aboutToShow` (`HelabMainWindow.py:583-590`). If a runner presses an
+item through accessibility without the menu opening (what M~3 asks to check), the item may hold a
+deleted object: Run Plot's actions hold run buttons that `tree_widget.clear()` deletes when the group
+changes (`HelabMainWindow.py:625` → `b.click()` on a deleted button), Show/Close Plot Tab hold docks
+`deleteLater`'d on close (`:653`, `:663`), and Save Window Screenshot… uses the target from the last
+`aboutToShow` (`:594`, `:679-688`). With `app_log`'s excepthook this logs a `RuntimeError` and does
+nothing rather than crashing. A `sip.isdeleted` guard in the lambdas would make it a no-op; M~3 should
+note the risk.
+
+**L2. Inline dialogs aren't walked and the skip list doesn't say so.** plan.md promised plain
+`QMessageBox`/`QInputDialog` calls "listed as reasoned skips"; `SKIPPED` is empty and the guard can't see
+them (they aren't classes). Inline dialogs with more than text buttons: `QInputDialog` in
+`HelabMainWindow`, `CacheMover`'s `QProgressDialog` (`CacheMover.py:258`). notes.md explains the choice;
+put it in the test's docstring and the testing.md proposal so a reader of the test knows what's out.
+
+**L3. A plot parameter's editor is hidden until its row is selected.** pyqtgraph 0.14's
+`WidgetParameterItem` hides the editor of number, text and list parameters until the row is selected
+(`parametertree/parameterTypes/basetypes.py:25`, `hideWidget = True`); Qt hides hidden widgets from
+accessibility, so a runner can't find `param_<group>.<name>` until it selects the row in the
+`plot_settings` tree. The runbook proposal should say so (it bears on phase B's Return/Tab bug too).
+
+## Nits
+
+- **N1.** `plot_tabs_<n>` (`dock.py:310`, `:322`) numbers bars in `findChildren` order; Qt retires bars
+  with `deleteLater` and makes new ones as docks move (`qmainwindowlayout.cpp`, `unuseTabBar`), so a
+  bar's number can change within a session. The close buttons' IDs (from `plot_id`) are fine; the
+  fallback `f"{number}_{index}"` (`dock.py:325`) changes with tab moves (no non-`AnalysisDock` docks today).
+- **N2.** The self-test doesn't cover "no ID" or a tab without a name; one line each.
+- **N3.** The screenshot creates `screenshots/` in the temp folder and writes the PNG on the GUI thread
+  (`HelabMainWindow.py:709-717`). The temp folder can be set in Settings, and the I/O trace checks it
+  through a helper (`trace_check`, `:742`). Fine for a debug item; say so if it stays.
+
+## Checked, no finding
+
+- **IDs** are set where the control is made, from what it is (analysis ID, plot number, folder tab's
+  open order, parameter key, profile field name, constant key, button role), never from text; the
+  screenshot's file name is the only title-derived string. Folder tab close buttons keep their ID after
+  an earlier tab is closed (probe: `close_folder_tab_2` stays on "run"). With 16 plots open no ID
+  repeats among a window's shown controls.
+- **The name rules** in `effective_name` match Qt 6.11 (`qaccessiblewidget.cpp:317-335`,
+  `simplewidgets.cpp:122-125`, tabs, line edits' placeholder only as Description) and are conservative,
+  except combos (H3). The self-test fails on an icon-only button, an unlabelled spin box, a repeated
+  shown ID and a mismatched identifier, and not on a buddy-labelled box or a hidden repeat.
+- **Debug items** call their control's path: Run Plot clicks the run button (→ `run_analysis`), Script
+  Group `setCurrentIndex` (→ `currentTextChanged` → `_on_group_changed`, the only connection), Show Plot
+  Tab `show_plot(raise_dock=True)` (the chooser's `activated` path), Close Plot Tab `dock.close()`
+  (`DockTabCloser.close_tab`'s), Settings Tab `show_settings_dialog(tab=…)` (same guard, then
+  `show_tab`). Menus are filled from memory (`current_dataset_view`, the tree, `instances()`); nothing
+  reads source folders or the store.
+- **Screenshot target:** the active window at the Debug menu's `aboutToShow`, else the main window;
+  deleted or hidden targets fall back; `grab()` renders the widget, so the save dialog isn't in it.
+- **Call sites:** besides names/IDs, only the Debug menu, `show_settings_dialog(tab=)`,
+  `SettingsDialog.TAB_TITLES`/`show_tab`, `AnalysisDock.plot_id`, and the `DockTabCloser` refits (H1).
+  Dock objectNames (used by arrangements and `saveState`) are untouched; Qt's dock layout doesn't use tab
+  bars' objectNames.
+- **Tests:** settings via `app_settings()`, synthetic folders in `tmp_path`, only PyQtGraph plots (no
+  `QWebEngineView` made by the tests; the main window is closed through `_closing`).
+
+---
+
+# Re-review: review fixes and phase B items 2–4 (94ed478..270b368)
+
+Reviewed `git diff 94ed478..270b368` (ed4c227 Dump State, `--geometry`, Return in plot settings;
+270b368 the phase A fixes).
+
+## Checks run
+
+- **Full suite** on 270b368 (detached worktree of that commit), `-n 4 --reruns 5 --reruns-delay 1
+  --basetemp=.ai/temp/pytest-review`: **8222 passed, 669 skipped, no RERUN.**
+- `mypy helab/ --strict` (193 files), `--platform win32` (193), `mypy tests --strict` (163): clean.
+  `pyright helab tests`, `--pythonplatform Windows`: 0 errors.
+- CI run 40984390827: see the end.
+
+## H1: the cause is now pinned down (and it is a user-visible bug since 0.0.6a1)
+
+**Mechanism, reproduced in isolation** (a scratch script, `QT_QPA_PLATFORM=offscreen`): a lambda
+connected to a signal of an object **Qt made itself** (here `QTabWidget.tabBar()`; in HeLab the dock
+tab bars `QMainWindowLayout` makes, found with `findChildren`), **capturing that object** (`bar=bar`),
+stops being called after one `gc.collect()` once nothing else holds the object's Python wrapper:
+
+```
+lambda capturing bar, no gc: delivered=True
+lambda capturing bar, gc.collect(): delivered=False
+lambda not capturing bar, gc.collect(): delivered=True
+lambda capturing bar, ref kept, gc.collect(): delivered=True
+bound pyqtSlot, gc.collect(): delivered=True
+```
+
+The wrapper and the lambda form a cycle (PyQt's GC traversal of a QObject visits its slot proxies'
+callables; the lambda holds the wrapper). sip keeps no reference to a wrapper of a C++-made object,
+so the cycle is garbage: the collector clears the wrapper, and clearing a QObject's wrapper clears
+its slot proxies, so the Qt connection stays but calls nothing. A bar made in Python (sip keeps its
+wrapper once C++ owns it) survives, and so does a bound `pyqtSlot` (a plain Qt connection, no proxy).
+This matches Beacon's observations: nothing disconnects it; "in isolation it survives `gc.collect()`"
+(the isolated test held `bar`); and it depends on test order (when a full collection falls between
+`fit()` and the click depends on what the worker allocated before).
+
+**Not new in 94ed478:** the lambda dates from 9c477c2 (0.0.6a1, 2026-10-28). What 94ed478 changed is
+the worker's history before that test (the new `test_accessible_names.py` ran first on `gw0` every
+time), so a collection now fell in that window. **The fix (a bound `pyqtSlot` with `sender()`) removes
+the cause, not just the timing.** Accepted.
+
+**The same pattern elsewhere:** an AST scan of `helab/` for `X.signal.connect(lambda …)` whose lambda
+refers to `X` finds 14 connections. In every one, either the sender is made in Python (`QMessageBox(...)`, `self.…`,
+Parameters, `UnitSpinBox`), or it comes from `menu.addMenu(...)` (sip keeps it; checked: the Debug
+submenus still fill after `gc.collect()`). Only `DockTabCloser`'s Qt-made bar was at risk. (A lambda
+reaching the sender through another name, or a `functools.partial`, would escape this scan; none seen
+by reading the Qt-made-object call sites: `tabBar()`, `findChildren`, `widgetForAction`.)
+
+### R1 (High, docs): the known issue and A~2 give the wrong cause
+
+With the old lambda, a **real mouse click** on a plot tab's × did nothing after one `gc.collect()` in
+the real main window (two plots tabbed; scratch test, the 94ed478 `fit` patched back in: "lambda: the
+tab's x did nothing after a GC"; the 270b368 slot: closed). In the app a full collection runs every so
+often, so **in 0.0.6a1–0.0.7a1 a plot tab's × goes dead soon after its tab bar is made**. That is
+almost certainly known-issues:85 ("A plot tab's 'x' didn't respond to computer-use clicks (the dock
+title's 'x' did)"): computer-use clicks are pointer clicks, and the dock title's × is Qt's own
+button with no lambda. A~2 says real clicks work and puts the smoke observation down to
+accessibility. The accessibility part is true for an AX *press* (`QAccessibleTabBar` doesn't list the
+close buttons), but it isn't what the smoke pass hit. The handoff should say: the × was dead after a
+GC (fixed in 270b368, user-visible, worth a release-notes line), and separately AX can't press a
+tab's × (A~2's routes stand). The known-issues entry closes with the GC cause, and the `dock.py`
+comment ("was seen to stop delivering in CI's test order") should name the mechanism so the pattern
+isn't reintroduced. Proposed AGENTS.md or architecture line: *never connect a lambda that captures
+the sender when Qt made the sender (found with `findChildren`, `tabBar()`, …): use a bound slot and
+`sender()`*.
+
+### R2 (Low): the new × test can't catch the bug
+
+`tests/test_debug_runner_menu.py:203` (`test_a_plot_tabs_close_button_closes_that_plot_when_clicked`)
+clicks without a collection, and it keeps `bar` in a local variable (which alone keeps the lambda
+alive), so it passes with the old lambda too. Take the button, `del bar`, `gc.collect()`, then click:
+that version fails on 94ed478's `fit` and passes on 270b368's (checked as above).
+
+## The other phase A fixes
+
+- **H2:** resolved. The names and IDs stay within the approved scope (`panes.py`, `backends.py`,
+  `release_time.py`, `density_images.py`, `helab/utils/accessible.py`). `identify_plot_controls`
+  (`dock.py:171`) prefixes them with `plot_<n>.` when the dock takes its content, so two plots never
+  share an ID. It renames only interactive classes, and nothing in HeLab looks up those by name
+  (`findChild` is used only for the labels `plot_data_source`, `plot_error`, `plot_note` and
+  `plot_opengl`, none of them renamed). The walk now opens every script of every group and one plot
+  per Library, and the guard covers `helab/analysis` and `helab/scripts`.
+  - **Nit:** `backends.py:99` reads Matplotlib's private `NavigationToolbar2QT._actions` (present in
+    3.11.2). If an upgrade renamed it, every Matplotlib pane would fail to build (an `AttributeError`),
+    not just lose its IDs. Use `getattr(self.toolbar, "_actions", {})`.
+  - **Nit:** controls a drawing creates after `setWidget` (none today) would miss the `plot_<n>.`
+    prefix. The walk would only catch that when two such plots are shown at once.
+- **H3, L2, L3:** resolved. The docstring now says macOS and Linux, and the runbook and M~3 have
+  their lines. Six message boxes are walked (`ASKS`), and `INLINE_SKIPPED` gives a reason for each
+  of the rest.
+- **L1:** resolved. Every runner item's lambda checks `sip.isdeleted` before it acts.
+- **N1–N3:** resolved or explained: tab bar IDs come from the first plot's number, the self-test
+  covers a control with no ID and an unnamed tab, and the GUI-thread write is explained in a comment.
+
+## Phase B items 2–4
+
+- **Dump State** (`helab/views/state_dump.py`) reads memory only. Every field is a plain attribute
+  or a property over one (`FolderExplorer.live` → `live_control.live`, `load_path` → `_load_path`,
+  `loading`, `load_progress`, `load_error`, `summary_buttons`), a label's text, tooltip or
+  visibility, `FolderCache.offline`, or plot instance fields. A test fails the dump on any
+  `IOService.submit`. It has every field brief B item 2 lists (summary lines, Folder details, status
+  bar, folder and plot tabs, each plot's source line and tooltip, plot count, Live). It suits the
+  `--smoke` channel: a versioned `schema` (`helab.state/1`), and controls and tabs named by their
+  phase A IDs (`folder_tab_<n>`, plot numbers, `details_<key>`, status-bar button IDs). No finding.
+  (`"closing"` reads `window._closing`; fine within the package.)
+- **`--geometry`:** HeLab saves no window geometry (no `saveGeometry`, `restoreGeometry` or
+  `saveState` on the main window), so nothing persists. The option is taken out of argv before
+  `QApplication` sees it, applied before `show()`, and `resize` can't go below the minimum size;
+  there are tests for parsing and placement. **Nit:** `--geometry` followed by another option uses
+  that option as its value (`helab --geometry -x`: logged as ignored and `-x` dropped). Harmless.
+- **Return and Escape in plot settings** (`parameter_tree.py`, approved): Return closes the editor
+  on the next event-loop pass, after the box has committed; Escape restores and closes. It covers
+  numbers (`UnitNumberItem`) and choices (the new `helab_list`). Nothing in HeLab compares a
+  parameter's type with `"list"`, so the remap is safe (grep). pyqtgraph gives the choice combo
+  `setValue`, which Escape uses. The new tests include the next run taking the value. No finding.
+
+## CI run 40984390827 (head 270b368)
+
+Completed, success, every job green, **no RERUN in any job** (each log's summary line and rerun
+lines read):
+macOS Tests (1/2) 123831926635 4098 passed, 322 skipped; (2/2) 123831926545 4124 passed, 347 skipped;
+Ubuntu (1/2) 123831926757 4095 passed, 324 skipped; (2/2) 123831926720 4125 passed, 347 skipped;
+Windows (1/2) 123831926531 4085 passed, 333 skipped; (2/2) 123831926584 4108 passed, 361 skipped;
+Converter backends 123831926706 / 123831926673 / 123831926619 and the three Builds: success.
+`test_every_script_and_each_library` passed on all three OSes (under the 120 s per-test timeout).
+
+## Verdict
+
+The code is ready. **Open before landing: R1** (handoff and known-issues: the × was dead after a
+GC, a user-visible bug fixed here, not only an accessibility gap; the `dock.py:333` comment should
+name the mechanism) **and R2** (the × test: `del bar`, then `gc.collect()`, before the click). The
+two Nits are optional.
+
+---
+
+# Round 3: R1/R2 fixes, the TXY Index merge, Quit that confirms (270b368..944a225)
+
+First-parent commits: f3651cf (R1, R2, Nits), b8f2218 (merge of dev/v0.0.7 c492242, TXY Index),
+d4ebf7b (brief-phase-b items 5 and 6), 944a225 (merge of f986257, `.ai` only).
+
+## Checks run
+
+- **Full suite** on 944a225 (detached worktree), `-n 4 --reruns 5 --reruns-delay 1`: **8275 passed,
+  669 skipped, no RERUN.**
+- `mypy helab/ --strict` (194), `--platform win32` (194), `mypy tests --strict` (165): clean; `pyright
+  helab tests` and `--pythonplatform Windows`: 0 errors.
+- **CI run 40990082872** (head 944a225): completed, success, every job green. Tests: macOS (1/2)
+  123850152602 4125 passed, (2/2) 123850152420 4150 passed; Ubuntu (1/2) 123850152607 4122 passed, (2/2)
+  123850152614 4150 passed; Windows (1/2) 123850152636 4112 passed, (2/2) 123850152612 4134 passed,
+  **1 rerun**; Converter backends 123850152617 / 123850152623 / 123850152529 and the three Builds:
+  success. The rerun:
+
+  ```
+  RERUN tests/test_test_isolation.py::test_pytest_imports_the_checkout_it_runs_in_before_any_other
+  E         ________________________ ERROR collecting test session ________________________
+  E         C:\hostedtoolcache\windows\Python\3.13.16\x64\Lib\pathlib\_abc.py:437: in lstat
+  tests\test_test_isolation.py:47: AssertionError
+  ```
+
+  Already in known-issues (line 135: "a collection error in pathlib `lstat` on Windows CI (run
+  40754482305 …), passed on retry"); the same signature, in a test this branch doesn't touch. Add run
+  40990082872 to that entry as a second sighting.
+
+## R1, R2, Nits (f3651cf): resolved
+
+The `dock.py` comment names the mechanism; the handoff and known-issues wording carry the cause. The ×
+test drops `bar`, collects, then clicks (fails on the old lambda, as checked in round 2).
+`getattr(self.toolbar, "_actions", {})`. `--geometry -x` keeps `-x` for Qt (a test case).
+
+## The TXY Index merge (b8f2218): fine
+
+The one conflict (`QuitSaveDialog`'s imports) keeps both sides. TXY Index adds no new control in
+`helab/views` (the walk over Settings' tabs would fail on one without a name or ID; it passes).
+
+## Quit that confirms and the quit window's list (d4ebf7b)
+
+**`quit_entries()`**: one typed `QuitSave(kind, path, state, started)` per operation, for the nine
+kinds. `quit_saves()` is now `dict.fromkeys(entry.path …)` over it, with the same members in the same
+order as before (finishing writes, saving loads, deferred saves, flags, constants, results, presets,
+last uses). The only addition is running conversions (the new wait, Q~4). **The start times are real for
+every kind**, not only in the test (which seeds them):
+- flags, constants, presets and Make room go through `cache_admin`, which records `_started[owner]`
+  (`folder_cache.py:3011`);
+- a result's own save uses `_result_ops[owner][1]`;
+- finishing writes use `_finishing_created`; loads and conversions use `job.created`;
+- deferred saves use the new `_deferred_since`; last uses use `_mark_flush_started`.
+
+The states are real too: "held" comes from `_probe_held`; presets show "waiting" until their job
+exists.
+
+**Scope in `folder_cache.py`**: only `QuitSave`, the `QUIT_*` kinds, `quit_entries`, the two hooks
+(`_deferred_since`; `_finishing_live`, set and popped beside `_finishing_created`), `_saves_memory` and
+`quit_save_started`. Nothing else changed. **One thing beyond "shape and hooks": the convert wait**
+(Q~4, Tony's). It is bounded:
+- `submit` refuses new work while `quitting` (`folder_cache.py:2131`), so no conversion starts during
+  the wait;
+- `cancel_for_quit` leaves running conversions alone, so only those already running are waited for.
+
+But a first auto-convert of a big folder could hold the quit window open for minutes (Quit now always
+works). Landing before Tony answers ships the wait; it is a one-line revert.
+
+**The window** (`QuitSaveDialog`) reads memory only: every 250 ms and on `quitSavesChanged`, from
+`quit_entries()`. It updates each line in place, closes itself (Accepted) when no entry is left, and
+Quit now skips (Rejected). The four tests from other areas that it touches only update their expected
+text; the behaviour they check is unchanged.
+
+**`quit_watch`**: a daemon thread started after `app.exec()` returns. It sleeps 1 s, then logs every
+thread's stack, flushes the log handlers and calls `os._exit(code)`. It can't cut short a HeLab write:
+- `closeEvent` shuts IOService down (`HelabMainWindow.py:1822`) before `QApplication.quit()`, and the
+  instance lock unlocks on `aboutToQuit`;
+- HeLab registers no `atexit` handler;
+- quit-time settings writes (`PlotReopen.record`) go through temporary `QSettings` objects, which sync
+  as soon as they're released;
+- helpers are separate processes that are already shut down.
+
+What it can cut is library teardown (e.g. QtWebEngine's profile), which doesn't matter here. Tests:
+in-process, plus a real process with a 60 s non-daemon thread that ends with its exit code.
+
+**The known issue "File › Quit sometimes left the process running"**: its cause is still unknown (the
+handoff says so). `quit_watch` covers a HeLab still running after its windows closed. It doesn't cover
+the handoff's other guess, a click that quit nothing: then the window stays open and visible. Don't close
+the entry at landing. Reword it to what's covered, and keep the "click before the menu opened" sighting
+open for the smoke pass.
+
+**TXY Index's last-uses flush** still runs as a quit save in the window: the four
+`test_txy_last_used_quit.py` tests pass, with only their expected line's format updated.
+
+### L1 (Low): the quit window says a conversion is "saving to the disk cache"
+
+`QuitSaveDialog._show` counts every path except presets and last uses as a folder "saved to the disk
+cache". With only a conversion running, the window reads (checked):
+
+```
+Saving 1 folder to the disk cache before HeLab quits:
+run — converting raw files · 0:05
+```
+
+A conversion writes TXY files to `converted-txy/` or beside the raw files, not to the disk cache. Count
+conversions separately (e.g. "converting raw files in 1 folder").
+
+### Nits
+
+- `_deferred_since` is never pruned: one float for every folder that has ever waited. It is harmless,
+  since it's read only for folders in `_deferred_saves`. Pop it where those entries leave.
+- In the four edited tests, `import re` sits on its own above the other standard-library imports,
+  separated by a blank line.
+
+## Verdict (round 3)
+
+No blocker. L1 is a one-line wording fix. For CoCo and Tony: Q~4 (the convert wait ships with this
+landing unless Tony answers first), and known-issues:81 stays open, reworded.
+
+---
+
+# Round 4: round 3 fixes and the Byte Units merge (944a225..fef81e1)
+
+First-parent commits: 4de24be (L1, Nits) and fef81e1 (merge of dev/v0.0.7 b9be661, Byte Units).
+
+## Checks run
+
+- **Full suite** on fef81e1 (detached worktree), `-n 4 --reruns 5 --reruns-delay 1`: **8301 passed, 669
+  skipped, no RERUN.**
+- **Type checks:** `mypy helab/ --strict` (194 files), `--platform win32` (194), `mypy tests --strict`
+  (165): clean. `pyright helab tests` and `--pythonplatform Windows`: 0 errors.
+- **The names walk and the Cache tab tests** (`test_accessible_names.py`, `test_cache_tab.py`): 53 passed.
+- **CI run 40992882385** (head fef81e1): completed, success, every job green, **no RERUN in any job**.
+
+  | Job | Result |
+  |---|---|
+  | macOS Tests (1/2) 123859252286 | 4136 passed, 322 skipped |
+  | macOS Tests (2/2) 123859252353 | 4165 passed, 347 skipped |
+  | Ubuntu Tests (1/2) 123859252367 | 4133 passed, 324 skipped |
+  | Ubuntu Tests (2/2) 123859252374 | 4165 passed, 347 skipped |
+  | Windows Tests (1/2) 123859252504 | 4123 passed, 333 skipped (13:38) |
+  | Windows Tests (2/2) 123859252514 | 4149 passed, 361 skipped |
+  | Converter backends 123859252274 / 123859252327 / 123859252292 | success |
+  | The three Builds | success |
+
+## Round 3 fixes (4de24be): resolved
+
+- **L1:** the quit window's header now counts conversions apart: "Converting raw files in 1 folder
+  before HeLab quits:", and with every kind, "Saving 8 folders and presets to the disk cache, recording
+  when converted TXY were last used and converting raw files in 1 folder". It joins one, two and three
+  parts correctly. A new test covers a conversion on its own.
+- **Nits:** `_deferred_since` is now popped wherever `_deferred_saves` loses an entry
+  (`folder_cache.py:2696-2697`, `:2798-2799`) and cleared beside it (`:2862-2863`). The `import re`
+  lines are tidied. The convert wait (Q~4) stays as built.
+
+## The Byte Units merge (fef81e1): fine
+
+- **Conflicts:** three conflicted files (`SettingsDialog`, `FolderExplorer`, `OldLogs`), each keeping
+  both sides: Byte Units' `app_log` import, kind-tagged `byte_size` and `{unit}` beside this floor's
+  `identify`/`identify_buttons`.
+- **No name or ID dropped:**
+  - Byte Units adds no control.
+  - The Cache tab's budget boxes are the same widgets, now in the OS's units. `_identify` still names
+    them (`CacheTab.py:353` `disk_budget` "Disk budget", `:371` `ram_budget_setting` "RAM budget",
+    called at `:334`).
+  - The Settings walk passes.
+- **Every `byte_size` call has a kind:** `byte_size(num, kind: ByteKind, *, platform=None)` takes it
+  as a required positional argument, so strict mypy (clean) rejects any call without one. A grep finds
+  none without `'disk'` or `'ram'`. This floor's own new code (Debug items, Dump State, the quit
+  window) shows no size.
+
+## Verdict (round 4)
+
+No open findings. Q~4 (the convert wait, as built) and the rewording of known-issues:81 remain with
+CoCo and Tony.
+
+---
+
+# Round 5: Tony's additions (fef81e1..4620adc)
+
+First-parent commits: 5a15c0d (my round 4 notes), 8c1b81d (merge of e74a5cf, docs only: no change
+under `helab/` or `tests/`), and 4620adc:
+- Debug › Save Window Screenshot to Temp Folder (Q~1);
+- Debug › Show Folder Tab and Close Folder Tab (Q~3);
+- `debug_*` IDs on the runner's menu items;
+- tests, and the handoff's Q~1–Q~4 recorded as decided.
+
+## Checks run
+
+- **Full suite** on 4620adc (detached worktree), `-n 4 --reruns 5 --reruns-delay 1`: **8303 passed, 669
+  skipped, no RERUN.**
+- **CI run 40995895223** (head 4620adc): completed, success, every job green, **one RERUN**.
+
+  | Job | Result |
+  |---|---|
+  | macOS Tests (1/2) 123868892217 | 4137 passed |
+  | macOS Tests (2/2) 123868892267 | 4166 passed |
+  | Ubuntu Tests (1/2) 123868892381 | 4134 passed |
+  | Ubuntu Tests (2/2) 123868892299 | 4166 passed |
+  | Windows Tests (1/2) 123868892493 | 4124 passed |
+  | Windows Tests (2/2) 123868892347 | 4151 passed, **1 rerun** (R5-1) |
+  | Converter backends 123868892189 / 123868892353 / 123868892373 | success |
+  | The three Builds | success |
+
+  ```
+  RERUN tests/test_debug_runner_menu.py::test_show_and_close_folder_tab
+  E       pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+  tests\test_debug_runner_menu.py:45: TimeoutError
+  ```
+
+## The new Debug items: correct
+
+- **Show Folder Tab and Close Folder Tab** are filled on `aboutToShow` from memory (the tab widget's
+  explorers and their titles).
+  - Each item finds its tab where it is now (`indexOf`, so moved tabs work) and does nothing if the
+    tab has closed (`sip.isdeleted`).
+  - Show uses `setCurrentIndex`, as a click on the tab does. Close emits `tabCloseRequested`, the
+    signal the tab's × sends, so the tab closes through the same path.
+  - Item IDs come from the tab's number (`debug_show_folder_tab_<n>`, `debug_close_folder_tab_<n>`),
+    never from its title. None of these items captures its sender, so the GC problem from round 2
+    can't recur here.
+- **Save Window Screenshot to Temp Folder** targets the same window as Save Window Screenshot…, opens
+  no dialog, and writes to `<temp>/screenshots/helab-<window>-<time>.png`, adding `-2`, `-3` … when the
+  name is taken. It logs the path and shows it in the status bar. It writes only to HeLab's temp folder.
+- **IDs:** the runner's actions are `debug_save_screenshot`, `debug_save_screenshot_temp` and
+  `debug_dump_state`; the plot items are `debug_show_plot_tab_<plot number>` and
+  `debug_close_plot_tab_<plot number>`.
+
+## R5-1 (Low, open): the RERUN in `test_show_and_close_folder_tab`
+
+**What failed:** `tests/test_debug_runner_menu.py:45`, the `window` fixture's teardown, waits up to 30 s
+for `made._closing` after `made.close()`. The test body itself passed: the CI line "PASSED" at
+03:16:59 is the call phase.
+
+**Why teardown waits:** the body loads a synthetic folder in a second tab, then closes that tab, so the
+load's background save to the disk cache is usually still running. I checked locally: in **all 40 runs
+whose state I logged, `quit_entries()` still held `QuitSave('save', …/run, 'writing', …)` when the body
+ended**. So `close()` opens the quit window, and teardown finishes only when that save ends.
+
+The other tests in this file keep their window open longer (plots run), so their saves have ended by
+teardown. **This test's teardown alone depends on a disk-cache save finishing within 30 s**, on a
+Windows runner that took 9:52 for its half of the suite.
+
+**Not reproduced locally:** 184 runs in parallel on macOS (`-n 8`) passed; one early run had an error
+I couldn't see. The worker's log line "GUI stalled for 32.03s" (03:17:00) doesn't settle it: "GUI
+stalled" lines appear in 10 of the 30 CI test-job logs I downloaded across rounds 1–5 (up to 183 s), from a
+window's watchdog while no event loop runs.
+
+**Fix (test only):** before the body ends, wait for the save the load started:
+`qtbot.waitUntil(lambda: not get_folder_cache(get_io_service()).quit_saves(), timeout=60_000)`.
+Then teardown's `close()` quits at once, as in the other tests. Or close the tab before the load's
+save can start. If it stays as is, the RERUN goes into known-issues with this explanation.
+
+## R5-2 (Low): the temp-folder screenshot test can't pass on a rerun
+
+`test_screenshot_to_the_temp_folder_asks_nothing` freezes the clock at 09:15:00 and writes to the
+worker's `DIR_TEMPS/screenshots`. That folder is one `mkdtemp` per worker (conftest:45), shared by
+every test the worker runs, and a rerun runs in the same worker. If the test ever fails once, its
+rerun finds the first attempt's `…-091500.png` and `-2.png`, gets `-2` and `-3`, and fails again. The
+test passes today, but a rerun can't recover it. Fix: point the test at its own folder with
+`monkeypatch.setattr(module, "DIR_TEMPS", str(tmp_path))` (HelabMainWindow imports `DIR_TEMPS` by
+value).
+
+## A~4: Beacon's local worker crash in `test_every_script_and_each_library`
+
+**Explained well enough to land, as a known issue.**
+- The crash is a SIGTRAP from a Chromium check failing on a QtWebEngineCore thread, outside Python
+  and HeLab.
+- It belongs with the existing Plotly worker crashes (known-issues around 96–114). Those include
+  `test_plot_backends.py`'s single Plotly pane (Counts per shot), so it isn't specific to this test.
+- A~4 adds the mechanism those entries lacked. The CI runs of this test so far (rounds 2–5, three OSes
+  each) passed with no RERUN.
+
+**Does the test open more web views than it needs?** I counted live `QWebEngineView`s after each
+step (scratch copy of the test):
+- 1 after Basic plots' 3D scatter;
+- 2 after the DLD port's 3D scatter (`helab.scatter_3d` and `helab.dld.scatter_3d` are different
+  scripts, so "every script once" holds);
+- **3 at most**, after Counts per shot in Plotly. Matplotlib adds none.
+
+**Does it leave one alive?** No. The three are deleted at teardown; conftest's `delete_left_widgets`
+fails any test that leaves a web view alive, and this test passes.
+
+**Optional Nit:** closing each web-view plot right after walking it would bring the peak to 1. The
+side-by-side ID check (`plot_<n>.` prefixes) stays covered by the PyQtGraph plots and the per-Library
+step. Since a single Plotly pane can also crash this way (above), this would reduce exposure, not
+remove it.
+
+## Verdict (round 5)
+
+The code is ready. **R5-1 is open:** a test-only fix, or a known-issues entry with the explanation
+above. The landing rule needs every RERUN explained or in known-issues, and its cause here is
+probable, not proven. R5-2 is a one-line test fix. A~4 goes to known-issues as Beacon proposes.
+
+---
+
+# Round 6: R5 fixes (4620adc..ffabdd2)
+
+First-parent commits: 31c37b0 (the runner-menu fixture's teardown names what quitting still waits for)
+and ffabdd2 (window tests leave nothing saving at quit; R5-2; web-view plots closed once walked).
+Only tests changed (`tests/test_accessible_names.py`, `tests/test_debug_runner_menu.py`,
+`tests/test_parameter_return.py`).
+
+## Checks run
+
+- **Full suite** on ffabdd2 (detached worktree), `-n 4 --reruns 5 --reruns-delay 1`: **8303 passed, 669
+  skipped, no RERUN.**
+- **Type checks:** `mypy helab/ --strict` (194 files), `--platform win32` (194), `mypy tests --strict`
+  (165): clean. `pyright helab tests` and `--pythonplatform Windows`: 0 errors.
+- **CI run 40998446014** (head ffabdd2): completed, success, every job green, **no RERUN in any job**
+  (no "rerun reasons" section in any log).
+
+  | Job | Result |
+  |---|---|
+  | macOS Tests (1/2) 123877019300 | 4137 passed, 322 skipped |
+  | macOS Tests (2/2) 123877019446 | 4166 passed, 347 skipped |
+  | Ubuntu Tests (1/2) 123877019356 | 4135 passed, 324 skipped |
+  | Ubuntu Tests (2/2) 123877019221 | 4167 passed, 347 skipped |
+  | Windows Tests (1/2) 123877019265 | 4124 passed, 333 skipped |
+  | Windows Tests (2/2) 123877019281 | 4150 passed, 361 skipped (it includes the folder tab test, which reran in round 5) |
+  | Converter backends 123877019268 / 123877019370 / 123877019364 | success |
+  | The three Builds | success |
+
+## R5-1: resolved
+
+The folder tab test now runs on a RAM-only folder (`no_auto_data_root`: conftest places no
+`.helab-root`, so nothing is saved to the disk cache). It asserts that nothing for that folder is
+pending, then waits up to 60 s until `quit_saves()` is empty, naming `quit_entries()` if not. The
+`window` fixture's teardown names what quitting still waited for (31c37b0). This removes the cause I
+found in round 5: a background save still running at teardown, which the quit window then waited for.
+
+## Does the RAM-only marker make a test skip what it checks? No
+
+- **The names walk** (both main-window cases in `test_accessible_names.py`): a scratch copy recorded
+  every control each walk visits, with and without the marker.
+  - `test_the_main_window_with_a_folder_and_plots`: the same 92 controls (class and ID) either way,
+    and the same ones shown.
+  - `test_every_script_and_each_library`: the same 422 controls, and the same ones shown.
+
+  A data root adds no control; the walk also checks hidden controls.
+- **`test_debug_runner_menu.py`** (now marked as a whole module): no test there asserts anything about
+  caching. The only matches for "cache" or "saved" are the Settings tab name "Cache", the screenshot's
+  "Screenshot saved", and the quit checks.
+  - Dump State's "no I/O during the dump" check still patches `IOService.submit` for the dump itself,
+    unchanged.
+  - Its other assertions are about what the window shows: the tabs, the summary line, Folder details,
+    the plot's source line.
+- **`test_parameter_return.py`'s window test** checks that the value Return took is the one the plot
+  runs with. That doesn't depend on caching (saved-result reuse is off by default anyway).
+
+## R5-2 and the Nit: resolved
+
+- **R5-2:** the temp-folder screenshot test patches `HelabMainWindow.DIR_TEMPS` to its own `tmp_path`
+  (HelabMainWindow imports it by value). A rerun finds none of the first attempt's files.
+- **Nit:** `close_web_views` closes each web-view (Plotly) plot right after its walk, so at most one is
+  open at a time.
+  - The walk still sees `PlotlyPane` before it closes (`covered_by` checks the class was walked).
+  - `opened` is lowered by the number closed, so `wait_for_plots` still counts right.
+  - IDs of plots shown side by side are still checked on the PyQtGraph plots and in the per-Library
+    step.
+- **Also:** `covered_by()` now reads the class list from `COVERED`, replacing the attribute set on the
+  test function and its `type: ignore`s. No behaviour change.
+
+## Verdict (round 6)
+
+**Nothing is open.** Every finding from rounds 1–6 is resolved. CI 40998446014 is green on every job
+with no RERUN. The RERUNs from earlier rounds are all explained:
+- H1: fixed;
+- known-issues:135: the Windows pathlib flake, to which run 40990082872 is added;
+- R5-1: fixed;
+- A~4: goes into known-issues at landing.
+
+Left for CoCo at landing (records, not findings):
+- the known-issues entries (A~4; the tab × GC bug closed; known-issues:81 reworded);
+- the handoff's doc proposals.

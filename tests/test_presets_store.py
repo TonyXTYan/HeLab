@@ -7,6 +7,7 @@ all and Reset all settings; ``quit_saves`` waits for their writes."""
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 import time
 import weakref
@@ -316,7 +317,7 @@ def test_the_quit_window_names_presets_being_saved(qtbot: QtBot, service: IOServ
     dialog.open()
     item = dialog.folders.item(0)
     assert dialog.label.text() == "Saving presets to the disk cache before HeLab quits:"
-    assert dialog.folders.count() == 1 and item is not None and item.text() == "Presets — saving"
+    assert dialog.folders.count() == 1 and item is not None and re.sub(r" · \d+:\d\d$", "", item.text()) == "Presets — writing"
     qtbot.waitUntil(lambda: bool(results), timeout=30_000)  # Saved: it closes by itself.
     assert not dialog.skipped and cache.quit_saves() == []
 

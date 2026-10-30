@@ -226,3 +226,34 @@ Trace folder: …
    that resolution.
 3. Decide which model runs it: Haiku 5.5 for cost, or Sonnet 5.5 if Haiku misreads the screen
    in the dry run (Q5.1).
+
+## Runner routes (v0.0.7)
+
+Added 2026-10-30 at the Smoke ready landing (`4ad8ac5`); what a runner uses now instead of pixels:
+
+- Debug › Script Group › <group> instead of the Group combo's popup; Debug › Run Plot › Plot
+  <script>; Debug › Show/Close Plot Tab › <title> instead of the tab and its ×; Debug › Show/Close
+  Folder Tab › <title>; Debug › Settings Tab › <tab>.
+- **Each `Shot:`:** Debug › Save Window Screenshot to Temp Folder (no dialog; the status bar names
+  the file in the temp folder's `screenshots/`; copy it to `shots/M1.x-n.png`). Debug › Dump State…
+  for what the window shows, as JSON.
+- `app_ax_find` by name ("Folder path", "Check folder status", "Live", "Cancel loading", "Apply
+  preset", "Rerun with these settings") or by AXIdentifier (`folder_path`, `live`, `run_…`).
+  **Combo boxes by AXIdentifier only** (`script_group`, `preset_combo`, `txy_source`, `txy_profile`,
+  `plot_chooser`, Settings' combos such as `load_mode`): on macOS Qt titles a combo by its current
+  choice, not its name; or Debug › Script Group for the group.
+- **A plot parameter's editor shows only while its row is selected**: select the row in
+  `plot_settings` first, then `param_<group>.<name>` is there; Return takes the value and closes it,
+  Escape cancels.
+- An accessibility press can't reach a tab's × (Qt never exposes it): use the Debug items, the
+  Settings panel's "Close plot" (`close_plot`) or the dock title's × ("Close").
+- `helab --geometry 1600x928+0+39` fixes the window's size and place for the run; quit confirms by
+  the process exiting within 1 s of the quit window closing.
+- **A source run on macOS** (Runner Tools, landed `0316bae`): START_COMMAND may be `open
+  <checkout>/.ai/local/HeLab-dev.app --args --geometry 1600x928+0+39` (after `python dev/dev_app.py
+  [--env-file …]`) instead of the built app; the target is bundle ID `au.edu.anu.he-bec-lab.dev`, so a
+  running release HeLab never answers for it. Quit it before opening it again.
+- **Waits:** instead of reading the summary from screenshots, wait for the log's `MILESTONE load_done
+  folder=<FOLDER>` (and `plot_done … plot=<id> state=ok`, `convert_done … by=live`) in the newest
+  `helab-<pid>.log` of the app folder (Help › Show log folder; with `floor-env.sh`, the floor's app
+  folder; the pid from `lsappinfo info -only pid -app au.edu.anu.he-bec-lab.dev`).

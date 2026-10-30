@@ -7,6 +7,7 @@ from typing import Any
 from PyQt6.QtCore import QDir
 from PyQt6.QtWidgets import QTabWidget, QWidget, QTabBar
 
+from helab.utils.accessible import identify
 from helab.utils.constants import DEFAULT_DATA_PATH, DEV_POTENTIAL_DATA_PATHS
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.views.FolderExplorer import FolderExplorer
@@ -40,6 +41,10 @@ class FolderTabWidget(QTabWidget):
                 """)
 
         self.tab_back_button_enabled = False
+        # Each tab's number, in the order opened this session: its controls' IDs (helab/utils/accessible.py).
+        self._tabs_opened = 0
+        if (bar := self.tabBar()) is not None:
+            identify(bar, "folder_tabs", "Folder tabs")
 
         self.currentChanged.connect(self.on_current_tab_changed)
 
@@ -102,7 +107,10 @@ class FolderTabWidget(QTabWidget):
             set_initial_expand_to_parent_level = False,
             default_candidates = default_candidates,
         )
+        self._tabs_opened += 1
+        folder_explorer.setObjectName(f"folder_tab_{self._tabs_opened}")
         index = self.addTab(folder_explorer, 'File Explorer')
+        self._name_close_button(index)
         folder_explorer.rootPathChanged.connect(lambda _ : self.update_tab_titles())
         folder_explorer.emit_root_path_changed()
         self.setCurrentIndex(index)
@@ -113,8 +121,17 @@ class FolderTabWidget(QTabWidget):
             current_folder_explorer = self.widget(index)
             if isinstance(current_folder_explorer, FolderExplorer):
                 self.setTabText(index, current_folder_explorer.tab_title_update())
+                self._name_close_button(index)
             else:
                 logging.critical(f"update_tab_titles: Current tab {index = } is not a FolderExplorer instance.")
+
+    def _name_close_button(self, index: int) -> None:
+        """Tab ``index``'s close button: "Close folder tab: <title>", its ID from the tab's number."""
+        bar, explorer = self.tabBar(), self.widget(index)
+        button = bar.tabButton(index, QTabBar.ButtonPosition.RightSide) if bar is not None else None
+        if button is not None and explorer is not None:
+            identify(button, f"close_{explorer.objectName()}", f"Close folder tab: {self.tabText(index)}",
+                     "Close this folder tab")
 
     def on_back_button_clicked(self) -> None:
         current_folder_explorer = self.currentWidget()
