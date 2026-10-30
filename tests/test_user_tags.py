@@ -77,7 +77,7 @@ def test_tonights_u8_txy_is_another_tags_converted_again_and_kept(source: Path, 
         "denied", "not an OS error"])
 def test_path_too_long_names_the_oss_refusal(error: BaseException, platform: str, said: str | None) -> None:
     long = "C:\\" + "d" * (WINDOWS_MAX_PATH + 10)
-    message = path_too_long(error, long, platform)
+    message = path_too_long(error, long, platform, lambda folder: True)
     if said is None:
         assert message is None
     else:
@@ -85,22 +85,52 @@ def test_path_too_long_names_the_oss_refusal(error: BaseException, platform: str
         assert f"{len(long):,} characters" in message
 
 
-@pytest.mark.parametrize("winerror, length, too_long", [(206, 100, True), (3, WINDOWS_MAX_PATH, True),
-                                                        (3, WINDOWS_MAX_PATH - 1, False), (5, 400, False)])
-def test_windows_errors_206_and_3_on_a_long_path(winerror: int, length: int, too_long: bool) -> None:
+@pytest.mark.parametrize("winerror, length, folder, too_long", [
+    (206, 100, False, True), (3, WINDOWS_MAX_PATH, True, True), (3, WINDOWS_MAX_PATH, False, False),
+    (3, WINDOWS_MAX_PATH - 1, True, False), (5, 400, True, False)],
+    ids=["206 (whatever the folder)", "3, long, folder there", "3, long, folder gone", "3, short", "5"])
+def test_windows_errors_206_and_3_on_a_long_path(winerror: int, length: int, folder: bool, too_long: bool) -> None:
+    """Low 2 (review): a not-found on a long path is "too long" only while the target's folder is there; gone
+    (moved, a share dropped), the run fails as before and the next check tries again."""
     error = OSError(errno.EINVAL, "Windows' error")  # (Not a FileNotFoundError: the Windows error decides.)
     setattr(error, "winerror", winerror)  # (An attribute Python sets on Windows only.)
     path = "C:\\" + "d" * (length - 3)
-    assert (path_too_long(error, path, "win32") is not None) is too_long
+    asked: list[str] = []
+
+    def exists(where: str) -> bool:
+        asked.append(where)
+        return folder
+    assert (path_too_long(error, path, "win32", exists) is not None) is too_long
     short = FileNotFoundError(errno.ENOENT, "No such file")  # A short path not found is just that.
-    assert path_too_long(short, "C:\\run\\d_txy_helab_m19v1_1.txt", "win32") is None
+    assert path_too_long(short, "C:\\run\\d_txy_helab_m19v1_1.txt", "win32", exists) is None
+    assert asked == ([os.path.dirname(path)] if winerror == 3 and length >= WINDOWS_MAX_PATH else [])
+
+
+def test_a_long_path_not_found_is_too_long_only_while_its_folder_is_there(source: Path, tmp_path: Path,
+                                                                             monkeypatch: pytest.MonkeyPatch) -> None:
+    write_raw(source, 1, raw_bytes(10_000))
+    gone = FileNotFoundError(errno.ENOENT, "No such file")
+
+    def refused(path: str | os.PathLike[str], data: bytes, **kwargs: Any) -> None:
+        raise gone
+
+    monkeypatch.setattr(txy, "write_atomic", refused)
+    monkeypatch.setattr(convert, "PLATFORM", "win32")
+    monkeypatch.setattr(convert, "WINDOWS_MAX_PATH", 10)  # (Every path here is "long".)
+    folders = {"there": True}
+    monkeypatch.setattr(convert, "_isdir", lambda folder, reason: folders["there"])
+    events = run(source, request_for(source, tmp_path, profile=MINE.to_dict(), beside=True, beside_confirmed=True))
+    assert of(events, "shot_unconvertible")[0]["message"].startswith("Path too long for Windows")  # Folder there.
+    folders["there"] = False  # Moved, or its drive dropped: not a length.
+    with pytest.raises(FileNotFoundError):
+        run(source, request_for(source, tmp_path, profile=MINE.to_dict(), beside=True, beside_confirmed=True))
 
 
 def test_the_temporary_name_in_the_error_is_the_length_said(tmp_path: Path) -> None:
     target = "C:\\" + "d" * 240
     temporary = Path(target + ".0123456789abcdef.partial")
     error = FileNotFoundError(errno.ENOENT, "No such file", temporary)  # os.open(Path) gives the Path.
-    message = path_too_long(error, target, "win32")
+    message = path_too_long(error, target, "win32", lambda folder: True)
     assert message is not None and f"{len(str(temporary)):,} characters" in message
 
 

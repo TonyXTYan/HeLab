@@ -10,7 +10,7 @@ function in its own process (``helab.convert_cli``); the app runs it in a helper
 
 **Settle checks** (A10.1; 2019-halos d3667 is the evidence: MATLAB converted it 0.25 s after its
 last write). A raw file is converted only when it is unmodified for ``fingerprints.SETTLE_SECONDS``
-(5 s) by this computer's clock and not dated in the future; its (size, mtime) are the same at two
+(the settle time, Settings › General, default 5 s; sent with each request, Q33.7) by this computer's clock and not dated in the future; its (size, mtime) are the same at two
 checks a check interval apart, the previous conversion's (the caller sends its ``waiting`` list
 back as ``seen``: a file not in it waits for the next check) and this one's, and the same again
 before and after it is read; it ends with a newline; and its first line is on the profile's
@@ -76,7 +76,8 @@ from typing import Any, Callable, Iterable, NotRequired, TypedDict, TYPE_CHECKIN
 
 from helab.io_ops import fingerprints, stores
 from helab.io_ops.events import ConvertProfile, ConvertSeconds, HelperEvent, ShotUnconvertibleEvent
-from helab.io_ops.infra import Emit, Heartbeat, Pause, _entry_stat, _guard, _scandir, _trace, _traced_error, emit
+from helab.io_ops.infra import (Emit, Heartbeat, Pause, _entry_stat, _guard, _isdir, _scandir, _trace, _traced_error,
+                                emit)
 from helab.utils import file_kinds
 
 if TYPE_CHECKING:
@@ -116,24 +117,34 @@ PARTIAL_MAX_AGE = 3600.0
 DEFAULT_WORKERS = 1 if getattr(sys, "frozen", False) else max(1, min(4, (os.cpu_count() or 2) // 2))
 # Windows' full-path limit without long paths turned on (MAX_PATH, the terminating NUL included): a
 # path of this many characters or more is refused, as WinError 206 or 3, or a FileNotFoundError
-# (Q23.6: user profiles' 33-character tags make HeLab's names ~56 characters, ~82 while temporary).
+# (Q23.6: user profiles' 33-character tags make HeLab's names 50 characters plus the shot's digits, 26
+# more while temporary).
 WINDOWS_MAX_PATH = 260
+# The OS whose path rules ``path_too_long`` applies (tests patch it to try Windows' on any OS).
+PLATFORM = sys.platform
 
 
-def path_too_long(exc: BaseException, path: str, platform: str = sys.platform) -> str | None:
+def path_too_long(exc: BaseException, path: str, platform: str | None = None,
+                  folder_exists: Callable[[str], bool] | None = None) -> str | None:
     """What to tell the user when the OS refused ``path`` (or the name in ``exc``, e.g. the TXY's
     longer temporary one) for its length: ENAMETOOLONG anywhere; on Windows WinError 206, or WinError
-    3 or FileNotFoundError on a path of WINDOWS_MAX_PATH characters or more. None for any other error
-    (a Windows PC with long paths turned on, or any other OS, may just write it)."""
+    3 or FileNotFoundError on a path of WINDOWS_MAX_PATH characters or more while ``path``'s folder
+    still exists (``folder_exists``, a traced stat by default; gone, the folder was moved or its drive
+    dropped: not a length, so the run fails as before and the next check tries again). None for any
+    other error (a Windows PC with long paths turned on, or any other OS, may just write it)."""
     if not isinstance(exc, OSError):
         return None
     given = exc.filename
     given = os.fspath(given) if isinstance(given, (str, os.PathLike)) else ""
     name = given if isinstance(given, str) and len(given) > len(path) else path
     winerror = getattr(exc, "winerror", None)
-    windows = platform == "win32"
-    if windows and (winerror == 206 or (winerror == 3 or isinstance(exc, FileNotFoundError))
-                    and len(name) >= WINDOWS_MAX_PATH):
+    windows = (PLATFORM if platform is None else platform) == "win32"
+    not_found = winerror == 3 or isinstance(exc, FileNotFoundError)
+    if windows and not_found and winerror != 206 and len(name) >= WINDOWS_MAX_PATH:
+        exists = folder_exists or (lambda folder: _isdir(folder, "convert: too long or gone"))
+        if not exists(os.path.dirname(path)):
+            return None
+    if windows and (winerror == 206 or not_found and len(name) >= WINDOWS_MAX_PATH):
         return (f"Path too long for Windows ({len(name):,} characters; the limit is {WINDOWS_MAX_PATH - 1} "
                 f"unless long paths are turned on in Windows): {name}. Choose a shorter cache or temp folder "
                 "(Settings), or a shorter folder path")
