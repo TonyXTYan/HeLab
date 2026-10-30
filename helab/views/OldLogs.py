@@ -16,7 +16,7 @@ from PyQt6.QtCore import QObject, pyqtBoundSignal, pyqtSignal
 from PyQt6.QtWidgets import QAbstractButton, QMessageBox, QWidget
 
 from helab.utils import app_log
-from helab.views.accessible import identify_buttons
+from helab.utils.accessible import identify_buttons
 
 QUESTION = "Log files use {size} MB. Delete old ones?"
 

@@ -21,6 +21,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QVBoxLayout, QWidget
 
 from helab.analysis.parameters import ParameterSpec
+from helab.utils.accessible import identify_action
 
 PYQTGRAPH = "PyQtGraph"
 PLOTLY = "Plotly"
@@ -95,6 +96,8 @@ class MatplotlibPane(QWidget):
         self.canvas = FigureCanvasQTAgg(figure)  # type: ignore[no-untyped-call]
         self.canvas.setParent(self)
         self.toolbar = NavigationToolbar2QT(self.canvas, self)  # type: ignore[no-untyped-call]
+        for tool, action in self.toolbar._actions.items():  # Named by their text; IDs by Matplotlib's tool name.
+            identify_action(self.toolbar, action, f"mpl_{tool}")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)

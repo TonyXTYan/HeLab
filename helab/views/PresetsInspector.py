@@ -29,11 +29,11 @@ from helab.analysis.parameters import ParameterSpec
 from helab.analysis.presets import (Arrangement, PlotCheck, RecordError, SavedPlot, ScriptPreset, ScriptRef,
                                     check_plot, check_value, parse)
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.utils.accessible import identify
 from helab.utils.colours import AMBER
 from helab.utils.folder_cache import QUITTING, FolderCache
 from helab.views.plots.arrangement import folder_name
 from helab.views.plots.presets import ARRANGEMENT, SCRIPT, ask_name, confirm, preset_store, saved_note
-from helab.views.accessible import identify
 
 Found = Union[Tuple[ScriptMetadata, DatasetAnalysis], str]
 ScriptFinder = Callable[[ScriptRef], Found]

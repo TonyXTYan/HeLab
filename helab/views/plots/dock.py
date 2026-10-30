@@ -8,10 +8,11 @@ from typing import Callable, Optional, cast
 from PyQt6 import sip
 from PyQt6.QtCore import QObject, QRect, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QCloseEvent, QFocusEvent, QPainter, QPaintEvent
-from PyQt6.QtWidgets import (QAbstractButton, QDockWidget, QMainWindow, QSizePolicy, QSplitter, QTabBar,
-                             QVBoxLayout, QWidget)
+from PyQt6.QtWidgets import (QAbstractButton, QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QComboBox,
+                             QDockWidget, QLineEdit, QMainWindow, QSizePolicy, QSplitter, QTabBar, QVBoxLayout,
+                             QWidget)
 
-from helab.views.accessible import identify
+from helab.utils.accessible import identify
 
 
 # A wrapped object's C++ address (PyQt6's stub types it as returning None).
@@ -163,6 +164,21 @@ class FloatingSettings(QWidget):
             self.page.setVisible(self.is_open)
 
 
+# The controls a plot's drawing may hold (helab/utils/accessible.py; tests/test_accessible_names.py).
+PLOT_CONTROLS = (QAbstractButton, QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QComboBox, QLineEdit, QTabBar)
+
+
+def identify_plot_controls(content: QWidget, plot_id: str) -> None:
+    """The controls in a plot's drawing (made by its script or library with an ID such as
+    ``plotly_open_in_browser`` or ``mpl_zoom``) take the plot's number first, ``plot_<n>.<id>``: two
+    plots side by side then never share an ID. Labels and the drawing itself keep theirs."""
+    prefix = f"plot_{plot_id}."
+    for control in content.findChildren(QWidget):
+        ident = control.objectName()
+        if isinstance(control, PLOT_CONTROLS) and ident and not ident.startswith((prefix, "qt_")):  # (Qt's own.)
+            identify(control, prefix + ident)
+
+
 class AnalysisDock(QDockWidget):
     """A plot dock that says when the user closes it (hiding, e.g. behind another tabbed
     dock, is not closing).
@@ -209,10 +225,13 @@ class AnalysisDock(QDockWidget):
     def setWidget(self, widget: Optional[QWidget]) -> None:
         """Show ``widget`` as the plot. As in Qt's own, the plot before it stays a (hidden)
         child of the dock until its owner deletes it, unless ``widget`` took it in (a wrapper
-        around it): then it stays as it is, inside ``widget``."""
+        around it): then it stays as it is, inside ``widget``. Its controls' IDs get the plot's
+        number (``identify_plot_controls``)."""
         old = self.widget()
         if old is widget:
             return
+        if widget is not None and self.plot_id:
+            identify_plot_controls(widget, self.plot_id)
         if old is not None and old.parentWidget() is self._body_holder:
             self._body_layout.removeWidget(old)
             old.hide()
@@ -307,26 +326,38 @@ class DockTabCloser(QObject):
         layout = self.area.layout()
         if layout is not None:
             layout.activate()  # Qt makes or reuses the tab bars as it lays the docks out.
-        bars = self.area.findChildren(QTabBar, options=Qt.FindChildOption.FindDirectChildrenOnly)
-        for number, bar in enumerate(bars, start=1):
+        for bar in self.area.findChildren(QTabBar, options=Qt.FindChildOption.FindDirectChildrenOnly):
             if not bar.property("helabClosable"):
                 bar.setProperty("helabClosable", True)
                 bar.setTabsClosable(True)
-                bar.tabCloseRequested.connect(lambda index, bar=bar: self.close_tab(bar, index))
+                # A slot of this object, not a lambda: a lambda's connection here was seen to stop
+                # delivering in CI's test order (the tab's × did nothing; H1 in the floor's review).
+                bar.tabCloseRequested.connect(self._tab_close_requested)
                 bar.tabMoved.connect(self.schedule_fit)
-            self.identify_tabs(bar, number)
+            self.identify_tabs(bar)
 
-    def identify_tabs(self, bar: QTabBar, number: int) -> None:
+    def identify_tabs(self, bar: QTabBar) -> None:
         """IDs and names for a tab bar of plots and its close buttons: "Close plot tab: <title>",
-        ``close_plot_tab_<the plot's number>`` (helab/views/accessible.py)."""
-        identify(bar, f"plot_tabs_{number}", "Plot tabs")
-        for index in range(bar.count()):
-            dock = self.dock_at(bar, index)
-            plot_id = dock.plot_id if isinstance(dock, AnalysisDock) and dock.plot_id else f"{number}_{index}"
+        ``close_plot_tab_<the plot's number>`` (helab/utils/accessible.py). Qt makes and retires these
+        bars as plots are tabbed, so no ID stays with a bar: it is ``plot_tabs_<its first tab's plot
+        number>``, unique while shown; the close buttons' IDs are the stable ones."""
+        plots = [dock.plot_id if isinstance(dock := self.dock_at(bar, index), AnalysisDock) else ""
+                 for index in range(bar.count())]
+        if plots and plots[0]:
+            identify(bar, f"plot_tabs_{plots[0]}", "Plot tabs")
+        for index, plot_id in enumerate(plots):
+            if not plot_id:
+                continue  # (Only plots' docks are tabbed here.)
             for side in (QTabBar.ButtonPosition.RightSide, QTabBar.ButtonPosition.LeftSide):
                 if (button := bar.tabButton(index, side)) is not None:
                     identify(button, f"close_plot_tab_{plot_id}", f"Close plot tab: {bar.tabText(index)}",
                              "Close this plot")
+
+    @pyqtSlot(int)
+    def _tab_close_requested(self, index: int) -> None:
+        bar = self.sender()
+        if isinstance(bar, QTabBar):
+            self.close_tab(bar, index)
 
     def close_tab(self, bar: QTabBar, index: int) -> None:
         dock = self.dock_at(bar, index)

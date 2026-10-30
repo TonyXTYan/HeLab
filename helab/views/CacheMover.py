@@ -29,6 +29,7 @@ from PyQt6.QtGui import QDesktopServices
 from PyQt6.QtWidgets import QAbstractButton, QMessageBox, QProgressDialog, QPushButton, QWidget
 
 from helab.utils import cache_move
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.cache_locks import FileLock, lock_for_move
 from helab.utils.cache_setting import write_cache_setting
 from helab.utils.constants import app_folder, cache_dir, set_cache_dir
@@ -36,7 +37,6 @@ from helab.utils.settings_defaults import DIR_CACHES_SETTING
 from helab.utils.folder_cache import FolderCache
 from helab.utils.io_service import IORequest
 from helab.utils.number_format import byte_size
-from helab.views.accessible import identify, identify_buttons
 
 SHOW = "Show in Explorer" if sys.platform == "win32" else "Show in Finder"
 FAILED = "Couldn't move the disk cache"

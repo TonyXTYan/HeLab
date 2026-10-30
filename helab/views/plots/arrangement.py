@@ -23,13 +23,13 @@ from PyQt6.QtWidgets import QDockWidget, QMainWindow, QMessageBox
 
 from helab.analysis.dataset_view import DatasetView, view_of
 from helab.analysis.presets import Arrangement, RecordError, SavedPlot, parse
+from helab.utils.accessible import identify_buttons
 from helab.utils.folder_cache import Dataset, FolderCache, store_options
 from helab.utils.io_service import IORequest
 from helab.utils.settings_defaults import OPEN_PLOTS_SETTING, REOPEN_PLOTS_SETTING, read_setting
 from helab.utils.settings_store import app_settings
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.instance import AnalysisInstance
-from helab.views.accessible import identify_buttons
 
 if TYPE_CHECKING:
     from helab.views.plots.script_tree import TreePanelWidget

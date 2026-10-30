@@ -33,13 +33,13 @@ from helab.analysis.results import DISK_CACHED, RAM_ONLY, AnalysisContext, Analy
 from helab.analysis.runner import AnalysisRunner, get_analysis_runner
 from helab.convert.profile import DetectorProfile, file_tag
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.utils.accessible import id_part, identify
 from helab.utils.constants import QDOCKWIDGET_STYLESHEET
 from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache, store_options
 from helab.utils.io_service import IORequest, get_io_service
 from helab.utils.number_format import byte_size
 from helab.utils import txy_sources
 from helab.utils.ram_buffers import Buffers, arrays_in, buffers
-from helab.views.accessible import id_part, identify
 from helab.views.plots.cached_results import PENDING_NOTE, VERIFY_NOTE, CachedRuns
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.pictures import ReleasedPlot, snapshot
@@ -51,7 +51,7 @@ if TYPE_CHECKING:
 
 
 def identify_parameters(settings: QWidget) -> QWidget:
-    """IDs and names for a plot's settings (pyqtgraph's parameter trees, helab/views/accessible.py):
+    """IDs and names for a plot's settings (pyqtgraph's parameter trees, helab/utils/accessible.py):
     each tree ``plot_settings`` (with pages, ``plot_settings_<n>`` and the page tabs
     ``plot_settings_pages``), each value's editor ``param_<group>.<name>`` named by its title, and
     its reset button ``param_<group>.<name>_reset``. ``settings`` itself, for chaining."""

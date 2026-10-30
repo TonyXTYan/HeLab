@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QChe
 from PyQt6.QtCore import QSettings, QUrl
 
 from helab.utils import folder_cache
+from helab.utils.accessible import identify
 from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import fnum
 from helab.utils.constants import (
@@ -24,7 +25,6 @@ from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import GB, CacheTab, read_result_reuse
 from helab.views.ConverterTab import ConverterTab
 from helab.views.LabParametersTab import LabParametersTab
-from helab.views.accessible import identify
 
 
 class SettingsDialog(QDialog):
@@ -235,7 +235,7 @@ class SettingsDialog(QDialog):
         # self.main_layout.setStretch(1, 0)
 
     def _identify(self) -> None:
-        """The General tab's and the dialog's controls' IDs and names (helab/views/accessible.py);
+        """The General tab's and the dialog's controls' IDs and names (helab/utils/accessible.py);
         each other tab names its own."""
         if (bar := self.tabs.tabBar()) is not None:
             identify(bar, "settings_tabs", "Settings tabs")

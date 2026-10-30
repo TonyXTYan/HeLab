@@ -4,7 +4,7 @@ tabs' and plots' state in RAM, never a folder, the disk cache or a helper.
 
 Its shape (``SCHEMA``) is the one the ``--smoke`` control channel (v0.0.8) is to return for its
 state query, so a runner reads either the same way. Each field names what the user sees, and the
-controls' IDs (helab/views/accessible.py) where a runner would look for them."""
+controls' IDs (helab/utils/accessible.py) where a runner would look for them."""
 from __future__ import annotations
 
 import os

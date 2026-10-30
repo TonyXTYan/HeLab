@@ -28,7 +28,7 @@ or, when empty, the dotted path of every accessible ancestor's objectName (class
 Both platform bridges use that function: macOS `accessibilityIdentifier`
 (`qcocoaaccessibilityelement.mm`) → AXIdentifier; Windows `UIA_AutomationIdPropertyId`
 (`qwindowsuiamainprovider.cpp`) → AutomationId. So HeLab sets both, the same text
-(`helab/views/accessible.py`, `identify`), and the OS sees exactly the ID. Not checked live yet on
+(`helab/utils/accessible.py`, `identify`), and the OS sees exactly the ID. Not checked live yet on
 either OS (M~ in the handoff).
 
 ## IDs: what is unique

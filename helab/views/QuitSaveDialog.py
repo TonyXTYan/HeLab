@@ -15,8 +15,8 @@ import os
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
+from helab.utils.accessible import identify
 from helab.utils.folder_cache import PRESETS_SAVING, FolderCache
-from helab.views.accessible import identify
 
 QUIT_NOW_TOOLTIP = ("Quit without waiting. The folders' TXY files stay where they are: the next check of "
                     "each reads the shots that weren't saved.")

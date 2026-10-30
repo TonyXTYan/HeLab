@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from helab.analysis.dataset_view import DatasetView
 from helab.convert.profile import BUILTIN_PROFILES, UNCALIBRATED, DetectorProfile, file_tag, suggested_plates
 from helab.utils import txy_sources
-from helab.views.accessible import identify
+from helab.utils.accessible import identify
 
 
 def known_profiles() -> dict[str, DetectorProfile]:

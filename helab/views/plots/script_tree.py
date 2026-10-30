@@ -16,9 +16,9 @@ from helab.analysis.presets import SavedPlot, ScriptRef, waiting_view
 from helab.scripts import dld, standard
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.scripts_manager import ScriptsManager
+from helab.utils.accessible import id_part, identify
 from helab.views.plots.dock import AnalysisDock, DockTabCloser
 from helab.views.plots.instance import AnalysisInstance, LinkedAnalysisInstance
-from helab.views.accessible import id_part, identify
 if TYPE_CHECKING:
     from helab.views.plots.arrangement import FolderWait
     from helab.views.plots.workspace import PlotWorkspace

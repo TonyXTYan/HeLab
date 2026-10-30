@@ -15,9 +15,9 @@ from PyQt6.QtWidgets import QGridLayout, QLabel, QPushButton, QScrollArea, QSize
 from helab.analysis.constant_layers import LIMITS, SI_UNITS, fixed_prefix, limits
 from helab.analysis.parameter_tree import UnitSpinBox
 from helab.analysis.physics import Constant
+from helab.utils.accessible import identify
 from helab.utils.colours import AMBER
 from helab.utils.lab_parameters import editable, lab_rows, read_lab_constants, write_lab_constants
-from helab.views.accessible import identify
 
 __all__ = ["AMBER", "LabParametersTab", "UNCONFIRMED", "UNCONFIRMED_TIP", "constant_editor", "name_label", "number"]
 UNCONFIRMED = "unconfirmed"

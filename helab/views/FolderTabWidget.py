@@ -7,10 +7,10 @@ from typing import Any
 from PyQt6.QtCore import QDir
 from PyQt6.QtWidgets import QTabWidget, QWidget, QTabBar
 
+from helab.utils.accessible import identify
 from helab.utils.constants import DEFAULT_DATA_PATH, DEV_POTENTIAL_DATA_PATHS
 from helab.models.SnapshotFileSystemModel import SnapshotFileSystemModel
 from helab.views.FolderExplorer import FolderExplorer
-from helab.views.accessible import identify
 
 
 def root_on_target_drive(model_root_path: str, target_path: str, path: ModuleType = os.path) -> str:
@@ -41,7 +41,7 @@ class FolderTabWidget(QTabWidget):
                 """)
 
         self.tab_back_button_enabled = False
-        # Each tab's number, in the order opened this session: its controls' IDs (helab/views/accessible.py).
+        # Each tab's number, in the order opened this session: its controls' IDs (helab/utils/accessible.py).
         self._tabs_opened = 0
         if (bar := self.tabBar()) is not None:
             identify(bar, "folder_tabs", "Folder tabs")

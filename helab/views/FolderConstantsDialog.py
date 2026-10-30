@@ -21,10 +21,10 @@ from PyQt6.QtWidgets import (QCheckBox, QDialog, QDialogButtonBox, QGridLayout, 
 from helab.analysis.constant_layers import folder_layer
 from helab.analysis.parameter_tree import UnitSpinBox
 from helab.analysis.physics import CONSTANTS, TABLE, Constant, ResolvedConstants, resolve
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.folder_cache import FolderCache
 from helab.utils.colours import AMBER as AMBER
 from helab.views.LabParametersTab import UNCONFIRMED_TIP, constant_editor, name_label, number
-from helab.views.accessible import identify, identify_buttons
 
 FOLDER_ROWS: tuple[Constant, ...] = tuple(constant for constant in CONSTANTS if constant.level == "folder")
 INHERITANCE_NOTE = ("A folder's values apply to it and to its subfolders that don't set their own, up to its "

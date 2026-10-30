@@ -9,8 +9,8 @@ from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QRect, QSize, Qt
 from PyQt6.QtGui import QHideEvent, QImage, QPainter, QPaintEvent, QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
+from helab.utils.accessible import identify
 from helab.utils.ram_buffers import Buffers
-from helab.views.accessible import identify
 
 
 @dataclass(frozen=True)

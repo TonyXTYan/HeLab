@@ -21,9 +21,9 @@ from PyQt6.QtWidgets import (QAbstractItemView, QButtonGroup, QDialog, QDialogBu
                              QMessageBox, QPushButton, QRadioButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                              QWidget)
 
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache
 from helab.utils.io_service import IORequest
-from helab.views.accessible import identify, identify_buttons
 
 TITLE = "Same folder or a copy?"
 INTRO = ("HeLab found the same .helab-root at more than one location. If they are the same folder (another "

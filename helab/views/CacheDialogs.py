@@ -14,9 +14,9 @@ from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QMessageBox, QWidget
 
 from helab.utils import folder_cache
+from helab.utils.accessible import identify_buttons
 from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import byte_size
-from helab.views.accessible import identify_buttons
 
 
 def _name(path: str) -> str:

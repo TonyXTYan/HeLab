@@ -6,10 +6,19 @@ Phase A (brief.md items 4, 1, 2 and phase B item 1, the IDs) is done; phase B it
 
 ## Phase A: what changed
 
-- **`helab/views/accessible.py`** (new): `identify(widget, id, name="", description="")` sets the
-  objectName and the accessible identifier (the same ID), and the name and description when given;
-  `identify_action` names a toolbar's button for an action; `identify_buttons` gives a button box's or
-  message box's buttons IDs; `id_part` makes a script or profile ID safe in an ID.
+- **`helab/utils/accessible.py`** (new; first in `helab/views/`, moved for the review's H2 so the plot
+  libraries' and scripts' controls use it without importing views): `identify(widget, id, name="",
+  description="")` sets the objectName and the accessible identifier (the same ID), and the name and
+  description when given; `identify_action` names a toolbar's button for an action;
+  `identify_buttons` gives a button box's or message box's buttons IDs; `id_part` makes a script or
+  profile ID safe in an ID.
+- **Plots' own controls** (review H2, approved for names/IDs at the line each is made): Plotly's
+  "Open in browser" (`plotly_open_in_browser`, `helab/analysis/panes.py`), Matplotlib's toolbar
+  (`mpl_<tool>`: `mpl_home`, `mpl_zoom`, …, `helab/analysis/backends.py`), Release time's "Use for
+  this folder…" (`release_use_for_folder`) and Density images' "Copy circles"
+  (`density_copy_circles`). `AnalysisDock.setWidget` prefixes a drawing's control IDs with the plot's
+  number (`plot_<n>.plotly_open_in_browser`), so two plots side by side never share one (Qt's own
+  `qt_…` parts keep theirs).
 - **Every interactive control in `helab/views/`** has an accessible name and an ID: the toolbars'
   icon-only buttons, status-bar buttons, folder tabs and their close buttons ("Close folder tab:
   <title>", `close_folder_tab_<n>`), each tab's tree and path bar, the summary rows' buttons (the two
@@ -40,22 +49,61 @@ Phase A (brief.md items 4, 1, 2 and phase B item 1, the IDs) is done; phase B it
 ## The test, and how to add a window (for testing.md)
 
 `tests/test_accessible_names.py` opens each window and dialog (the real main window with a
-synthetic TXY folder loaded, two PyQtGraph plots tabbed, one released and one floating; Settings at
-each tab and the profile editor; eleven dialogs and tool windows on a cache whose helpers never
-run), walks every control of the interactive classes (`QAbstractButton`, `QComboBox`, `QLineEdit`,
+synthetic TXY folder loaded, two PyQtGraph plots tabbed, one released and one floating; the main
+window again with **every script of every group** run once (both run buttons) and Counts per shot in
+each Library; Settings at each tab and the profile editor; eleven dialogs and tool windows and
+Correlations' drawing on a cache whose helpers never run; six message boxes HeLab builds, caught as
+they open), walks every control of the interactive classes (`QAbstractButton`, `QComboBox`, `QLineEdit`,
 `QAbstractSpinBox`, `QAbstractSlider`, `QTabBar` and each tab, `QAbstractItemView`, editable
 `QTextEdit`/`QPlainTextEdit`; less a control's own parts, listed in `part_of_another`) and fails
 listing each without a name or ID, whose accessible identifier isn't its ID, or whose ID repeats
 among the controls its window shows. Hidden controls are checked for a name and ID too. PyQt6
 doesn't bind `QAccessible`, so `effective_name` follows Qt 6.11's rules (notes.md).
-`test_every_widget_class_in_views_is_walked_or_skipped_with_a_reason` imports every module of
-`helab/views/` and fails on a `QWidget` subclass that no case opens (`covers(...)` on a case,
-`DIALOGS`) and that `SKIPPED` doesn't list with a reason (none today). **A new window or dialog:**
-add a builder to `DIALOGS` (or a case with `@covers`), with synthetic data if its controls need a
-folder or a plot.
+`test_every_widget_class_is_walked_or_skipped_with_a_reason` imports every module of `helab/views`,
+`helab/analysis` and `helab/scripts` (less `legacy_plotly`) and fails on a `QWidget` subclass that no
+case opens (`covers(...)` on a case, `DIALOGS`) and that `SKIPPED` doesn't list with a reason (none
+today). Not classes, so out of the guard's sight: `INLINE_SKIPPED` lists, with why, the dialogs Qt
+builds itself (`QMessageBox.question` and its kin, `QInputDialog.getText/getInt`, whose field Qt
+names by its label, `QFileDialog`) and HeLab's boxes built from live state no case opens. Combo boxes:
+the test checks the name Qt gives on Windows; on macOS and Linux Qt names a combo by its current
+choice (see the runbook line below). **A new window or dialog:** add a builder to `DIALOGS` (or a
+case with `@covers`), with synthetic data if its controls need a folder or a plot; a new message box
+built where it asks: an entry in `ASKS`.
+
+## Review fixes (Wren, review.md)
+
+- **H1** (the rerun on all three OSes): reproduced locally with CI's exact command
+  (`pytest -n 4 --test-group 1/2 -rR --cov=helab … --timeout=120 --timeout-method=thread`: 1 RERUN of
+  `test_plots_close_from_their_tab_and_the_settings_panel` on gw0, 4 runs of 4); replaying gw0's
+  order alone, even under xdist, never failed. Instrumented at the failure: one tab bar, 3 tabs,
+  closable, marked by `DockTabCloser`, `dock_at` finding every dock; the test's
+  `tabCloseRequested.emit` never reached `close_tab`, while calling `close_tab` directly closed the
+  plot. So the **lambda connected to `tabCloseRequested`** (`lambda index, bar=bar: self.close_tab(bar,
+  index)`) stopped delivering; nothing in HeLab disconnects it, and in isolation it survives
+  `gc.collect()`, so the PyQt mechanism isn't pinned down. Fixed by connecting a bound
+  `pyqtSlot(int)` of the closer (`_tab_close_requested`, the bar from `sender()`): CI's command twice
+  since, **no RERUN**. Why this branch: the only changes on that path are the closer's extra refits
+  and naming; with the lambda gone the order no longer fails.
+- **H2**: done as above (approved files), the test runs every script and each Library, the guard
+  covers `helab/analysis` and `helab/scripts`.
+- **H3**: docs: the test's docstring (macOS and Linux), the runbook line on combos, M~3.
+- **L1**: Debug items do nothing when their run button, plot or window is gone (`sip.isdeleted`).
+- **L2**: six message boxes walked (`ASKS`), the rest in `INLINE_SKIPPED` with reasons; docstring fixed.
+- **L3**: the runbook line on parameter editors.
+- **N1**: a plot tab bar's ID is `plot_tabs_<its first tab's plot number>`: Qt makes and retires
+  bars as plots are tabbed (`unuseTabBar` deletes them), so no ID can stay with a bar; the close
+  buttons' IDs (each plot's number) are the stable ones. No fallback ID for docks that aren't plots
+  (there are none; the walk would flag one).
+- **N2**: the self-test covers a control with no ID and a tab without a name.
+- **N3**: the screenshot (and Dump State) write stays on the GUI thread: one folder in HeLab's temp
+  folder and one small file the user picked, as Settings' profile export does (a comment says so).
 
 ## Checks
 
+- After the review fixes (on top of phase B 2–4): full suite (`-n 4 --reruns 5 --reruns-delay 1`)
+  8222 passed, 669 skipped, no RERUN; CI's group 1/2 command locally 4099 passed, 322 skipped, no
+  RERUN (three times since the H1 fix); the five type checks clean.
+- Phase A, as committed (94ed478):
 - Full suite twice (`-n 4 --reruns 5 --reruns-delay 1`): basetemp `.ai/temp/pytest` 8200 passed,
   669 skipped, **no RERUN**; basetemp outside the checkout (a path with a space, in the scratchpad)
   8200 passed, 669 skipped, no RERUN. (An earlier run had 6 failures with 30 reruns, all mine:
@@ -69,7 +117,7 @@ folder or a plot.
 ## Proposed doc changes (for the Coordinator)
 
 - **AGENTS.md**, under UI: "Every interactive control has an accessible name and a stable ID
-  (`helab/views/accessible.py`, `identify`; test-enforced: `tests/test_accessible_names.py`)."
+  (`helab/utils/accessible.py`, `identify`; test-enforced: `tests/test_accessible_names.py`)."
 - **app-runtime-and-ui.md**, a paragraph "Accessible names, IDs and the runner's Debug items": the
   `identify` helpers and the ID rules (unique among a window's shown controls; per-item IDs from the
   script's analysis ID, the plot's number, the folder tab's number; never from text); Qt 6.11 maps the
@@ -83,7 +131,14 @@ folder or a plot.
   Plot › Plot <script>; Debug › Show/Close Plot Tab › <title> instead of the tab and its ×; Debug ›
   Settings Tab › <tab>; Debug › Save Window Screenshot… for each `Shot:` (type the path in the save
   panel); `app_ax_find` by name ("Folder path", "Check folder status", "Live", "Cancel loading",
-  "Preset", "Apply preset", "TXY source") or by AXIdentifier (`folder_path`, `live`, `run_…`).
+  "Apply preset", "Rerun with these settings") or by AXIdentifier (`folder_path`, `live`, `run_…`).
+  **Combo boxes by AXIdentifier only** (`script_group`, `preset_combo`, `txy_source`, `txy_profile`,
+  `plot_chooser`, the Settings combos such as `load_mode`): on macOS Qt titles a combo by its current
+  choice, not its name (`QAccessibleComboBox`, `Q_OS_UNIX`); or Debug › Script Group for the group.
+  **A plot parameter's editor shows only while its row is selected** (pyqtgraph hides it, and Qt
+  hides hidden widgets from accessibility): select the row in `plot_settings` first, then
+  `param_<group>.<name>` is there; Return now takes the value and closes it, Escape cancels.
+  The same caveat goes into the `app-runtime-and-ui.md` paragraph above.
 
 ## Phase B items 2–4
 
@@ -131,8 +186,10 @@ folder or a plot.
 - **M~2** On a lab PC: Debug › Save Window Screenshot… with a PyQtGraph plot and a 3D scatter open:
   what each pane looks like in the PNG.
 - **M~3** On the Mac with the built `.app`: `app_ax_find` finds "Folder path" and `run_…` by
-  AXIdentifier, and `app_menu` reaches Debug › Run Plot › … with its items filled (Qt fills them on
-  the menu's opening; check that the accessibility route opens it the same way).
+  AXIdentifier; the Group combo's AXTitle is its current group (expected, H3) and AXIdentifier
+  `script_group`; `app_menu` reaches Debug › Run Plot › … with its items filled (Qt fills them on
+  the menu's opening; check that the accessibility route opens it the same way: an item pressed
+  without the menu opening may be stale, and then does nothing rather than act on a closed plot).
 - **A~2** (for known-issues, replacing "A plot tab's x didn't respond to computer-use clicks"): Qt's
   tab bar never exposes its tabs' close buttons to accessibility: `QAccessibleTabBar`
   (qtbase `complexwidgets.cpp`) lists only the tabs (role PageTab, its rect the whole tab with its ×,

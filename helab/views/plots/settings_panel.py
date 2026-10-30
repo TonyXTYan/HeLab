@@ -10,8 +10,8 @@ from PyQt6.QtGui import QGuiApplication, QWindow
 from PyQt6.QtWidgets import (QApplication, QComboBox, QDockWidget, QHBoxLayout, QLabel, QMainWindow, QPushButton,
                              QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
+from helab.utils.accessible import identify
 from helab.views.plots.dock import AnalysisDock
-from helab.views.accessible import identify
 
 
 def mouse_held() -> bool:

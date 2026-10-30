@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from helab.analysis.budget_core import RELEASE_SHARE
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.cache_store import KINDS, purge_estimate, results_purge_estimate, trim_estimate
 from helab.utils.constants import (
     DISK_BUDGET_SETTING, LIVE_AUTOSAVE_SETTING, PLOT_AUTO_RELOAD_SETTING, MAX_LIVE_AUTOSAVE, MIN_DISK_BUDGET, RAM_BUDGET_SETTING, RAM_STEPS,
@@ -31,7 +32,6 @@ from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import byte_size
 from helab.utils.settings_defaults import RESULT_REUSE_SETTING, read_setting
 from helab.utils.time_format import relative_age
-from helab.views.accessible import identify, identify_buttons
 
 GB = 10**9  # SI, as every size HeLab shows: budgets typed and shown in GB (Tony, 2026-10-26)
 DAY = 86400.0
@@ -336,7 +336,7 @@ class CacheTab(QWidget):
         return label
 
     def _identify(self) -> None:
-        """The tab's controls' IDs and names (helab/views/accessible.py)."""
+        """The tab's controls' IDs and names (helab/utils/accessible.py)."""
         identify(self.open_button, "cache_open", "Open cache folder")
         identify(self.disk_budget, "disk_budget", "Disk budget")
         for kind, button in self.kind_buttons.items():

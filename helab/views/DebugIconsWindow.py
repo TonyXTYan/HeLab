@@ -8,9 +8,9 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QT
 from PyQt6.QtGui import QColor, QIcon, QCloseEvent, QPainter, QPixmap
 
 from helab.resources.icons import StatusIcons, ToolIcons, PercentageIcon
+from helab.utils.accessible import id_part, identify
 from helab.views.FolderDetailsPanel import paint_load_bar
 from helab.views.FolderExplorer import IO_SPINNER, LOAD_SPINNER, paint_check, paint_check_badge, paint_spinner
-from helab.views.accessible import id_part, identify
 
 
 def _painted(paint: Callable[[QPainter], None]) -> QIcon:

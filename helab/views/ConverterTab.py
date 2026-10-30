@@ -27,6 +27,7 @@ from helab.convert.profile import (BUILTIN_PROFILES, CANDIDATE_HANDLING, DEFAULT
                                    UNCALIBRATED, DetectorProfile, ProfileError, file_tag)
 from helab.convert.user_profiles import ProfileLibrary, Unreadable, check_name, duplicate
 from helab.utils import txy_sources
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.colours import AMBER
 from helab.utils.constants import (
     CONVERT_BACKEND_SETTING, CONVERT_OUTPUT_SETTING, CONVERT_PROFILE_SETTING, TXY_SOURCE_SETTING, profiles_folder,
@@ -34,7 +35,6 @@ from helab.utils.constants import (
 )
 from helab.utils.folder_cache import FolderCache
 from helab.utils.settings_defaults import CONVERT_OUTPUTS, read_setting
-from helab.views.accessible import identify, identify_buttons
 
 # Backends by name (``reconstruct._MODULES``), without importing them: whether one can run here is the
 # conversion's to say (an optional package or compiled extension may be missing).
@@ -249,7 +249,7 @@ class ConverterTab(QWidget):
                              (self.export_button, self.export_selected), (self.folder_button, self.show_folder)):
             button.clicked.connect(slot)
             buttons.addWidget(button)
-        # IDs and names (helab/views/accessible.py).
+        # IDs and names (helab/utils/accessible.py).
         for widget, ident, name in (
                 (self.profile_combo, "convert_profile", "Conversions use the profile"),
                 (self.backend_combo, "convert_backend", "Backend"),

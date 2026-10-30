@@ -12,9 +12,9 @@ from PyQt6.QtGui import QFontDatabase
 from PyQt6.QtWidgets import (QAbstractButton, QApplication, QDialog, QDialogButtonBox, QFileDialog, QLabel,
                              QMessageBox, QPlainTextEdit, QPushButton, QVBoxLayout, QWidget)
 
+from helab.utils.accessible import identify
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, PLACE_ROOT_ACTION, FolderCache, marker_path
 from helab.utils.io_service import IORequest
-from helab.views.accessible import identify
 
 TITLE = "Place .helab-root"
 CONFIRM = ("HeLab will write a small hidden file, .helab-root, in {path}. Its subfolders will use the "

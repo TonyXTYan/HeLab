@@ -13,11 +13,11 @@ from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QProgressBar, QScrollAr
 
 from helab.models.StatusReport import StatusReport
 from helab.utils import txy_sources
+from helab.utils.accessible import identify
 from helab.utils.folder_cache import analysis_cached_text, data_root_row
 from helab.utils.number_format import fnum
 from helab.utils.io_service import IOService
 from helab.utils.time_format import clock as stopwatch, relative_age
-from helab.views.accessible import identify
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderExplorer import (
     AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP,

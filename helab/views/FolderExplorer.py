@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (QApplication, QMessageBox, QHBoxLayout, QLineEdit, 
 from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemModel
 from helab.models.StatusReport import StatusReport
 from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.io_service import IORequest
 from helab.utils import large_folder
 from helab.utils.colours import AMBER as AMBER  # Shared; the views import it from here too.
@@ -31,7 +32,6 @@ from helab.utils.load_clock import LoadClock
 from helab.utils.time_format import byte_rate, clock as stopwatch, duration, relative_age
 from helab.utils.cache_freshness import CacheFreshness, data_as_of, freshness_tooltip, metadata_date
 from helab.utils.scan_history import history_tooltip
-from helab.views.accessible import identify, identify_buttons
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.explorer_live import LiveController, LiveSession
 from helab.views.explorer_text import large_text, plural

@@ -6,8 +6,8 @@ import os
 
 from PyQt6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QLabel, QVBoxLayout, QWidget
 
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.number_format import byte_size
-from helab.views.accessible import identify, identify_buttons
 
 
 class LargeFolderDialog(QDialog):

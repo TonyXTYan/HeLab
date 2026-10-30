@@ -8,6 +8,7 @@ import signal
 import sys
 import types
 import time
+from helab.utils.accessible import id_part, identify, identify_action, identify_buttons
 from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, io_trace_folder, io_trace_refused
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
@@ -41,7 +42,6 @@ from helab.utils.number_format import byte_size, fnum
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, WORK_OFFLINE_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
-from helab.views.accessible import id_part, identify, identify_action, identify_buttons
 from helab.views.CacheDialogs import CacheDialogs
 from helab.views.ClockSkewWarning import ClockSkewWarning
 from helab.views.OldLogs import OldLogs
@@ -629,7 +629,8 @@ class HelabMainWindow(QMainWindow):
                 action = menu.addAction(button.accessibleName() or button.text())
                 if action is not None:
                     action.setEnabled(loaded and button.isEnabled())
-                    action.triggered.connect(lambda _=False, b=button: b.click())
+                    # (An item pressed without the menu opening may outlive its button: then nothing.)
+                    action.triggered.connect(lambda _=False, b=button: None if sip.isdeleted(b) else b.click())
         if menu.isEmpty():
             self._unavailable(menu, "no scripts in this group")
 
@@ -657,7 +658,8 @@ class HelabMainWindow(QMainWindow):
             if action is not None:
                 action.setCheckable(True)
                 action.setChecked(dock is settings.current_plot())
-                action.triggered.connect(lambda _=False, d=dock: settings.show_plot(d, raise_dock=True))
+                action.triggered.connect(
+                    lambda _=False, d=dock: None if sip.isdeleted(d) else settings.show_plot(d, raise_dock=True))
         if menu.isEmpty():
             self._unavailable(menu, "no plots open")
 
@@ -667,7 +669,7 @@ class HelabMainWindow(QMainWindow):
         for dock in self._open_plot_docks():
             action = menu.addAction(dock.windowTitle())
             if action is not None:
-                action.triggered.connect(lambda _=False, d=dock: d.close())
+                action.triggered.connect(lambda _=False, d=dock: None if sip.isdeleted(d) else d.close())
         if menu.isEmpty():
             self._unavailable(menu, "no plots open")
 
@@ -706,7 +708,8 @@ class HelabMainWindow(QMainWindow):
         for window in self._screenshot_windows():
             action = menu.addAction(window.windowTitle() or type(window).__name__)
             if action is not None:
-                action.triggered.connect(lambda _=False, w=window: self.save_window_screenshot(w))
+                action.triggered.connect(
+                    lambda _=False, w=window: None if sip.isdeleted(w) else self.save_window_screenshot(w))
 
     def save_window_screenshot(self, window: QWidget, path: str = "") -> str:
         """Debug › Save Window Screenshot…: ``window.grab()`` as a PNG, to ``path`` or one chosen in a
@@ -742,6 +745,8 @@ class HelabMainWindow(QMainWindow):
     def _runner_file_path(self, caption: str, name: str, suffix: str, filter: str) -> str:
         """A file for a runner's screenshot or state, chosen in a save dialog that offers
         ``helab-<name>-<time>.<suffix>`` in the temp folder's ``screenshots`` ("": cancelled)."""
+        # On the GUI thread: one folder in HeLab's own temp folder and one small file the user asked for
+        # (a debug item, as Settings' profile export), never a source folder or the store.
         folder = os.path.join(DIR_TEMPS, "screenshots")
         os.makedirs(folder, exist_ok=True)
         suggested = os.path.join(folder, f"helab-{id_part(name).lower()[:40]}-{datetime.now():%Y%m%d-%H%M%S}.{suffix}")

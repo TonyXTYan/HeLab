@@ -16,10 +16,10 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabe
                              QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from helab.utils import folder_cache
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache, marker_path
 from helab.utils.number_format import byte_size
 from helab.utils.io_service import IORequest
-from helab.views.accessible import identify, identify_buttons
 
 INTRO = ("Folders holding a .helab-root that HeLab has seen on this computer. Each one identifies its folder "
          "and subfolders in the disk cache, whichever drive or share reaches them. Folders without one use "
@@ -141,7 +141,7 @@ class DataRootsTab(QWidget):
         self.review_button.clicked.connect(self.review_selected)
         footer.addWidget(self.review_button)
         layout.addLayout(footer)
-        # IDs and names (helab/views/accessible.py).
+        # IDs and names (helab/utils/accessible.py).
         for widget, ident, name in (
                 (self.list, "data_roots_list", "Data roots"), (self.path_line, "data_root_path", "Data root path"),
                 (self.uuid_line, "data_root_id", "Data root ID"), (self.refresh_button, "data_roots_refresh", ""),

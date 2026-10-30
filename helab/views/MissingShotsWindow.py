@@ -21,8 +21,8 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from helab.utils.accessible import identify
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache
-from helab.views.accessible import identify
 
 INTRO = ("TXY files are written once and never deleted, so shots missing from a folder HeLab cached mean "
          "another folder may have been moved to that path, or files were deleted or renamed. Nothing was "

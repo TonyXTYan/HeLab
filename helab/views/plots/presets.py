@@ -38,10 +38,10 @@ from helab.analysis.parameter_tree import parameter_of
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.presets import (Arrangement, PlotCheck, RecordError, ScriptPreset, ScriptPresets, ScriptRef,
                                     check_value, dumps, parse, preset_note)
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.colours import AMBER
 from helab.utils.folder_cache import PRESETS_WAIT_READ, FolderCache
 from helab.views.plots.arrangement import capture, folder_name, open_arrangement
-from helab.views.accessible import identify, identify_buttons
 
 if TYPE_CHECKING:
     from helab.views.FolderExplorer import FolderExplorer

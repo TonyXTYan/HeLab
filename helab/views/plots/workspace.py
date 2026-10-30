@@ -20,6 +20,7 @@ from helab.analysis.budget_core import DIALOG_SHARE, RELEASE_SHARE, WARN_SHARE
 from helab.analysis.dataset_view import DatasetView, view_of
 from helab.analysis.live_feed import LiveFeed
 from helab.analysis.results import DISK_CACHED, FROM_DISK, AnalysisResult
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.colours import AMBER
 from helab.utils.constants import read_plot_auto_reload
 from helab.utils.folder_cache import FolderCache
@@ -27,7 +28,6 @@ from helab.utils.number_format import byte_size
 from helab.views.CentralHint import CentralHint
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.settings_panel import PlotSettingsPanel
-from helab.views.accessible import identify, identify_buttons
 
 if TYPE_CHECKING:
     from helab.views.FolderExplorer import FolderExplorer

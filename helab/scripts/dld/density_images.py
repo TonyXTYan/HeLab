@@ -48,6 +48,7 @@ from helab.analysis.stats import AXES, CropBox, crop_box, freedman_diaconis_bins
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import group
 from helab.utils.colours import AMBER
+from helab.utils.accessible import identify
 
 # Projections: (horizontal axis, vertical axis) as T/X/Y column indices. T runs along the
 # horizontal axis of XT and YT, as time does in a plot.
@@ -419,7 +420,7 @@ class HotSpotsPlot(DensityPlot):
         bar.setContentsMargins(6, 2, 6, 4)
         self.summary = QLabel()
         self.summary.setWordWrap(True)
-        self.copy_button = QPushButton("Copy circles")
+        self.copy_button = identify(QPushButton("Copy circles"), "density_copy_circles")
         self.copy_button.setToolTip("Copies the circles as a Mask's custom circles (cut, in mm), to paste into "
                                     "any plot's Mask › custom. Nothing is applied by itself.")
         self.copy_button.clicked.connect(self.copy)

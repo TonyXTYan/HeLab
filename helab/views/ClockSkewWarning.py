@@ -14,9 +14,9 @@ from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from helab.utils import events
+from helab.utils.accessible import identify_buttons
 from helab.utils.folder_cache import FolderCache
 from helab.utils.time_format import span
-from helab.views.accessible import identify_buttons
 
 TITLE = "Computer clocks out of sync"
 TEXT = ("Files in {folder} are dated {skew} ahead of this computer's clock: this computer's clock and the "

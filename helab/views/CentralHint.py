@@ -8,7 +8,7 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from helab.views.accessible import identify
+from helab.utils.accessible import identify
 
 TIPS = (
     "Data already cached shows at once when you select its folder, then is checked for changes.",
