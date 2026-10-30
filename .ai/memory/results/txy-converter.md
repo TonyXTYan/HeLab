@@ -40,7 +40,8 @@ Q25.4).
   default keep "the flag wins".
 - **Last used** (Q30.3, 2026-10-30): a load marks a folder's `last_used` at most hourly; the uses it
   skipped are written at quit, a quit save like the others (quit window, 5 s, Quit now skips), and
-  ("(a)+(c)") also in the background every ~10 min (A30.4). A TXY is current only while its size and
+  ("(a)+(c)") also in the background every ~10 min (A30.4, built). `helab convert --once` calls a raw file
+  damaged only at 60 s by its mtime (Q23.7 (c)). A TXY is current only while its size and
   mtime match the index (Q30.1).
 - **Name** (Q18.4, 2026-10-29, "agree with your suggestions"): `d_txy_helab_<tag>_<N>.txt` (`.txt`
   like MATLAB's `d_txy_forc<N>.txt`). Short fixed tags, frozen once used: `m19v1` matlab-2019,

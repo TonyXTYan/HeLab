@@ -297,7 +297,8 @@ polish" floor after Smoke ready lands (Q33.6):
 - **Q33.6** go for the UI polish floor (Q33.1–Q33.5, A33.1–A33.4), after Smoke ready lands, since it
   touches the same widgets.
 - **Q23.7** `helab convert --once` calls a raw file damaged only at 60 s by its mtime (its settle
-  age), not 20 s: "c" (Tony, 2026-10-30). Live and `--watch` keep 20 s with two checks.
+  age), not 20 s: "c" (Tony, 2026-10-30). Live and `--watch` keep 20 s with two checks. Built
+  (`agent/txy-index`, landed with merge `e06d891`).
 - **Q23.6** a custom profile's tag is `u` + **32** hex digits of its content hash (was 8): "so it's
   really annoying, also pushes the user to make a proper frozen profile" (Tony, 2026-10-30). Built-in
   tags unchanged. Names stay far inside every file system's 255-per-name limit (~56 characters, ~82

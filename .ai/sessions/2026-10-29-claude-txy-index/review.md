@@ -909,3 +909,94 @@ I read every job's log. None has a "rerun reasons" section or a RERUN line.
 
 The compat matrix was skipped (a push). The new and changed tests (the two Q23.7 tests, three cases,
 and the takeover test) passed on each OS.
+
+## Round 10 review (head `e06d891`, the merge of `origin/dev/v0.0.7` `cb05f27` into `0f69731`)
+
+**Result: 0 open findings, no blocker.** The merge is clean: it changes nothing of Smoke ready's or
+Runner Tools', and the fixture fix has the right cause.
+
+### The merge
+
+- **Against dev, the merge adds only this branch's work.** I compared `git diff -U0 cb05f27 e06d891 --
+  helab tests` with this branch's own work, `git diff -U0 e74a5cf 0f69731 -- helab tests` (`e74a5cf`
+  is the merge base). Hunk headers aside, the two differ only in these lines:
+  - the Q~3 → Q30.3 comment renames in the comments Smoke ready brought: the `if self._mark_flush:`
+    line, the `QUIT_*` kinds' comment and `QuitSaveDialog`'s docstring;
+  - in `tests/test_txy_last_used_quit.py`: the `QApplication` and `QUIT_LAST_USED` imports, the
+    `frozen(qapp)` fixture and its docstring, `quit_entries() == []` beside `quit_saves() == []`, and
+    the four lines that check the quit flush's entry in the takeover test.
+
+  So nothing of Smoke ready's or Runner Tools' changed. Outside `helab/` and `tests/`, the merge
+  touches only this floor's three session files.
+- **The four conflict hunks** (`git show --cc e06d891`): `quit_saves` returns the paths of
+  `quit_entries()`. `quit_entries` adds `QuitSave(QUIT_LAST_USED, TXY_LAST_USED, "writing",
+  self._mark_flush_started)` only while `_mark_flush` is set. `quit_save_started` is Smoke ready's,
+  the earliest start among the entries. `QuitSaveDialog._show` is Smoke ready's. In each, Smoke
+  ready's side is taken with the renamed comment. `_schedule_marks`, `_marks_due` and
+  `_on_marks_written` came in unchanged beside them.
+- **The background write is not a quit entry.** It is submitted straight to `service.submit`
+  (`folder_cache.py:2815`) and kept only in `_mark_background`/`_mark_sent`. `quit_entries` reads
+  none of those, and none of the lists it does read (`_finishing`, `jobs`, `_deferred_saves`,
+  `_pref_writes`, `_constant_writes`, `_result_writes`, `_preset_jobs`) holds that write. The test
+  asserts `quit_entries() == []` while it runs.
+- **The quit flush is a quit entry**, of kind `QUIT_LAST_USED` with its start. The takeover test
+  asserts `(kind, path, state)` and that `started == quit_save_started(TXY_LAST_USED)`, and is not
+  None.
+- **`_wait_for_saves`** (`HelabMainWindow.py:1904`) still calls `cache.flush_txy_marks()` before
+  `quit_saves()`, unchanged.
+- **The takeover's "cancel first" (Nit-11) survived** (`folder_cache.py:2767–2772`). It sets
+  `_marks_quit`, stops `_marks_timer`, then calls `service.cancel(_mark_background)`, and only then
+  clears `_mark_background`/`_mark_sent`. `shutdown` still stops `_marks_timer`.
+
+### The `frozen` fixture: is the cause right? Yes.
+
+- **What the fixture lacked:** `frozen` builds an `IOService` and a `FolderCache` with no
+  `QApplication`. Its tests take no `qtbot`, and so no `qapp`.
+- **Why that fails:** A30.4's tests assert `_marks_timer.isActive()`. My probe, in a fresh
+  interpreter with no application, started a `QTimer` with 600 s:
+  - Without an application, Qt printed "QObject::startTimer: current thread's event dispatcher has
+    already been destroyed". The timer reported `isActive()` False, with `interval()` still
+    600000.
+  - With a `QCoreApplication`, `isActive()` was True.
+- **Why it shows only sometimes:** a test fails whenever it is the first Qt test its xdist worker
+  runs. That depends only on where the tests fall in each worker, so it is deterministic for a given
+  set of tests. That is why it failed all five reruns, and why the merge's new tests from dev could
+  bring it out.
+- **The fix is the right one:** requesting `qapp` (pytest-qt's session application) fixes the cause.
+  The round 1 test that also uses `frozen` needs no timer, which is why the gap went unseen until
+  A30.4.
+
+### Checks (floor venv, macOS, head `e06d891`)
+
+- **Full suite**, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8361 passed, 669 skipped, 0 reruns** (2 min 54 s).
+- **Type checks:**
+  - `mypy helab/ --strict` (194 files), `mypy tests --strict` (167) and `mypy helab/ --strict
+    --platform win32` (194): no issues.
+  - `pyright helab tests` and `pyright --pythonplatform Windows helab tests`: 0 errors.
+
+### CI run 41007355018 (head `e06d891`, attempt 1): success, no RERUN
+
+I read every job's log. None has a RERUN line or a "rerun reasons" section.
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123905239426 | 4164 passed |
+| Ubuntu Tests (2/2) | 123905239298 | 4194 passed |
+| macOS Tests (1/2) | 123905239436 | 4167 passed |
+| macOS Tests (2/2) | 123905239571 | 4194 passed |
+| Windows Tests (1/2) | 123905239393 | 4152 passed |
+| Windows Tests (2/2) | 123905239342 | 4176 passed |
+| Ubuntu Converter backends | 123905239313 | 696 passed |
+| macOS Converter backends | 123905239353 | 696 passed |
+| Windows Converter backends | 123905239445 | 695 passed |
+| Detect branch; ubuntu, macos, windows Build | 123905171606; 123905239345, 123905239503, 123905239262 | success |
+
+- **The Build jobs:** each logs "mlx/numba/rust: unavailable", the developer-only backends (A9.1),
+  and passes.
+- **The compat matrix** was skipped (a push).
+- **The A30.4 tests that use `frozen`** passed on every OS: the ten-minute test and the takeover
+  test in each Tests (2/2), and the offline/cache-off/foreground test in each Tests (1/2).
+- **Still open from round 9, for landing:** `roadmaps/known-issues.md:95`, the Scatter3D worker
+  crash, still names only Windows CI. Widening it to the macOS local crash from round 9 waits for
+  the landing.
