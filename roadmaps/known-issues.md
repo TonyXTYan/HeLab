@@ -175,6 +175,15 @@ How to use it:
   crashed workers gw0 and gw1. The same tree (`e75a105`) passed every job in run 40679110506
   minutes earlier, so a slow runner with timing-sensitive, compute-heavy tests is likely; cause
   not found.
+- [ ] **matplotlib's font cache build passes the 100 s `faulthandler_timeout`** on a fresh CI runner,
+  killing the xdist worker ("node down: Not properly terminated", then "worker crashed"; it passes on
+  rerun, the cache built). Windows: Ground CI 41031678338 (`da76ced`, Tests 1/2, job 123982721538, gw0),
+  `test_accessible_names.py::test_every_script_and_each_library` at line 375 switching Counts per shot to
+  Matplotlib: the main thread in `font_manager._load_fontmanager` → `addfont` (the first `matplotlib.figure`
+  import, from `backends.mpl_figure`), GUI stalls logged at 24, 54 and 84 s. macOS: the `agent/txy-packaging`
+  entry below (`_get_macos_fonts`). So that test's worker crashes are not all QtWebEngine's or the fixed
+  Plotly SIGSEGV. Candidate fix: build the font cache before the tests (a CI step importing
+  `matplotlib.font_manager`, or once in conftest at session start).
 - [ ] macOS CI on `agent/txy-packaging` (run 40765484151, `e2f3e14`, 2026-10-28): the test job was
   cancelled at its 20-min limit on both attempts, so neither printed its summary or rerun reasons
   (job logs read 2026-10-29 with `gh api …/actions/jobs/<id>/logs`). Attempt 1 (job 123091397883):
