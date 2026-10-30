@@ -82,6 +82,7 @@ uv python install 3.13
 uv venv --seed --python 3.13 venv && source venv/bin/activate   # Windows: venv\Scripts\activate
 uv pip install -r requirements.lock -e .   # pinned; requirements.txt lists direct deps (README: updating dependencies)
 git submodule update --init legacy/tdc_autoconverter   # DLD_front_panel, Momentum_Bells_test: cloned by hand (README)
+git submodule update --init --checkout testdata   # optional, private: HeLab's test data (README; tests skip without it)
 ```
 
 `venv/` may be a symlink to `venv.nosync/` (out of iCloud sync on macOS); both are gitignored.

@@ -3,10 +3,12 @@ tag ``TESTDATA_TAG``): every era's raw files give MATLAB's archived TXY byte for
 ``matlab-2019``, and ``reference/matlab-2023``'s with ``matlab-2023-lab-edit``, by numpy and by cython
 where it's built.
 
-``HELAB_TESTDATA`` names a download of that tag (``hf download TonyXTYan/HeLab-TestData --type dataset
---revision v1 --local-dir <folder>``; CI downloads it with a read-only token). Without it these tests
-skip, unless ``HELAB_REQUIRE_TESTDATA=1`` (CI, where the token is there), which fails them instead.
-They only read the files, checked against the set's manifest first.
+The data is the ``testdata`` submodule when checked out (``git submodule update --init --checkout
+testdata``, with access to the dataset), or ``HELAB_TESTDATA``, a download of that tag (``hf download
+TonyXTYan/HeLab-TestData --type dataset --revision v1 --local-dir <folder>``; CI downloads it with a
+read-only token), which wins. Without either these tests skip, unless ``HELAB_REQUIRE_TESTDATA=1`` (CI,
+where the token is there), which fails them instead. They only read the files, checked against the set's
+manifest first.
 """
 from __future__ import annotations
 
@@ -35,19 +37,26 @@ FAULTS = {
 }
 
 
+SUBMODULE = Path(__file__).resolve().parent.parent / "testdata"
+
+
 def find_testdata() -> Path | None:
-    """The test data's folder; None (and the tests skip) without ``HELAB_TESTDATA``, unless
-    ``HELAB_REQUIRE_TESTDATA`` makes that an error."""
+    """The test data's folder: ``HELAB_TESTDATA``, else the checked-out submodule; None (and the tests
+    skip) without either, unless ``HELAB_REQUIRE_TESTDATA`` makes that an error."""
     folder = os.environ.get("HELAB_TESTDATA", "")
-    if not folder:
-        if os.environ.get("HELAB_REQUIRE_TESTDATA") == "1":
-            raise RuntimeError("HELAB_REQUIRE_TESTDATA=1 but HELAB_TESTDATA isn't set")
-        return None
-    return Path(folder)
+    if folder:
+        return Path(folder)
+    if (SUBMODULE / "manifest.json").is_file():
+        return SUBMODULE
+    if os.environ.get("HELAB_REQUIRE_TESTDATA") == "1":
+        raise RuntimeError("HELAB_REQUIRE_TESTDATA=1 but there's no test data (HELAB_TESTDATA, or the testdata "
+                           "submodule)")
+    return None
 
 
 DATA = find_testdata()
-needs_data = pytest.mark.skipif(DATA is None, reason="no test data: set HELAB_TESTDATA (see this file's docstring)")
+needs_data = pytest.mark.skipif(DATA is None,
+                                reason="no test data: the testdata submodule or HELAB_TESTDATA (this file's docstring)")
 
 
 def pairs(base: Path) -> list[tuple[str, int]]:

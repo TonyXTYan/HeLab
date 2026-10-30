@@ -2,3 +2,7 @@
 	path = legacy/tdc_autoconverter
 	url = https://github.com/HeBECANU/tdc_autoconverter
 	branch = master
+[submodule "testdata"]
+	path = testdata
+	url = https://huggingface.co/datasets/TonyXTYan/HeLab-TestData
+	update = none

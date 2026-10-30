@@ -41,8 +41,11 @@ a few raw/TXY pairs per detector era, Live, raw-only, TXY-only, nested and damag
 `manifest.json` with its SHA-256. Tests pin a tag (`v1`; a change is a new tag). CI's
 `.github/actions/testdata` downloads it with the `HF_TOKEN` secret (a read-only token), cached per
 OS, and sets `HELAB_TESTDATA` and `HELAB_REQUIRE_TESTDATA=1`; without the token (forks, the lab's copy)
-the tests that need it skip. Locally: `hf download TonyXTYan/HeLab-TestData --type dataset --revision
-v1 --local-dir <folder>`, then `HELAB_TESTDATA=<folder>`. `tests/test_convert_testdata.py` checks the
+the tests that need it skip. Locally it is the `testdata` submodule, pinned at the tag's commit and never
+fetched by default (`update = none`: `git submodule update --init --checkout testdata`, with HF's git
+credentials), or a download anywhere named by `HELAB_TESTDATA`, which wins. On Tony's Mac,
+`~/GitHub-Local/HeLab-testdata` is a symlink to the submodule (git refuses a symlink at a submodule's path).
+A new tag: upload, tag, then move the submodule and the action's `--revision` together. `tests/test_convert_testdata.py` checks the
 manifest and converts every pair byte for byte (`matlab-2019` on the eras, with its listed archive
 faults; `matlab-2023-lab-edit` on the reference), by numpy and, in the Converter backends job,
 cython. Tests only read it; one that writes copies it into its temp folder first.

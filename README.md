@@ -130,6 +130,7 @@ Notes:
 - Bare `python` on lab PCs is often an old interpreter (for example Python 2.7). Use the one in `venv`.
 - On Windows, start HeLab from the desktop, not over SSH. An SSH session as an administrator runs elevated, and it can leave cache folders that a normal launch can't write to.
 - The submodule (`legacy/tdc_autoconverter`) is MATLAB reference code only. HeLab runs without it. In an existing clone, fetch it with `git submodule update --init --recursive`.
+- The `testdata` submodule is HeLab's test data (the private Hugging Face dataset `TonyXTYan/HeLab-TestData`, about 100 MB), used only by tests, which skip without it. It is never fetched by default (`update = none`). With access to the dataset: `hf auth login --add-to-git-credential` once, then `git submodule update --init --checkout testdata`. Or download it anywhere and point `HELAB_TESTDATA` at it: `hf download TonyXTYan/HeLab-TestData --type dataset --revision v1 --local-dir <folder>`.
 - Legacy references for porting work (not submodules, and not needed to run HeLab): clone them into `legacy/` at the commits the port was read from:
   ```bash
   git clone --recurse-submodules -b LaserMac-BECMachine-cloudstor https://github.com/HeBECANU/DLD_front_panel legacy/DLD_front_panel

@@ -389,7 +389,7 @@ was done on the floor.
 
 From the Assistant's Live tests on HeLab's test data (`tests/test_live_testdata.py`, 2026-10-31).
 
-- **A37.1** (Q37.1) Say when a raw file's reading stops early: the parser (`helab/convert/raw.py`, both
+- **A37.1** (Q37.1; v0.0.8, Tony 2026-10-31) Say when a raw file's reading stops early: the parser (`helab/convert/raw.py`, both
   `fastio.parse_strict` and `_parse_textscan`) reports the line where an unreadable token ended it, the
   conversion keeps MATLAB's TXY byte for byte and adds the stop to its event (a `shot_converted` field, or
   a warning kind in `helab/io_ops/events.py`), and the Live line, Folder details and `helab convert` name
