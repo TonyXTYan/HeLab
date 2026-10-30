@@ -249,3 +249,11 @@ Added 2026-10-30 at the Smoke ready landing (`4ad8ac5`); what a runner uses now 
   Settings panel's "Close plot" (`close_plot`) or the dock title's × ("Close").
 - `helab --geometry 1600x928+0+39` fixes the window's size and place for the run; quit confirms by
   the process exiting within 1 s of the quit window closing.
+- **A source run on macOS** (Runner Tools, landed `0316bae`): START_COMMAND may be `open
+  <checkout>/.ai/local/HeLab-dev.app --args --geometry 1600x928+0+39` (after `python dev/dev_app.py
+  [--env-file …]`) instead of the built app; the target is bundle ID `au.edu.anu.he-bec-lab.dev`, so a
+  running release HeLab never answers for it. Quit it before opening it again.
+- **Waits:** instead of reading the summary from screenshots, wait for the log's `MILESTONE load_done
+  folder=<FOLDER>` (and `plot_done … plot=<id> state=ok`, `convert_done … by=live`) in the newest
+  `helab-<pid>.log` of the app folder (Help › Show log folder; with `floor-env.sh`, the floor's app
+  folder; the pid from `lsappinfo info -only pid -app au.edu.anu.he-bec-lab.dev`).

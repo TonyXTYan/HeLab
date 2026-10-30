@@ -361,6 +361,15 @@ From the Smoke ready floor's [handoff](sessions/2026-10-30-claude-smoke-ready/ha
   AST scan finds 14 such connections, all safe today). It backs AGENTS.md's rule; a sender reached
   through another name would escape it.
 
+## Runner tools (block 35)
+
+From the Runner Tools floor's [handoff](sessions/2026-10-30-claude-runner-tools/handoff.md) (landed `0316bae`).
+
+- **A35.1 A `dev/` wait helper for runners** (`wait_milestone.py EVENT [key=value …] --log <file>
+  --timeout S`, built on `app_log.parse_milestone`), if the runbook's waits want more than `grep`.
+- **A35.2 `--geometry` through the dev stub**: `open …/HeLab-dev.app --args --geometry …` (Smoke ready
+  has landed it); check once.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

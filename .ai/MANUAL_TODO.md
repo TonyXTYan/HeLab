@@ -244,6 +244,10 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
 - [ ] **M23.3 Damaged raw files on the acquisition PC**: a deliberately truncated raw file is reported
   damaged after ~20 s with one notification; later shots convert.
 
+- [ ] **M35.1 HeLab-dev's window in a computer-use screenshot** (block 35): `python dev/dev_app.py
+  --env-file .ai/local/floor-env.sh`, `open .ai/local/HeLab-dev.app`, then a computer-use screenshot
+  targeting `au.edu.anu.he-bec-lab.dev` shows the main window; also the menu bar's app name (Qt may
+  say "Python" or "HeLab").
 - [ ] **M34.1 Accessibility on Windows** (block 34; a lab PC): Accessibility Insights or `inspect.exe`
   on HeLab: the toolbar's Live shows AutomationId `live` and Name "Live", a script's Plot button
   `run_helab.counts_per_shot_Plot` / "Plot Counts per shot", a plot tab's close button

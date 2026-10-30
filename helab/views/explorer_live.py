@@ -16,7 +16,7 @@ import weakref
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QInputDialog, QMenu, QMessageBox
 
-from helab.utils import events
+from helab.utils import app_log, events
 from helab.utils import folder_cache
 from helab.utils import txy_sources
 from helab.utils.folder_cache import Dataset, FolderCache
@@ -84,6 +84,10 @@ class AutoConvert:
     last_at: float | None = None  # Wall time.
     low: int = 0  # Low-count shots notified.
     no_hits: set[int] = field(default_factory=set)  # Shots converted with no hits (A17.1).
+    # The last ``convert_done`` milestone's: ``no_hits`` counted, and the unconvertible, waiting and kept
+    # counts (None: none yet). A run that changed nothing logs none (Live converts every interval).
+    no_hits_logged: int = 0
+    logged_counts: tuple[int, int, int] | None = None
     # The last plan: where the TXY go and why not where asked, the profile and backend.
     output: str = ""
     fallback: str = ""
@@ -810,6 +814,13 @@ class LiveController:
                 str(entry[0]), "can't be converted") for entry in event["unconvertible"]}
             convert.damaged = {name for name, why in convert.unconvertible.items()
                                if name in convert.damaged or why.startswith(DAMAGED_TEXT)}
+            counts = (len(event["unconvertible"]), len(event["waiting"]), len(event["kept"]))
+            no_hit = len(convert.no_hits) - convert.no_hits_logged
+            if event["converted"] or no_hit or counts != convert.logged_counts:
+                app_log.milestone("convert_done", folder=session.path, by="live", converted=int(event["converted"]),
+                                  no_hit=no_hit, unconvertible=counts[0], waiting=counts[1], kept=counts[2],
+                                  output=str(event["output"]), seconds=float(event["seconds"]))
+                convert.no_hits_logged, convert.logged_counts = len(convert.no_hits), counts
         elif kind in ("done", "error", "cancelled", "offline"):
             if kind == "offline":
                 convert.error = "not while working offline"
