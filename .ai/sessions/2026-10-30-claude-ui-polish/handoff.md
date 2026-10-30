@@ -1,9 +1,57 @@
 # UI polish: handoff (Worker, 2026-10-30)
 
-Branch `agent/ui-polish` from `43cb202` (`dev/v0.0.7`). Brief: [brief.md](brief.md); working notes: [notes.md](notes.md).
-Not merged with `dev/v0.0.7` yet (waiting for CoCo's word, after Runner Tools and the TXY Index follow-up land;
-expect a small conflict in `helab/io_ops/helab_txy.py`'s `_OWN_FILE`, where this floor changes only `{1,15}` to
-`{1,32}`).
+Branch `agent/ui-polish` from `43cb202` (`dev/v0.0.7`). Brief: [brief.md](brief.md); working notes: [notes.md](notes.md);
+Ibis's review: [review.md](review.md). `origin/dev/v0.0.7` at `cb05f27` (Runner Tools) is merged in (no conflict).
+The TXY Index follow-up lands later: expect a small conflict in `helab/io_ops/helab_txy.py`'s `_OWN_FILE`, where
+this floor changes only `{1,15}` to `{1,32}`.
+
+## Round 2 (after Ibis's review and Tony's answers)
+
+- **Tony:** Q~1 = (a), as built. Q~2 (offer a restart after a temp folder change) goes to v0.0.8. Yes to the
+  Plotly crash fix on this floor.
+- **The Plotly SIGSEGV** (`86d32ce`): `PlotlyPane`'s lambda on `destroyed` is `weakref.finalize(self,
+  server.remove_plot, self.plot_id)`; Settings → Cache's Presets line (`PresetsInspector.show_summary`) holds the
+  label weakly and disconnects through `weakref.finalize` on it. New `tests/test_destroyed_connections.py`: an AST
+  guard (no `.destroyed.connect(` to anything but a bound method in `helab/`), and a closed Plotly plot's figure
+  leaving `dash_server` once dropped (unit and real window). The three-file set that crashed 7/7 for Beacon:
+  10 runs, no crash. The figure now leaves the server when the pane's Python object goes, not at the C++ deletion
+  (Beacon checked; the plot's instance is dropped on close).
+- **High 1** (`afd6b32`, Q33.2 on Windows): the Scripts panel's top row (Group label, the group combo sized to its
+  longest item, "Load Scripts…") was ~1.8× as wide in Windows CI's font, so the settings panel never went below
+  ~548 px. The row now shrinks (combo to 8 characters, button to its text) and the settings panel's least width is
+  set (`MIN_PANEL_WIDTH`, 80 px): QSplitter keeps the width the user or default gave it, and a row that doesn't fit
+  is cut until the panel is widened. The widths are also applied again at the first show, from the splitter's real
+  width (before, it shared out a 1600 px guess and gave the panel its size hint when narrower). The split tests now
+  want exactly 380/320 and name the panel's widgets over 320 px when they fail; new tests: a row far wider than the
+  panel doesn't widen it; the default split holds, a plot open, at twice the font. All three fail without the set
+  least width. **On a lab PC** with Segoe UI 9 pt (narrower than macOS's font) nothing should be cut at 320 px; at
+  a large display scale the Scripts row's button may be cut until the panel is widened (M~1).
+- **High 2** (`4bfd6ad`): `setattr(error, "winerror", …)` in the test; `mypy tests --strict --platform
+  win32` is clean now (I hadn't run that one before).
+- **Low 1** (`6ef90bb`, Q33.3): a double-click on a plot's title floats it on the press (button down), so it was taken for a
+  drag; `AnalysisDock.event` notes `MouseButtonDblClick` and the plot is placed. Test with `qtbot.mouseDClick`
+  (fails without the change).
+- **Low 2** (`0de7d3c`, Q23.6): on Windows a FileNotFoundError / WinError 3 on a 260+ character path is "too long" only while
+  the target's folder still exists (a traced stat); gone, the run fails as before and the next check retries.
+  WinError 206 and ENAMETOOLONG stay per-shot refusals. `convert.PLATFORM` (read at call time) lets tests try
+  Windows' rules.
+- **Nits** (`4a6174d`, `a909960`): convert.py's docstring (the settle time is the setting); the settle limits and reader in a new
+  standard-library module `helab/utils/settle_time.py` (fingerprints, the settings row's default and the dialog
+  import it; the GUI no longer imports `helab.io_ops.fingerprints`); "Settings →" in the new comments and help.
+- **A33.2's online change** (Ibis's nit): data shown unchecked while **online** (auto-load off, a cancelled check)
+  no longer says "checked, unchanged" from an earlier check in Folder details' Loaded row either; for
+  app-runtime-and-ui.md's Folder details wording.
+- **Round 2 checks** (merged with `cb05f27`, at the last commit): the full suite inside the checkout **8460
+  passed, 669 skipped, no RERUN**; outside (`<scratchpad>/pytest out`) **8460 passed, 669 skipped, no RERUN**. A
+  first full run after the merge had 4 failures (20 reruns): four Plotly tests that held the pane while waiting for
+  its figure to leave the server (`86d32ce`'s timing change); fixed in the next commit by dropping their own holds.
+  `mypy helab/ --strict` and `mypy tests --strict`, each also `--platform win32`, `pyright helab tests` and
+  `--pythonplatform Windows`: all clean.
+- **Ibis's other notes for the docs:** the Dock button's ID `plot_dock` repeats in each floating window (as
+  `floating_settings_toggle`), unique per window: a line for the accessible-ID docs; the deep-path test runs only
+  its "converts" branch on GitHub's Windows runners (long paths on), the "too long" branch is covered by the
+  patched tests (testing.md); `test_gui_responsiveness.py::…_artifact_reader_is_blocked[1]` reran on Windows CI
+  41005221588 (the known-issues entry for `[2]`, same line): add `[1]` there.
 
 ## Commits (one per item, brief order except A33.4, built with Q33.3/Q33.4)
 
@@ -187,17 +235,24 @@ worktree, the same three test files 4×: 3 crashes, the same stack). CoCo has as
   as before).
 - **converter.md**: "other profiles are tagged `u` + 8 hex digits" → 32 (Q23.6), `NAME_TAG` (33 characters at most in
   names; `TAG_PATTERN` 16 for built-ins), old `u`+8 TXY treatment, `path_too_long` and its message.
+- **AGENTS.md**, UI rules (round 2): "Never connect a Python callable (lambda, function, partial) to a Qt object's
+  `destroyed`; cleanup that needs Python uses `weakref.finalize` (`tests/test_destroyed_connections.py`)", beside
+  the Qt-made-sender lambda rule. **settings.md**: `settle_seconds`'s default and limits live in
+  `helab/utils/settle_time.py` (standard library, shared by helpers and the app). **converter.md**: which errors
+  count as "too long" (ENAMETOOLONG, WinError 206; on Windows not-found / WinError 3 on 260+ characters only while
+  the folder exists). **app-runtime-and-ui.md**: the settings panel's set least width (`MIN_PANEL_WIDTH`) and the
+  widths applied at first show; a double-click float is placed too.
 - **testing.md**: `tests/test_settle_setting.py` (the env override wins; tests that need the request's value patch
   `fingerprints._SETTLE_OVERRIDE`); sibling test modules are imported by bare name (`from test_x import …`), never
   `tests.test_x` (mypy sees the file twice); the SIGSEGV note above.
 
 ## Proposals (provisional numbers)
 
-- **Q~1** A33.4: keep (a) (the main window's panel shows the docked plot in front while the shown plot floats), or
+- **Q~1** (answered: (a), Tony) A33.4: keep (a) (the main window's panel shows the docked plot in front while the shown plot floats), or
   (b) the old behaviour with only the away line naming the plot? Proposed: (a), as built.
-- **Q~2** The temp folder row says a change applies at the next start; should Settings offer to restart, or apply it
+- **Q~2** (Tony: v0.0.8) The temp folder row says a change applies at the next start; should Settings offer to restart, or apply it
   live like the cache folder's move? Proposed: leave it (rarely changed).
-- **A~1** Fix the SIGSEGV on plot dock deletion (`panes.py:32`'s lambda on `destroyed`; connect a module-level
+- **A~1** (done here, `86d32ce`, Tony's go) Fix the SIGSEGV on plot dock deletion (`panes.py:32`'s lambda on `destroyed`; connect a module-level
   function holding only the server and ID, or disconnect in the pane's close) and add it to known-issues meanwhile.
 - **A~2** `read_settle_seconds` could move to `constants.py` beside `read_live_interval` (not this floor's file).
 - **A~3** `events.ShotUnconvertibleEvent`'s docstring could name the path-too-long message among "failed" reasons.
@@ -205,7 +260,10 @@ worktree, the same three test files 4×: 3 crashes, the same stack). CoCo has as
   splitters, quit, relaunch: the widths come back; Live on still collapses the folder panel.
 - **M~2** Float two plots from their title's float button: they open 800×600 a step apart; the Dock button docks
   each; with one floating and the main window active, the panel names the docked plot and its title's Float floats
-  that one.
+  that one. Also (Ibis): pick the floating plot from the Settings panel's chooser on macOS and check
+  the panel ends on it (the chooser's popup closing gives focus back to the main window, which now shows the docked
+  plot, before the floating window activates; offscreen can't show which wins). And double-click a plot's title:
+  it floats 800×600 a step from the last.
 - **M~3** On a lab Windows PC without long paths, a user profile converting beside raw files in a deep folder shows
   "Path too long for Windows …" in the Live line's tooltip (or check `LongPathsEnabled` there and note it).
 - **M~4** Settings › General: set the settle time to 10 s and watch Live on a run being written: shots appear ~10 s
