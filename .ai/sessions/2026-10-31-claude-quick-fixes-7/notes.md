@@ -181,3 +181,61 @@ Full suite -n 12: 8506 passed, 672 skipped, 2 warnings (as before) in 95.30 s, n
 last test-only edit). Round 2's CI run 41081757658 passed. (A slip, caught: one `&&` chain amended the
 commit after a failing test because `tail` hid pytest's exit code; the test was fixed and the suite rerun
 before the push, nothing pushed in between.)
+
+# Round 4 (Codex's fourth review 5714936123 on `fb40034`)
+
+## 7. P2 `folder_cache.convert`: `seen` carried a profile's reasons across a profile change (comment 4425610377)
+
+**Cause.** `payload["seen"] = lists["waiting"]` whatever the profile. `convert_folder` rebuilds `unfinished`
+(entries whose reason is `no_final_newline`, `not_trigger_first` or `no_rows`) from it and, for a file unchanged
+since, calls `unfinished_or_damaged` without reading it: a file waiting with `not_trigger_first` under one
+profile kept that reason under a corrected one, became damaged after `DAMAGED_SECONDS`, then was skipped.
+
+**Fix: keep the fingerprint, drop the reason** (the brief's second option). Under another profile each waiting
+entry `[name, size, mtime, reason, message, first_seen]` is sent as `[name, size, mtime, "", "", first_seen]`
+(an entry of five fields loses nothing else). `unfinished` then has no entry for it (its reason isn't one of the
+three), `_stats` still gives its (size, mtime), `first_seen` its time. Same profile: unchanged.
+
+**The two-looks rule on a profile change.** Kept: a waiting file seen unchanged at the previous check counts as
+seen, so it is read at the first conversion under the new profile, not one tick later. Dropping all of `seen`
+(the first option) would make every waiting file wait one more tick (an empty `seen` means "not seen before").
+**The damaged clock** goes on from when this computer first saw the file with its size and date: that measures
+the file, not the profile (a file waiting under the old profile is under 20 s into it, else it would be
+unconvertible and covered by item 5).
+
+**Which reasons depend on the profile.** Of `raw.not_done`'s: `not_trigger_first` (the profile's
+`channel_trigger`) only; `no_final_newline` and `no_rows` read the bytes alone. Waiting-only reasons (`settling`,
+`future`, `changed`) never enter `unfinished`. All three are dropped all the same: at most one more read of an
+unchanged file, and no rule to keep in step with `raw.not_done`.
+
+**The other remembered fields** (CoCo: "so this is the last of its kind"):
+
+- `FolderCache.convert_lists[path]`: `current` → `done`, `kept`, `unconvertible` → `skip`: only for the same
+  profile (`done`/`kept` from before, `skip` round 2). `waiting` → `seen`: the profile's parts (reasons)
+  dropped under another (this round). `profile`: the comparison itself (`to_dict()` equality, so a change in a
+  field the output doesn't read, `channel_trigger`/`channel_mcp`, still counts as another profile: done shots are
+  then checked against the index by hash and stay current without a write). Nothing else is stored.
+- The backend isn't compared and needn't be: every backend writes `reference`'s bytes (AGENTS.md converter rule).
+- The destination and beside flag: the places differ; done/kept count only while their TXY is there (round 2).
+- `FolderCache.convert_reasons`: the unconvertible files' messages for the Live line, pruned to each summary's
+  unconvertible names; display only. A file sent again under the new profile gets its new message.
+- Helper side: the converted-TXY index rows carry the profile hash and tag (`provenance.stale` checks them).
+- Notifications: a damaged file (`events.DAMAGED_RAW`, path/name/size/mtime) and low counts
+  (`convert_low_hits`, path/shot/raw sha256) are once per raw file, by design (Q18.5): not repeated under a
+  new profile.
+- **One display leftover (A~2):** `explorer_live`'s `AutoConvert.damaged` keeps a name while the file stays
+  unconvertible (`name in convert.damaged or why.startswith(DAMAGED_TEXT)`), so a file damaged under one profile
+  and unconvertible for another reason under the next is still counted "damaged" on the Live line. Display only;
+  `explorer_live.py` is outside this brief's files.
+
+**Tests.** `test_live_convert.py::test_a_file_waiting_off_one_profiles_trigger_converts_under_another`: a raw
+file whose first line is on channel 6 waits with `not_trigger_first` under matlab-2019 (trigger 5);
+`MATLAB_2019.replace(channel_trigger=6)` (same output hash, another profile): it converts at the next
+conversion, whose `seen` has its fingerprint, `""` reasons and its first-seen time. Fails on `dd540cd`
+(`[] == [4]`). `test_the_lists_of_the_last_conversion_are_sent_back` asserts the stripped entry (fails on
+`dd540cd`: the reason was sent).
+
+## Round 4 checks
+
+Full suite -n 12: 8507 passed, 672 skipped, 2 warnings (as before) in 137.68 s, no RERUN
+(`.ai/temp/qf7-suite-r4.log`); the five type checks clean. Round 3's CI run 41084197666 passed.

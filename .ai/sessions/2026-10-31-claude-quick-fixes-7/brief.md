@@ -119,3 +119,20 @@ Codex accepted round 2 and found one more (CoCo checked it against the code). Sa
 
 Commit on `dev/v0.0.7` (message names comment 4425456506), full suite + five type checks, push once, a "Round 3"
 section in `handoff.md`, then report back: `maestri ask "CoCo" "QF7 round 3 pushed at <hash>, CI <run id>"`.
+
+## Round 4: Codex's fourth review (review 5714936123, on `fb40034`)
+
+Codex accepted round 3 and found one more, next to round 2's item 5. Same rules and files as round 2.
+
+7. **P2, `helab/utils/folder_cache.py` `convert()` (comment 4425610377).** `seen` (the waiting list) is sent
+   whatever the profile. A raw file waiting with a profile-dependent reason (e.g. `not_trigger_first`) when the
+   user picks a corrected profile keeps that reason: `convert_folder()` rebuilds `unfinished` from `seen` and skips
+   `raw.not_done()` for unchanged files, so the shot keeps waiting, becomes damaged under the corrected profile and
+   is then skipped. Fix: like item 5, reuse the waiting history only for the same profile (or keep only the
+   fingerprint, without profile-dependent reasons); say which in the handoff, and what it does to the
+   "taken as finished only after two conversions saw it unchanged" rule on a profile change. Test: a file waiting
+   with `not_trigger_first` under profile A, then profile B (the right trigger): it converts (fails on today's
+   code). Check the other remembered list fields (anything else profile-dependent?) and say so.
+
+Commit on `dev/v0.0.7` (message names comment 4425610377), full suite + five type checks, push once, a "Round 4"
+section in `handoff.md`, then report back: `maestri ask "CoCo" "QF7 round 4 pushed at <hash>, CI <run id>"`.

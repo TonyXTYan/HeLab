@@ -1237,12 +1237,15 @@ class FolderCache(QObject):
                                    "beside": self.write_beside(path), "seen": []}
         lists = self.convert_lists.get(path)
         if lists is not None:
-            payload["seen"] = lists["waiting"]
             if lists["profile"] == profile:
-                # (Another profile's current and unconvertible shots aren't this one's: checked again, a
-                # file damaged for one profile's trigger channel too.)
+                payload["seen"] = lists["waiting"]
                 payload["done"], payload["kept"] = lists["current"], lists["kept"]
                 payload["skip"] = lists["unconvertible"]
+            else:
+                # Another profile's current and unconvertible shots, and why a file looked unfinished (its
+                # trigger channel), aren't this one's: checked again. When each waiting file was seen, with its
+                # size and date, still holds (the two looks, the damaged clock): its reason goes.
+                payload["seen"] = [[*entry[:3], "", "", *entry[5:6]] for entry in lists["waiting"]]
         return self.submit(owner, 0, path, "convert", payload)
 
     def _remember_convert(self, job: SharedJob, event: dict[str, Any]) -> None:
