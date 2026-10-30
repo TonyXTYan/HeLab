@@ -182,8 +182,9 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         trusted = {shot: (*held[shot], origin) for shot, origin in held_origins.items()}
         helab_found = helab_txy.find(path, txy, helab_key, beside_entries, raw_entries, trusted,
                                      helab_txy.could_take(txy_source, raw_entries, matlab, held_origins))
-    # Each shot's TXY as the source asks; a held shot keeps its kind while that TXY is there.
-    chosen = helab_txy.compose(txy_source, matlab, helab_found, held_origins)
+    # Each shot's TXY as the source asks; a held shot keeps its kind while that TXY is there (one held from
+    # MATLAB's too: "" its origin, so a HeLab TXY converted since doesn't replace it).
+    chosen = helab_txy.compose(txy_source, matlab, helab_found, {shot: held_origins.get(shot, "") for shot in held})
     origins = {shot: origin for shot, (_, origin) in chosen.items() if origin}
     for shot, (filename, origin) in chosen.items():
         names[shot] = filename

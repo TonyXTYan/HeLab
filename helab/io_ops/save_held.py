@@ -103,8 +103,10 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
             trusted = {shot: (*by_shot[shot], origin) for shot, origin in held_origins.items()}
             helab_found = helab_txy.find(path, txy, helab_key, beside_entries, raw_entries, trusted,
                                          helab_txy.could_take(txy_source, raw_entries, matlab, held_origins))
-        # Each shot's TXY as the source asks; a held one is checked against the kind it was read from.
-        chosen = helab_txy.compose(txy_source, matlab, helab_found, held_origins)
+        # Each shot's TXY as the source asks; a held one is checked against the kind it was read from (MATLAB's
+        # too: "" its origin).
+        held_kinds = {shot: held_origins.get(shot, "") for shot in known}
+        chosen = helab_txy.compose(txy_source, matlab, helab_found, held_kinds)
         origins = {shot: origin for shot, (_, origin) in chosen.items() if origin}
         for shot, (filename, origin) in chosen.items():
             listed[shot] = matlab_stats[shot] if not origin else (helab_found[shot].size, helab_found[shot].mtime_ns)
