@@ -153,7 +153,7 @@ def test_each_live_conversion_says_what_that_run_did(
         qtbot: QtBot, service: IOService, tmp_path: Path, milestones: pytest.LogCaptureFixture) -> None:
     """Every count is the run's: converted and no-hit shots this run (no_hit: the growth of the
     session's no-hit shots since the last line), and the folder's unconvertible, waiting and kept
-    files as that run left them."""
+    files as that run left them. A run that changed nothing (Live converts every interval) logs none."""
     explorer, path = watching_raw_folder(qtbot, tmp_path)
     cycle(qtbot, explorer, path, tmp_path)
     write_raw(Path(path), 3, b"5,1000\r\n")  # The trigger alone: no hits.
@@ -167,6 +167,8 @@ def test_each_live_conversion_says_what_that_run_did(
                and line["output"] == of(sent, "convert_summary")[0]["output"] for line in lines)
     counts = [(line["converted"], line["no_hit"], line["unconvertible"], line["waiting"], line["kept"])
               for line in lines]
-    assert counts[-2:] == [(2, 1, 0, 0, 0), (0, 0, 0, 0, 0)]
+    assert counts[0] == (0, 0, 0, 0, 0)  # The first run, though it found nothing.
+    assert counts[-1] == (2, 1, 0, 0, 0)  # The run after it changed nothing: no line.
+    assert all(before != after for before, after in zip(counts, counts[1:]))
     assert sum(line["converted"] for line in lines) == 2 and sum(line["no_hit"] for line in lines) == 1
     explorer.close_cleanup()
