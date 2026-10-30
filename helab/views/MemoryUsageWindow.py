@@ -6,6 +6,9 @@ from PyQt6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout
 from pympler import muppy, summary
 import psutil
 
+from helab.utils.number_format import byte_unit
+
+
 class MemoryUsageWindow(QWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -32,7 +35,8 @@ class MemoryUsageWindow(QWidget):
         # Clear the previous data in the series
         self.series.clear()
         # Add data to the series for the top object types
+        mib, unit = byte_unit(2, "ram")
         for item in summary_info[:10]:  # Display top 10 object types
             obj_type = item[0]
-            mem_usage = item[2] / 1e6  # Bytes to megabytes (SI, as every size HeLab shows)
-            self.series.append(f'{obj_type}: {mem_usage:.2f} MB', mem_usage)
+            mem_usage = item[2] / mib  # Bytes to MiB (RAM is in powers of 1024 on every OS, Q26.1)
+            self.series.append(f'{obj_type}: {mem_usage:.2f} {unit}', mem_usage)

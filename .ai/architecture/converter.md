@@ -144,6 +144,9 @@ case in `tests/data/convert/`, both built-ins, the quirks above, and every sampl
 **Measured standing** (`.ai/sessions/2026-10-29-claude-txy-bench/results.md`; serial, all 309 shots, load 4-5): end to end per core numpy 119,
 numba 171, cython 170, rust 178, mlx 72, reference 13 MB/s; reconstruction alone 279/869/915/
 1056/111/14. Compiled backends then spend 80-83 % of a conversion reading and writing text.
+MATLAB itself (R2025b, `.ai/sessions/2026-10-30-claude-matlab-bench/results.md`, a busier machine):
+the 2019 converter ~22 MB/s per core against numpy's 76 in the same window (~3.5×), 57 % of it in
+`dlmwrite`, no gain from its threads, 6-8 s to start; it reproduces the same 303 of 309 archived TXY.
 Parallelise across shots in long-lived processes (numpy x12 warm 1,049 MB/s, rust 1,466); threads
 stop at ~400 MB/s because the text I/O, `parse_raw` as well as `format_txy`, holds the GIL in
 practice; within-shot splitting helps only slow backends or shots much denser than the samples (a

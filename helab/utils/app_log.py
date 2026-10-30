@@ -20,6 +20,7 @@ from types import TracebackType
 from typing import Callable
 
 from helab.utils.cache_locks import other_instances
+from helab.utils.number_format import byte_unit
 
 
 # Each HeLab writes its own file, helab-<process ID>.log (Tony, 2026-10-22): two at once never share
@@ -27,7 +28,7 @@ from helab.utils.cache_locks import other_instances
 # helab-<pid>.log.1 (and so on, LOG_BACKUPS of them). Old sessions' files go at startup: the oldest
 # beyond Settings → General → Log files to keep, and past ASK_BYTES the user is asked
 # (``helab.views.OldLogs``; Tony, 2026-10-22).
-MB = 1000 * 1000  # SI, as every size HeLab shows (Tony, 2026-10-26)
+MB, MB_UNIT = byte_unit(2, "disk")  # 1 MB, or 1 MiB on Windows: disk units follow the OS (Q26.1)
 LOG_NAME = "helab-{pid}.log"
 LOG_FILE = re.compile(r"helab-(\d+)\.log(\.\d+)?")  # Rotated copies too; the group is the pid.
 LOG_BYTES = 1 * MB
@@ -187,7 +188,7 @@ def delete_logs(files: list[LogFile]) -> list[LogFile]:
         else:
             deleted.append(file)
     if deleted:
-        logging.info(f"Deleted {len(deleted)} old log file(s), {sum(file.size for file in deleted) / MB:.1f} MB")
+        logging.info(f"Deleted {len(deleted)} old log file(s), {sum(file.size for file in deleted) / MB:.1f} {MB_UNIT}")
     return deleted
 
 

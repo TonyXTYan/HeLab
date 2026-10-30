@@ -456,7 +456,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if self._save_note:
             self._cached_warning("")
         if size > result_cache.LARGE_RESULT_BYTES and self.workspace is not None:
-            self.workspace.notice(f"Saved {self.name} ({self.view.identity.name}) in the disk cache: {byte_size(size)}")
+            self.workspace.notice(f"Saved {self.name} ({self.view.identity.name}) in the disk cache: {byte_size(size, 'disk')}")
         shown = self.shown
         if shown is None or shown.job_id != result.job_id or self.released is not None:
             return

@@ -4238,7 +4238,7 @@ def analysis_cached_text(cache: FolderCache, path: str) -> str:
         return ""
     from helab.utils.number_format import byte_size
     count, size = cached
-    return f"Cached analysis: {count:,} result{'' if count == 1 else 's'}, {byte_size(size)}"
+    return f"Cached analysis: {count:,} result{'' if count == 1 else 's'}, {byte_size(size, 'disk')}"
 
 
 def data_root_row(cache: FolderCache, path: str) -> tuple[str, str]:

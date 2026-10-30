@@ -14,6 +14,11 @@ How to use it:
 
 ## App
 
+- [ ] **The RAM budget box clips its text** (Settings → Cache): Qt's `QAbstractSpinBox.sizeHint`
+  measures at most 18 characters, and "16.0 GiB (1/8 of 128 GiB)" is 25 (it was 23 as "17.2 GB (1/8
+  of 137 GB)", clipped too; widths 131 and 135 px offscreen). A `sizeHint` override on
+  `RamBudgetSpinBox` measuring the longest of its texts would fix it (byte units floor, block 32).
+
 - [ ] **Lab data: a corrupted MATLAB TXY** in
   `dld_output_cheerypicked/20260722-tight-trap-1000Hzsampling/d_txy_forc183.txt` (two programs
   wrote it at once), and July 2026 TXY from the 2023 lab edit beside AutoConvert's (Q25.3). HeLab's
@@ -95,7 +100,8 @@ How to use it:
   `waitUntil timed out in 3000 milliseconds` at line 292 (the `finally`'s wait for the killed fake
   helpers to exit after `service.shutdown()`), on Windows CI run 40803552596 (`agent/txy-ship`) and
   once locally on macOS; passed on retry. Again on Windows: Ground CI 40861772277 (`9f0b21f`) and
-  `agent/txy-index` CI 40874212130. A candidate: 3 s under load.
+  `agent/txy-index` CI 40874212130; Ground CI 40988453930 (`c492242`, Windows Tests 1/2). A candidate: 3 s
+  under load.
 - [ ] `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`: an
   xdist worker crashed on Windows CI run 40803552596; passed on retry (no traceback; look for a
   faulthandler dump). Again: the Plotly case on `agent/byte-units` CI 40865344851 (job 123418722344,
@@ -134,7 +140,8 @@ How to use it:
   passed on its rerun. A crash, not an assertion (a native fault in a GUI test?); cause unknown.
 - [ ] `test_test_isolation.py::test_pytest_imports_the_checkout_it_runs_in_before_any_other`: a
   collection error in pathlib `lstat` on Windows CI (run 40754482305, `agent/txy-packaging` `7d2bff9`),
-  passed on retry.
+  passed on retry. Again on Windows Tests (2/2): `agent/byte-units` CI 40989130996 (job
+  123847075029) and `agent/smoke-ready` CI 40990082872 (job 123850152612), both passed on retry.
 - [ ] `test_gui_responsiveness.py::test_stalled_process_keeps_heartbeat_and_shutdown_responsive`:
   `assert 0.2199… < 0.2` (line 228) on macOS CI (run 40764414177), passed on retry.
 - [ ] Tests that `chdir` while helpers can start: a helper inherits the working folder, which its

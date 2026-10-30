@@ -262,6 +262,29 @@ Tony in Chat, 2026-10-30, via the Assistant, on the converted-TXY index floor (b
   ({problem}): choose a folder on this computer's own disk."; an existing such setting kept but
   warned about once): yes (A30.5).
 
+Tony in Chat, 2026-10-30, on computer use and the smoke pass (blocks 5 and 31,
+[plan](../roadmaps/smoke-automation.md)):
+
+- **Q5.2.5** the runner's menu items go in the existing Debug menu, not a separate "Smoke" menu
+  (the Assistant's proposal, approved with the Smoke ready floor). Being built on `agent/smoke-ready`.
+- **Q31.1** accessibility names and descriptions on every button and control, and stable IDs
+  (`objectName`), with a test that fails on any unnamed control ("let's set this up properly";
+  the AGENTS.md rule proposed at landing): `agent/smoke-ready`.
+- **Q31.2** the computer-use extras 1–5, 7 and 9 from the Mac pass's notes: stable IDs, milestone
+  log lines, Debug › Dump State, Quit that confirms, `--geometry`, a bundle ID for source runs on
+  macOS, Return committing a typed value and the plot tab's ×: `agent/smoke-ready`,
+  `agent/runner-tools`. Item 8 (no popup combos) dropped: the Debug menu routes avoid them, and the
+  smoke pass keeps one step done the way a person would.
+- **Q31.3** the quit window lists every pending operation (kind, folder, how long), not only
+  folder names.
+
+Tony in Chat, 2026-10-30, on the byte units floor (block 32,
+[handoff](sessions/2026-10-29-claude-byte-units/handoff.md)):
+
+- **Q32.1** a disk budget saved under the OS's minimum (in practice 1 GB on a Windows PC, the old
+  minimum) becomes 1 GiB at the next Settings Save: "ok (a)" (the minimum is 1 GiB, Q26.1 (c); HeLab
+  already uses 1 GiB from startup).
+
 ## Converter stage 4, HeLab core (block 12)
 
 From the `agent/txy-helab-core` handoff (`sessions/2026-10-29-claude-txy-helab-core/handoff.md`).
@@ -409,7 +432,7 @@ Finding numbers refer to the
   - Q3.6.2: do floors need the two large submodules (Momentum_Bells_test, DLD_front_panel)?
     Proposed: no; only `legacy/tdc_autoconverter`.
 
-## Automating the smoke pass (block 5)
+## Automating the smoke pass (blocks 5, 31)
 
 - **Q5.1 Which model drives the smoke pass** ([runbook](sessions/2026-10-28-claude-smoke-automation/plan.md))?
   Proposed: Haiku 5.5, with Sonnet 5.5 if Haiku misreads the screen. The dry run (A5.1, done
@@ -417,9 +440,14 @@ Finding numbers refer to the
   Haiku is still untried.
   Also: which computer-use tool runs it on each machine (the Claude desktop app's computer use
   on the Mac; check a lab PC can run it)?
-- **Q5.2.5 Shape of the debug/smoke menu** (from Q5.2, approved: [plan](../roadmaps/smoke-automation.md)): extend the
-  existing Debug menu, or a separate "Smoke" menu shown only with a flag? Proposed: a "Smoke"
-  menu behind `HELAB_SMOKE=1`, so release users never see it.
+
+- **Q31.4 Where the test data lives** (computer-use extra 6): a set prepared locally in
+  `~/GitHub-Local/HeLab-testdata` (75 MB, 148 files: a few raw + MATLAB TXY shots per detector era,
+  Live, raw-only, TXY-only, nested and damaged folders; `manifest.json`, `tools/build.py`; not a git
+  commit, nothing pushed). Host: (a) a private GitHub repo (beside the code, a deploy key in CI,
+  plain git under ~1 GB) or (b) a private Hugging Face dataset (made for data, no LFS quota, would
+  also take the 2.6 GB sample sets; another account and token). Proposed: (a) for this set, (b) if
+  the full samples go online too. Also: does the lab agree to its shots in a private hosted repo?
 
 ## v0.0.7 scope (block 6)
 
