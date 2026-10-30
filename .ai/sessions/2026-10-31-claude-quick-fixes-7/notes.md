@@ -286,3 +286,50 @@ held): on `3a30bbd`, `shots_missing` [1, 2]; now shot 3 alone, origins {3}, remo
 
 Full suite -n 12: 8509 passed, 672 skipped, 2 warnings (as before) in 204.55 s, no RERUN
 (`.ai/temp/qf7-suite-r5.log`); the five type checks clean. CI: every job log read (below, after the push).
+
+# Round 6 (CI: PR run 41095142656 on `release/v0.0.7a1` `8ccc0be`; no Codex comment)
+
+| Job | Commit | Files |
+|---|---|---|
+| macOS Tests (1/2) job 124198926348: `test_app_log.py::test_the_log_file_keeps_tracebacks_and_rotates` failed all 6 tries in gw3 | `01ce35f` | `tests/test_app_log.py` |
+
+**Cause (test isolation, not QF7's code).** The test raised the root logger's level with
+`monkeypatch.setattr(root, "level", logging.INFO)`. Setting the attribute skips `Logger.setLevel`'s cache clear,
+so if any earlier test in the worker logged an INFO line while the root was at WARNING (which caches
+`root._cache[INFO] = False`), the cache held: `logging.exception` (ERROR) reached the file, but the 600
+`logging.info` lines were dropped and the log never rotated ("[helab-1986.log] == [helab-1986.log, .log.1 …
+.log.10]"). Every rerun ran in the same worker with the same cache, so all six failed. `15c907c` (Runner Tools)
+fixed the sibling `test_each_helab_writes_its_own_log_file` the same way and missed this one. There is no single
+"leaking test": any INFO line logged at WARNING before it in a worker sets the cache, so it depends on xdist's
+distribution.
+
+**Evidence.**
+- Mechanism, plain Python: `logging.info("x")` at WARNING → `root._cache == {20: False}`; `root.level = INFO` →
+  `isEnabledFor(INFO)` still False; `root.setLevel(INFO)` → True.
+- The gw3 order from the CI log (2034 tests up to the failure, `[gw3] … PASSED|RERUN …` lines), replayed in one
+  process (`pytest.main` with `-p no:randomly -p no:xdist`): before the fix, the rotation test failed as on CI;
+  after it, it passes. (The replay also fails `test_test_groups.py::test_the_whole_collection_splits_into_two_groups_of_about_half`
+  both times, as expected: that test checks the whole collection and the replay runs a subset.)
+- gw3's three preceding `test_analysis.py` tests alone don't reproduce it: the cache comes from earlier in the worker.
+
+**Fix.** `root.setLevel(logging.INFO)` and `root.setLevel(level)` in the `finally`, as the sibling test does. A
+search of `tests/` and `helab/` finds no other logger level set as an attribute.
+
+**Test (fails before, passes now).** `test_app_log.py::test_the_rotation_test_holds_after_an_info_line_at_warning`:
+the root at WARNING, one INFO line, then the rotation test. Before the fix: `['helab-<pid>.log'] == [… .log.1 …]`,
+the CI's assertion. (A sibling of `test_milestones.py`'s regression test from `15c907c`, kept in this file, which
+this job allows.)
+
+**Checks.** Full suite -n 12: 8510 passed, 672 skipped, 2 warnings in 227.95 s, **1 RERUN**:
+`tests/test_folder_summary.py::test_visible_scans_follow_scrolling_without_prefetching_offscreen_folders`,
+`AssertionError` at line 868 (`assert ([IORequest(...)] and False)`, `all(...)` False over the requests), passed on
+rerun; not in known-issues and unrelated to this change (log: `.ai/temp/qf7-suite-r6.log`). Proposed known-issues line:
+"`test_folder_summary.py::test_visible_scans_follow_scrolling_without_prefetching_offscreen_folders`: `all(...)` False at
+line 868 over the pending scan requests, once in a local `-n 12` full run (2026-10-31, Ground `dev/v0.0.7` `01ce35f`,
+QF7 round 6); passed on rerun." The five type checks clean.
+
+**Proposed known-issues line for this job:** none (fixed); optionally under the Runner Tools entry for `15c907c`:
+"Again in `test_the_log_file_keeps_tracebacks_and_rotates` (macOS PR CI 41095142656, job 124198926348, gw3, all 6
+tries): fixed in QF7 round 6 (`01ce35f`)."
+
+**Pushed:** `dev/v0.0.7` with `01ce35f` and this session commit; hash, CI run and its job logs' RERUNs in the report.
