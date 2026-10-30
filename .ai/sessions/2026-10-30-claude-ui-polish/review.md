@@ -199,3 +199,221 @@ Run 41005221588 on `e53f0f8`, every job checked by job ID:
 The compat jobs (3.11/3.12/3.14) were skipped: this is not a PR. Overall conclusion: **failure**. Q23.6's
 `test_a_deep_folder_converts_or_says_its_path_is_too_long` PASSED on Windows (the "converts" branch: the runner has
 long paths on). All three `test_a_real_helper_leaves_a_file_newer_than_the_settle_time` cases PASSED there too.
+
+---
+
+# Round 2 (Reviewer, 2026-10-30): `e53f0f8..3af2791`
+
+**Verdict: one finding is still open (High R2-1), so the floor can't land yet.** It is a small fix. Round 1's
+High 1, High 2, Low 1, Low 2 and the nits are fixed. CI 41011506627 is green on every job with no RERUN.
+
+## Checks rerun here (macOS, HEAD 3af2791)
+
+- **Full suite:** `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review -rR` gave
+  **8468 passed, 669 skipped, 0 RERUN** (146 s; log in `.ai/temp/review-r2-suite.log`).
+- **Type checks, all clean:**
+  - `mypy helab/ --strict`: 195 files.
+  - `mypy tests --strict`: 173 files.
+  - Both again with `--platform win32`.
+  - `pyright helab tests`, and again with `--pythonplatform Windows`: 0 errors.
+- **Touched tests three times** (destroyed connections, main split, floating plots, user tags, settle setting,
+  presets plots, accessible names, Debug runner menu; `-n 4` with reruns): 186 passed each time, no RERUN.
+- **Probes,** scratch tests under pytest's conftest; nothing in the repo was edited:
+  - whether a closed Plotly plot's figure leaves the server without `gc.collect()`;
+  - which object keeps it;
+  - the RAM-budget release;
+  - the settings panel at 320→80 px, at fonts ×1, ×1.25 and ×1.5, listing cut and squashed controls, with
+    screenshots;
+  - which forms of a `destroyed` connection the AST guard catches.
+
+## Findings
+
+### High R2-1: a closed Plotly plot's figure stays on the Dash server until Python's next full cyclic GC (86d32ce)
+
+`helab/analysis/panes.py:34`: `weakref.finalize(self, server.remove_plot, self.plot_id)` frees the figure only
+when the pane's Python object goes. The handoff (line 15) says "the plot's instance is dropped on close". It is
+not reachable, but it isn't freed either:
+
+- **What holds it:** the closed `AnalysisInstance` is cyclic garbage. Its own children hold bound methods back to
+  it: `PresetBar`, `TxySourceRow` and `CachedRuns` hold `set_txy_source`, `_cached_found`, `_cached_run` and so
+  on. Its `__dict__['_content']` holds the `PlotlyPane`, and a closure cell holds the pane too.
+- **So nothing frees it on its own.** Reference counting never does. Only a cyclic collection does, and by the
+  time the plot closes these objects are old, so it takes a full one.
+
+**Failure, reproduced:**
+- **Steps:** a real `HelabMainWindow` opens 3D scatter (Plotly). Close Plot Tab closes it. The test then sends
+  `DeferredDelete` events every 50 ms, with no `gc.collect()`.
+- **Result:** `dash_server.snapshot(plot_id)` was still the figure **after 30 s**, with GC enabled (Python
+  3.13.15, thresholds 2000/10/10). One `gc.collect()` freed it at once.
+- **Before 86d32ce:** the lambda on `destroyed` freed it at the C++ deletion, right after the close.
+
+**What a user sees:**
+- **A stale browser page.** The page in the browser keeps showing the closed plot. `DashServer`'s contract
+  (`helab/utils/dash_server.py:30`) is that a page still open says the plot is closed and stops polling.
+  Lab PCs can't paint QtWebEngine, so on those PCs the browser page is where Plotly plots are seen
+  (memory `results/lab-pc-qtwebengine-black-render.md`). An idle HeLab may keep it for minutes.
+- **Memory.** Each closed Plotly plot's figure (3D scatter: up to the 100k-point sample) stays in RAM until a
+  full GC. The RAM budget doesn't see it.
+
+**The RAM-budget release is fine.** I probed it without `gc.collect()`: `release()` replaces `_content` on a
+live instance, the old pane is freed by reference counting, and the figure leaves at once.
+
+**Fix (small; keeps the SIGSEGV fix):**
+- Keep the finalizer, `self._free = weakref.finalize(...)`, and call `self._free()` when the plot closes.
+  `finalize` objects run once, so calling it again is harmless.
+- The call could go in `LinkedAnalysisInstance.close` (`helab/views/plots/instance.py:134`), for each
+  `PlotlyPane` in the dock before `dock.deleteLater()`. Or add a `PlotlyPane.release_figure()` that the close
+  path calls.
+- This is a plain Python call on the GUI thread from a `@pyqtSlot`, not a callable on `destroyed`. The finalizer
+  stays as the fallback for a dock deleted unclosed.
+
+**Tests that would catch it:** the new real-window test, `test_closing_a_plotly_plot_frees_its_figure_once_the_plot_is_dropped`
+(`tests/test_destroyed_connections.py:87-89`), and the three `figure_freed` helpers call `gc.collect()` inside
+their wait, so they pass even though the app never frees the figure. Without the fix, at least the real-window
+test and one of the older close tests should:
+- wait with `gc.disable()`, or simply without `gc.collect()`;
+- and fail.
+
+### Low R2-2: the settings panel can be dragged to 80 px, where it is unusable, and that width comes back at the next start (afd6b32)
+
+`helab/views/HelabMainWindow.py:1007` sets `right_panel.setMinimumWidth(self.MIN_PANEL_WIDTH)`, which is 80
+(line 1268). That fixes High 1: the default 380/320 holds on Windows CI, and the split tests ask for it exactly
+and pass on all three OSes. But 80 px is far below what the panel's controls need. Measured with 4 interactive
+controls cut or squashed ("cut": the control runs past the panel's right edge; "squashed": narrower than Qt's
+least width for it):
+
+**Test window, macOS, offscreen (Fusion), 9 pt, with T, X, Y histograms:**
+- **The contents' least width is 327 px.** At the default 320 nothing is cut.
+  - The preset row's buttons sit just under Qt's 80 px least width for a button with text. Their text still
+    shows; "Delete…" is just cut.
+  - The parameter tree's Value column needs its horizontal scroll bar.
+- **At 240 px:** "Load Scripts…" (`load_scripts`) and Delete… (`preset_delete`) run past the panel's edge.
+- **At 200 px:** both are still cut, and the TXY combos are unreadable.
+- **At 80 px:** Apply, Save… and Delete… are cut, every combo is 13–24 px wide, and Rerun is cut to "with these
+  se". The panel is unusable.
+
+**Wider fonts (×1.5, near Windows' Segoe UI at a higher scale):**
+- The contents' least width is 408 px.
+- At the default 320, "Load Scripts…" and Delete… are cut but usable (screenshot checked).
+- At ×1.25 nothing is cut at 320.
+- So the handoff's M~1 note (a large display scale may cut the Scripts row's button) is right.
+
+**Why Low:** it is the user's own drag and it recovers by dragging back. But:
+- `_remember_panel_widths` keeps any width ≥ 80, and `read_split` restores it, so an accidental near-collapse
+  comes back at every start;
+- before this change the splitter stopped at the contents' least width.
+
+**Fix (either):**
+- set the panel's least width to about **240 px** (where nothing is cut at the macOS font) instead of 80, and use
+  the same threshold in `read_split` and `_remember_panel_widths`;
+- or `min(contents' least width, 320)`.
+
+Both keep Windows at 320 and stop the unusable range. Tony's call if he prefers 80; then it's a DECISIONS_TODO
+line, not a blocker.
+
+### Nit R2-3: the `destroyed` guard has blind spots (none of which exist in helab today)
+
+`tests/test_destroyed_connections.py:35` checks only `<x>.destroyed.connect(<positional non-Attribute>)`. I ran
+its rule on each form:
+- **Caught:** a lambda; `functools.partial(...)`.
+- **Missed:**
+  - `w.destroyed.connect(slot=lambda: ...)`: the keyword form (`node.args` is empty);
+  - `w.destroyed[QObject].connect(...)`: the overload subscript;
+  - `sig = w.destroyed; sig.connect(...)`: a signal stored first;
+  - `w.destroyed.connect(self.cb)` where `self.cb` is a lambda or partial: an attribute passes as a "bound
+    method".
+
+**No false negatives on what exists.** `grep destroyed helab/` finds exactly two connections. Both are
+`@pyqtSlot` methods on QObjects, which are real Qt slots and need no PyQt proxy:
+- `instance.py:122`: `dock.destroyed.connect(self.close)`;
+- `settings_panel.py:162`: `dock.destroyed.connect(self._forget_deleted)`.
+
+**Cheap tightening:** also scan `node.keywords`, and accept `node.func.value` being an `ast.Subscript` of
+`.destroyed`.
+
+## Round 1 findings: fixed
+
+- **High 1 (afd6b32):** fixed (with Low R2-2's caveat).
+  - What it changed: the Scripts row shrinks (the combo to 8 characters, the button to its text), the panel's
+    least width is set, and the widths are applied again at the first show from the splitter's real width.
+  - On Windows CI the default split test (exactly 380/320) and the restart test pass.
+  - Each split assertion now reports any wide widget when it fails.
+- **High 2 (4bfd6ad):** fixed. `setattr(error, "winerror", …)`, and `mypy tests --strict --platform win32` is
+  clean here.
+- **Low 1 (6ef90bb):** fixed. `AnalysisDock.event` marks a `MouseButtonDblClick` while Qt handles it, and
+  `_floated` places the plot then. There is a new test that double-clicks the title.
+- **Low 2 (0de7d3c):** fixed as proposed.
+  - The new rule: on Windows, a not-found error on a path of 260+ characters counts as "too long" only while the
+    target's folder still exists. That check is a traced `_isdir`, run in the helper.
+  - When the folder is gone, the run fails and the next check retries.
+  - WinError 206 and `ENAMETOOLONG` still refuse the shot.
+  - `PLATFORM` is a module name that tests patch.
+  - The docstring's "(5 s)" is fixed too.
+- **Nits (4a6174d, a909960):**
+  - **Settle limits:** they're in `helab/utils/settle_time.py` (standard library only), and `SettingsDialog` no
+    longer imports any `helab.io_ops` module (test-enforced).
+  - **Arrow style:** the help text says "Settings →".
+  - **No settle constant read by value.** Every reader still goes through `fingerprints.SETTLE_SECONDS` /
+    `RACY_SECONDS` as module attributes. This includes what came in from dev: `convert.py:519`, `live.py:92`,
+    `fingerprints.py:85/99/101`. `helab convert` still falls back to the default.
+
+## The merges (ff4abb4 ← cb05f27, 04e9ac0 ← 7b51c84): nothing of the landed floors changed
+
+For each merge M, I looked at:
+- **`git diff M^2 M`:** every file that differs from dev is one this floor changed (none outside).
+- **`git show --remerge-diff M`:** empty for both, so the merges were clean and nothing was resolved by hand.
+- **Files both sides changed:**
+  - ff4abb4: `explorer_live.py`.
+  - 04e9ac0: `convert.py`, `helab_txy.py`, `HelabMainWindow.py`, `test_convert_helab.py`.
+  - Git merged them without conflicts, and the merged code passes the suite and type checks.
+
+## The four older Plotly tests (971c348)
+
+They now drop their own references to the pane and instance before waiting. That part is legitimate: a test that
+holds the pane keeps it alive. But each wait now calls `gc.collect()` (`figure_freed`):
+- `tests/test_analysis_gui.py:793`
+- `tests/test_live_plots.py:1558`
+- `tests/test_plot_ram_budget.py:873`
+
+So the tests no longer prove that **closing** frees the figure, only that a forced full collection does, which
+HeLab never runs. That is exactly how High R2-1 got through. All their other assertions are unchanged (the page
+updated in place, the camera kept, the snapshot of the released plot).
+
+- **RAM-budget test** (`test_plot_ram_budget.py`): this one would pass without the collection too (probed).
+- **Two close tests** (`test_analysis_gui.py`, `test_live_plots.py`): after the fix, they should wait without
+  `gc.collect()`.
+
+The Presets test (`test_presets_plots.py:1683-1691`) collects so it can count receivers. That's fine: an extra
+connection to a label that is gone does nothing (`shown()` checks the weak ref).
+
+## CI 41011506627 (3af2791, agent/ui-polish): success
+
+| Job | ID | Result |
+|---|---|---|
+| Detect branch and version bump | 123918212423 | success |
+| macos Build / ubuntu Build / windows Build | 123918278075 / 123918277961 / 123918278044 | success |
+| macos Tests (1/2) | 123918278264 | 4222 passed, 322 skipped, no RERUN |
+| macos Tests (2/2) | 123918278348 | 4246 passed, 347 skipped, no RERUN |
+| ubuntu Tests (1/2) | 123918278230 | 4220 passed, 324 skipped, no RERUN |
+| ubuntu Tests (2/2) | 123918278174 | 4246 passed, 347 skipped, no RERUN |
+| windows Tests (1/2) | 123918278222 | 4207 passed, 335 skipped, no RERUN |
+| windows Tests (2/2) | 123918278100 | 4228 passed, 363 skipped, no RERUN |
+| Converter backends macos / ubuntu / windows | 123918278261 / 123918278097 / 123918278167 | 696 / 696 / 695 passed, no RERUN |
+
+- **No RERUN:** I grepped every Tests and Converter job's log for "RERUN".
+- **Passed on all three OSes:**
+  - `test_every_script_and_each_library`;
+  - every `test_main_split` test, including the exact 380/320 one on Windows;
+  - every `test_destroyed_connections` test.
+- **Skipped:** the compat jobs (3.11/3.12/3.14) and the draft-release job. This isn't a PR.
+- **Round 1's single RERUN** (`test_gui_responsiveness ...[1]` on Windows) didn't recur. The round 1 proposal
+  still stands: add `[1]` to its known-issues entry.
+
+## Docs the handoff should propose (round 2)
+
+- **app-runtime-and-ui.md / plots-and-scripts.md:**
+  - a Plotly figure leaves the server when its plot closes, with `weakref.finalize` as the fallback, once
+    R2-1's fix is in;
+  - the "no Python callable on `destroyed`" rule (the handoff already proposes it for AGENTS.md).
+- **testing.md:** a test of freeing on close must not call `gc.collect()` in its wait, or it can't tell
+  "freed at close" from "freed by a full collection".
