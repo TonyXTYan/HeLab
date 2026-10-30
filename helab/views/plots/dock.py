@@ -1,16 +1,16 @@
 """A plot's dock: ``AnalysisDock`` (the plot, with its settings section beside it while it
-floats: ``FloatingSettings``, ``SettingsToggle``) and ``DockTabCloser`` (close buttons on
-tabbed plots' tabs)."""
+floats: ``FloatingSettings``, ``SettingsToggle``, and its Dock button) and ``DockTabCloser`` (close
+buttons on tabbed plots' tabs)."""
 from __future__ import annotations
 
 from typing import Callable, Optional, cast
 
 from PyQt6 import sip
-from PyQt6.QtCore import QObject, QRect, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QCloseEvent, QFocusEvent, QPainter, QPaintEvent
+from PyQt6.QtCore import QObject, QPoint, QRect, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtGui import QCloseEvent, QFocusEvent, QGuiApplication, QPainter, QPaintEvent
 from PyQt6.QtWidgets import (QAbstractButton, QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QComboBox,
-                             QDockWidget, QLineEdit, QMainWindow, QSizePolicy, QSplitter, QTabBar, QVBoxLayout,
-                             QWidget)
+                             QDockWidget, QLineEdit, QMainWindow, QSizePolicy, QSplitter, QTabBar, QToolButton,
+                             QVBoxLayout, QWidget)
 
 from helab.utils.accessible import identify
 
@@ -21,6 +21,11 @@ address_of = cast(Callable[[QObject], int], sip.unwrapinstance)
 
 # Qt's largest widget size (QWIDGETSIZE_MAX), which PyQt6 doesn't export.
 WIDGET_SIZE_MAX = (1 << 24) - 1
+
+
+def mouse_held() -> bool:
+    """Whether a mouse button is down (as of the last mouse event Qt had)."""
+    return QGuiApplication.mouseButtons() != Qt.MouseButton.NoButton
 
 
 class SettingsToggle(QAbstractButton):
@@ -109,9 +114,10 @@ class SettingsToggle(QAbstractButton):
 
 class FloatingSettings(QWidget):
     """A floating plot's settings section, right of the plot in its window (``AnalysisDock``):
-    the toggle, then the plot's settings page (``hold``, from the Settings panel) while open.
-    It starts closed, a slim strip. Whether it is open and its width open are the plot's for
-    the session: they last as long as its dock, floated and docked again."""
+    the Dock button (Q33.4: the plot goes back into the main window), the toggle, then the plot's
+    settings page (``hold``, from the Settings panel) while open. It starts closed, a slim strip.
+    Whether it is open and its width open are the plot's for the session: they last as long as
+    its dock, floated and docked again."""
 
     MIN_WIDTH = 160
     DEFAULT_WIDTH = 300
@@ -121,6 +127,10 @@ class FloatingSettings(QWidget):
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(0)
+        self.dock_button = identify(QToolButton(self), "plot_dock", "Dock plot",
+                                    "Put this plot back in the main window's plot area")
+        self.dock_button.setToolTip("Dock: put this plot back in the main window")
+        self._layout.addWidget(self.dock_button)
         self.toggle = identify(SettingsToggle(self), "floating_settings_toggle", "Plot settings",
                                "Show or hide this plot's settings beside it")
         self._layout.addWidget(self.toggle)
@@ -155,6 +165,7 @@ class FloatingSettings(QWidget):
 
     def _fit(self) -> None:
         """Open: as wide as the splitter makes it; closed, the strip alone."""
+        self.dock_button.setText("⇲ Dock" if self.is_open else "⇲")
         if self.is_open:
             self.setMinimumWidth(self.MIN_WIDTH)
             self.setMaximumWidth(WIDGET_SIZE_MAX)
@@ -187,8 +198,16 @@ class AnalysisDock(QDockWidget):
     with the plot's settings section (``settings``) on its right, shown only while the plot
     floats: the Settings panel moves the plot's page there and back (``PlotSettingsPanel``).
     Opening or closing the section widens or narrows the floating window by its width, so
-    the plot keeps its size; the splitter sets the width open."""
+    the plot keeps its size; the splitter sets the width open.
+
+    Floated other than by a drag (its title's float button, a double-click on its title), it opens
+    at ``FLOAT_SIZE``, ``FLOAT_STEP`` right of and below the plot floated last (the first, of its
+    place docked), kept on its screen (Q33.3); dragged, it stays where it is let go. A restart puts
+    it back where the user left it (the arrangement's saved dock state)."""
     closed = pyqtSignal()
+    FLOAT_SIZE = QSize(800, 600)
+    FLOAT_STEP = 40
+    _floated_count = 0  # (Each float's turn, ``floated_turn``: the last one floated is the highest.)
 
     def __init__(self, title: str = "", parent: Optional[QWidget] = None) -> None:
         super().__init__(title, parent)
@@ -210,8 +229,44 @@ class AnalysisDock(QDockWidget):
         self.frame.setStretchFactor(1, 0)
         self.frame.splitterMoved.connect(self._splitter_moved)
         self.settings.toggle.clicked.connect(self.set_settings_open)
+        self.settings.dock_button.clicked.connect(self.dock_back)
         self._fit_handle()
         super().setWidget(self.frame)
+        self.floated_turn = 0
+        self.topLevelChanged.connect(self._floated)
+
+    @pyqtSlot()
+    def dock_back(self) -> None:
+        """The Dock button: the plot goes back where Qt docks it (its last place in the plot area)."""
+        self.setFloating(False)
+
+    @pyqtSlot(bool)
+    def _floated(self, floating: bool) -> None:
+        if not floating:
+            return
+        AnalysisDock._floated_count += 1
+        self.floated_turn = AnalysisDock._floated_count
+        if not mouse_held():  # (A drag: where the user lets go.)
+            self.place_floating()
+
+    def place_floating(self) -> None:
+        """At ``FLOAT_SIZE`` (less on a smaller screen), ``FLOAT_STEP`` right of and below the visible
+        plot floated last, else of this one's place as it floated (its docked place), on its screen."""
+        parent = self.parentWidget()
+        others = [dock for dock in (parent.findChildren(AnalysisDock) if parent is not None else [])
+                  if dock is not self and dock.isFloating() and dock.isVisible()]
+        last = max(others, key=lambda dock: dock.floated_turn, default=None)
+        start = (last.geometry() if last is not None else self.geometry()).topLeft()
+        place = QRect(start + QPoint(self.FLOAT_STEP, self.FLOAT_STEP), self.FLOAT_SIZE)
+        least = self.minimumSizeHint()
+        place.setSize(place.size().expandedTo(least))
+        screen = self.screen() if last is None else last.screen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            place.setSize(place.size().boundedTo(available.size()).expandedTo(least))
+            place.moveLeft(max(available.left(), min(place.left(), available.right() + 1 - place.width())))
+            place.moveTop(max(available.top(), min(place.top(), available.bottom() + 1 - place.height())))
+        self.setGeometry(place)
 
     def set_minimum_plot_size(self, width: int, height: int) -> None:
         """The least size of the plot's area (the plot with its source lines; the script's

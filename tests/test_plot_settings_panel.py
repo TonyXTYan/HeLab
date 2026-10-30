@@ -422,7 +422,7 @@ def test_a_floating_plot_takes_its_page_and_gives_it_back(plots: Plots, qtbot: Q
     plots.show(qtbot)
     panel = plots.panel
     assert panel.stack.currentWidget() is page and cast(AnalysisDock, two).settings.isHidden()
-    dock = floated(two, qtbot)
+    dock = floated(two, qtbot, width=400)  # (Room to widen on the offscreen screen.)
     side = dock.settings
     assert side.page is page and page.parentWidget() is side and panel.page(two) is page
     assert panel.settings_away(two) and panel.stack.currentWidget() is panel.away

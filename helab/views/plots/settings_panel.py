@@ -6,17 +6,12 @@ from typing import Any, Dict, List, Optional
 
 from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QGuiApplication, QWindow
+from PyQt6.QtGui import QWindow
 from PyQt6.QtWidgets import (QApplication, QComboBox, QDockWidget, QHBoxLayout, QLabel, QMainWindow, QPushButton,
                              QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from helab.utils.accessible import identify
-from helab.views.plots.dock import AnalysisDock
-
-
-def mouse_held() -> bool:
-    """Whether a mouse button is down (as of the last mouse event Qt had)."""
-    return QGuiApplication.mouseButtons() != Qt.MouseButton.NoButton
+from helab.views.plots.dock import AnalysisDock, mouse_held
 
 
 class DragEnd(QObject):
