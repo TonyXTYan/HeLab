@@ -41,7 +41,7 @@ helper killed mid-write), only those matching exactly the name ``write_atomic`` 
 sent as ``partial_removed``.
 ``cache`` writes under the cache folder, keyed by the folder's data root like the store
 (``root://<uuid>/<relative>``); a folder without one, with the disk cache off, or marked Don't cache
-(Q19.5, Q27.4: the store's flag, read here; unless ``cache_confirmed``, Q~2) goes to ``temp``
+(Q19.5, Q27.4: the store's flag, read here; unless ``cache_confirmed``, Q30.2) goes to ``temp``
 (HeLab's temp folder) and ``convert_plan`` says why (``fallback``). HeLab's folder for a source folder is
 ``<base>/converted-txy/<hash of its key>/``; the base's ``converted-txy/index.sqlite`` names the key
 and path (its ``folders`` row, updated when the folder moved) and holds the shots' rows. A
@@ -122,7 +122,7 @@ class ConvertRequest(TypedDict):
     setting (``cache``, default, or ``temp``). ``beside``: the app believes the folder's
     ``write_beside`` flag is on (checked again in the store here); ``beside_confirmed``: the user
     asked for beside for this run (the command line only). ``cache_confirmed``: the user typed
-    ``--output cache`` and confirmed it for a Don't cache folder (the command line only, Q~2; anywhere
+    ``--output cache`` and confirmed it for a Don't cache folder (the command line only, Q30.2; anywhere
     else that folder's flag wins and its TXY go to the temp folder). ``temps``: HeLab's temp folder.
     ``cache``: ``store_options()``. ``shots``: only these (None: every raw file).
     ``seen`` (required): the previous conversion's ``waiting`` list, ``[]`` for a folder's first
@@ -261,7 +261,7 @@ def _not_cached(store: CacheStore, path: str) -> str:
 
 
 def dont_cache(path: str, cache: dict[str, Any]) -> str:
-    """``_not_cached`` before a conversion (``helab convert --output cache`` asks first, Q~2). "" also
+    """``_not_cached`` before a conversion (``helab convert --output cache`` asks first, Q30.2). "" also
     when the store can't be read or the folder has no data root: those send it to temp anyway."""
     from helab.utils.cache_paths import UnresolvedRemotePath
     from helab.utils.cache_store import StoreError

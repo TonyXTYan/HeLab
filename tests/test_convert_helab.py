@@ -1694,7 +1694,7 @@ def typed(source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.
 def test_a_typed_output_cache_asks_before_writing_a_dont_cache_folder_to_the_cache(
         source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
         terminal: bool | None, answer: bool | None, output: str, cache: bool) -> None:
-    """Q~2 (Tony): the command line stands for the user, as ``beside`` does (Q12.4). One line names the
+    """Q30.2 (Tony): the command line stands for the user, as ``beside`` does (Q12.4). One line names the
     folder; for a typed ``--output cache`` a terminal asks (no by default), without one it's temp;
     ``cache-forced`` asks nothing. No stdin at all (the windowed Windows app, ``console=False``; terminal
     None: ``_on_terminal`` itself runs) is no terminal (Tern's Low-8)."""

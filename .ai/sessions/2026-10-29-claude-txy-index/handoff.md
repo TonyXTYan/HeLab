@@ -698,3 +698,75 @@ CI run 40874212130 (c546394) passed every job, with two RERUNs, quoted from "rer
   **Nit-9**: documented, one best-effort flush (Design › Q~3). **Nit-10**: the header no longer says
   "to the disk cache" for the last uses; wording at M~3 for Tony.
 
+
+## Addendum after landing (`c492242`): A30.4 done
+
+CoCo, 2026-10-30: Tony wants Q30.3's (c) as well. The last uses loads skipped (`FolderCache.txy_unmarked`)
+are now also written in the background, in one `cache_admin` `mark_used` request about every 10
+minutes while any are owed. `origin/dev/v0.0.7` was merged first (a fast-forward to `c492242`). The
+provisional `Q~2`/`Q~3` left in code comments are now `Q30.2`/`Q30.3`.
+
+**How it works** (`helab/utils/folder_cache.py`; `MARK_FLUSH_INTERVAL` = 600 s, beside
+`MARK_FLUSH_TIMEOUT`):
+
+- The first `txy_unmarked` event starts a single-shot `_marks_timer` (10 min). Later events don't
+  move it.
+- When it fires, `_marks_due` sends everything owed in one request. This is the local lane, not
+  priority, and has the same 5 s no-progress limit.
+- The marks stay owed until written. On `done` an entry is dropped only if it hasn't changed since it
+  was sent. A newer skip that arrives meanwhile stays owed.
+- After the helper ends, the timer starts again if anything is still owed. With nothing owed, no timer
+  runs and nothing is submitted.
+- Only one background write runs at a time. It isn't a quit save (`quit_saves` doesn't list it), and
+  the GUI never waits on it.
+- **Busy index.** `helab_txy.mark_used` now returns the marks a busy or failing index left unwritten
+  (500 ms wait), not a count. `admin_result` carries them as `unwritten`, a new optional field in
+  `events.AdminResultFields`. Those stay owed, and so do a failed or timed-out helper's marks (logged
+  "Converted TXY last used: …"). A missing, newer or unreadable index is dropped as before.
+- **Work Offline.** No write while offline; it tries again in 10 min. The index may be in a temp
+  folder on a share, and A30.5 hasn't been built yet. `cache_admin` would be allowed offline, so
+  writing anyway would be a one-line change if Tony prefers it.
+- **Cache off** (`store_options()` empty): no write; it tries again in 10 min. This matches the quit
+  flush, which needs the cache too.
+- **Lane pausing.** While `IOService.hold_background()` is true (the foreground is working, which also
+  holds background loads and scans), it tries again after `SWEEP_RETRY` (5 s). A full queue gets the
+  same retry.
+- **Quit.** `flush_txy_marks` takes over. It stops the timer and cancels a background write in flight
+  (its marks are still owed, so the quit flush sends them), then writes everything owed as before. No
+  background write starts again this session. `shutdown()` stops the timer.
+
+**Files changed:**
+- `helab/io_ops/helab_txy.py`: `mark_used`'s return value; the docstrings. The module's unused
+  `import contextlib` is removed.
+- `helab/io_ops/admin.py`: `unwritten` in `admin_result`.
+- `helab/io_ops/events.py`: the `unwritten` field, and the `TxyUnmarkedEvent` docstring.
+- `helab/utils/folder_cache.py`: the state and timer, `_schedule_marks`, `_marks_due`,
+  `_on_marks_written`, the `_on_event` hook, `flush_txy_marks`'s takeover, `shutdown`, the constant.
+- `HelabMainWindow.py`, `QuitSaveDialog.py`, `convert_cli.py`, `io_ops/convert.py`: ID renames in
+  comments only.
+
+**Tests** (`tests/test_txy_last_used_quit.py`, 5 new, 2 extended):
+- Owed marks start a 10 min timer. One request (not priority, 5 s limit, not a quit save) goes at a
+  time. `unwritten` and a failed helper's marks stay owed, a newer skip stays owed, and once everything
+  is written no timer runs.
+- The write waits while offline, with the cache off, or while the foreground works (5 s retry).
+- Quitting cancels a background write and writes all that is owed, and no background write follows.
+- Nothing owed at quit still stops the timer for the session.
+- End to end with a real helper (interval patched to 0.2 s): a busy index's mark stays owed and the
+  next round writes it.
+- `mark_used` reports a busy index's marks, and `admin_result` carries `unwritten`.
+- Probes: with the `unwritten` handling removed, two tests fail; with the offline gate removed, one
+  fails.
+
+**Proposed doc changes** (Coordinator applies):
+- `converter.md` (line 311): "kept in `FolderCache` memory and written in the background about every
+  10 minutes while any are owed (A30.4: one `cache_admin` `mark_used` helper, not while the disk cache
+  is off, working offline or the foreground works; a busy index's marks, returned as `unwritten`, stay
+  owed) and as HeLab quits (Q30.3: …, a quit save, which takes over from the background write; …)".
+- `io-and-browsing.md` (the `txy_unmarked` sentence): "… written in the background about every 10
+  minutes and as HeLab quits (`cache_admin` `mark_used`, the index only; `admin_result`'s `unwritten`
+  lists what a busy index left) …".
+- `MANUAL_TODO.md` M30.3: add "Work more than 10 minutes after the second load, then quit: no quit
+  window (the background write already recorded it)." The last sentence, about the window showing on
+  most quits, then reads "on quits within 10 minutes of a load that skipped its mark".
+- `AI_TODO.md`: A30.4 is done.

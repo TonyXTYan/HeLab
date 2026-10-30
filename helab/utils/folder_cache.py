@@ -269,10 +269,15 @@ class FolderCache(QObject):
         # Quitting waits for saves (``cancel_for_quit``): no other folder work starts meanwhile.
         self.quitting = False
         # Converted TXY's last uses loads didn't write (``txy_unmarked``): (root, folder) → when,
-        # written as HeLab quits (``flush_txy_marks``, Q~3); the flush's owner while it runs, and its start.
+        # written as HeLab quits (``flush_txy_marks``, Q30.3); the flush's owner while it runs, and its start.
         self.txy_unmarked: dict[tuple[str, str], float] = {}
         self._mark_flush = ""
         self._mark_flush_started = 0.0
+        # And in the background about every MARK_FLUSH_INTERVAL while any are owed (``_marks_due``, A30.4):
+        # that helper's owner and the marks it took (owed until written); none once quitting has taken over.
+        self._mark_background = ""
+        self._mark_sent: dict[tuple[str, str], float] = {}
+        self._marks_quit = False
         # Each folder's flags, as the store or this session last said: {"no_cache", "no_auto_load", "set_at"}.
         self.prefs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         # What the store last confirmed for each folder (listings, saves): shown again if a choice fails.
@@ -518,6 +523,9 @@ class FolderCache(QObject):
         self._subtree_timer = QTimer(self)
         self._subtree_timer.setSingleShot(True)
         self._subtree_timer.timeout.connect(self._save_subtrees)
+        self._marks_timer = QTimer(self)
+        self._marks_timer.setSingleShot(True)
+        self._marks_timer.timeout.connect(self._marks_due)
         # Subscriber owners of the current tab (its model, and in queue mode its
         # background loads); their listings and loads use the foreground lane.
         self.foreground_owners: set[str] = set()
@@ -2708,7 +2716,7 @@ class FolderCache(QObject):
         settings = [write[0] for write in (*self._pref_writes.values(), *self._constant_writes.values())]
         presets = [PRESETS_SAVING] if self.presets_saving() else []
         results = list(self._result_writes.values())
-        marks = [TXY_LAST_USED] if self._mark_flush else []  # (Q~3; its start: ``quit_save_started``.)
+        marks = [TXY_LAST_USED] if self._mark_flush else []  # (Q30.3; its start: ``quit_save_started``.)
         return list(dict.fromkeys((*writing, *loading, *self._deferred_saves, *settings, *results, *presets,
                                    *marks)))
 
@@ -2724,7 +2732,13 @@ class FolderCache(QObject):
 
     def flush_txy_marks(self) -> bool:
         """Quitting: write the last uses loads didn't (``txy_unmarked``) in one helper (``cache_admin``
-        ``mark_used``, the index only); whether one was submitted. Nothing to write: none."""
+        ``mark_used``, the index only); whether one was submitted. Nothing to write: none. It takes over
+        from the background writes (``_marks_due``): one running is stopped, its marks still owed here."""
+        self._marks_quit = True
+        self._marks_timer.stop()
+        if self._mark_background:
+            owner, self._mark_background, self._mark_sent = self._mark_background, "", {}
+            self.service.cancel(owner)
         options = store_options()
         if not self.txy_unmarked or not options or self.service.closed:
             return False
@@ -2741,6 +2755,55 @@ class FolderCache(QObject):
 
     def txy_marks_flushing(self) -> bool:
         return bool(self._mark_flush)
+
+    def _schedule_marks(self, seconds: float = 0.0) -> None:
+        """Write the owed last uses in the background in ``seconds`` (``MARK_FLUSH_INTERVAL`` if 0), unless
+        a write is due or running already, or quitting took them over (``flush_txy_marks``)."""
+        if (self.txy_unmarked and not self._mark_background and not self._marks_quit and not self._closing
+                and not self.service.closed and not self._marks_timer.isActive()):
+            self._marks_timer.start(int((seconds or MARK_FLUSH_INTERVAL) * 1000))
+
+    def _marks_due(self) -> None:
+        """A30.4: the last uses loads didn't write, in one background helper about every 10 minutes while
+        any are owed (``cache_admin`` ``mark_used``, local lane, the index only, ``MARK_FLUSH_TIMEOUT``
+        without progress), so a crash or a forced quit loses at most that much. Not while the disk cache is
+        off or working offline (the index may be in a temp folder on a share, A30.5), and not while the
+        foreground works, when background loads and scans hold too: again later. A busy index's marks
+        (``unwritten``) and a failed helper's stay owed; quitting writes what is still owed."""
+        if (not self.txy_unmarked or self._mark_background or self._marks_quit or self.quitting
+                or self._closing or self.service.closed):
+            return
+        options = store_options()
+        if not options or self.offline:
+            self._schedule_marks()
+            return
+        if self.service.hold_background():
+            self._schedule_marks(self.SWEEP_RETRY)
+            return
+        owner = uuid4().hex
+        sent = dict(self.txy_unmarked)
+        marks = [[root, folder, at] for (root, folder), at in sent.items()]
+        if not self.service.submit(owner, 0, options["directory"], "cache_admin",
+                                   {"cache": options, "action": "mark_used", "params": {"marks": marks}},
+                                   timeout=MARK_FLUSH_TIMEOUT):
+            self._schedule_marks(self.SWEEP_RETRY)  # Queue full.
+            return
+        self._mark_background, self._mark_sent = owner, sent
+
+    def _on_marks_written(self, event: dict[str, Any]) -> None:
+        """The background write's events: what it wrote is no longer owed (a newer skip since still is)."""
+        if event["kind"] == "admin_result":
+            for root, folder, _ in event.get("unwritten") or ():
+                self._mark_sent.pop((str(root), str(folder)), None)
+        elif event["kind"] == "done":
+            for mark, at in self._mark_sent.items():
+                if self.txy_unmarked.get(mark) == at:
+                    del self.txy_unmarked[mark]
+        if event["kind"] in ("done", "error", "cancelled"):
+            if event["kind"] == "error":
+                logging.warning("Converted TXY last used: %s", event.get("message", ""))
+            self._mark_background, self._mark_sent = "", {}
+            self._schedule_marks()
 
     def quit_save_started(self, entry: str) -> float | None:
         """When a ``quit_saves`` entry's work started (``time.monotonic()``), where this cache knows it:
@@ -2831,6 +2894,7 @@ class FolderCache(QObject):
         self._sweep_timer.stop()
         self._restore_timer.stop()
         self._budget_timer.stop()
+        self._marks_timer.stop()
         for owner in {r.owner for job in self.jobs.values() for r in job.subscribers.values()} | {
             r.owner for r in self._deliveries}:
             self.cancel(owner)
@@ -3703,6 +3767,10 @@ class FolderCache(QObject):
         if event["kind"] == "txy_unmarked":
             mark = (str(event["root"]), str(event["folder"]))
             self.txy_unmarked[mark] = max(self.txy_unmarked.get(mark, 0.0), float(event["at"]))
+            self._schedule_marks()
+            return
+        if producer.owner == self._mark_background and self._mark_background:
+            self._on_marks_written(event)
             return
         if producer.owner == self._mark_flush and self._mark_flush:
             if event["kind"] in ("done", "error", "cancelled"):
@@ -4176,10 +4244,12 @@ PENDING_DISCARDED, PENDING_EXPIRED, PENDING_STORE, PENDING_CLEARED, PENDING_NOT_
     "discarded", "expired", "store", "cleared", "not_saved")
 # ``quit_saves``' entry while presets are being written (it names folders otherwise).
 PRESETS_SAVING = "Presets"
-# ``quit_saves``' entry for the converted TXY's last uses being written as HeLab quits (Q~3), and that
+# ``quit_saves``' entry for the converted TXY's last uses being written as HeLab quits (Q30.3), and that
 # helper's no-progress limit: one quick write per base, so a stuck one never holds the quit window long.
 TXY_LAST_USED = "Converted TXY last used"
 MARK_FLUSH_TIMEOUT = 5.0
+# Seconds between background writes of the last uses while any are owed (A30.4).
+MARK_FLUSH_INTERVAL = 600.0
 # Why presets and saved results weren't taken while the cache folder's store was unknown (a failed
 # identity probe, FolderCache.store_answer): the note ends once a probe succeeds.
 STORE_NOT_CONFIRMED = "the disk cache's store couldn't be confirmed"

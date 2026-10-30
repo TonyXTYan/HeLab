@@ -14,7 +14,7 @@ dispatches it before anything starts Qt widgets, caches or Dash).
 ``--output`` defaults to the setting (``converted_txy_output``: cache, else temp). ``beside``
 writes the TXY next to the raw files for this run, the command line standing for the folder's
 flag (Q9.7). A folder marked Don't cache converts to the temp folder (Q27.4: the store's flag, read
-by the conversion), as with the setting's default, unless the command line asks for the cache (Q~2,
+by the conversion), as with the setting's default, unless the command line asks for the cache (Q30.2,
 standing for the user as in Q12.4). A typed ``--output cache``: one warning names the folder and, on
 a terminal, it asks once per run whether to write to the cache folder anyway (no by default: temp);
 without a terminal, temp. ``--output cache-forced``: the cache folder, said in one log line naming
@@ -38,7 +38,7 @@ if TYPE_CHECKING:
     from helab.io_ops.convert import ConvertRequest
 
 LOG = logging.getLogger("helab.convert")
-# The cache folder even for a folder marked Don't cache, without asking (Q~2; the command line only).
+# The cache folder even for a folder marked Don't cache, without asking (Q30.2; the command line only).
 CACHE_FORCED = "cache-forced"
 DEFAULT_INTERVAL = 3.0
 
@@ -218,7 +218,7 @@ def _ask(question: str) -> bool:
 
 
 def _cache_anyway(folder: str, cache: dict[str, Any], forced: bool) -> bool:
-    """A typed ``--output cache`` or ``cache-forced`` on a folder marked Don't cache (Q~2): one line
+    """A typed ``--output cache`` or ``cache-forced`` on a folder marked Don't cache (Q30.2): one line
     naming the folder, then for ``cache`` the user's answer on a terminal (temp without one). Asked
     once, before the first check, so ``--watch`` doesn't ask again per pass or per shot."""
     from helab.io_ops import convert

@@ -107,3 +107,8 @@ Final runs (after 35b50d0):
   `8225 passed, 669 skipped, 2 warnings in 132.29s`, no RERUN. The five type checks clean.
 - Probes: one row dropped by a writer fails the two-writer test (`149 == 150`); the old `_on_terminal`
   fails the two stdin tests.
+
+## A30.4 (after landing c492242)
+
+- Full suite `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: 8230 passed, 669 skipped, 2 warnings in 189.88s; no rerun.
+- mypy helab/tests strict, mypy win32: no issues (191, 160, 191 files); pyright and pyright Windows: 0 errors.
