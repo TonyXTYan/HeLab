@@ -102,6 +102,10 @@ Merged `origin/dev/v0.0.7` at c492242 (TXY Index) first: one conflict, `QuitSave
   opened may have quit nothing, and the runner then started a second HeLab); whichever it was, a HeLab
   whose windows have closed can no longer stay running more than a second, and a runner confirms the
   quit by the process exiting (or reads Dump State's `window.closing` while the quit window waits).
+- **Round 3** (Wren): the header counts a running conversion apart ("converting raw files in 1
+  folder", not "saving … to the disk cache": its TXY go to converted-txy/ or beside the raw files);
+  `_deferred_since` is popped with its `_deferred_saves` entry; the four tests' `import re` sits among
+  their imports.
 - **Tests**: `tests/test_quit_confirms.py`: the watch (in-process, and a real process with a
   60 s non-daemon thread ending with its exit code in under the grace), quitting with nothing to save
   in under a second, every kind as an entry with its state and start, the window's lines and closing by

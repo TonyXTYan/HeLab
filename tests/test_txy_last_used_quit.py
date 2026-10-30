@@ -5,11 +5,10 @@
 Synthetic folders under ``tmp_path`` only."""
 from __future__ import annotations
 
-import re
-
 import contextlib
 import os
 from pathlib import Path
+import re
 import sqlite3
 import time
 from typing import Any, Iterator

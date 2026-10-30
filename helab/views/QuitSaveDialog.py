@@ -96,13 +96,20 @@ class QuitSaveDialog(QDialog):
     def _show(self, entries: list[QuitSave]) -> None:
         """The operations, each a line updated in place (from memory, every ``POLL_MS``)."""
         paths = list(dict.fromkeys(save.path for save in entries))
-        count = len([path for path in paths if path not in (PRESETS_SAVING, TXY_LAST_USED)])  # (Their own entries.)
+        # Folders saved to the disk cache; conversions apart (their TXY go to converted-txy/ or beside the
+        # raw files), as are presets and last uses (their own entries).
+        saved = {save.path for save in entries if save.kind not in (QUIT_PRESETS, QUIT_LAST_USED, QUIT_CONVERT)}
+        converting = {save.path for save in entries if save.kind == QUIT_CONVERT}
+        count = len(saved)
         saving = " and ".join(filter(None, (f"{count:,} folder{'' if count == 1 else 's'}" if count else "",
                                             "presets" if PRESETS_SAVING in paths else "")))
         # (The converted TXY's index may be under the temp folder, not the disk cache: Q~3, Nit-10.)
-        doing = " and ".join(filter(None, (f"saving {saving} to the disk cache" if saving else "",
-                                           "recording when converted TXY were last used"
-                                           if TXY_LAST_USED in paths else "")))
+        parts = [part for part in (
+            f"saving {saving} to the disk cache" if saving else "",
+            "recording when converted TXY were last used" if TXY_LAST_USED in paths else "",
+            f"converting raw files in {len(converting):,} folder{'' if len(converting) == 1 else 's'}"
+            if converting else "") if part]
+        doing = " and ".join(filter(None, (", ".join(parts[:-1]), parts[-1]))) if parts else ""
         self.label.setText(f"{doing[:1].upper()}{doing[1:]} before HeLab quits:")
         now = time.monotonic()
         while self.folders.count() > len(entries):

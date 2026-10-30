@@ -145,8 +145,8 @@ def test_the_quit_window_lists_each_operation_and_closes_when_they_end(qtbot: Qt
         "Presets — writing · 1:0x",
         "Converted TXY last used — recording when HeLab's converted TXY were last used · 1:0x",
         "run-raw — converting raw files · 1:0x"]
-    assert dialog.label.text() == ("Saving 9 folders and presets to the disk cache and recording when converted "
-                                   "TXY were last used before HeLab quits:")
+    assert dialog.label.text() == ("Saving 8 folders and presets to the disk cache, recording when converted TXY "
+                                   "were last used and converting raw files in 1 folder before HeLab quits:")
     # One ends: its line goes, the others stay (updated in place); all end: the window closes by itself.
     cache.jobs.pop(("convert", f"{RUN}-raw"))
     dialog.refresh()
@@ -158,6 +158,19 @@ def test_the_quit_window_lists_each_operation_and_closes_when_they_end(qtbot: Qt
     cache.quitSavesChanged.emit()
     qtbot.waitUntil(lambda: bool(results))
     assert results == [QDialog.DialogCode.Accepted] and not dialog.skipped and not dialog.isVisible()
+
+
+def test_a_conversion_alone_isnt_called_a_disk_cache_save(qtbot: QtBot, cache: FolderCache) -> None:
+    """Its TXY go to converted-txy/ or beside the raw files: the header says converting (Wren, round 3, L1)."""
+    cache.jobs[("convert", RUN)] = SharedJob("convert", RUN, "convert", 0, {})
+    dialog = QuitSaveDialog(cache)
+    qtbot.addWidget(dialog)
+    dialog.open()
+    assert dialog.label.text() == "Converting raw files in 1 folder before HeLab quits:"
+    assert [re.sub(r" · \d+:\d\d$", "", line) for line in lines(dialog)] == ["run — converting raw files"]
+    cache.jobs.clear()
+    dialog.refresh()
+    assert not dialog.isVisible()
 
 
 def test_quit_now_skips_them(qtbot: QtBot, cache: FolderCache) -> None:

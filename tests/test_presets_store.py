@@ -6,9 +6,8 @@ stores, read as none from a read-only one without it; RAM only while the cache f
 all and Reset all settings; ``quit_saves`` waits for their writes."""
 from __future__ import annotations
 
-import re
-
 import json
+import re
 import sqlite3
 import time
 import weakref

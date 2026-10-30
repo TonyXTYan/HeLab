@@ -266,7 +266,7 @@ class FolderCache(QObject):
         # Saves (loads with ``save`` in their payload) waiting for the folder's running save to
         # end, so saves of one folder never overlap: folder → (owner, payload).
         self._deferred_saves: dict[str, tuple[str, dict[str, Any]]] = {}
-        self._deferred_since: dict[str, float] = {}  # (Read only for folders in ``_deferred_saves``.)
+        self._deferred_since: dict[str, float] = {}  # (Beside ``_deferred_saves``: set and popped with it.)
         # Quitting waits for saves (``cancel_for_quit``): no other folder work starts meanwhile.
         self.quitting = False
         # Converted TXY's last uses loads didn't write (``txy_unmarked``): (root, folder) → when,
@@ -2694,6 +2694,7 @@ class FolderCache(QObject):
         if path not in self._deferred_saves or self._save_waits(path) or self.service.closed:
             return
         owner, payload = self._deferred_saves.pop(path)
+        self._deferred_since.pop(path, None)
         if not self.submit(owner, 0, path, "load", payload, priority=True):
             logging.warning("Disk cache save of %s: queue full", path)
             # Its owner waits for a load's outcome: this is it.
@@ -2795,6 +2796,7 @@ class FolderCache(QObject):
         for folder, (waiting, _) in list(self._deferred_saves.items()):
             if waiting == owner and operation in (None, "load") and path in (None, folder):
                 del self._deferred_saves[folder]
+                self._deferred_since.pop(folder, None)
                 self.quitSavesChanged.emit()
         for request in list(self._deliveries):
             if request.owner == owner and (operation is None or request.operation == operation) and (path is None or request.path == path):
@@ -2858,6 +2860,7 @@ class FolderCache(QObject):
         self._probe_waiting.clear()
         self._probe_waiting_owners.clear()
         self._deferred_saves.clear()
+        self._deferred_since.clear()
         self._sweep_timer.stop()
         self._restore_timer.stop()
         self._budget_timer.stop()

@@ -282,3 +282,122 @@ The code is ready. **Open before landing: R1** (handoff and known-issues: the ×
 GC, a user-visible bug fixed here, not only an accessibility gap; the `dock.py:333` comment should
 name the mechanism) **and R2** (the × test: `del bar`, then `gc.collect()`, before the click). The
 two Nits are optional.
+
+---
+
+# Round 3: R1/R2 fixes, the TXY Index merge, Quit that confirms (270b368..944a225)
+
+First-parent commits: f3651cf (R1, R2, Nits), b8f2218 (merge of dev/v0.0.7 c492242, TXY Index),
+d4ebf7b (brief-phase-b items 5 and 6), 944a225 (merge of f986257, `.ai` only).
+
+## Checks run
+
+- **Full suite** on 944a225 (detached worktree), `-n 4 --reruns 5 --reruns-delay 1`: **8275 passed,
+  669 skipped, no RERUN.**
+- `mypy helab/ --strict` (194), `--platform win32` (194), `mypy tests --strict` (165): clean; `pyright
+  helab tests` and `--pythonplatform Windows`: 0 errors.
+- **CI run 40990082872** (head 944a225): completed, success, every job green. Tests: macOS (1/2)
+  123850152602 4125 passed, (2/2) 123850152420 4150 passed; Ubuntu (1/2) 123850152607 4122 passed, (2/2)
+  123850152614 4150 passed; Windows (1/2) 123850152636 4112 passed, (2/2) 123850152612 4134 passed,
+  **1 rerun**; Converter backends 123850152617 / 123850152623 / 123850152529 and the three Builds:
+  success. The rerun:
+
+  ```
+  RERUN tests/test_test_isolation.py::test_pytest_imports_the_checkout_it_runs_in_before_any_other
+  E         ________________________ ERROR collecting test session ________________________
+  E         C:\hostedtoolcache\windows\Python\3.13.16\x64\Lib\pathlib\_abc.py:437: in lstat
+  tests\test_test_isolation.py:47: AssertionError
+  ```
+
+  Already in known-issues (line 135: "a collection error in pathlib `lstat` on Windows CI (run
+  40754482305 …), passed on retry"); the same signature, in a test this branch doesn't touch. Add run
+  40990082872 to that entry as a second sighting.
+
+## R1, R2, Nits (f3651cf): resolved
+
+The `dock.py` comment names the mechanism; the handoff and known-issues wording carry the cause. The ×
+test drops `bar`, collects, then clicks (fails on the old lambda, as checked in round 2).
+`getattr(self.toolbar, "_actions", {})`. `--geometry -x` keeps `-x` for Qt (a test case).
+
+## The TXY Index merge (b8f2218): fine
+
+The one conflict (`QuitSaveDialog`'s imports) keeps both sides. TXY Index adds no new control in
+`helab/views` (the walk over Settings' tabs would fail on one without a name or ID; it passes).
+
+## Quit that confirms and the quit window's list (d4ebf7b)
+
+**`quit_entries()`**: one typed `QuitSave(kind, path, state, started)` per operation, for the nine
+kinds. `quit_saves()` is now `dict.fromkeys(entry.path …)` over it, with the same members in the same
+order as before (finishing writes, saving loads, deferred saves, flags, constants, results, presets,
+last uses). The only addition is running conversions (the new wait, Q~4). **The start times are real for
+every kind**, not only in the test (which seeds them):
+- flags, constants, presets and Make room go through `cache_admin`, which records `_started[owner]`
+  (`folder_cache.py:3011`);
+- a result's own save uses `_result_ops[owner][1]`;
+- finishing writes use `_finishing_created`; loads and conversions use `job.created`;
+- deferred saves use the new `_deferred_since`; last uses use `_mark_flush_started`.
+
+The states are real too: "held" comes from `_probe_held`; presets show "waiting" until their job
+exists.
+
+**Scope in `folder_cache.py`**: only `QuitSave`, the `QUIT_*` kinds, `quit_entries`, the two hooks
+(`_deferred_since`; `_finishing_live`, set and popped beside `_finishing_created`), `_saves_memory` and
+`quit_save_started`. Nothing else changed. **One thing beyond "shape and hooks": the convert wait**
+(Q~4, Tony's). It is bounded:
+- `submit` refuses new work while `quitting` (`folder_cache.py:2131`), so no conversion starts during
+  the wait;
+- `cancel_for_quit` leaves running conversions alone, so only those already running are waited for.
+
+But a first auto-convert of a big folder could hold the quit window open for minutes (Quit now always
+works). Landing before Tony answers ships the wait; it is a one-line revert.
+
+**The window** (`QuitSaveDialog`) reads memory only: every 250 ms and on `quitSavesChanged`, from
+`quit_entries()`. It updates each line in place, closes itself (Accepted) when no entry is left, and
+Quit now skips (Rejected). The four tests from other areas that it touches only update their expected
+text; the behaviour they check is unchanged.
+
+**`quit_watch`**: a daemon thread started after `app.exec()` returns. It sleeps 1 s, then logs every
+thread's stack, flushes the log handlers and calls `os._exit(code)`. It can't cut short a HeLab write:
+- `closeEvent` shuts IOService down (`HelabMainWindow.py:1822`) before `QApplication.quit()`, and the
+  instance lock unlocks on `aboutToQuit`;
+- HeLab registers no `atexit` handler;
+- quit-time settings writes (`PlotReopen.record`) go through temporary `QSettings` objects, which sync
+  as soon as they're released;
+- helpers are separate processes that are already shut down.
+
+What it can cut is library teardown (e.g. QtWebEngine's profile), which doesn't matter here. Tests:
+in-process, plus a real process with a 60 s non-daemon thread that ends with its exit code.
+
+**The known issue "File › Quit sometimes left the process running"**: its cause is still unknown (the
+handoff says so). `quit_watch` covers a HeLab still running after its windows closed. It doesn't cover
+the handoff's other guess, a click that quit nothing: then the window stays open and visible. Don't close
+the entry at landing. Reword it to what's covered, and keep the "click before the menu opened" sighting
+open for the smoke pass.
+
+**TXY Index's last-uses flush** still runs as a quit save in the window: the four
+`test_txy_last_used_quit.py` tests pass, with only their expected line's format updated.
+
+### L1 (Low): the quit window says a conversion is "saving to the disk cache"
+
+`QuitSaveDialog._show` counts every path except presets and last uses as a folder "saved to the disk
+cache". With only a conversion running, the window reads (checked):
+
+```
+Saving 1 folder to the disk cache before HeLab quits:
+run — converting raw files · 0:05
+```
+
+A conversion writes TXY files to `converted-txy/` or beside the raw files, not to the disk cache. Count
+conversions separately (e.g. "converting raw files in 1 folder").
+
+### Nits
+
+- `_deferred_since` is never pruned: one float for every folder that has ever waited. It is harmless,
+  since it's read only for folders in `_deferred_saves`. Pop it where those entries leave.
+- In the four edited tests, `import re` sits on its own above the other standard-library imports,
+  separated by a blank line.
+
+## Verdict (round 3)
+
+No blocker. L1 is a one-line wording fix. For CoCo and Tony: Q~4 (the convert wait ships with this
+landing unless Tony answers first), and known-issues:81 stays open, reworded.
