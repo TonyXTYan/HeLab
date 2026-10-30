@@ -886,6 +886,27 @@ def test_the_quick_check_never_reuses_ram_of_another_kind(tmp_path: Path, privat
     assert result["memory_shots"] == [1, 2] and result["source"] != "memory"
 
 
+def test_helab_only_leaves_out_matlabs_shots_without_a_mismatch(tmp_path: Path, private_store: str) -> None:
+    """Codex 4425801688: shots cached (or held) from MATLAB's TXY that HeLab only leaves out aren't deleted: their
+    MATLAB TXY are there. The load gives HeLab's shots, with no ``shots_missing``."""
+    source = tmp_path / "run"
+    source.mkdir()
+    old = time.time() - 600
+    for shot in (1, 2, 3):
+        write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 1))))
+        os.utime(matlab_txy(source, shot), (old, old))
+    convert(source, tmp_path, private_store, shots=[3])
+    first = loaded(run_load(source, tmp_path, private_store, options(tmp_path, private_store, txy_sources.MATLAB_ONLY)))
+    assert first["txy"]["origins"] == {} and [entry[0] for entry in first["fingerprint"]] == [1, 2, 3]
+    only = options(tmp_path, private_store, txy_sources.HELAB_ONLY)
+    for kwargs in ({}, {"memory": first["fingerprint"], "base_signature": first["signature"]}):
+        events = run_load(source, tmp_path, private_store, only, **kwargs)
+        assert "shots_missing" not in kinds_of(events), kwargs
+        result = loaded(events)
+        assert [entry[0] for entry in result["fingerprint"]] == [3] and sorted(result["txy"]["origins"]) == ["3"]
+        # (Counted as removed from the data shown: the shots the source leaves out.)
+        assert result["total_files"] == result["files"] == 1 and result["load_counts"]["removed"] == 2
+
 
 def test_live_asks_the_store_for_a_key_once_a_session(tmp_path: Path, private_store: str,
                                                       monkeypatch: pytest.MonkeyPatch) -> None:

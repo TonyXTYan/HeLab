@@ -456,7 +456,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     # TXY files are written once: shots cached (or held in RAM) that the folder no longer has mean
     # another folder now sits at this path, or files were deleted. Stop before reading anything,
     # or unpacking the cache; the user decides (``allow_missing``: load the folder as it is now).
-    listed = set(chosen)
+    # A shot the source leaves out (HeLab only) whose MATLAB TXY is there isn't missing: the load is without it.
+    listed = set(chosen) | set(matlab)
     # Only MATLAB's TXY, written once, feed the mismatch rule (Q6.6): a shot held or cached from HeLab's TXY
     # may go (cleared) or change (converted again) legitimately; it is then read anew, or removed.
     from_helab = set(held_origins)
