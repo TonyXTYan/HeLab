@@ -44,7 +44,7 @@ No High. Fixed in `8e12052`: **L1** (a Live save logged as `source=check live=fa
 the bare message or a `helab.milestone:` line, every field in the form), **N2** (U+0085, U+2028,
 U+2029 escaped), **N3** (`is_stub` on a malformed plist), **N4** (cd before the env file; a missing
 checkout, env file or venv said on stderr, in the system log and an alert; a path with a quote,
-backslash or control character refused at build; the env file's path through a variable).
+backslash (in a POSIX path) or control character refused at build; the env file's path through a variable).
 
 ## RERUN (for known-issues' Fixed section)
 
@@ -78,7 +78,20 @@ Branch at `347748e` (`dev/v0.0.7` `c492242`, TXY Index, merged in `0a612d3` with
 - `mypy helab/ --strict`: Success, 191 files; `mypy tests --strict`: Success, 162 files;
   `pyright helab tests`: 0 errors, 0 warnings; `mypy helab/ --strict --platform win32`: Success,
   191 files; `pyright --pythonplatform Windows helab tests`: 0 errors, 0 warnings.
-- CI: the run of this push (the one push since `2c5c9ee`, whose run 40977894008 was green); its ID and jobs are in the report to CoCo, as a docs-only push would run CI again.
+- CI run **40989399407** (`bf7a3a5`): red on Windows only, both Tests jobs (macOS, Ubuntu and every
+  Converter backends and Build job green, no reruns in them). Two causes, both this branch's, neither
+  flaky (each failed all 5 reruns), and one known RERUN:
+  - `tests/test_dev_app.py` (4 tests): N4's `plain()` refused every backslash, Windows' separator
+    (`The checkout 'C:\Users\…\check out': a quote, backslash or control character in it`). Now
+    a backslash is refused only where `os.sep` is `/` (a POSIX name; the stub is macOS only), and the
+    backslash case of the refusal test is skipped on Windows.
+  - `tests/test_milestones.py::test_helab_convert_once_writes_its_line_in_its_log_file`:
+    `FileNotFoundError: …\app\logs\helab-3484.log`. A venv's `python.exe` on Windows runs Python
+    as a child, so `Popen.pid` isn't HeLab's; the test now reads the one log file in its own app folder.
+  - One RERUN not this branch's, passed on its rerun: `tests/test_io_service_run.py::test_writing_held_data_out_counts_as_progress`
+    (`assert (2 == 1)`, `where 2 = len([0.0015683999999964726, 0.0016781000000491986])`,
+    `tests\test_io_service_run.py:40`), already in known-issues.
+- CI after the fix: the run of its push; its ID and jobs are in the report to CoCo (a docs-only push would run CI again).
 
 ## Proposed doc changes (for the Coordinator)
 

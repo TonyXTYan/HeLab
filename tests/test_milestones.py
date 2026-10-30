@@ -271,7 +271,8 @@ def test_each_helab_convert_run_says_what_it_did(
 
 
 def test_helab_convert_once_writes_its_line_in_its_log_file(source: Path, tmp_path: Path) -> None:
-    """The real command: its log file (``helab-<pid>.log`` in its app folder) has the line, parsed back."""
+    """The real command: its log file (``helab-<pid>.log``, the only one in its own app folder) has the
+    line, parsed back. (Not by ``process.pid``: a venv's python.exe on Windows runs Python as a child.)"""
     write_raw(source, 1, raw_bytes(10_000, 20_000))
     write_raw(source, 2, b"5,1000\r\n")
     env = dict(os.environ, HELAB_APP_DIR_OVERRIDE=str(tmp_path / "app"))
@@ -280,7 +281,7 @@ def test_helab_convert_once_writes_its_line_in_its_log_file(source: Path, tmp_pa
                                cwd=Path(__file__).resolve().parents[1], env=env)
     _, stderr = process.communicate(timeout=60)
     assert process.returncode == 0, stderr
-    log = Path(app_log.log_folder(str(tmp_path / "app"))) / app_log.LOG_NAME.format(pid=process.pid)
+    [log] = Path(app_log.log_folder(str(tmp_path / "app"))).glob("helab-*.log")
     lines = [parsed for line in log.read_text(encoding="utf-8").splitlines()
              if (parsed := parse_milestone(line)) is not None]
     assert [(event, fields["by"], fields["converted"], fields["no_hit"]) for event, fields in lines] == [

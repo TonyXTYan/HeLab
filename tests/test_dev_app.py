@@ -104,7 +104,8 @@ def test_a_malformed_info_plist_is_no_stub_of_its_own(tmp_path: Path) -> None:
         dev_app.build(app, checkout(tmp_path))
 
 
-@pytest.mark.parametrize("bad", ['quo"te', "back\\slash", "new\nline", "line\u2028break"])
+@pytest.mark.parametrize("bad", ['quo"te', pytest.param("back\\slash", marks=pytest.mark.skipif(
+    os.name == "nt", reason="Windows' separator, not in a name")), "new\nline", "line\u2028break"])
 def test_a_path_the_launcher_cant_quote_is_refused(tmp_path: Path, bad: str) -> None:
     with pytest.raises(ValueError, match="quote, backslash or control"):
         dev_app.build(tmp_path / "HeLab-dev.app", tmp_path / bad)

@@ -121,8 +121,10 @@ def info_plist(checkout: Path, bundle_id: str, name: str, env_file: str) -> dict
 
 def plain(path: str, what: str) -> str:
     """``path``, if the launcher can quote it safely (no ``"``, backslash or control character, which
-    the alert's AppleScript string or a line of the script would take as its own)."""
-    if any(char in '"\\' or ord(char) < 0x20 or char in "\x7f\x85\u2028\u2029" for char in path):
+    the alert's AppleScript string or a line of the script would take as its own). A backslash is
+    Windows' separator, not in a name (a build there is only the tests')."""
+    if any(char in '"' or (char == "\\" and os.sep == "/") or ord(char) < 0x20 or char in "\x7f\x85\u2028\u2029"
+           for char in path):
         raise ValueError(f"{what} {path!r}: a quote, backslash or control character in it; move it first")
     return path
 
