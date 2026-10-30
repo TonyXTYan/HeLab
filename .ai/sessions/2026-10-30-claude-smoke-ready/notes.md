@@ -54,3 +54,42 @@ repeats never meet.
   Message boxes built with `QMessageBox(...)` and custom buttons get IDs (`identify_buttons`).
   Alerts that only get Qt's default OK at show time (DataRootsTab `_alert`, FolderExplorer's marker
   error, RootDuplicatesWindow's error) keep Qt's OK without an ID.
+
+## Follow-up (2026-10-30, after landing): the SIGSEGV in test_every_script_and_each_library
+
+Sable (UI Polish) saw `test_accessible_names.py::test_every_script_and_each_library` crash its xdist
+worker with SIGSEGV. Investigated on `agent/smoke-ready` after merging dev/v0.0.7 at 43cb202 (local
+merge 97e1dd7, not pushed).
+
+- **Reproduced:** `pytest tests/test_accessible_names.py tests/test_presets_plots.py
+  tests/test_debug_runner_menu.py -n 4 --reruns 2` crashes gw0 in that test **7 of 7** runs (4, then
+  3 as the control). (With `test_presets_window.py` instead: 0 of 4.) macOS crash reports
+  (`python3.13-2026-10-30-1534*.ips`): SIGSEGV, main thread, `QDockWidget` deleted (DeferredDelete) →
+  `deleteChildren` four levels down → `sipQWidget::~sipQWidget` → `QObject::destroyed` →
+  `PyQtSlotProxy::unislot` → `PyQtSlot::call` → `_PyEval_EvalFrameDefault`; faulthandler: the main
+  thread's Python frame is `<invalid frame>`.
+- **The connection:** `helab/analysis/panes.py:32`, `PlotlyPane.__init__`:
+  `self.destroyed.connect(lambda *_: server.remove_plot(plot_id))`, a Python callable (through a
+  PyQt slot proxy) on the pane's own `destroyed`; the only plain-callable `destroyed` connection on a
+  widget inside a plot dock.
+- **Fix, tested (working tree only, reverted):** `weakref.finalize(self, server.remove_plot,
+  self.plot_id)` instead of the lambda: **0 of 6** runs crashed (control 3 of 3 crashed right after,
+  same session). The figure still leaves the server, once the plot's Python object goes (checked:
+  present while the closed plot's instance is still referenced, gone after it's dropped); before, it
+  left at the C++ deletion. Alternative keeping that timing (not tested): a long-lived QObject with a
+  bound `pyqtSlot` on `destroyed`, mapping the pane's address to its plot ID (a plain Qt connection,
+  no Python proxy, as the tab-× fix).
+- **An isolated loop** (a QWidget subclass with the same lambda, deleted with its parent 3 × 3000
+  times, with GC and allocator churn) never crashed, so the precise PyQt mechanism isn't shown; the
+  evidence is the 7/7 vs 0/6 swap.
+- **Real use:** the same path runs whenever a Plotly plot's dock is deleted: closing a tabbed or
+  floating Plotly plot (its tab's ×, Close plot, Debug › Close Plot Tab, the dock's ×), and quitting
+  with Plotly plots open. 75 open-and-close cycles of a Plotly plot in one real main window didn't
+  crash, so it needs a particular memory history; in the app it would be a rare quit without a
+  traceback when a Plotly plot closes.
+- **The same family:** `helab/views/PresetsInspector.py:136`, `label.destroyed.connect(gone)` (a
+  closure on a Python-made QLabel's `destroyed`, Settings › Cache's Presets line); not seen to crash.
+- **Tests proposed:** (1) the cleanup: open a Plotly plot, close it, drop it: its figure is gone from
+  `dash_server` (pins the behaviour the lambda existed for); (2) the rule as a guard (with A~3's AST
+  scan): no `.destroyed.connect(` to a lambda or a plain function anywhere in `helab/`; (3) the 3-file
+  order above as a manual check (it reproduces 7/7 on this Mac, not CI-able as a unit test).
