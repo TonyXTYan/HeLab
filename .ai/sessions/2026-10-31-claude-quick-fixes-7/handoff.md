@@ -303,3 +303,9 @@ QF7 round 6); passed on rerun." The five type checks clean.
 tries): fixed in QF7 round 6 (`01ce35f`)."
 
 **Pushed:** `dev/v0.0.7` with `01ce35f` and this session commit; hash, CI run and its job logs' RERUNs in the report.
+
+**Round 6 CI (`371751d`): run 41100591971, success; every Tests and Converter backends job log read.** One RERUN:
+windows + py3.13 Tests (1/2), job 124217404251, gw0: `tests/test_accessible_names.py::test_every_script_and_each_library`,
+"worker 'gw0' crashed while running" it (no traceback), passed on rerun. Already in known-issues ("QtWebEngine crashes
+xdist workers", this test on Windows gw0): add this run as another occurrence. Not the round 4 "QTabBar … no ID" one.
+The other eight jobs: no RERUN. (This line is committed locally only, not pushed.)
