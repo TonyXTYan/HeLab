@@ -60,6 +60,7 @@ from helab.analysis.selection import SHOT_SPECS, select_shots, selection_text, s
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.dld import group
 from helab.utils.colours import AMBER
+from helab.utils.accessible import identify
 
 if TYPE_CHECKING:
     from helab.utils.folder_cache import FolderCache
@@ -380,7 +381,7 @@ class ReleasePlot(QWidget):
             plot.showGrid(x=True, y=True, alpha=0.3)
         row = QHBoxLayout()
         row.setContentsMargins(6, 2, 6, 4)
-        self.use_button = QPushButton("Use for this folder…")
+        self.use_button = identify(QPushButton("Use for this folder…"), "release_use_for_folder")
         self.use_button.setToolTip("Save t_r and the trap origin as this folder's constants (Folder constants…), "
                                    "for the velocity plots. Asks first.")
         self.use_button.clicked.connect(self.use_for_folder)

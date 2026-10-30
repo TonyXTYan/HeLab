@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import (QApplication, QWidget, QVBoxLayout, QHBoxLayout, QT
 from PyQt6.QtGui import QColor, QIcon, QCloseEvent, QPainter, QPixmap
 
 from helab.resources.icons import StatusIcons, ToolIcons, PercentageIcon
+from helab.utils.accessible import id_part, identify
 from helab.views.FolderDetailsPanel import paint_load_bar
 from helab.views.FolderExplorer import IO_SPINNER, LOAD_SPINNER, paint_check, paint_check_badge, paint_spinner
 
@@ -130,7 +131,7 @@ class _IconGroup(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         heading = QHBoxLayout()
-        self.toggle = QToolButton()
+        self.toggle = identify(QToolButton(), f"icons_{id_part(title)}_toggle")
         self.toggle.setText(title)
         self.toggle.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.toggle.setCheckable(True)
@@ -139,7 +140,7 @@ class _IconGroup(QWidget):
         heading.addStretch()
         layout.addLayout(heading)
 
-        self.icon_list = QTreeWidget()
+        self.icon_list = identify(QTreeWidget(), f"icons_{id_part(title)}", title)
         self.icon_list.setRootIsDecorated(False)
         self.icon_list.setUniformRowHeights(True)
         self.icon_list.setIconSize(QSize(20, 20))

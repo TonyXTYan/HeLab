@@ -16,6 +16,7 @@ from helab.analysis.presets import SavedPlot, ScriptRef, waiting_view
 from helab.scripts import dld, standard
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.scripts.scripts_manager import ScriptsManager
+from helab.utils.accessible import id_part, identify
 from helab.views.plots.dock import AnalysisDock, DockTabCloser
 from helab.views.plots.instance import AnalysisInstance, LinkedAnalysisInstance
 if TYPE_CHECKING:
@@ -61,13 +62,15 @@ class TreePanelWidget(QWidget):
         controls_layout = QHBoxLayout()
         
         # Add group selector
-        self.group_selector = QComboBox()
+        self.group_selector = identify(QComboBox(), "script_group", "Script group",
+                                       "Choose which group's scripts are listed")
         self.group_selector.currentTextChanged.connect(self._on_group_changed)
         controls_layout.addWidget(QLabel("Group:"))
         controls_layout.addWidget(self.group_selector)
 
         # Add script directory button
-        self.load_dir_button = QPushButton("Load Scripts...")
+        self.load_dir_button = identify(QPushButton("Load Scripts..."), "load_scripts",
+                                        description="Load analysis scripts from a folder")
         self.load_dir_button.clicked.connect(self._on_load_directory)
         controls_layout.addWidget(self.load_dir_button)
 
@@ -75,7 +78,7 @@ class TreePanelWidget(QWidget):
         self.panel_layout_right_bottom.addLayout(controls_layout)
 
         # Tree list widget
-        self.tree_widget = QTreeWidget()
+        self.tree_widget = identify(QTreeWidget(), "scripts", "Scripts", "The group's scripts and their run buttons")
         self.tree_widget.setHeaderLabels(["Script", "Run", "Run"])
         self.tree_widget.setColumnCount(3)
         header = self.tree_widget.header()
@@ -202,8 +205,11 @@ class TreePanelWidget(QWidget):
                     item = QTreeWidgetItem(group_item, [metadata.name])
                     item.setToolTip(0, f"{metadata.description}\n{metadata.identity().text()}")
                     for column, action in enumerate(actions[:2], start=1):
-                        self.tree_widget.setItemWidget(
-                            item, column, self.create_button(action, self._action_callback(metadata, script, action)))
+                        button = self.create_button(action, self._action_callback(metadata, script, action))
+                        # "Plot Counts per shot", its ID from the script's analysis ID (not its name).
+                        identify(button, f"run_{id_part(metadata.identity().analysis_id)}_{id_part(action)}",
+                                 f"{action} {metadata.name}", f"Run {metadata.name} on this tab's loaded data")
+                        self.tree_widget.setItemWidget(item, column, button)
                 except Exception as e:
                     logging.error(f"Error loading script {metadata.name}: {e}")
                     error_item = QTreeWidgetItem(group_item, [f"{metadata.name} (Error)"])

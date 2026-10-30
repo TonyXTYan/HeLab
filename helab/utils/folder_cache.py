@@ -266,6 +266,7 @@ class FolderCache(QObject):
         # Saves (loads with ``save`` in their payload) waiting for the folder's running save to
         # end, so saves of one folder never overlap: folder → (owner, payload).
         self._deferred_saves: dict[str, tuple[str, dict[str, Any]]] = {}
+        self._deferred_since: dict[str, float] = {}  # (Beside ``_deferred_saves``: set and popped with it.)
         # Quitting waits for saves (``cancel_for_quit``): no other folder work starts meanwhile.
         self.quitting = False
         # Converted TXY's last uses loads didn't write (``txy_unmarked``): (root, folder) → when,
@@ -384,6 +385,8 @@ class FolderCache(QObject):
         self._finishing_epochs: dict[str, int] = {}
         # When each finishing load started: a removal since then voids its cache events.
         self._finishing_created: dict[str, float] = {}
+        # Whether a finishing write is Live's new shots (its load had ``save_memory``), for the quit window.
+        self._finishing_live: dict[str, bool] = {}
         # A folder check run beside its cached read (``cache_base``) that finished first: its
         # events wait (by producer owner) until that read's dataset is in memory to complete it.
         self._awaiting_cached: dict[str, list[dict[str, Any]]] = {}
@@ -2672,6 +2675,8 @@ class FolderCache(QObject):
         path = self.key(path)
         payload = {**payload, "save": True}
         if self._save_waits(path):
+            if path not in self._deferred_saves:
+                self._deferred_since[path] = time.monotonic()  # (When it began waiting: the quit window.)
             self._deferred_saves[path] = (owner, payload)
             self.quitSavesChanged.emit()
             return True
@@ -2689,6 +2694,7 @@ class FolderCache(QObject):
         if path not in self._deferred_saves or self._save_waits(path) or self.service.closed:
             return
         owner, payload = self._deferred_saves.pop(path)
+        self._deferred_since.pop(path, None)
         if not self.submit(owner, 0, path, "load", payload, priority=True):
             logging.warning("Disk cache save of %s: queue full", path)
             # Its owner waits for a load's outcome: this is it.
@@ -2703,14 +2709,38 @@ class FolderCache(QObject):
         quitting would end that helper, and with it the user's choice; a plot's result being saved,
         by its run or by Make room (``result_saving``); presets being written; and the converted TXY's
         last uses loads didn't write (``TXY_LAST_USED``, ``flush_txy_marks``)."""
-        writing = [self._finishing[owner] for owner in self._disk_cache_writers if owner in self._finishing]
-        loading = [job.path for job in self.jobs.values() if job.operation == "load" and job.saves()]
-        settings = [write[0] for write in (*self._pref_writes.values(), *self._constant_writes.values())]
-        presets = [PRESETS_SAVING] if self.presets_saving() else []
-        results = list(self._result_writes.values())
-        marks = [TXY_LAST_USED] if self._mark_flush else []  # (Q~3; its start: ``quit_save_started``.)
-        return list(dict.fromkeys((*writing, *loading, *self._deferred_saves, *settings, *results, *presets,
-                                   *marks)))
+        return list(dict.fromkeys(entry.path for entry in self.quit_entries()))
+
+    def quit_entries(self) -> list[QuitSave]:
+        """What quitting waits for, one entry per operation (``quit_saves`` lists their folders): its
+        kind, folder, state and start, from memory (the quit window lists them). A conversion still
+        running (auto-convert, ``helab convert``'s are another process) is waited for too: it writes
+        each TXY under a temporary name first, so Quit now loses nothing but that shot."""
+        held = {write.owner for write in self._probe_held}
+        # (In the order the writes began: ``_finishing`` is a dict, ``_disk_cache_writers`` a set.)
+        entries = [QuitSave(QUIT_LIVE if self._finishing_live.get(owner) else QUIT_SAVE, path, "writing",
+                            self._finishing_created.get(owner))
+                   for owner, path in self._finishing.items() if owner in self._disk_cache_writers]
+        entries += [QuitSave(QUIT_LIVE if _saves_memory(job) else QUIT_SAVE, job.path, "reading", job.created)
+                    for job in self.jobs.values() if job.operation == "load" and job.saves()]
+        entries += [QuitSave(QUIT_LIVE if payload.get("save_memory") else QUIT_SAVE, path, "waiting",
+                             self._deferred_since.get(path)) for path, (_, payload) in self._deferred_saves.items()]
+        for kind, writes in ((QUIT_FLAGS, self._pref_writes), (QUIT_CONSTANTS, self._constant_writes)):
+            entries += [QuitSave(kind, path, "held" if owner in held else "writing", self._started.get(owner))
+                        for owner, (path, _, _) in writes.items()]
+        for owner, path in self._result_writes.items():
+            started = self._result_ops[owner][1] if owner in self._result_ops else self._started.get(owner)
+            entries.append(QuitSave(QUIT_MAKE_ROOM if self._admin.get(owner) == "adopt_result" else QUIT_RESULT,
+                                    path, "held" if owner in held else "writing", started))
+        if self.presets_saving():
+            starts = [self._started[owner] for owner in self._preset_jobs if owner in self._started]
+            entries.append(QuitSave(QUIT_PRESETS, PRESETS_SAVING, "writing" if self._preset_jobs else "waiting",
+                                    min(starts) if starts else None))
+        if self._mark_flush:  # (Q~3.)
+            entries.append(QuitSave(QUIT_LAST_USED, TXY_LAST_USED, "writing", self._mark_flush_started))
+        entries += [QuitSave(QUIT_CONVERT, job.path, "converting", job.created)
+                    for job in self.jobs.values() if job.operation == "convert"]
+        return entries
 
     def result_saving(self, path: str) -> bool:
         """A plot's result of the folder (or, for ``RESULTS_SAVING``, one of unknown folder) is being
@@ -2743,9 +2773,10 @@ class FolderCache(QObject):
         return bool(self._mark_flush)
 
     def quit_save_started(self, entry: str) -> float | None:
-        """When a ``quit_saves`` entry's work started (``time.monotonic()``), where this cache knows it:
-        ``TXY_LAST_USED`` for now; None for the others."""
-        return self._mark_flush_started if entry == TXY_LAST_USED and self._mark_flush else None
+        """When a ``quit_saves`` entry's work started (``time.monotonic()``): its earliest operation's
+        (``quit_entries``); None if none says."""
+        starts = [save.started for save in self.quit_entries() if save.path == entry and save.started is not None]
+        return min(starts) if starts else None
 
     def cancel_for_quit(self) -> None:
         """Quitting: stop the reads, listings and loads nothing will show, and data-root
@@ -2765,6 +2796,7 @@ class FolderCache(QObject):
         for folder, (waiting, _) in list(self._deferred_saves.items()):
             if waiting == owner and operation in (None, "load") and path in (None, folder):
                 del self._deferred_saves[folder]
+                self._deferred_since.pop(folder, None)
                 self.quitSavesChanged.emit()
         for request in list(self._deliveries):
             if request.owner == owner and (operation is None or request.operation == operation) and (path is None or request.path == path):
@@ -2828,6 +2860,7 @@ class FolderCache(QObject):
         self._probe_waiting.clear()
         self._probe_waiting_owners.clear()
         self._deferred_saves.clear()
+        self._deferred_since.clear()
         self._sweep_timer.stop()
         self._restore_timer.stop()
         self._budget_timer.stop()
@@ -3690,6 +3723,7 @@ class FolderCache(QObject):
             del self._finishing[producer.owner]
             self._finishing_epochs.pop(producer.owner, None)
             self._finishing_created.pop(producer.owner, None)
+            self._finishing_live.pop(producer.owner, None)
         if was_saving and producer.owner not in self._disk_cache_writers:
             outcome = ("saved" if valid and kind == "cache_saved" else
                        "pending" if held else
@@ -4081,6 +4115,7 @@ class FolderCache(QObject):
                 self._finishing[job.owner] = job.path
                 self._finishing_epochs[job.owner] = job.epoch
                 self._finishing_created[job.owner] = job.created
+                self._finishing_live[job.owner] = _saves_memory(job)
                 if event.get("disk_cache_pending"):
                     self._disk_cache_writers.add(job.owner)
                     self._cache_states.setdefault(job.path, CacheStatus()).error = ""
@@ -4176,6 +4211,28 @@ PENDING_DISCARDED, PENDING_EXPIRED, PENDING_STORE, PENDING_CLEARED, PENDING_NOT_
     "discarded", "expired", "store", "cleared", "not_saved")
 # ``quit_saves``' entry while presets are being written (it names folders otherwise).
 PRESETS_SAVING = "Presets"
+# The kinds of ``quit_entries``: Live's new shots, a load's save to the disk cache, a folder's flags or
+# constants, a plot's result (its run's save, or Make room for it), presets, converted TXY's last uses
+# (Q~3), and a conversion still running.
+QUIT_LIVE, QUIT_SAVE, QUIT_FLAGS, QUIT_CONSTANTS, QUIT_RESULT, QUIT_MAKE_ROOM, QUIT_PRESETS, QUIT_LAST_USED, \
+    QUIT_CONVERT = ("live", "save", "flags", "constants", "result", "make_room", "presets", "last_used", "convert")
+
+
+@dataclass(frozen=True)
+class QuitSave:
+    """One operation quitting waits for (``FolderCache.quit_entries``): its kind (``QUIT_*``), its folder
+    (or ``PRESETS_SAVING``, ``TXY_LAST_USED``, ``RESULTS_SAVING``), its state ("reading", "writing",
+    "waiting" for the folder's previous save or a read of presets, "held" for the store's identity
+    check, "converting") and when its work started (``time.monotonic()``; None: not known)."""
+    kind: str
+    path: str
+    state: str
+    started: float | None
+
+
+def _saves_memory(job: SharedJob) -> bool:
+    """A save of Live's new shots (``save_memory``: the data in RAM, its new shots read again)."""
+    return bool(job.payload.get("save_memory")) or any(r.payload.get("save_memory") for r in job.subscribers.values())
 # ``quit_saves``' entry for the converted TXY's last uses being written as HeLab quits (Q~3), and that
 # helper's no-progress limit: one quick write per base, so a stuck one never holds the quit window long.
 TXY_LAST_USED = "Converted TXY last used"

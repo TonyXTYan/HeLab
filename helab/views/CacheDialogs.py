@@ -14,6 +14,7 @@ from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QMessageBox, QWidget
 
 from helab.utils import folder_cache
+from helab.utils.accessible import identify_buttons
 from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import byte_size
 
@@ -171,6 +172,7 @@ class CacheDialogs(QObject):
             self._warn_full = False
 
     def _open(self, box: QMessageBox, asking: tuple[str, str], answer: Callable[[QAbstractButton | None], None]) -> None:
+        identify_buttons(box, "disk_cache_question")
         self.dialog, self._asking = box, asking
 
         def finished() -> None:

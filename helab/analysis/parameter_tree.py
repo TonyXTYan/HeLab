@@ -5,12 +5,13 @@ import re
 from decimal import Decimal
 from typing import Any, Sequence, cast
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
+from PyQt6.QtCore import QEvent, QObject, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QFocusEvent, QKeyEvent
 from PyQt6.QtWidgets import QApplication, QTabWidget, QTextEdit, QWidget
 import pyqtgraph.functions as fn
 from pyqtgraph.parametertree import Parameter, ParameterTree, registerParameterType
 from pyqtgraph.parametertree.parameterTypes.basetypes import SimpleParameter, WidgetParameterItem
+from pyqtgraph.parametertree.parameterTypes.list import ListParameter, ListParameterItem
 from pyqtgraph.parametertree.parameterTypes.numeric import NumericParameterItem
 from pyqtgraph.widgets.SpinBox import SpinBox
 
@@ -168,7 +169,34 @@ class UnitSpinBox(SpinBox):  # type: ignore[misc]
         return shown[1] if shown is not None else ""
 
 
-class UnitNumberItem(NumericParameterItem):  # type: ignore[misc]
+class EndsEditOnReturn:
+    """A tree row's editor that Return or Enter closes once the box has taken the value (the box's
+    own Return commits it; an invalid entry gives the value back, as Tab does), and Escape closes
+    with the value put back, uncommitted. Closing deselects the row, so it shows its value and a
+    click opens the editor again. Before, Return committed but left the editor open, which looked
+    as if nothing had been taken (known-issues, the computer-use smoke pass)."""
+
+    def widgetEventFilter(self, obj: QObject, ev: QEvent) -> bool:
+        if isinstance(ev, QKeyEvent) and ev.type() == QEvent.Type.KeyPress and getattr(self, "hideWidget", False):
+            if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                QTimer.singleShot(0, self._close_editor)  # After the box's own Return, which commits.
+            elif ev.key() == Qt.Key.Key_Escape:
+                widget = getattr(self, "widget")
+                widget.setValue(getattr(self, "param").value())
+                if isinstance(widget, SpinBox):
+                    widget.updateText()  # (setValue keeps the typed text when the value is the same.)
+                QTimer.singleShot(0, self._close_editor)
+                return True
+        return bool(super().widgetEventFilter(obj, ev))  # type: ignore[misc]
+
+    def _close_editor(self) -> None:
+        tree = cast(Any, self).treeWidget()
+        if tree is not None and tree.currentItem() is self:
+            tree.clearSelection()  # (pyqtgraph hides a deselected row's editor.)
+            tree.setFocus(Qt.FocusReason.OtherFocusReason)
+
+
+class UnitNumberItem(EndsEditOnReturn, NumericParameterItem):  # type: ignore[misc]
     def makeWidget(self) -> UnitSpinBox:
         """``NumericParameterItem.makeWidget`` with a ``UnitSpinBox``."""
         opts = self.param.opts
@@ -264,7 +292,21 @@ class CommitTextParameter(Parameter):  # type: ignore[misc]
 
 TEXT_TYPE = "helab_text"
 registerParameterType(TEXT_TYPE, CommitTextParameter, override=True)
-TREE_TYPES = {**NUMBER_TYPES, "text": TEXT_TYPE}
+
+
+class ChoiceItem(EndsEditOnReturn, ListParameterItem):  # type: ignore[misc]
+    """pyqtgraph's drop-down row, which Return and Escape close (``EndsEditOnReturn``)."""
+
+
+class ChoiceParameter(ListParameter):  # type: ignore[misc]
+    @property
+    def itemClass(self) -> type:
+        return ChoiceItem
+
+
+CHOICE_TYPE = "helab_list"
+registerParameterType(CHOICE_TYPE, ChoiceParameter, override=True)
+TREE_TYPES = {**NUMBER_TYPES, "text": TEXT_TYPE, "list": CHOICE_TYPE}
 
 
 def _with_number_types(children: list[dict[str, Any]]) -> list[dict[str, Any]]:
