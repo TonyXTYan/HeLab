@@ -87,6 +87,11 @@ Ibis's review: [review.md](review.md). `origin/dev/v0.0.7` is merged in at `cb05
   font with a plot open, the Presets and Scripts rows' combos shrink to 3 and 4 characters and their buttons to
   their text + 8 px (measured: nothing cut from 248 px; before, the Presets row's Delete… was cut below 280). A
   test drags the panel to its least width and finds no control past its edge or narrower than its text.
+- CI 41015289899 (`3a33170`): the "nothing cut at 250 px" test failed off macOS (Windows CI's font: Load Scripts…
+  188 px wide, cut at any width near 250; Ubuntu's: Delete… 3 px over). 250 px is measured at macOS's default font
+  and the least width is fixed on purpose, so that test runs on macOS only (its skip says why). **So at 250 px
+  on Linux and on Windows CI's fonts a row is cut until the panel is widened;** the 320 px default holds on every
+  OS (the exact 380/320 test passed on Windows and Ubuntu). Every other job of that run passed.
 - **R2-3** (`2c13796`): the guard also catches `connect(slot=…)`, `destroyed[QObject].connect(…)` and a
   `destroyed` signal stored in a name first.
 - **Checks:** full suite inside and outside the checkout **8473 passed, 669 skipped, no RERUN**; the six type
