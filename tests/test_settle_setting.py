@@ -19,6 +19,7 @@ from pytestqt.qtbot import QtBot
 
 from helab import io_helper
 from helab.io_ops import fingerprints, infra
+from helab.utils import settle_time
 from helab.utils.io_service import FOREGROUND, IORequest, IOService
 from helab.utils.settings_defaults import SETTLE_SECONDS_SETTING, setting_default
 from helab.views.HelabMainWindow import HelabMainWindow
@@ -30,7 +31,7 @@ from test_helper_dispatch import HANDLERS, ROUTES, helper_state, send  # noqa: F
 def from_requests(monkeypatch: pytest.MonkeyPatch) -> None:
     """As in the app: HELAB_SETTLE_SECONDS unset, so a request's settle time applies (restored after)."""
     monkeypatch.setattr(fingerprints, "_SETTLE_OVERRIDE", None)
-    monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", fingerprints.DEFAULT_SETTLE_SECONDS)
+    monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", settle_time.DEFAULT_SETTLE_SECONDS)
     monkeypatch.setattr(fingerprints, "RACY_SECONDS", 2.0)
 
 
@@ -154,7 +155,7 @@ def test_a_real_helper_leaves_a_file_newer_than_the_settle_time(tmp_path: Path, 
 
 
 def test_the_setting_reads_within_its_limits_and_its_default_is_the_helpers(tmp_path: Path) -> None:
-    assert setting_default(SETTLE_SECONDS_SETTING) == fingerprints.DEFAULT_SETTLE_SECONDS == 5.0
+    assert setting_default(SETTLE_SECONDS_SETTING) == settle_time.DEFAULT_SETTLE_SECONDS == 5.0
     # The GUI takes the limits from the standard-library module both sides share, not from a helper module.
     import helab.views.SettingsDialog as dialog_module
     assert "helab.io_ops" not in Path(str(dialog_module.__file__)).read_text(encoding="utf-8")
