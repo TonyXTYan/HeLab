@@ -549,12 +549,35 @@ def test_a_hidden_floating_plot_falls_back_to_a_visible_one(plots: Plots, qtbot:
     dock = floated(two, qtbot)
     dock.activateWindow()
     qtbot.waitUntil(lambda: plots.panel.current_plot() is two)
-    plots.area.activateWindow()  # Focus back in the main window, not in a plot: two stays.
-    qtbot.wait(50)
-    assert plots.panel.current_plot() is two and plots.panel.stack.currentWidget() is plots.panel.away
+    assert plots.panel.stack.currentWidget() is plots.panel.away
     two.hide()
     qtbot.waitUntil(lambda: plots.panel.current_plot() is one)
     assert plots.panel.stack.currentWidget() is plots.panel.page(one)
+
+
+def test_back_in_the_main_window_the_docked_plot_beside_the_panel_shows(plots: Plots, qtbot: QtBot) -> None:
+    """A33.4 (reversing "focus back in the main window: the floating plot stays shown"): the main window
+    active while the shown plot floats, the panel shows the docked plot in front, whose title's Float
+    button is beside it, so that button acts on the plot the panel names. The floating plot's window
+    names it again; with no plot docked, the panel names the floating one and where its settings are."""
+    one, two = plots.add(), plots.add()
+    plots.show(qtbot)
+    dock = floated(two, qtbot)
+    dock.activateWindow()
+    qtbot.waitUntil(lambda: plots.panel.current_plot() is two)
+    assert plots.panel.away_label.text() == f"Settings are in {two.windowTitle()}'s window"
+    plots.area.activateWindow()  # Back in the main window.
+    qtbot.waitUntil(lambda: plots.panel.current_plot() is one)
+    assert plots.panel.stack.currentWidget() is plots.panel.page(one)
+    dock.activateWindow()
+    qtbot.waitUntil(lambda: plots.panel.current_plot() is two)
+    floated(one, qtbot)  # None docked: the main window active, the panel names the floating plot.
+    plots.area.activateWindow()
+    qtbot.waitUntil(lambda: QApplication.activeWindow() is plots.area)
+    qtbot.wait(20)
+    shown = plots.panel.current_plot()
+    assert shown in (one, two) and plots.panel.stack.currentWidget() is plots.panel.away
+    assert plots.panel.away_label.text() == f"Settings are in {shown.windowTitle()}'s window"
 
 
 def test_many_floating_plots_each_hold_their_own_page(plots: Plots, qtbot: QtBot) -> None:
