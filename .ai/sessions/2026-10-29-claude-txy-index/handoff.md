@@ -441,12 +441,19 @@ limit, `MARK_FLUSH_TIMEOUT`)". In `app-runtime-and-ui.md`'s main-window part, on
   without a TXY in HeLab's folder" would have to tell them from beside rows, whose TXY is never there
   and which are the only provenance of those TXY; Clear removes only the rows of the very files it
   removes. No follow-up proposed.
+- **Known issue to file (Coordinator): `tests/test_folder_summary.py::test_cached_scan_age_and_failed_refresh_retain_counts`
+  fails across midnight.** 3 RERUNs in CI run 40975825607 (head `c6277f0`, superseded by `0b00fdc`),
+  job "windows Tests (2/2)" (123803535756), each then the job passed: `assert '2026-10-29' in 'Last
+  successful status scan: 2026-10-30 00:00:19 Coordinated Universal Time …'` with `datetime(2026, 10, 29,
+  23, 59, 44, …)`, `tests\test_folder_summary.py:286`. The test takes its expected date from a timestamp
+  ~35 s before the scan the tooltip shows; that run crossed midnight UTC. Not this branch's code. Fix:
+  compare with the date of the time the tooltip shows (or freeze the clock), not of an earlier one.
 - **Known issue to file (Coordinator): `tests/test_convert_helab.py::test_two_writers_side_by_side_lose_nothing`
   starves on Windows in WAL mode too.** One RERUN in CI run 40977028554 (head `0b00fdc`), job "windows
   Converter backends" (123807566257), then passed: `AssertionError: shot 36: IndexUnavailable: HeLab's
   TXY index couldn't be written (database is locked) (cause OperationalError: database is locked; code
-  SQLITE_BUSY) after 10.75 s`, `tests\test_convert_helab.py:1556`. Six Windows runs in a row since WAL
-  (5dc161f) had passed it. Not caused by `0b00fdc` (Q~2/Q~3 don't touch the index's writes). Cause:
+  SQLITE_BUSY) after 10.75 s`, `tests\test_convert_helab.py:1556`. It hadn't rerun in the four
+  earlier Windows runs since WAL that I read (40890989136, 40894080358, 40898587803, 40975825607). Not caused by `0b00fdc` (Q~2/Q~3 don't touch the index's writes). Cause:
   SQLite's write lock isn't fair. Each of the test's two processes opens the index and writes a row
   150 times back to back, with no work between, so it takes two write transactions per shot (`open_index`'s
   `_prepare` under `BEGIN IMMEDIATE`, then `record`). The waiter retries with sleeps of up to 100 ms
