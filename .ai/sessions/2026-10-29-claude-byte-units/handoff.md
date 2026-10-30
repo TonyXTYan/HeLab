@@ -134,6 +134,17 @@ On the merged state (`f58e161`: this work plus `origin/dev/v0.0.7` at `9f0b21f`)
   seen on run 40803552596); not related to units. Proposed: add this run as a second sighting there.
   No other job had a "rerun reasons" section.
 
+### After merging TXY Index (`origin/dev/v0.0.7` at `c492242`, merge `8a03bbe`)
+
+- `CacheTab.py` conflicted in two hunks (the Clear confirm text; the converted row's label, tooltip
+  and button): TXY Index's logic and text kept (bases, newer, clearable, the per-base tooltip), every
+  `byte_size` there given `"disk"`; its new bare calls in `tests/test_converter_tab.py` too. No
+  `byte_size` call in `helab/` or `tests/` is left without a kind. Units only.
+- Strict mypy helab + tests (also `--platform win32`), pyright (also Windows): clean. Full suite
+  with `--basetemp=.ai/temp/pytest`: **8250 passed, 669 skipped, no RERUN** (136 s); without it:
+  **8250 passed, 669 skipped, no RERUN** (150 s).
+- CI run 40989130996 (head `1e5c166`).
+
 ## For the Reviewer
 
 - `kind` is required, positional or keyword; `platform` is keyword-only.
