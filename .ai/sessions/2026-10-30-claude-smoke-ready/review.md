@@ -401,3 +401,60 @@ conversions separately (e.g. "converting raw files in 1 folder").
 
 No blocker. L1 is a one-line wording fix. For CoCo and Tony: Q~4 (the convert wait ships with this
 landing unless Tony answers first), and known-issues:81 stays open, reworded.
+
+---
+
+# Round 4: round 3 fixes and the Byte Units merge (944a225..fef81e1)
+
+First-parent commits: 4de24be (L1, Nits) and fef81e1 (merge of dev/v0.0.7 b9be661, Byte Units).
+
+## Checks run
+
+- **Full suite** on fef81e1 (detached worktree), `-n 4 --reruns 5 --reruns-delay 1`: **8301 passed, 669
+  skipped, no RERUN.**
+- **Type checks:** `mypy helab/ --strict` (194 files), `--platform win32` (194), `mypy tests --strict`
+  (165): clean. `pyright helab tests` and `--pythonplatform Windows`: 0 errors.
+- **The names walk and the Cache tab tests** (`test_accessible_names.py`, `test_cache_tab.py`): 53 passed.
+- **CI run 40992882385** (head fef81e1): completed, success, every job green, **no RERUN in any job**.
+
+  | Job | Result |
+  |---|---|
+  | macOS Tests (1/2) 123859252286 | 4136 passed, 322 skipped |
+  | macOS Tests (2/2) 123859252353 | 4165 passed, 347 skipped |
+  | Ubuntu Tests (1/2) 123859252367 | 4133 passed, 324 skipped |
+  | Ubuntu Tests (2/2) 123859252374 | 4165 passed, 347 skipped |
+  | Windows Tests (1/2) 123859252504 | 4123 passed, 333 skipped (13:38) |
+  | Windows Tests (2/2) 123859252514 | 4149 passed, 361 skipped |
+  | Converter backends 123859252274 / 123859252327 / 123859252292 | success |
+  | The three Builds | success |
+
+## Round 3 fixes (4de24be): resolved
+
+- **L1:** the quit window's header now counts conversions apart: "Converting raw files in 1 folder
+  before HeLab quits:", and with every kind, "Saving 8 folders and presets to the disk cache, recording
+  when converted TXY were last used and converting raw files in 1 folder". It joins one, two and three
+  parts correctly. A new test covers a conversion on its own.
+- **Nits:** `_deferred_since` is now popped wherever `_deferred_saves` loses an entry
+  (`folder_cache.py:2696-2697`, `:2798-2799`) and cleared beside it (`:2862-2863`). The `import re`
+  lines are tidied. The convert wait (Q~4) stays as built.
+
+## The Byte Units merge (fef81e1): fine
+
+- **Conflicts:** three conflicted files (`SettingsDialog`, `FolderExplorer`, `OldLogs`), each keeping
+  both sides: Byte Units' `app_log` import, kind-tagged `byte_size` and `{unit}` beside this floor's
+  `identify`/`identify_buttons`.
+- **No name or ID dropped:**
+  - Byte Units adds no control.
+  - The Cache tab's budget boxes are the same widgets, now in the OS's units. `_identify` still names
+    them (`CacheTab.py:353` `disk_budget` "Disk budget", `:371` `ram_budget_setting` "RAM budget",
+    called at `:334`).
+  - The Settings walk passes.
+- **Every `byte_size` call has a kind:** `byte_size(num, kind: ByteKind, *, platform=None)` takes it
+  as a required positional argument, so strict mypy (clean) rejects any call without one. A grep finds
+  none without `'disk'` or `'ram'`. This floor's own new code (Debug items, Dump State, the quit
+  window) shows no size.
+
+## Verdict (round 4)
+
+No open findings. Q~4 (the convert wait, as built) and the rewording of known-issues:81 remain with
+CoCo and Tony.
