@@ -64,10 +64,14 @@ DESCRIPTIVE = ("name", "version", "calibrated", "notes", "tag")
 # starts only the tags made from a hash.
 TAG_PATTERN = re.compile(r"^[a-z][a-z0-9]{1,15}$", re.ASCII)
 USER_TAG_PREFIX = "u"
-# Hex digits of the content hash in a user profile's tag: 32 bits, so two of a lab's few dozen
-# profiles share one with odds of about one in ten million; HeLab's own folders hold the full hash
-# in each shot's provenance, so a shared tag there is found stale and converted again.
-USER_TAG_DIGITS = 8
+# Hex digits of the content hash in a user profile's tag: 128 bits (Q23.6, Tony, 2026-10-30: "so it's
+# really annoying, also pushes the user to make a proper frozen profile"; 8 before), so two profiles
+# never share one. A file name's tag is then up to 33 characters (``NAME_TAG``).
+USER_TAG_DIGITS = 32
+# A tag as file names carry it (``provenance``'s and ``file_kinds``' patterns spell it out alike): a
+# built-in's, a user profile's (``u`` and USER_TAG_DIGITS hex digits) or one written under an older
+# rule (``u`` and 8, Q23.6), all a lowercase letter and 1 to 32 lowercase letters or digits.
+NAME_TAG = r"[a-z][a-z0-9]{1,32}"
 # Fields the output path doesn't read yet; left out of content_hash. channel_mcp joins the hash
 # once MCP matching is on; channel_trigger once anything in the output path reads it (today only
 # stage 4's done-writing check will: t_zero is the first raw row, whatever its channel).

@@ -298,3 +298,13 @@ def test_screenshot_to_the_temp_folder_asks_nothing(
     assert os.path.isfile(first) and second == first[:-4] + "-2.png" and os.path.isfile(second)
     assert not QImage(first).isNull() and f"Screenshot saved: {first}" in caplog.text
     assert f"Screenshot saved: {second}" in window.status_bar_message_left.text()
+
+
+def test_the_debug_menu_has_the_runners_items_and_no_placeholders(window: HelabMainWindow) -> None:
+    """Q33.5: "Debug - 6", "Draw a line in debug console" and "Debug - validate tab status" are gone."""
+    debug = next(action.menu() for action in window.menu_bar.actions() if action.text() == "Debug")
+    assert isinstance(debug, QMenu)
+    names = list(items(debug))
+    assert not {"Debug - 6", "Draw a line in debug console", "Debug - validate tab status"} & set(names)
+    assert {"Run Plot", "Script Group", "Show Plot Tab", "Close Plot Tab", "Settings Tab", "Show all Icons",
+            "Show Memory Usage"} <= set(names)

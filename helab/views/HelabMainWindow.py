@@ -15,13 +15,12 @@ from helab.utils.gui_watchdog import GUIWatchdog
 from helab.utils.lab_parameters import read_lab_constants
 from helab.utils import app_log, events
 from datetime import datetime
-from sys import getsizeof
 from typing import Any, Callable, Optional
 
 import psutil
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, QSize, QTimer, QItemSelection, QUrl, QDateTime, QSettings, QRect
-from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplication, QPainter, QPixmap, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplication, QPainter, QPixmap, QKeySequence, QShowEvent
 from PyQt6.QtWidgets import QMainWindow, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QMenu, QApplication, QInputDialog, QProgressBar, QToolButton, QMessageBox, \
     QDockWidget, QFileDialog, QPushButton
@@ -34,13 +33,14 @@ from helab.views.plots.workspace import PlotWorkspace
 from helab.resources.icons import ToolIcons
 from helab.utils.constants import (
     APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, DEFAULT_LOAD_MODE, DIR_TEMPS, LOAD_MODE_LABELS,
-    QSPLITTER_STYLESHEET, TOOLBAR_STYLESHEET_LR, assert_warn, cache_dir_refused, read_check_level,
+    QSPLITTER_STYLESHEET, TOOLBAR_STYLESHEET_LR, cache_dir_refused, read_check_level,
     read_disk_budget, read_io_concurrency, read_live_autosave, read_live_interval, read_load_mode,
     app_folder, read_plot_auto_reload, read_ram_budget,
 )
-from helab.utils.number_format import byte_size, byte_unit, fnum
+from helab.utils.number_format import byte_size, byte_unit
 from helab.utils.settings_defaults import (
-    AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, WORK_OFFLINE_SETTING, read_setting)
+    AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, MAIN_SPLIT_SETTING, WORK_OFFLINE_SETTING, read_setting,
+    setting_default)
 from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
 from helab.views.ClockSkewWarning import ClockSkewWarning
@@ -59,7 +59,7 @@ from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.MissingShotsWindow import MissingShotsWindow
 from helab.views.QuitSaveDialog import QuitSaveDialog
 from helab.views.RootDuplicatesWindow import RootDuplicatesWindow
-from helab.views.SettingsDialog import SettingsDialog
+from helab.views.SettingsDialog import SettingsDialog, read_settle_seconds
 from helab.views.DebugIconsWindow import DebugIconsWindow
 
 # QtWebEngine must be imported before the QApplication exists; main.py imports this module first.
@@ -506,11 +506,6 @@ class HelabMainWindow(QMainWindow):
         menu_debug = self.menu_bar.addMenu('Debug')
         if menu_debug is not None:
             self._create_runner_menus(menu_debug)
-            debug_action_2 = QAction('Draw a line in debug console', self)
-            debug_action_2.triggered.connect(lambda: logging.debug("="*80))
-
-            menu_debug.addAction(debug_action_2)
-
             menu_debug.addSeparator()
 
             action_debug_icons = QAction("Show all Icons", self)
@@ -523,11 +518,6 @@ class HelabMainWindow(QMainWindow):
 
             menu_debug.addSeparator()
 
-            action_debug_3 = QAction('Debug - validate tab status', self)
-            action_debug_3.triggered.connect(self.action_debug_validate_tab_status)
-            menu_debug.addAction(action_debug_3)
-
-
             action_debug_4 = QAction('Debug - show current visible rows', self)
             action_debug_4.triggered.connect(self.action_debug_show_current_visible_rows)
             menu_debug.addAction(action_debug_4)
@@ -535,12 +525,6 @@ class HelabMainWindow(QMainWindow):
             action_debug_gc_collect = QAction('gc.collect()', self)
             action_debug_gc_collect.triggered.connect(gc.collect)
             menu_debug.addAction(action_debug_gc_collect)
-
-            action_debug_6 = QAction('Debug - 6', self)
-            action_debug_6.triggered.connect(lambda: logging.debug("Debug action 6"))
-            menu_debug.addAction(action_debug_6)
-
-
 
         else:
             logging.error("menu_debug is None")
@@ -909,30 +893,6 @@ class HelabMainWindow(QMainWindow):
             action.triggered.connect(lambda checked=False, p=path: self.add_new_folder_explorer_tab(target_path=p))
             self._drive_menu.addAction(action)
 
-    def action_debug_validate_tab_status(self) -> None:
-        logging.info("action_debug_validate_tab_status: called")
-        logging.info(f"  {self.current_tracking_folder_path = }")
-        logging.info(f"  {self.tab_widget.count() = }")
-        logging.info(f"  {self.tab_widget.currentIndex() = }")
-        ic = self.tab_widget.currentIndex()
-        for i in range(self.tab_widget.count()):
-            tab = self.tab_widget.widget(i)
-            if isinstance(tab, FolderExplorer):
-                ps = tab.selected_path_globally
-                op = tab.folder_opened_path
-                od = tab.folder_opened_data
-                logging.info(f"  tab {i}: {ps = }, {op = }, {fnum(getsizeof(od)) = }B")
-                assert_warn(ps == self.current_tracking_folder_path, f"tab {i} {ps = } != {self.current_tracking_folder_path = }")
-                if i == ic:
-                    assert_warn(op == self.current_tracking_folder_path, f"tab {i} {op = } != {self.current_tracking_folder_path = }")
-                    assert_warn(ps == self.current_tracking_folder_path, f"tab {i} {ps = } != {self.current_tracking_folder_path = }")
-                    assert_warn(od is not None, f"tab {i} {od = } is None")
-
-            else:
-                logging.warning(f"action_debug_validate_tab_status: tab {i} is not a FolderExplorer")
-
-        pass
-
     def action_debug_show_current_visible_rows(self) -> None:
         current_file_explorer = self.tab_widget.currentWidget()
         if isinstance(current_file_explorer, FolderExplorer):
@@ -984,9 +944,11 @@ class HelabMainWindow(QMainWindow):
 
     @staticmethod
     def _apply_live_settings(settings: QSettings) -> None:
+        """Live's interval and autosave, and the settle time every helper uses (Q33.7)."""
         cache = get_folder_cache(get_io_service())
         cache.live_interval = read_live_interval(settings)
         cache.live_autosave_shots = read_live_autosave(settings)
+        get_io_service().settle_seconds = read_settle_seconds(settings)
 
     def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
         self._status_notice = (text, time.monotonic() + seconds)
@@ -1026,7 +988,10 @@ class HelabMainWindow(QMainWindow):
         self._setup_right_side()
 
 
-        # Set the initial sizes of the panels
+        # The folder and settings panels' widths as the user left them (Q33.2), the plots the rest; applied
+        # again from the splitter's real width when the window first shows (``showEvent``).
+        self.left_panel_width, self.right_panel_width = self.read_split(app_settings())
+        self._split_shown = False
         self.splitter.setSizes([
             self.left_panel_width,
             self.DEFAULT_WIDTH-self.left_panel_width-self.right_panel_width,
@@ -1036,12 +1001,15 @@ class HelabMainWindow(QMainWindow):
 
         # Make the left and right panels collapsible
         self.left_panel.setMinimumWidth(0)
-        self.right_panel.setMinimumWidth(0)
+        # The settings panel's least width is set, not its contents': the splitter keeps the width the user
+        # (or the default) gave it, whatever a row's text needs in the system's font (on Windows CI a row
+        # held it at ~548 px); a row that doesn't fit is cut until the panel is widened (Q33.2).
+        self.right_panel.setMinimumWidth(self.MIN_SETTINGS_WIDTH)
 
-        # Set stretch factors
-        self.splitter.setStretchFactor(0, 1)  # Left panel
+        # A change in the window's width goes to the plots; the panels keep theirs.
+        self.splitter.setStretchFactor(0, 0)  # Left panel
         self.splitter.setStretchFactor(1, 1)  # Middle area
-        self.splitter.setStretchFactor(2, 1)  # Right panel
+        self.splitter.setStretchFactor(2, 0)  # Right panel
 
         self.splitter.splitterMoved.connect(self.on_splitter_moved)
 
@@ -1067,7 +1035,6 @@ class HelabMainWindow(QMainWindow):
 
         # Left panel
         self.left_panel = QWidget()
-        self.left_panel_width = 700  # Store the width of the left panel
         self._live_collapsed_panel = False  # Live collapsed it (``_live_panel``): Live off restores it.
         left_layout = QVBoxLayout(self.left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -1245,7 +1212,6 @@ class HelabMainWindow(QMainWindow):
 
         # Right panel
         self.right_panel = QWidget()
-        self.right_panel_width = 500
         right_layout = QVBoxLayout(self.right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         # Placeholder content
@@ -1297,6 +1263,58 @@ class HelabMainWindow(QMainWindow):
         self.splitter.addWidget(self.plots.middle_mainwindow)
 
         self.plots.update_placeholder_visibility()
+
+    # A panel narrower than this isn't a width to restore (the user dragged it nearly shut).
+    MIN_PANEL_WIDTH, MAX_PANEL_WIDTH = 80, 4000
+    # The settings panel's least width (review R2-2): the narrowest at which none of its controls is cut at
+    # macOS's default font (Load Scripts… and Delete… start to be at 240), below the 320 px default so the
+    # default split holds where the system's font is wider (Windows), set rather than taken from the contents.
+    MIN_SETTINGS_WIDTH = 250
+    _split_shown = True  # (False from ``_setup_central_widgets`` until the first show applies the widths.)
+
+    @classmethod
+    def read_split(cls, settings: QSettings) -> tuple[int, int]:
+        """The folder and settings panels' saved widths (``main_window_split``, "<folders>,<settings>"); the
+        row's default for a value that isn't two widths up to MAX_PANEL_WIDTH, the folders' at least
+        MIN_PANEL_WIDTH and the settings' at least MIN_SETTINGS_WIDTH."""
+        def widths(text: object) -> tuple[int, int] | None:
+            try:
+                left, right = (int(part) for part in str(text).split(","))
+            except ValueError:
+                return None
+            fits = (cls.MIN_PANEL_WIDTH <= left <= cls.MAX_PANEL_WIDTH
+                    and cls.MIN_SETTINGS_WIDTH <= right <= cls.MAX_PANEL_WIDTH)
+            return (left, right) if fits else None
+        saved = widths(read_setting(settings, MAIN_SPLIT_SETTING))
+        if saved is not None:
+            return saved
+        default = widths(setting_default(MAIN_SPLIT_SETTING))
+        assert default is not None
+        return default
+
+    def showEvent(self, a0: QShowEvent | None) -> None:
+        """The first time it shows: the panels at their widths, the plots taking what the window really has
+        (before, the splitter shared out a width it only guessed, and gave a panel its contents' size hint)."""
+        super().showEvent(a0)
+        if not self._split_shown:
+            self._split_shown = True
+            self.splitter.setSizes([self.left_panel_width,
+                                    max(0, self.splitter.width() - self.left_panel_width - self.right_panel_width),
+                                    self.right_panel_width])
+
+    def save_split(self) -> None:
+        """Keep the panels' widths for the next start (as HeLab quits). A shown panel's width is its own; a
+        collapsed one's, the width it had (``--geometry`` sizes the window for one run only: Q33.2)."""
+        self._remember_panel_widths()
+        app_settings().setValue(MAIN_SPLIT_SETTING, f"{self.left_panel_width},{self.right_panel_width}")
+
+    def _remember_panel_widths(self) -> None:
+        """The panels' widths to restore (toggle back, next start): each shown panel's current width."""
+        left, _, right = self.splitter.sizes()
+        if left >= self.MIN_PANEL_WIDTH:
+            self.left_panel_width = min(left, self.MAX_PANEL_WIDTH)
+        if right >= self.MIN_SETTINGS_WIDTH:
+            self.right_panel_width = min(right, self.MAX_PANEL_WIDTH)
 
     GEOMETRY = re.compile(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)")
 
@@ -1366,8 +1384,7 @@ class HelabMainWindow(QMainWindow):
             self.toggle_left_panel_action.setChecked(True)
             self.view_toggle_left_panel.setChecked(True)
         else: # Collapse the left panel
-            self.left_panel_width = self.left_panel.width() if self.left_panel.width() > 600 else self.left_panel_width
-            self.right_panel_width = self.right_panel.width() if self.right_panel.width() > 300 else self.right_panel_width
+            self._remember_panel_widths()
             self.splitter.setSizes([0, self.splitter.sizes()[1], self.splitter.sizes()[2]])
             self.toggle_left_panel_action.setIcon(ToolIcons.ICON_LEFT_EXPAND)
             self.toggle_left_panel_action.setChecked(False)
@@ -1441,7 +1458,7 @@ class HelabMainWindow(QMainWindow):
             self.toggle_right_panel_action.setChecked(True)
             self.view_toggle_right_panel.setChecked(True)
         else:
-            self.right_panel_width = self.right_panel.width() if self.right_panel.width() > 300 else self.right_panel_width
+            self._remember_panel_widths()
             self.splitter.setSizes([
                 self.splitter.sizes()[0],
                 self.width()-self.left_panel_width,
@@ -1879,6 +1896,7 @@ class HelabMainWindow(QMainWindow):
                 a0.ignore()
             return
         self._closing = True
+        self.save_split()
         self.plot_reopen.quit()  # The open plots are recorded before they close.
         self.plots.close_plots()
         self.plots.detach()  # The RAM budget, then the Settings panel.

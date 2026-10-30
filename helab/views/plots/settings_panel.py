@@ -6,17 +6,13 @@ from typing import Any, Dict, List, Optional
 
 from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QObject, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtGui import QGuiApplication, QWindow
+from PyQt6.QtGui import QWindow
 from PyQt6.QtWidgets import (QApplication, QComboBox, QDockWidget, QHBoxLayout, QLabel, QMainWindow, QPushButton,
                              QStackedWidget, QToolButton, QVBoxLayout, QWidget)
 
 from helab.utils.accessible import identify
-from helab.views.plots.dock import AnalysisDock
-
-
-def mouse_held() -> bool:
-    """Whether a mouse button is down (as of the last mouse event Qt had)."""
-    return QGuiApplication.mouseButtons() != Qt.MouseButton.NoButton
+from helab.views.ElidedLabel import ElidedLabel
+from helab.views.plots.dock import AnalysisDock, mouse_held
 
 
 class DragEnd(QObject):
@@ -112,12 +108,12 @@ class PlotSettingsPanel(QWidget):
         self.away = QWidget()  # The shown plot floats: its settings are in its window.
         away_row = QHBoxLayout(self.away)
         away_row.setContentsMargins(4, 0, 4, 0)
-        away_row.addWidget(QLabel("Settings are in this plot's window"))
+        self.away_label = ElidedLabel()  # "Settings are in <plot>'s window" (``_show_page``).
+        away_row.addWidget(self.away_label, 1)
         self.away_button = identify(QPushButton("Show plot window"), "show_plot_window")
         self.away_button.setToolTip("Bring this plot's window to the front, with its settings open")
         self.away_button.clicked.connect(self.raise_current)
         away_row.addWidget(self.away_button)
-        away_row.addStretch(1)
         away_row.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.stack.addWidget(self.away)
         layout.addWidget(self.stack, 1)
@@ -204,7 +200,7 @@ class PlotSettingsPanel(QWidget):
         if dock in self._recent:
             self._recent.remove(dock)
         self._recent.append(dock)
-        self.stack.setCurrentWidget(page if self.stack.indexOf(page) >= 0 else self.away)
+        self._show_page(dock, page)
         self.chooser.setCurrentIndex(self._order.index(dock))
         self._update_chooser()
         if raise_dock:
@@ -240,6 +236,8 @@ class PlotSettingsPanel(QWidget):
             self.chooser.setItemText(self._order.index(dock), title)
             if isinstance(dock, AnalysisDock):
                 dock.settings.toggle.set_text(name=title)
+            if dock is self.current_plot():
+                self._show_page(dock, self._pages[dock])  # (The away line names it.)
 
     def follow(self, area: QMainWindow) -> None:
         """Show a plot's page when its tab is clicked among tabbed docks in ``area``."""
@@ -270,14 +268,45 @@ class PlotSettingsPanel(QWidget):
         page = self._pages.get(dock)
         if page is None or sip.isdeleted(page) or sip.isdeleted(dock):
             return
-        if dock.isFloating() and dock.settings.page is not page:
+        floated = dock.isFloating() and dock.settings.page is not page
+        if floated:
             self.stack.removeWidget(page)
             dock.hold_settings(page)
         elif not dock.isFloating() and dock.settings.page is page:
             dock.settings.release()
             self.stack.addWidget(page)
-        if dock is self.current_plot():
-            self.stack.setCurrentWidget(page if self.stack.indexOf(page) >= 0 else self.away)
+        if dock is not self.current_plot():
+            return
+        beside = self._docked_in_front(dock) if floated and self._area_active() else None
+        if beside is not None:
+            # Its settings went with it; the panel shows the plot docked beside it, whose title's
+            # Float button then acts on the plot the panel names (A33.4).
+            self.show_plot(beside)
+        else:
+            self._show_page(dock, page)
+
+    def _show_page(self, dock: QDockWidget, page: QWidget) -> None:
+        """The shown plot's page, or, while it is in its floating window, a line naming that plot."""
+        if self.stack.indexOf(page) >= 0:
+            self.stack.setCurrentWidget(page)
+            return
+        title = self.chooser.itemText(self._order.index(dock))
+        self.away_label.setText(f"Settings are in {title}'s window")
+        self.away_label.setToolTip(self.away_label.text())
+        self.stack.setCurrentWidget(self.away)
+
+    def _area_active(self, window: Optional[QWindow] = None) -> bool:
+        """Whether ``window`` (None: the active one) is a followed plot area's (the main window)."""
+        if window is None:
+            active = QApplication.activeWindow()
+            window = active.windowHandle() if active is not None else None
+        tops = [area.window() for area in self._followed if not sip.isdeleted(area)]
+        return window is not None and any(top is not None and top.windowHandle() is window for top in tops)
+
+    def _docked_in_front(self, leaving: QDockWidget) -> Optional[QDockWidget]:
+        """The most recently shown plot still docked and on screen (in front of its tabs), but ``leaving``."""
+        return next((dock for dock in reversed(self._recent) if dock is not leaving and not sip.isdeleted(dock)
+                     and not dock.isFloating() and dock.isVisible()), None)
 
     @pyqtSlot()
     def _dock_moved(self) -> None:
@@ -338,13 +367,19 @@ class PlotSettingsPanel(QWidget):
 
     @pyqtSlot(QWindow)
     def _window_activated(self, window: Optional[QWindow]) -> None:
-        """A floating plot's window became active (clicked, even where nothing takes focus)."""
+        """A floating plot's window became active (clicked, even where nothing takes focus), or the
+        main window while the shown plot floats."""
         if window is None:
             return
         for dock in self._order:
             if dock.isFloating() and dock.windowHandle() is window:
                 self._activate(dock)
                 return
+        shown = self.current_plot()
+        if self._area_active(window) and shown is not None and shown.isFloating():
+            # Back in the main window, whose docked plot's title (its Float button) is beside the panel:
+            # that plot shows, so the button acts on the plot the panel names (A33.4).
+            self._activate(self._docked_in_front(shown))
 
     @pyqtSlot(bool)
     def _visibility_changed(self, visible: bool) -> None:

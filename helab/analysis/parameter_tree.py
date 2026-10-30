@@ -171,15 +171,25 @@ class UnitSpinBox(SpinBox):  # type: ignore[misc]
 
 class EndsEditOnReturn:
     """A tree row's editor that Return or Enter closes once the box has taken the value (the box's
-    own Return commits it; an invalid entry gives the value back, as Tab does), and Escape closes
-    with the value put back, uncommitted. Closing deselects the row, so it shows its value and a
-    click opens the editor again. Before, Return committed but left the editor open, which looked
-    as if nothing had been taken (known-issues, the computer-use smoke pass)."""
+    own Return commits it; an invalid entry gives the value back), and Escape closes with the value
+    put back, uncommitted. Tab and Shift+Tab take the value and close it as Return does, rather than
+    opening the next row's editor (pyqtgraph's way, an empty wide box until the next click: A33.1).
+    Closing deselects the row, so it shows its value and a click opens the editor again. Before,
+    Return committed but left the editor open, which looked as if nothing had been taken
+    (known-issues, the computer-use smoke pass)."""
 
     def widgetEventFilter(self, obj: QObject, ev: QEvent) -> bool:
         if isinstance(ev, QKeyEvent) and ev.type() == QEvent.Type.KeyPress and getattr(self, "hideWidget", False):
             if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
                 QTimer.singleShot(0, self._close_editor)  # After the box's own Return, which commits.
+            elif ev.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                widget = getattr(self, "widget")
+                if isinstance(widget, SpinBox):
+                    widget.editingFinishedEvent()  # Takes a valid entry, as the box's Return does,
+                    widget.setValue(getattr(self, "param").value())  # and gives the value back otherwise.
+                    widget.updateText()
+                QTimer.singleShot(0, self._close_editor)
+                return True  # (Not pyqtgraph's: it opens the next row's editor.)
             elif ev.key() == Qt.Key.Key_Escape:
                 widget = getattr(self, "widget")
                 widget.setValue(getattr(self, "param").value())

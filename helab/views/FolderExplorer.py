@@ -236,6 +236,8 @@ class FolderExplorer(QWidget):
         self._cache_read_waits: str | None = None
         self._load_path: str | None = None
         self._cancelled_load_path: str | None = None
+        # A typed folder without subfolders, selected once its parent's listing has its row (Q33.1).
+        self._select_when_listed: str | None = None
         # Large folders (S8): the folder the user just said yes to, only while the call that asked
         # submits its request. Whether a request was asked for (``deliberate``) and allowed
         # (``allow_large``) travels with the request, so neither outlives it.
@@ -462,6 +464,7 @@ class FolderExplorer(QWidget):
             scroll_bar.valueChanged.connect(self._schedule_visible_checks)
         self.tree.collapsed.connect(self._schedule_visible_checks)
         self.model.rowsInserted.connect(self._schedule_visible_checks)
+        self.model.rowsInserted.connect(self._schedule_select)
         viewport = self.tree.viewport()
         if viewport:
             viewport.installEventFilter(self)
@@ -516,6 +519,7 @@ class FolderExplorer(QWidget):
         self._visible_seen.clear()
         self._release_load()
         self._cancelled_load_path = self._cache_read_path = None
+        self._select_when_listed = None
         self.target_path = self.view_path = self.model_root_path = os.path.abspath(os.path.expanduser(path))
         self.selected_path_globally = self.view_path
         self.path_edit.setText(self.view_path)
@@ -526,7 +530,47 @@ class FolderExplorer(QWidget):
         self.loadStateChanged.emit()
 
     def _navigate_input(self) -> None:
-        self.open_to_path(self.path_edit.text())
+        """A typed path. A folder memory knows has no subfolders opens its parent with its row
+        selected (and so loaded), as a double-click on it does (Q33.1); any other, as its top."""
+        text = self.path_edit.text()
+        if not text.strip():
+            return
+        path = os.path.abspath(os.path.expanduser(text))
+        parent = os.path.dirname(path)
+        if parent == path or not self.without_subfolders(path):
+            self.open_to_path(path)
+            return
+        self.open_to_path(parent)
+        self._select_when_listed = path
+        self._select_listed()
+
+    def without_subfolders(self, path: str) -> bool:
+        """Whether memory says ``path`` has no subfolders: its row's listing or saved summary, else
+        the session's snapshot or scan of it. Not known (never listed): False. Memory only."""
+        node = self.model.nodes.get(path)
+        if node is not None and node.loaded:
+            return not node.children
+        if node is not None and node.has_dirs is not None:
+            return node.has_dirs is False
+        snapshot = self.model.cache.snapshot(path)
+        if snapshot is not None:
+            return not snapshot.entries
+        summary = self.model.cache.scan_summaries.get(path)
+        return summary is not None and summary.get("has_dirs") is False
+
+    def _schedule_select(self, *_: object) -> None:
+        if self._select_when_listed is not None:
+            QTimer.singleShot(0, self._select_listed)  # (After the model's insertion.)
+
+    def _select_listed(self) -> None:
+        """Select the typed folder's row once its parent's listing has it (``_navigate_input``)."""
+        path = self._select_when_listed
+        if self.closed or path is None or path not in self.model.nodes:
+            return
+        self._select_when_listed = None
+        index = self.model.path_index(path)
+        self.tree.setCurrentIndex(index)
+        self.tree.scrollTo(index)
 
     def refresh_folder(self, path: str) -> None:
         """Right-click Retry / Refresh: list the folder again (no timeout), and check its cached
@@ -571,6 +615,8 @@ class FolderExplorer(QWidget):
         indexes = selected.indexes()
         if indexes:
             path = self.model.filePath(indexes[0])
+            if path != self._select_when_listed:
+                self._select_when_listed = None  # (Another row chosen first.)
             if self.live is not None and path != self.live.path:
                 self.stop_live()  # Another folder selected (the tree is locked: e.g. Show in tab).
             if path != self.selected_path_globally:
@@ -2413,7 +2459,13 @@ class FolderExplorer(QWidget):
         self.loadStateChanged.emit()
 
     def on_double_click(self, index: QModelIndex) -> None:
-        self.open_to_path(self.model.filePath(index))
+        """A folder with no subfolders is selected (and so loaded) where it is, not made the
+        tree's top (Q33.1); one with subfolders, or not listed yet, becomes the top."""
+        path = self.model.filePath(index)
+        if path != self.view_path and self.without_subfolders(path):
+            self.tree.setCurrentIndex(index)
+        else:
+            self.open_to_path(path)
 
     def on_back_button_clicked(self) -> None:
         self.open_to_path(os.path.dirname(self.view_path))

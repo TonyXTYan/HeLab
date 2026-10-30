@@ -57,12 +57,12 @@ import time
 import urllib.parse
 from typing import Any, Callable, Iterable, Literal, TypeVar, overload
 
-# The tag (``profile.TAG_PATTERN``, or ``u`` and hex digits) and the shot as HeLab writes them: ASCII
-# digits, no leading zeros (``txy_name``). Groups ``tag`` and ``shot``.
-_NAME = r"d_txy_helab_(?P<tag>[a-z][a-z0-9]{1,15})_(?P<shot>0|[1-9][0-9]*)"
+# The tag (``profile.NAME_TAG``: a built-in's, or ``u`` and hex digits, up to 33 characters, Q23.6) and the
+# shot as HeLab writes them: ASCII digits, no leading zeros (``txy_name``). Groups ``tag`` and ``shot``.
+_NAME = r"d_txy_helab_(?P<tag>[a-z][a-z0-9]{1,32})_(?P<shot>0|[1-9][0-9]*)"
 TXY_PATTERN = re.compile(rf"^{_NAME}\.txt$", re.ASCII)
 # The same name without groups, for patterns that join several (``io_ops.convert.partial``).
-BARE_NAME = r"d_txy_helab_[a-z][a-z0-9]{1,15}_(?:0|[1-9][0-9]*)"
+BARE_NAME = r"d_txy_helab_[a-z][a-z0-9]{1,32}_(?:0|[1-9][0-9]*)"
 
 INDEX_NAME = "index.sqlite"
 # ``PRAGMA user_version`` of the index this HeLab writes (0: a new file).

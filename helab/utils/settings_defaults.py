@@ -7,7 +7,7 @@ table can't be read (``KeyError``) and no read has a default of its own
 reader still checks the value it gets (a malformed or out-of-range saved value is replaced by
 the default there, e.g. ``constants.read_disk_budget``).
 
-Standard library, QtCore and ``number_format`` (standard library only): ``helab.utils.constants``
+Standard library, QtCore, ``number_format`` and ``settle_time`` (standard library only): ``helab.utils.constants``
 and the I/O helpers import it.
 """
 from __future__ import annotations
@@ -18,6 +18,7 @@ from typing import Any
 from PyQt6.QtCore import QSettings
 
 from helab.utils import number_format
+from helab.utils.settle_time import DEFAULT_SETTLE_SECONDS
 
 
 @dataclass(frozen=True)
@@ -37,6 +38,8 @@ AUTO_SCAN_VISIBLE_SETTING = "auto_basic_scan_visible_folders"
 DISK_BUDGET_SETTING = "disk_cache_budget"
 RAM_BUDGET_SETTING = "ram_budget_steps"
 LIVE_INTERVAL_SETTING = "live_check_interval_seconds"
+# A file modified this recently may still be being written: never read (Q33.7; io_ops.fingerprints).
+SETTLE_SECONDS_SETTING = "settle_seconds"
 LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
 # A new key off by default (Q27.1): saves of the old ``result_reuse`` (on) no longer turn it on.
@@ -61,6 +64,8 @@ TXY_SOURCE_SETTING = "txy_source"
 # The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).
 REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
 OPEN_PLOTS_SETTING = "open_plots"
+# The main window's folder and settings panels' widths, the plots taking the rest (Q33.2).
+MAIN_SPLIT_SETTING = "main_window_split"
 
 def default_disk_budget(platform: str | None = None) -> int:
     """8 GB on macOS and Linux, 8 GiB on Windows (Q22.7, Q26.1): disk units follow the OS
@@ -95,6 +100,11 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(LIVE_INTERVAL_SETTING, float, 3.0,
             "Seconds from the end of one Live check to the start of the next, 0.5 to 600 "
             "(Settings → General)."),
+    Setting(SETTLE_SECONDS_SETTING, float, DEFAULT_SETTLE_SECONDS,
+            "Seconds a file must be unmodified before HeLab reads it, 2 to 60 (Settings → General, Q33.7): newer "
+            "files may still be being written, so every read leaves them for later (browsing, loads, Live, cache "
+            "checks and conversions). Below 2 s a file still being written can't be told apart. Sent with every "
+            "I/O request; HELAB_SETTLE_SECONDS, when set, wins (tests)."),
     Setting(LIVE_AUTOSAVE_SETTING, int, 10,
             "New Live shots held in RAM before the folder is saved to the disk cache, 1 to 100,000 "
             "(Settings → Cache)."),
@@ -143,6 +153,10 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(OPEN_PLOTS_SETTING, str, "",
             "The plots open when HeLab last quit (or last opened or closed a plot), with their settings and "
             "places: an arrangement record (helab.analysis.presets, JSON). Unset: none."),
+    Setting(MAIN_SPLIT_SETTING, str, "380,320",
+            "The main window's folder panel and plot settings panel widths in logical pixels, \"<folders>,<settings>\", "
+            "saved as HeLab quits; the plots take the rest of the window. Folders 80 to 4000, settings 250 to 4000; "
+            "otherwise the default (Q33.2)."),
 )
 
 # Keys under a prefix: Settings → Lab parameters saves only the lab constants the user set,

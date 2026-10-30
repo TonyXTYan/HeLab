@@ -121,20 +121,26 @@ def presets_summary(cache: FolderCache) -> str:
 def show_summary(label: QLabel, cache: Optional[FolderCache]) -> FolderCache:
     """Keep Settings → Cache's Presets line (``label``) current; the FolderCache holding them."""
     store = cache if cache is not None else preset_store()
+    held = weakref.ref(label)  # (Not the label itself: its going is what ends the connection.)
 
     def shown() -> None:
-        if not sip.isdeleted(label):
-            label.setText(presets_summary(store))
+        target = held()
+        if target is not None and not sip.isdeleted(target):
+            target.setText(presets_summary(store))
     shown()
     store.presetsChanged.connect(shown)
-
-    def gone() -> None:  # (The store outlives Settings: one connection per Cache tab shown, else.)
-        try:
-            store.presetsChanged.disconnect(shown)
-        except TypeError:
-            pass
-    label.destroyed.connect(gone)
+    # The store outlives Settings: the connection goes with the label (one per Cache tab shown, else).
+    # Once the label's Python object goes, not by a Python callable on ``destroyed`` (which crashed the
+    # process from a plot dock: Smoke ready's follow-up notes).
+    weakref.finalize(label, _disconnect, store, shown)
     return store
+
+
+def _disconnect(store: FolderCache, shown: Callable[[], None]) -> None:
+    try:
+        store.presetsChanged.disconnect(shown)
+    except TypeError:
+        pass
 
 
 def open_inspector(cache: FolderCache, parent: QWidget, current: Optional[QWidget]) -> PresetsInspector:

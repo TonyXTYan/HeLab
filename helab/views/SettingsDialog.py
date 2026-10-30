@@ -8,6 +8,7 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QChe
 from PyQt6.QtCore import QSettings, QUrl
 
 from helab.utils import app_log, folder_cache
+from helab.utils.settle_time import DEFAULT_SETTLE_SECONDS, MAX_SETTLE_SECONDS, MIN_SETTLE_SECONDS, settle_seconds
 from helab.utils.accessible import identify
 from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import fnum
@@ -19,12 +20,20 @@ from helab.utils.constants import (
 )
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING, CHECK_LEVEL_SETTING, DIR_CACHES_SETTING, DIR_TEMPS_SETTING, LIVE_INTERVAL_SETTING,
-    LOAD_MODE_SETTING, LOG_KEEP_SETTING, REOPEN_PLOTS_SETTING, RETIRED, SIMULTANEOUS_IO_SETTING, read_setting)
+    LOAD_MODE_SETTING, LOG_KEEP_SETTING, REOPEN_PLOTS_SETTING, RETIRED, SETTLE_SECONDS_SETTING, SIMULTANEOUS_IO_SETTING,
+    read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import CacheTab, read_result_reuse
 from helab.views.ConverterTab import ConverterTab
 from helab.views.LabParametersTab import LabParametersTab
+
+
+def read_settle_seconds(settings: QSettings) -> float:
+    """The settle time (Q33.7, ``settle_seconds``), 2 to 60 s (out of range: the nearest), the default for
+    a saved value that isn't a number. The app sends it with every request (``IOService.settle_seconds``)."""
+    value = settle_seconds(read_setting(settings, SETTLE_SECONDS_SETTING))
+    return DEFAULT_SETTLE_SECONDS if value is None else value
 
 
 class SettingsDialog(QDialog):
@@ -94,6 +103,16 @@ class SettingsDialog(QDialog):
             "While Live watches a folder, its next check starts this long after the previous one ended, so "
             "checks never overlap or queue up on a slow drive. A check of an unchanged folder is one folder stat.")
         folder_io_form.addRow("Live: check again after", self.live_interval_spin)
+        self.settle_spin = QDoubleSpinBox()
+        self.settle_spin.setRange(MIN_SETTLE_SECONDS, MAX_SETTLE_SECONDS)
+        self.settle_spin.setDecimals(1)
+        self.settle_spin.setSingleStep(0.5)
+        self.settle_spin.setSuffix(" s")
+        self.settle_spin.setToolTip(
+            "A file modified more recently than this may still be being written, so HeLab leaves it for a later "
+            "read. It applies to every read: browsing, loads, Live, checks of cached data and conversions. Below "
+            "2 s HeLab can't tell a file still being written. Default 5 s.")
+        folder_io_form.addRow("Read files unmodified for", self.settle_spin)
         self.general_layout.addLayout(folder_io_form)
         self.auto_scan_visible_checkbox = QCheckBox("Automatically check folder status in view")
         self.auto_scan_visible_checkbox.setToolTip(
@@ -154,7 +173,8 @@ class SettingsDialog(QDialog):
 
 
 
-        self.dir_scroll_layout.addWidget(QLabel("DIR_TEMPS:"))
+        # (Read once at start, constants.DIR_TEMPS; worded like the cache folder's row: A33.3.)
+        self.dir_scroll_layout.addWidget(QLabel("Temp folder (a change applies at the next start):"))
         self.dir_scroll_layout.addWidget(self.dir_temps_edit)
         dir_temps_btn_layout = QHBoxLayout()
         dir_temps_btn_layout.addWidget(self.dir_temps_browse_btn)
@@ -242,7 +262,8 @@ class SettingsDialog(QDialog):
         for widget, ident, name in (
                 (self.load_mode_combo, "load_mode", "When selecting another folder"),
                 (self.simultaneous_io_spin, "simultaneous_io", ""), (self.check_level_combo, "check_level", ""),
-                (self.live_interval_spin, "live_interval", ""), (self.auto_scan_visible_checkbox, "auto_scan_visible", ""),
+                (self.live_interval_spin, "live_interval", ""), (self.settle_spin, "settle_seconds", "Settle time"),
+                (self.auto_scan_visible_checkbox, "auto_scan_visible", ""),
                 (self.reopen_plots_checkbox, "reopen_plots", ""), (self.log_keep_spin, "log_keep", ""),
                 (self.dir_temps_edit, "temp_folder", "Temp folder"), (self.dir_caches_edit, "cache_folder", "Cache folder"),
                 (self.dir_temps_browse_btn, "temp_folder_browse", "Browse for temp folder…"),
@@ -290,7 +311,7 @@ class SettingsDialog(QDialog):
         super().done(a0)
 
     def browse_dir_temps(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select DIR_TEMPS Folder")
+        folder = QFileDialog.getExistingDirectory(self, "Choose the temp folder")
         if folder:
             self.dir_temps_edit.setText(folder)
 
@@ -330,6 +351,7 @@ class SettingsDialog(QDialog):
         self.simultaneous_io_spin.setValue(read_io_concurrency(settings))
         self.check_level_combo.setCurrentIndex(self.check_level_combo.findData(read_check_level(settings)))
         self.live_interval_spin.setValue(read_live_interval(settings))
+        self.settle_spin.setValue(read_settle_seconds(settings))
         self.log_keep_spin.setValue(read_log_keep(settings))
         self.auto_scan_visible_checkbox.setChecked(read_setting(settings, AUTO_SCAN_VISIBLE_SETTING, typed=True))
         self.reopen_plots_checkbox.setChecked(read_setting(settings, REOPEN_PLOTS_SETTING, typed=True))
@@ -362,6 +384,7 @@ class SettingsDialog(QDialog):
         settings.setValue(SIMULTANEOUS_IO_SETTING, self.simultaneous_io_spin.value())
         settings.setValue(CHECK_LEVEL_SETTING, self.check_level_combo.currentData())
         settings.setValue(LIVE_INTERVAL_SETTING, self.live_interval_spin.value())
+        settings.setValue(SETTLE_SECONDS_SETTING, self.settle_spin.value())
         settings.setValue(LOG_KEEP_SETTING, self.log_keep_spin.value())
         for key in RETIRED:
             settings.remove(key)

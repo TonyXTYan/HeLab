@@ -154,12 +154,13 @@ def test_a_builtins_tag_never_changes() -> None:
 
 def test_any_other_profile_is_tagged_by_its_hash() -> None:
     edited = MATLAB_2019.replace(search_depth=40)
-    assert file_tag(edited) == "u" + edited.content_hash()[:USER_TAG_DIGITS] and USER_TAG_DIGITS == 8
+    assert file_tag(edited) == "u" + edited.content_hash()[:USER_TAG_DIGITS]
+    assert USER_TAG_DIGITS == 32 and len(file_tag(edited)) == 33  # (Q23.6; 8 before.)
     # A copy under another name, or a file claiming a built-in's tag, never writes under it.
-    assert file_tag(MATLAB_2019.replace(name="mine")) == "u" + MATLAB_2019.content_hash()[:8]
-    assert file_tag(MATLAB_2019.replace(name="mine", tag="m19v1")) == "u" + MATLAB_2019.content_hash()[:8]
-    assert file_tag(MATLAB_2019.replace(tag="p22v1")) == "u" + MATLAB_2019.content_hash()[:8]
-    assert file_tag(MATLAB_2019.replace(tag="")) == "u" + MATLAB_2019.content_hash()[:8]
+    assert file_tag(MATLAB_2019.replace(name="mine")) == "u" + MATLAB_2019.content_hash()[:USER_TAG_DIGITS]
+    assert file_tag(MATLAB_2019.replace(name="mine", tag="m19v1")) == "u" + MATLAB_2019.content_hash()[:USER_TAG_DIGITS]
+    assert file_tag(MATLAB_2019.replace(tag="p22v1")) == "u" + MATLAB_2019.content_hash()[:USER_TAG_DIGITS]
+    assert file_tag(MATLAB_2019.replace(tag="")) == "u" + MATLAB_2019.content_hash()[:USER_TAG_DIGITS]
     # The tag is descriptive: out of the hash, and optional in JSON (a user profile has none).
     assert MATLAB_2019.replace(tag="").content_hash() == MATLAB_2019.content_hash()
     data = MATLAB_2019.to_dict()

@@ -161,6 +161,12 @@ def test_folder_details_and_hint_describe_each_folder_state(
     # Data shown before its check, a failed check, and data the folder has moved on from.
     browser._unchecked_path = path
     assert show() == ("Loaded from cache · not checked yet", "Loaded run — run a script to plot it")
+    cache.service.offline = True  # Offline, as the summary says it (A33.2).
+    try:
+        assert show()[0] == "Loaded from cache · not checked (offline)"
+        assert browser.folder_cache_label.text().endswith("not checked (offline)")
+    finally:
+        cache.service.offline = False
     browser.load_error = "Timed out — Retry"
     assert show() == ("Check failed · Timed out — Retry", "Could not check run — see Folder details")
     browser.load_error = ""
@@ -189,6 +195,22 @@ def test_folder_details_and_hint_describe_each_folder_state(
     # A check answered without reading files has no load time; it says it found no change.
     FolderDetailsPanel._data_rows(browser, {"loaded_at": time.time(), "unchanged": True}, rows, False, False)
     assert rows["loaded"][0].endswith("just now · checked, unchanged")
+
+
+def test_offline_folder_details_agree_with_the_summary(browser: FolderExplorer, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A33.2: offline, data shown unchecked is "not checked (offline)" in Folder details' rows as in the
+    summary, never "checked, unchanged" from an earlier check."""
+    monkeypatch.setattr(browser.model.cache.service, "offline", True)  # (Only what the panel reads.)
+    rows: dict[str, tuple[str, str]] = {}
+    FolderDetailsPanel._data_rows(browser, {"loaded_at": time.time(), "unchanged": True}, rows, False, True,
+                                  unchecked=True)
+    assert rows["loaded"][0].endswith("just now · not checked (offline)") and "checked, unchanged" not in rows["loaded"][0]
+    assert "Working offline" in rows["loaded"][1] and "nothing was read" not in rows["loaded"][1]
+    monkeypatch.setattr(browser.model.cache.service, "offline", False)
+    rows.clear()
+    FolderDetailsPanel._data_rows(browser, {"loaded_at": time.time(), "unchanged": True}, rows, False, True,
+                                  unchecked=True)  # Online, unchecked: being checked, not yet "unchanged".
+    assert rows["loaded"][0].endswith("just now")
 
 
 @pytest.mark.parametrize("known_counts", [False, True])
