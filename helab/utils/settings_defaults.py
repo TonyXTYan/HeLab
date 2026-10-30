@@ -37,6 +37,8 @@ AUTO_SCAN_VISIBLE_SETTING = "auto_basic_scan_visible_folders"
 DISK_BUDGET_SETTING = "disk_cache_budget"
 RAM_BUDGET_SETTING = "ram_budget_steps"
 LIVE_INTERVAL_SETTING = "live_check_interval_seconds"
+# A file modified this recently may still be being written: never read (Q33.7; io_ops.fingerprints).
+SETTLE_SECONDS_SETTING = "settle_seconds"
 LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
 # A new key off by default (Q27.1): saves of the old ``result_reuse`` (on) no longer turn it on.
@@ -97,6 +99,11 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(LIVE_INTERVAL_SETTING, float, 3.0,
             "Seconds from the end of one Live check to the start of the next, 0.5 to 600 "
             "(Settings → General)."),
+    Setting(SETTLE_SECONDS_SETTING, float, 5.0,
+            "Seconds a file must be unmodified before HeLab reads it, 2 to 60 (Settings › General, Q33.7): newer "
+            "files may still be being written, so every read leaves them for later (browsing, loads, Live, cache "
+            "checks and conversions). Below 2 s a file still being written can't be told apart. Sent with every "
+            "I/O request; HELAB_SETTLE_SECONDS, when set, wins (tests)."),
     Setting(LIVE_AUTOSAVE_SETTING, int, 10,
             "New Live shots held in RAM before the folder is saved to the disk cache, 1 to 100,000 "
             "(Settings → Cache)."),

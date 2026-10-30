@@ -11,7 +11,7 @@ import json
 import sys
 import time
 
-from helab.io_ops import stores
+from helab.io_ops import fingerprints, stores
 from helab.io_ops.admin import cache_admin, cache_move_job
 from helab.io_ops.browse import list_folder
 from helab.io_ops.convert import convert_folder
@@ -54,6 +54,7 @@ def main() -> None:
         request = json.loads(sys.stdin.readline())
         operation = request["operation"]
         Pause.configure(request.get("control"))
+        fingerprints.configure_settle(request.get("settle_seconds"))  # (The app's setting, Q33.7; first.)
         _start_trace(request)
         if operation in CACHE_ONLY and not request.get("cache"):
             raise ValueError("The disk cache is off for this session")

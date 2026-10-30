@@ -409,7 +409,7 @@ def test_a_shot_live_read_recently_that_changes_is_read_again_and_said(
         checks(qtbot, explorer, path, tmp_path, count=1)
     assert not session.error and path not in cache.mismatched and session.shots == {1, 2, 3, 4}
     np.testing.assert_array_equal((explorer.folder_opened_data or {})[3], [[3, 2, 3], [3, 4, 5]])
-    note = "Shot 3 changed after it was read (writer paused > 5 s?): read again"
+    note = "Shot 3 changed after it was read (writer paused past the settle time?): read again"
     text, tooltip, stopped = explorer.live_control.live_line(session)
     assert note in text and not stopped and "old and new size and mtime" in tooltip
     panel = FolderDetailsPanel(explorer)
@@ -486,7 +486,7 @@ def test_the_save_at_live_off_reads_a_recently_read_shot_again_and_saves_it(
     read_cached(path, str(output), found.append, store_options())
     shot = next(event for event in found if event["kind"] == "shot" and event["shot"] == 3)
     np.testing.assert_array_equal(np.load(shot["artifact"]), [[3, 2, 3], [3, 4, 5]])
-    note = "Shot 3 changed after it was read (writer paused > 5 s?): read again"
+    note = "Shot 3 changed after it was read (writer paused past the settle time?): read again"
     qtbot.waitUntil(lambda: not explorer.live_control._live_sessions)  # (Its save ended: the session is done.)
     assert explorer.live_reread_note(path) == note
     panel = FolderDetailsPanel(explorer)

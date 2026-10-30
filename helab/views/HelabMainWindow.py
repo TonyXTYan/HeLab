@@ -59,7 +59,7 @@ from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.MissingShotsWindow import MissingShotsWindow
 from helab.views.QuitSaveDialog import QuitSaveDialog
 from helab.views.RootDuplicatesWindow import RootDuplicatesWindow
-from helab.views.SettingsDialog import SettingsDialog
+from helab.views.SettingsDialog import SettingsDialog, read_settle_seconds
 from helab.views.DebugIconsWindow import DebugIconsWindow
 
 # QtWebEngine must be imported before the QApplication exists; main.py imports this module first.
@@ -944,9 +944,11 @@ class HelabMainWindow(QMainWindow):
 
     @staticmethod
     def _apply_live_settings(settings: QSettings) -> None:
+        """Live's interval and autosave, and the settle time every helper uses (Q33.7)."""
         cache = get_folder_cache(get_io_service())
         cache.live_interval = read_live_interval(settings)
         cache.live_autosave_shots = read_live_autosave(settings)
+        get_io_service().settle_seconds = read_settle_seconds(settings)
 
     def show_status_notice(self, text: str, seconds: float = 10.0) -> None:
         self._status_notice = (text, time.monotonic() + seconds)

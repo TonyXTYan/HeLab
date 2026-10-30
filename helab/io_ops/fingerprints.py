@@ -3,12 +3,14 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import math
 import os
 import random
 import time
 from typing import Any, Iterable, TYPE_CHECKING
 
+from helab.io_ops import infra
 from helab.io_ops.infra import Emit, _entry_stat, _stat
 from helab.io_ops.stores import _cache_info
 from helab.utils import file_kinds
@@ -22,14 +24,51 @@ if TYPE_CHECKING:
 # Settle age only, by Tony's decision (2026-10-19): a TXY write never takes longer, so an older
 # file is read as it is; its content isn't checked. The converter writing to a temporary name and
 # renaming it remains the real fix.
-SETTLE_SECONDS = float(os.environ.get("HELAB_SETTLE_SECONDS", "5"))
+# The settle time is a setting (Settings › General, ``settle_seconds``, Q33.7): the app sends it with
+# every request and ``io_helper`` applies it first (``configure_settle``). Without one (``helab
+# convert``, which reads no settings; a request from an older HeLab) it is DEFAULT_SETTLE_SECONDS.
+# HELAB_SETTLE_SECONDS, when set, wins over both (tests set it to 0).
+DEFAULT_SETTLE_SECONDS = 5.0
+# The setting's range: below 2 s a file still being written can't be told apart (``RACY_SECONDS``).
+MIN_SETTLE_SECONDS, MAX_SETTLE_SECONDS = 2.0, 60.0
+_SETTLE_OVERRIDE = os.environ.get("HELAB_SETTLE_SECONDS")
+SETTLE_SECONDS = float(_SETTLE_OVERRIDE) if _SETTLE_OVERRIDE else DEFAULT_SETTLE_SECONDS
 
 # A folder modified this close to when its listing began (either way: the server's clock may differ
 # a little from ours) may change again within the same mtime step (FAT and some shares keep 2 s),
 # which a later stat wouldn't see: its mtime isn't kept for the quick check (``_quick_mtime``), nor
 # compared by Live's next check (``live``, which reads this one). Tests, with no settle age, have no
-# margin either.
+# margin either. (2 s whatever the setting, whose least is 2 s.)
 RACY_SECONDS = min(2.0, SETTLE_SECONDS)
+
+
+def settle_seconds(value: object) -> float | None:
+    """A settle time as the setting may hold it (seconds, from MIN_SETTLE_SECONDS to
+    MAX_SETTLE_SECONDS, a number out of range taking the nearest), or None for one that isn't a
+    finite number. The app reads its setting through this, and ``configure_settle`` the request's."""
+    try:
+        number = float(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if isinstance(value, bool) or not math.isfinite(number):
+        return None
+    return max(MIN_SETTLE_SECONDS, min(MAX_SETTLE_SECONDS, number))
+
+
+def configure_settle(value: object) -> float:
+    """Use the settle time a request carries (``settle_seconds``: the app's setting) for this helper's
+    work: ``SETTLE_SECONDS``, and ``RACY_SECONDS`` with it. Kept as it is when HELAB_SETTLE_SECONDS is
+    set or the request has none (or one that isn't a number). Noted once (a helper serves one request):
+    a debug log line, and on every line of the I/O trace (``settle``). The time used."""
+    global SETTLE_SECONDS, RACY_SECONDS
+    given = settle_seconds(value)
+    source = "HELAB_SETTLE_SECONDS" if _SETTLE_OVERRIDE else "request" if given is not None else "default"
+    if source == "request" and given is not None:
+        SETTLE_SECONDS = given
+        RACY_SECONDS = min(2.0, SETTLE_SECONDS)
+    logging.debug("Settle time %g s (%s)", SETTLE_SECONDS, source)
+    infra._trace_request["settle"] = SETTLE_SECONDS
+    return SETTLE_SECONDS
 
 
 # A source file's mtime more than this ahead of our clock means the computers' clocks are out of

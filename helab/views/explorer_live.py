@@ -460,9 +460,9 @@ class LiveController:
                 when(new_mtime))
             session.read_at[shot] = now
         shots = sorted(int(entry["shot"]) for entry in entries)
-        note = (f"Shot {shots[0]} changed after it was read (writer paused > 5 s?): read again" if len(shots) == 1
+        note = (f"Shot {shots[0]} changed after it was read (writer paused past the settle time?): read again" if len(shots) == 1
                 else f"Shots {', '.join(map(str, shots[:5]))}{' …' if len(shots) > 5 else ''} changed after they "
-                     "were read (writer paused > 5 s?): read again")
+                     "were read (writer paused past the settle time?): read again")
         self._reread_notes[session.path] = (note, time.monotonic())
 
     def live_reread_note(self, path: str) -> str:
