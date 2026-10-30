@@ -305,7 +305,10 @@ def test_quitting_takes_over_from_the_background_write(frozen: FolderCache) -> N
     cache._marks_due()
     [background] = cache.service.pending
     owed(cache, "/c", 6.0, folder="f" * 24)
+    passed_on: list[str] = []
+    cache.resultReady.connect(lambda request, event: passed_on.append(request.owner))
     assert cache.flush_txy_marks()  # The background one is stopped; quitting writes all that is owed.
+    assert background.owner not in passed_on  # (Its ``cancelled`` ends it here: Nit-11.)
     [flush] = cache.service.pending
     assert background.cancelled.is_set() and flush is not background and flush.priority
     assert flush.payload["params"]["marks"] == [["/c", FOLDER, 5.0], ["/c", "f" * 24, 6.0]]

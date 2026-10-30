@@ -770,3 +770,42 @@ provisional `Q~2`/`Q~3` left in code comments are now `Q30.2`/`Q30.3`.
   window (the background write already recorded it)." The last sentence, about the window showing on
   most quits, then reads "on quits within 10 minutes of a load that skipped its mark".
 - `AI_TODO.md`: A30.4 is done.
+
+## Addendum: Q23.7 (c) done, and Tern's Nit-11
+
+CoCo, 2026-10-30: Tony decided Q23.7 (c). With `helab convert --once` (`seen` None), a raw file is
+called damaged only once it has been unmodified for `ONCE_SETTLE_SECONDS` (60 s) by its mtime. Before,
+the limit was `DAMAGED_SECONDS` (20 s). Live and `--watch` are unchanged. `origin/dev/v0.0.7` was merged
+first (`e74a5cf`, Byte Units, as merge `b8e1022`); this change adds no byte size.
+
+**The change:**
+- `helab/io_ops/convert.py`, `unfinished_or_damaged`: when `seen` is None the limit is
+  `max(ONCE_SETTLE_SECONDS, DAMAGED_SECONDS)`, which is 60 s. The `max` means one look is never quicker
+  to call a file damaged than two. `test_files_that_may_still_be_written_wait` relies on it: it patches
+  `DAMAGED_SECONDS` to 1e9 to mean "not damaged yet", and with `ONCE_SETTLE_SECONDS` alone it failed
+  (shots 2 and 3, dated 2023, became damaged). Otherwise the limit is `DAMAGED_SECONDS`, using the
+  smaller of the mtime age and the first-seen age, as before.
+- The module docstring and `ONCE_SETTLE_SECONDS`'s comment say so, and so does `convert_cli.py`'s
+  comment beside `seen`.
+- With the default 5 s settle, the `--once` settle rule (60 s) already made a bad file under 60 s wait
+  as `settling` before its content was checked. The new limit is what decides when the settle age is 0
+  (as in tests), and it keeps the two rules from contradicting each other.
+
+**Tests** (`tests/test_convert_helab.py`):
+- `test_once_calls_a_file_damaged_only_after_the_once_settle_age`, two cases. At 30 s the file waits
+  (`no_final_newline`). At 61 s it is damaged.
+- `test_live_and_watch_still_call_a_file_damaged_after_20_s`. With `seen`, a file 30 s old by its mtime
+  and since first seen is damaged.
+- The damaged test's `--once` case ("read for the first time past the damaged age") now dates its file
+  `ONCE_SETTLE_SECONDS` + 1 s back.
+- Probe: with the old limit back, `30s-waits` fails.
+
+**Nit-11 (Tern, round 8, optional), done:** `flush_txy_marks` now cancels the background write first
+and then clears its owner. Its `cancelled` therefore ends it in `_on_marks_written` and is not passed
+on through `FolderCache.resultReady`. `test_quitting_takes_over_from_the_background_write` asserts this
+(it fails with the old order). Tern's round 8 `review.md` is committed with this push.
+
+**Proposed doc change** (`converter.md`, about line 232): replace "`--once` goes by the mtime alone,
+Q23.7" with "`--once` goes by the mtime alone and wants 60 s, `ONCE_SETTLE_SECONDS`, as its settle rule
+does: Q23.7 (c)". At about line 382: "`--once` (one check: files unmodified for 60 s, to be read and to
+be called damaged)". `DECISIONS_TODO.md` Q23.7: decided (c), built.

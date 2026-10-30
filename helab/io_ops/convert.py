@@ -25,7 +25,7 @@ trigger channel, no rows) once unmodified for ``DAMAGED_SECONDS`` (20 s; a shot 
 30 s), both by its mtime against this clock and since this computer first saw it with that size and
 mtime (each ``waiting`` entry carries that time, sent back in ``seen``; so a source clock behind ours
 can't make a file paused mid-write look old; ``--once``, one look with no history, goes by the mtime
-alone, as its settle rule does), is **damaged** (Q18.5): unconvertible (``shot_unconvertible``, reason ``damaged``, the check in
+alone and wants ``ONCE_SETTLE_SECONDS``, as its settle rule does, Q23.7), is **damaged** (Q18.5): unconvertible (``shot_unconvertible``, reason ``damaged``, the check in
 ``problem``), no TXY, skipped from then on while unchanged, so it never holds up later shots. One the
 converter fails on is unconvertible too.
 
@@ -97,7 +97,8 @@ READ_BLOCK = 8 * 1024 * 1024
 # One shot this large (raw bytes) is cut into pieces for the pool, for Live's latency.
 SPLIT_BYTES = 20 * 10**6
 PROGRESS_INTERVAL = 0.25
-# A single check (seen None: ``helab convert --once`` only) wants a file this long unmodified.
+# A single check (seen None: ``helab convert --once`` only) wants a file this long unmodified, to read it
+# and to call it damaged (Q23.7: by its mtime alone, with no first seen to go by).
 ONCE_SETTLE_SECONDS = 60.0
 # Heartbeats while a shot computes stop after this, plus a second per COMPUTE_RATE raw bytes (ten
 # times slower than the plain-Python reference): a hung backend then times out.
@@ -506,11 +507,14 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
 
     def unfinished_or_damaged(shot: _Shot, code: str, message: str) -> None:
         """A file failing the format checks: damaged once unmodified for DAMAGED_SECONDS by its mtime and
-        since this computer first saw it so, else waiting."""
+        since this computer first saw it so, else waiting. ``--once`` (one look, no history) goes by the
+        mtime alone, so it wants ONCE_SETTLE_SECONDS, as its settle rule does (Q23.7), and never less than
+        two looks."""
         age = now - shot.mtime_ns / 1e9
-        if seen is not None:  # (``--once``: one look, no history; the mtime alone, as its settle rule.)
-            age = min(age, now - seen_since(shot))
-        if age >= DAMAGED_SECONDS:
+        limit = max(ONCE_SETTLE_SECONDS, DAMAGED_SECONDS)
+        if seen is not None:
+            age, limit = min(age, now - seen_since(shot)), DAMAGED_SECONDS
+        if age >= limit:
             refuse(shot, DAMAGED, f"Damaged: {message} (unchanged for {age:,.0f} s)", code)
         else:
             wait(shot, code, message)

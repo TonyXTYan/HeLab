@@ -242,7 +242,8 @@ def _request(args: argparse.Namespace, folder: str, profile: dict[str, Any], cac
     typed = args.output
     output = "cache" if typed == CACHE_FORCED else typed or read_convert_output(app_settings())
     # --watch: the first pass only records each file (seen=[]), the second converts those unchanged
-    # since. --once: one check (seen None), so a file must be unmodified for ONCE_SETTLE_SECONDS.
+    # since. --once: one check (seen None), so a file must be unmodified for ONCE_SETTLE_SECONDS, to be
+    # read and to be called damaged (Q23.7).
     request: ConvertRequest = {"path": folder, "profile": profile, "temps": DIR_TEMPS, "backend": args.backend,
                                "seen": None if args.once else [],
                                "destination": read_convert_output(app_settings()) if output == "beside" else output,

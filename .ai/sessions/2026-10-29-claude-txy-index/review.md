@@ -748,3 +748,71 @@ I read every job's log. No job has a "rerun reasons" section or a RERUN line.
 
 The compat matrix was skipped (a push). The two-writer test passed with no rerun in every job that
 runs it: Tests (2/2) on each OS, and the Converter backends jobs, which run `test_convert_helab.py`.
+
+## Round 8 review (head `18514ff`, `git diff c492242..18514ff`: A30.4, background last-use writes)
+
+**Result: 0 open findings, no blocker.** I add one optional Nit (Nit-11). Every point CoCo asked about
+holds.
+
+| Question | Answer | Where |
+|---|---|---|
+| No write after quit starts | **holds** | `flush_txy_marks` sets `_marks_quit`, stops `_marks_timer` and cancels a background write in flight. `_schedule_marks` and `_marks_due` both refuse once `_marks_quit`, `quitting`, `_closing` or `service.closed` is set, so a mark that arrives later (a save's load ending) starts nothing (tested). |
+| No write after shutdown | **holds** | `shutdown()` sets `_closing` and stops the timer. A background write still running then is cancelled by `IOService.shutdown()`, and its late `cancelled` can't reschedule (`_closing`). |
+| No older time from a race | **holds** | Both writers run `UPDATE … SET last_used = at WHERE … AND last_used < at`, so the final value is the larger `at`, whatever order the writes land in. The quit flush sends the current `txy_unmarked`, which is never older per key than what the background write took: it keeps the max. A cancelled background helper that is still writing can't move a value back. |
+| The timer can't spin | **holds** | One single-shot timer, armed only when not already active, with nothing owed and nothing running. Retries are 600 s (offline, cache off, after a write ends with marks still owed) or `SWEEP_RETRY` 5 s (foreground busy, or the queue full). |
+| 5 s under sustained foreground work | **fine** | Each retry is a memory-only check, no I/O and no submit. `hold_background` lasts only while a foreground load reads a file or a listing progresses, plus `RESUME_DELAY` 0.5 s, and a Live check holds only while it reads a new file. So gaps come often, and the background write isn't starved during Live, which is when marks pile up. The sweep uses the same 5 s retry. |
+| Not during a cache move | **holds** (not asked) | `cache_admin` is in `IOService.CACHE_OPERATIONS`. `hold_cache()` cancels a running one and starts none, and a cancelled write's marks stay owed. One thing for the record: a mark taken before the move names the old `converted-txy`. Afterwards `open_index` finds nothing there, so the mark is dropped as nothing to write. The cost is a `last_used` up to an hour old at the new place. |
+| Events contract, both sides | **holds** | `AdminResultFields` gains `unwritten: list[list[Any]]` (optional; standard library only). `admin.cache_admin` sends it for `mark_used`, and `FolderCache._on_marks_written` reads it with `.get(…) or ()`. `test_helper_events` passes. |
+| Marks dropped only if unchanged | **holds** | On `done`, an entry is deleted only when `txy_unmarked[mark] == at` sent. `unwritten` entries are taken out of `_mark_sent` first, so they stay owed. An `error` (timeout) or `cancelled` keeps everything. `admin_result` always comes before `done` on the same stdout. |
+| Q~ → Q30.x renames | **comments only** | A word diff of `convert_cli.py`, `io_ops/convert.py`, `HelabMainWindow.py` and `QuitSaveDialog.py` shows only `Q~2`→`Q30.2` and `Q~3`→`Q30.3`. In `admin.py`, `events.py`, `helab_txy.py` and `folder_cache.py` the IDs change in comments and docstrings beside the real changes. The removed `import contextlib` was unused after `mark_used`'s rewrite. |
+| Handoff "A30.4 done" | **accurate** | It matches the code, including the offline choice (left as Tony's) and the proposed `converter.md`, `io-and-browsing.md`, M30.3 and A30.4 lines. |
+
+### Nit-11 (optional): a cancelled background write's `cancelled` goes to FolderCache's listeners
+
+- **Where:** `flush_txy_marks` clears `_mark_background` and then calls `service.cancel(owner)`.
+  `IOService.cancel` emits `cancelled` synchronously.
+- **Why it matters little:** that event no longer matches the background owner, so `_on_event` passes
+  it on through `FolderCache.resultReady`, under a `job is None` request. Every listener filters by
+  owner (`FolderExplorer._io_event`, `SnapshotFileSystemModel._on_event`, `DataRootsTab`,
+  `DataRootDialogs`, `RootDuplicatesWindow`), so it is harmless.
+- **Fix:** cancel first, then clear. `_on_marks_written` takes the `cancelled`, and its
+  `_schedule_marks()` refuses because `_marks_quit` is already set.
+
+### Other notes (no change needed)
+
+- **A missing index:** `mark_used` drops marks whose index `open_index(write=False)` returns None
+  for (missing, newer, damaged, or a DELETE-mode read failing). A busy DELETE-mode reader instead
+  waits its connection timeout and hits the 5 s no-progress limit, so it ends as `error` and the marks
+  stay owed.
+- **Many marks on a busy index:** each waits 500 ms, so more than about 10 can hit the 5 s limit.
+  Then everything stays owed for 10 min. Any writes already made are forward-only. Fine.
+
+### Checks (floor venv, macOS, head `18514ff`)
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8230 passed, 669 skipped, 0 reruns** (2 min 8 s). The tree was clean and HEAD was `18514ff`,
+  before and after the run.
+
+- **Type checks:** `mypy helab/ --strict` (191), `mypy tests --strict` (160) and `mypy helab/ --strict
+  --platform win32` (191) found no issues. `pyright helab tests` and `pyright --pythonplatform Windows
+  helab tests` found 0 errors.
+
+### CI run 40989459638 (head `18514ff`, attempt 1): success, no RERUN
+
+I read every job's log. None has a "rerun reasons" section or a RERUN line.
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123848143631 | 4101 passed |
+| Ubuntu Tests (2/2) | 123848143652 | 4127 passed |
+| macOS Tests (1/2) | 123848143930 | 4103 passed |
+| macOS Tests (2/2) | 123848143570 | 4127 passed |
+| Windows Tests (1/2) | 123848143577 | 4090 passed |
+| Windows Tests (2/2) | 123848143555 | 4111 passed |
+| Ubuntu Converter backends | 123848143609 | 693 passed |
+| macOS Converter backends | 123848143595 | 693 passed |
+| Windows Converter backends | 123848143545 | 692 passed |
+| Detect branch; ubuntu, macos, windows Build | 123848076179; 123848143828, 123848143859, 123848143862 | success |
+
+The compat matrix was skipped (a push). All 13 tests in `test_txy_last_used_quit.py` passed on each OS
+(7 in Tests (1/2), 6 in Tests (2/2)).

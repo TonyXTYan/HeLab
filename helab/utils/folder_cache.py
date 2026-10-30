@@ -2737,8 +2737,9 @@ class FolderCache(QObject):
         self._marks_quit = True
         self._marks_timer.stop()
         if self._mark_background:
-            owner, self._mark_background, self._mark_sent = self._mark_background, "", {}
-            self.service.cancel(owner)
+            # Cancelled first, so its ``cancelled`` ends it here (``_on_marks_written``), not passed on.
+            self.service.cancel(self._mark_background)
+            self._mark_background, self._mark_sent = "", {}
         options = store_options()
         if not self.txy_unmarked or not options or self.service.closed:
             return False
