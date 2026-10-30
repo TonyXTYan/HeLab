@@ -298,9 +298,9 @@ def test_the_clear_question_names_records_when_no_txy_is_left(qtbot: QtBot, monk
                                                "clearable_bytes": clearable_bytes}}
             tab.clear_converted()
         assert asked[0].startswith(f"Removes what is left of HeLab's converted TXY: old records and damaged indexes "
-                                   f"({byte_size(40_000)}), from the cache and temp folders")
+                                   f"({byte_size(40_000, 'disk')}), from the cache and temp folders")
         assert "0 TXY files" not in asked[0]
-        assert asked[1].startswith(f"Removes 3 TXY files HeLab converted, with their records ({byte_size(1500)})")
+        assert asked[1].startswith(f"Removes 3 TXY files HeLab converted, with their records ({byte_size(1500, 'disk')})")
         tab.detach()
     finally:
         service.shutdown()
@@ -343,11 +343,11 @@ def test_the_cache_tab_shows_and_clears_converted_txy(qtbot: QtBot, monkeypatch:
         for event in (events[0], {"kind": "done"}):
             service.resultReady.emit(request, event)
         service.pending.remove(request)
-        assert tab.converted_label.text() == f"2 files · {byte_size(1502 + temp_bytes)} · last used 2h ago"
+        assert tab.converted_label.text() == f"2 files · {byte_size(1502 + temp_bytes, 'disk')} · last used 2h ago"
         assert tab.converted_button.isEnabled()
         assert tab.converted_label.toolTip().endswith(
-            f"Cache folder: 1 file in 1 folder · {byte_size(1502)}\n"
-            f"Temp folder: 1 file in 1 folder · {byte_size(temp_bytes)} · last used 2h ago")
+            f"Cache folder: 1 file in 1 folder · {byte_size(1502, 'disk')}\n"
+            f"Temp folder: 1 file in 1 folder · {byte_size(temp_bytes, 'disk')} · last used 2h ago")
         tab.clear_converted()
         assert "Removes 2 TXY files HeLab converted" in asked[0] and "from the cache and temp folders" in asked[0]
         clear = admin(service, "clear_converted_txy")
@@ -366,7 +366,7 @@ def test_the_cache_tab_shows_and_clears_converted_txy(qtbot: QtBot, monkeypatch:
         tab._update()
         assert tab.clear_all_button.isEnabled()
         index_bytes = os.path.getsize(temp.parent / provenance.INDEX_NAME)
-        assert tab.converted_label.text() == f"0 files · {byte_size(index_bytes)}"  # (No folder left to be used.)
+        assert tab.converted_label.text() == f"0 files · {byte_size(index_bytes, 'disk')}"  # (No folder left to be used.)
         assert not tab.converted_button.isEnabled()
         assert "keeps the index" in tab.converted_label.toolTip()
     finally:

@@ -1,16 +1,54 @@
 """Short number labels shared by Folder details, Settings and the log."""
-from typing import Optional
+import os
+import sys
+from typing import Literal, Mapping, Optional
+
+# What a byte count measures (Tony, Q26.1): a size on disk (files, folders, the disk cache and its
+# budget, read rates) is in SI units on macOS and Linux and in powers of 1024 on Windows, as each
+# OS's own file manager shows it; RAM is in powers of 1024 on every OS. Every call says which.
+ByteKind = Literal["disk", "ram"]
+SI_UNITS = ("B", "kB", "MB", "GB", "TB")
+BINARY_UNITS = ("B", "KiB", "MiB", "GiB", "TiB")
+# The platform whose disk units HeLab shows: ``sys.platform``, unless this variable names another
+# (the tests pin ``darwin``; ``win32`` shows Windows' units on a Mac). Read once, at import.
+UNITS_PLATFORM_OVERRIDE = "HELAB_UNITS_PLATFORM_OVERRIDE"
 
 
-def byte_size(num: int | float) -> str:
-    """Sizes in SI units (powers of 1000, as ``time_format.byte_rate``; Tony, 2026-10-26):
-    ``850 B``, ``706 MB``, ``1.2 GB``, ``8.6 GB``."""
+def units_platform(environ: Mapping[str, str]) -> str:
+    return environ.get(UNITS_PLATFORM_OVERRIDE) or sys.platform
+
+
+PLATFORM = units_platform(os.environ)
+
+
+def binary_units(kind: ByteKind, platform: Optional[str] = None) -> bool:
+    """Powers of 1024 (KiB…): RAM everywhere, disk on Windows. ``platform`` defaults to ``PLATFORM``."""
+    return kind == "ram" or (platform or PLATFORM) == "win32"
+
+
+def byte_unit(power: int, kind: ByteKind, platform: Optional[str] = None) -> tuple[int, str]:
+    """``base ** power`` bytes and its label: ``byte_unit(3, "disk")`` is ``(10**9, "GB")`` on macOS
+    and Linux, ``(2**30, "GiB")`` on Windows; ``byte_unit(3, "ram")`` is ``(2**30, "GiB")``."""
+    binary = binary_units(kind, platform)
+    return (1024 if binary else 1000) ** power, (BINARY_UNITS if binary else SI_UNITS)[power]
+
+
+def scaled(num: int | float, kind: ByteKind, platform: Optional[str] = None) -> tuple[float, str]:
+    """``num`` bytes in the largest unit that keeps it under 999.5 (TB or TiB at most)."""
+    base, units = (1024, BINARY_UNITS) if binary_units(kind, platform) else (1000, SI_UNITS)
     value = max(0.0, float(num))
-    unit = "B"
-    for unit in ("B", "kB", "MB", "GB", "TB"):
-        if value < 999.5 or unit == "TB":
+    unit = units[0]
+    for unit in units:
+        if value < 999.5 or unit == units[-1]:
             break
-        value /= 1000
+        value /= base
+    return value, unit
+
+
+def byte_size(num: int | float, kind: ByteKind, *, platform: Optional[str] = None) -> str:
+    """A size in ``kind``'s units (``binary_units``): ``850 B``, ``706 MB``, ``1.2 GB``, ``8.6 GB``
+    in SI; ``706 MiB``, ``1.2 GiB``, ``8.0 GiB`` in powers of 1024."""
+    value, unit = scaled(num, kind, platform)
     return f"{value:.0f} {unit}" if unit == "B" or value >= 99.95 else f"{value:.1f} {unit}"
 
 

@@ -10,6 +10,7 @@ from typing import Optional
 
 from PyQt6.QtCore import QSettings, QDir
 from helab.utils.settings_store import app_settings
+from helab.utils.number_format import byte_unit
 # Settings' keys (re-exported: they were defined here) and defaults: helab/utils/settings_defaults.py.
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING as AUTO_SCAN_VISIBLE_SETTING,
@@ -116,7 +117,8 @@ MAX_SIMULTANEOUS_IO = 32
 
 # The disk cache budget in bytes (Settings → Cache from S7). It counts live data only.
 DEFAULT_DISK_BUDGET: int = setting_default(DISK_BUDGET_SETTING)
-MIN_DISK_BUDGET = 10**9  # 1 GB: budgets are SI, as every size HeLab shows (Tony, 2026-10-26)
+# 1 GB on macOS and Linux, 1 GiB on Windows: disk units follow the OS (Q26.1).
+MIN_DISK_BUDGET = byte_unit(3, "disk")[0]
 
 
 def read_disk_budget(settings: QSettings) -> int:
@@ -133,7 +135,7 @@ def read_disk_budget(settings: QSettings) -> int:
 RAM_STEPS = 128
 DEFAULT_RAM_STEPS: int = setting_default(RAM_BUDGET_SETTING)
 MAX_RAM_STEPS = 64
-MIN_RAM_BUDGET = 10**9  # 1 GB (SI, as the disk budget)
+MIN_RAM_BUDGET = byte_unit(3, "ram")[0]  # 1 GiB: RAM is in powers of 1024 on every OS (Q26.1)
 
 
 def total_ram() -> int:
@@ -146,7 +148,7 @@ def ram_step_bytes(total: int | None = None) -> int:
 
 
 def ram_step_range(total: int | None = None) -> tuple[int, int]:
-    """The allowed steps: at least max(1 GB, 1 step), at most half of RAM."""
+    """The allowed steps: at least max(1 GiB, 1 step), at most half of RAM."""
     step = ram_step_bytes(total)
     return min(MAX_RAM_STEPS, max(1, -(-MIN_RAM_BUDGET // step))), MAX_RAM_STEPS
 

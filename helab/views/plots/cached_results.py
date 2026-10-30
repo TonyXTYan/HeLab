@@ -504,7 +504,7 @@ class CachedRuns(QObject):
                 self._keys[result.job_id] = str(event["result_id"])
             if size > result_cache.LARGE_RESULT_BYTES:
                 logging.warning("Saved %s's result (%s) in the disk cache: %s", self.name,
-                                result.input.identity.source_path, byte_size(size))
+                                result.input.identity.source_path, byte_size(size, "disk"))
             if not self._closed():
                 self._saved(replace(result, policy=DISK_CACHED), size)
         elif kind == "result_not_saved" and event.get("reason") == "dropped":
