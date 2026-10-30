@@ -243,7 +243,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         try:
             _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, counts, unsettled,
                            had_dataset, (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
-                           send, times, txy_record=record)
+                           send, times, txy_record=record, signature=signature)
         except Exception as exc:
             _save_failed(store, exc, send)
     finally:
