@@ -108,7 +108,8 @@ class AdminResultFields(TypedDict, total=False):
     result_id: str  # an adopted result's saved row (R2)
     folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
     store: str  # the store an adoption answered from (its ``store_id``)
-    converted_txy: dict[str, int]  # HeLab's TXY under the cache folder after a Clear (files, bytes, folders)
+    # HeLab's TXY under the cache and temp folders after a Clear (``helab_txy.converted_summary``).
+    converted_txy: ConvertedSummaryField
 
 
 # Process and progress
@@ -552,6 +553,28 @@ class RemovedEvent(TypedDict):
     evicted: NotRequired[list[list[str]]]
 
 
+class ConvertedUsageField(TypedDict):
+    """HeLab's converted TXY under one base's ``converted-txy`` (``helab_txy.converted_usage``): the TXY
+    files, their bytes (the index and old builds' records included), the folders holding them, and when
+    a conversion or load last used one (None: never, or no index says); ``newer``: the bytes of a newer
+    HeLab's index there (live or set aside), not counted in ``bytes`` and never cleared;
+    ``clearable``/``clearable_bytes``: the files Settings › Cache's Clear would remove (never the index
+    itself), what enables its Clear."""
+    files: int
+    bytes: int
+    folders: int
+    last_used: float | None
+    newer: int
+    clearable: int
+    clearable_bytes: int
+
+
+class ConvertedSummaryField(ConvertedUsageField):
+    """Both bases' (Q27.5, ``helab_txy.converted_summary``): the totals, and each base's by name
+    (``cache``; ``temp`` when the app sent its temp folder)."""
+    bases: dict[str, ConvertedUsageField]
+
+
 class ResultCountField(TypedDict):
     """A folder's saved results (``CacheStore.ResultCount``): the row badge and Folder details. ``seq``
     is the store's [store_id, writes] when counted; the newest wins."""
@@ -826,6 +849,16 @@ class ClockSkewEvent(TypedDict):
     location: str  # its share or volume (the mount's source), else the folder
 
 
+class TxyUnmarkedEvent(TypedDict):
+    """A load took a TXY from HeLab's folder ``folder`` (its 24-hex name) under ``root`` (a base's
+    ``converted-txy``) at ``at``, but didn't write that last use (``helab_txy.LAST_USED_STEP``, or the
+    index busy): the app writes it as it quits (``cache_admin`` ``mark_used``, Q~3)."""
+    kind: Literal["txy_unmarked"]
+    root: str
+    folder: str
+    at: float
+
+
 class MarkerSaveEvent(TypedDict):
     """The manual marker dialog's copy (``marker_save``): written, or a file already there (not replaced)."""
     kind: Literal["marker_saved", "marker_save_exists"]
@@ -878,7 +911,7 @@ class ConvertSeconds(TypedDict):
     parse: float
     reconstruct: float
     format: float
-    write: float  # the TXY and its provenance record
+    write: float  # the TXY and its provenance row
 
 
 class ConvertPlanEvent(TypedDict):
@@ -886,8 +919,8 @@ class ConvertPlanEvent(TypedDict):
     ``output`` is where the TXY go (``beside``, ``cache`` or ``temp``): the one asked for, or
     ``temp`` with ``fallback`` saying why (no data root, the disk cache off or unreadable; Q9.3), or
     the setting's output when ``beside`` was asked for a folder whose flag is off.
-    ``folder`` is HeLab's own folder for this source folder (the TXY unless beside, and every
-    provenance record); ``txy_folder`` where the TXY go; ``key`` the data-root key ("" without)."""
+    ``folder`` is HeLab's own folder for this source folder (the TXY unless beside; every provenance
+    row is in its base's ``converted-txy/index.sqlite``); ``txy_folder`` where the TXY go; ``key`` the data-root key ("" without)."""
     kind: Literal["convert_plan"]
     path: str
     output: str
@@ -904,7 +937,7 @@ class ConvertPlanEvent(TypedDict):
 
 class ShotConvertedEvent(TypedDict):
     """A shot converted: its TXY (``txy``, 0 bytes when ``hits`` is 0: "converted, empty", Q10.3) and
-    provenance record (``provenance``) written atomically. A low-count shot is the app's to judge
+    provenance row written first in the base's index (``provenance``: that index's path). A low-count shot is the app's to judge
     from ``hits``."""
     kind: Literal["shot_converted"]
     path: str
@@ -1027,7 +1060,7 @@ HelperEvent = Union[
     MoveRecoveredEvent, TraceFolderEvent,
     RootFoundEvent, RootChangedEvent, RootDuplicateEvent, RootRekeyedEvent, RootConfirmedEvent, RootCreatedEvent,
     RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, ClockSkewEvent, MarkerSaveEvent,
-    MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
+    TxyUnmarkedEvent, MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
     ResultFoundEvent, ResultMissingEvent, ResultSavedEvent, ResultNotSavedEvent, ResultPendingEvent,
     ConvertPrefsEvent, ConvertPlanEvent, ShotConvertedEvent, ShotWaitingEvent, ShotUnconvertibleEvent, ShotKeptEvent,
     ConvertProgressEvent, ConvertSummaryEvent, PartialRemovedEvent,
@@ -1047,7 +1080,7 @@ KINDS = frozenset({
     "trace_folder",
     "root_found", "root_changed", "root_duplicate", "root_rekeyed", "root_confirmed", "root_created",
     "root_adopted", "root_manual", "root_reassigned", "root_removed", "root_remove_refused",
-    "clock_skew", "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified",
+    "txy_unmarked", "clock_skew", "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified",
     "roots_verified", "result_found", "result_missing", "result_saved", "result_not_saved",
     "result_pending",
     "convert_prefs", "convert_plan", "shot_converted", "shot_waiting", "shot_unconvertible", "shot_kept",

@@ -2,7 +2,8 @@
 
 Live's new shots, a finished load's background save (``disk_cache_pending``), a folder's flags
 or constants still being written, a plot's result being saved (its run's save, or Make room for
-it) and presets being written are saved before HeLab quits. This window names the folders,
+it), presets being written and the converted TXY's last uses loads didn't write (Q~3) are saved
+before HeLab quits. This window names the folders,
 closes by itself when the saves end (each stops itself after the usual no-progress timeout), and
 offers Quit now, which skips them. Nothing is lost either way: the source files remain, the next
 check reads what wasn't saved, and a plot whose result wasn't saved computes it again. Results
@@ -15,7 +16,7 @@ import os
 from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
-from helab.utils.folder_cache import PRESETS_SAVING, FolderCache
+from helab.utils.folder_cache import PRESETS_SAVING, TXY_LAST_USED, FolderCache
 
 QUIT_NOW_TOOLTIP = ("Quit without waiting. The folders' TXY files stay where they are: the next check of "
                     "each reads the shots that weren't saved.")
@@ -61,6 +62,8 @@ class QuitSaveDialog(QDialog):
     def state(self, path: str) -> str:
         if path == PRESETS_SAVING and self.cache.presets_saving():
             return "saving"
+        if path == TXY_LAST_USED:
+            return "recording when HeLab's converted TXY were last used"
         if self.cache.disk_cache_saving(path):
             return "writing the disk cache"
         if ("load", self.cache.key(path)) in self.cache.jobs:
@@ -81,10 +84,14 @@ class QuitSaveDialog(QDialog):
             self._end(skipped=False)
 
     def _show(self, paths: list[str]) -> None:
-        count = len([path for path in paths if path != PRESETS_SAVING])  # (Presets: their own entry.)
+        count = len([path for path in paths if path not in (PRESETS_SAVING, TXY_LAST_USED)])  # (Their own entries.)
         saving = " and ".join(filter(None, (f"{count:,} folder{'' if count == 1 else 's'}" if count else "",
                                             "presets" if PRESETS_SAVING in paths else "")))
-        self.label.setText(f"Saving {saving} to the disk cache before HeLab quits:")
+        # (The converted TXY's index may be under the temp folder, not the disk cache: Q~3, Nit-10.)
+        doing = " and ".join(filter(None, (f"saving {saving} to the disk cache" if saving else "",
+                                           "recording when converted TXY were last used"
+                                           if TXY_LAST_USED in paths else "")))
+        self.label.setText(f"{doing[:1].upper()}{doing[1:]} before HeLab quits:")
         self.folders.clear()
         for path in paths:
             name = os.path.basename(path.rstrip("/\\")) or path

@@ -2,8 +2,10 @@
 Clear (Q12.3), and a plot's TXY source row (Q6.6, Q6.10). Synthetic files under ``tmp_path`` only."""
 from __future__ import annotations
 
+import contextlib
 import os
 from pathlib import Path
+import sqlite3
 import time
 from typing import Any
 
@@ -15,10 +17,12 @@ from pytestqt.qtbot import QtBot
 from helab.analysis.dataset_view import build_view
 from helab.convert.profile import BUILTIN_PROFILES, MATLAB_2019, DetectorProfile
 from helab.convert.user_profiles import ProfileLibrary
+from helab.convert import provenance
 from helab.io_ops import helab_txy
 from helab.io_ops.admin import cache_admin
 from helab.utils import constants
 from helab.utils.folder_cache import Dataset, store_options
+from helab.utils.number_format import byte_size
 from helab.views.CacheTab import CacheTab
 from helab.views.ConverterTab import ConverterTab, ProfileEditor
 from helab.views.plots.txy_source import TxySourceRow, folder_day, plate_note
@@ -172,19 +176,144 @@ def converted_folder(root: str, name: str, files: dict[str, bytes]) -> Path:
     return folder
 
 
+def indexed(folder: Path, shot: int, used: float = 1.0, output: str = "cache") -> None:
+    """The index's row for the folder's TXY of ``shot`` (``output`` beside: a TXY beside the raw files)."""
+    name = provenance.txy_name("m19v1", shot)
+    info = (folder / name).stat() if output != "beside" else os.stat(folder.parent)
+    record = provenance.Provenance(
+        shot=shot, raw_name=f"d{shot}.txt", raw_size=1, raw_mtime_ns=1, raw_sha256="", profile_name="matlab-2019",
+        profile_version=1, profile_hash="h", profile_tag="m19v1", profile_calibrated=False, backend="numpy",
+        output=output, txy_name=name, txy_size=info.st_size, txy_mtime_ns=info.st_mtime_ns, txy_sha256="", hits=1,
+        converted_at=used, helab_version="0", read_seconds=0.0, parse_seconds=0.0, reconstruct_seconds=0.0,
+        format_seconds=0.0, write_seconds=0.0)
+    with provenance.open_index(str(folder.parent), write=True) as index:
+        index.record(folder.name, "", "/data/" + folder.name, record, used)
+
+
 def test_the_helper_measures_and_clears_converted_txy(tmp_path: Path) -> None:
     root = str(tmp_path / "converted-txy")
+    # Indexed TXY, and the records of the builds before the index (Q26.2: measured and cleared, never read).
     one = converted_folder(root, "a" * 24, {"d_txy_helab_m19v1_1.txt": b"x" * 10, "d_txy_helab_m19v1_1.json": b"{}",
                                              "folder.json": b"{}", "notes.txt": b"theirs"})
+    indexed(one, 1, used=100.0)
     beside = converted_folder(root, "b" * 24, {"d_txy_helab_m19v1_2.json": b"{}", "folder.json": b"{}"})
+    indexed(beside, 2, used=200.0, output="beside")
+    # A TXY the index doesn't know (an index lost or set aside): measured by its file, cleared too.
     gone = converted_folder(root, "c" * 24, {"d_txy_helab_m19v1_3.txt": b"y" * 5, "d_txy_helab_m19v1_3.json": b"{}",
                                               "folder.json": b"{}"})
+    # An old build's leftover temporary folder.json: HeLab's too (so its folder can go); look-alikes stay.
+    leftover = converted_folder(root, "d" * 24, {".folder.json.0123456789abcdef.partial": b"half",
+                                                  "folder.json": b"{}"})
+    (gone / ".folder.json.0123456789abcdeF.partial").write_bytes(b"theirs")
     os.symlink(one / "d_txy_helab_m19v1_1.txt", gone / "d_txy_helab_m19v1_9.txt")
-    assert helab_txy.converted_usage(root) == {"files": 2, "bytes": 10 + 2 + 2 + 2 + 2 + 5 + 2 + 2, "folders": 3}
-    assert helab_txy.clear_converted(root) == {"files": 2, "bytes": 10 + 2 + 5 + 2}
+    aside = Path(root) / "index-damaged-20261029T120000Z-0123abcd.sqlite"
+    aside.write_bytes(b"damaged")
+    (Path(root) / "index-notes.sqlite").write_bytes(b"theirs")
+    index_bytes = os.path.getsize(Path(root) / provenance.INDEX_NAME)
+    assert helab_txy.converted_usage(root) == {
+        "files": 2, "bytes": 10 + 2 + 2 + 2 + 2 + 5 + 2 + 2 + 4 + 2 + 7 + index_bytes, "folders": 4, "last_used": 200.0,
+        "newer": 0, "clearable": 7, "clearable_bytes": 10 + 2 + 5 + 2 + 4 + 2 + 7}  # (What Clear removes, below.)
+    assert helab_txy.converted_usage(str(tmp_path / "none")) == {
+        "files": 0, "bytes": 0, "folders": 0, "last_used": None, "newer": 0, "clearable": 0, "clearable_bytes": 0}
+    assert helab_txy.clear_converted(root) == {"files": 2, "bytes": 10 + 2 + 5 + 2 + 4 + 2 + 7}
+    # Left: the index (Clear keeps it), the beside TXY's old record and folder.json: nothing more to clear.
+    after = helab_txy.converted_usage(root)
+    assert (after["files"], after["clearable"], after["clearable_bytes"]) == (0, 0, 0) and after["bytes"] > 0
+    assert not leftover.exists()
     assert sorted(os.listdir(one)) == ["folder.json", "notes.txt"]  # Another's file stays, so its folder too.
     assert sorted(os.listdir(beside)) == ["d_txy_helab_m19v1_2.json", "folder.json"]  # A beside TXY's record stays.
-    assert sorted(os.listdir(gone)) == ["d_txy_helab_m19v1_9.txt", "folder.json"]  # A link is never followed or removed.
+    assert sorted(os.listdir(gone)) == [".folder.json.0123456789abcdeF.partial", "d_txy_helab_m19v1_9.txt",
+                                        "folder.json"]  # A link is never followed or removed; a look-alike stays.
+    assert sorted(os.listdir(root)) == ["a" * 24, "b" * 24, "c" * 24, "index-notes.sqlite", provenance.INDEX_NAME]
+    # The removed TXY's row and its folder's row go; the beside TXY's row and folder stay.
+    with provenance.open_index(root, write=False) as index:  # type: ignore[union-attr]
+        assert [row[0] for row in index.folders()] == ["b" * 24]
+        assert list(index.shots("b" * 24)) == [("m19v1", 2)] and index.shots("a" * 24) == {}
+
+
+def test_a_clear_leaves_a_newer_helabs_index_alone(tmp_path: Path) -> None:
+    """An older HeLab's Clear never sets aside or removes a newer HeLab's index (its beside rows are the
+    only account of those TXY), live or set aside by a conversion: not counted as ours, said as ``newer``.
+    It removes the TXY it was asked to, and damaged set-aside indexes."""
+    root = str(tmp_path / "converted-txy")
+    folder = converted_folder(root, "a" * 24, {"d_txy_helab_m19v1_1.txt": b"x" * 10})
+    indexed(folder, 1)
+    index = Path(root) / provenance.INDEX_NAME
+    with contextlib.closing(sqlite3.connect(index)) as conn:
+        conn.execute(f"PRAGMA user_version = {provenance.SCHEMA + 1}")
+        conn.commit()
+    newer_aside = Path(root) / "index-newer-20261029T120000Z-0123abcd.sqlite"
+    newer_aside.write_bytes(b"newer")
+    damaged = Path(root) / "index-damaged-20261029T120000Z-89abcdef.sqlite"
+    damaged.write_bytes(b"damaged")
+    before = index.read_bytes()
+    usage = helab_txy.converted_usage(root)
+    assert usage["newer"] == len(before) + 5 and usage["bytes"] == 10 + 7 and usage["files"] == 1
+    assert (usage["clearable"], usage["clearable_bytes"]) == (2, 10 + 7)
+    assert helab_txy.clear_converted(root) == {"files": 1, "bytes": 10 + 7}
+    assert index.read_bytes() == before and newer_aside.exists() and not damaged.exists()
+    assert sorted(os.listdir(root)) == [newer_aside.name, provenance.INDEX_NAME]
+    assert helab_txy.converted_usage(root) == {"files": 0, "bytes": 0, "folders": 0, "last_used": None,
+                                               "newer": len(before) + 5, "clearable": 0, "clearable_bytes": 0}
+
+
+def test_a_clear_that_removed_rows_gives_their_space_back(tmp_path: Path) -> None:
+    """Review Low-6: SQLite reuses a removed row's space but never shrinks the file by itself, so a Clear
+    that removed rows ends with a VACUUM: the index is small again."""
+    root = str(tmp_path / "converted-txy")
+    folder = converted_folder(root, "a" * 24, {provenance.txy_name("m19v1", shot): b"x" for shot in range(400)})
+    with provenance.open_index(root, write=True) as index:
+        for shot in range(400):
+            info = (folder / provenance.txy_name("m19v1", shot)).stat()
+            index.record(folder.name, "", "/data/run", provenance.Provenance(
+                shot=shot, raw_name=f"d{shot}.txt", raw_size=1, raw_mtime_ns=1, raw_sha256="r" * 64,
+                profile_name="matlab-2019", profile_version=1, profile_hash="h" * 64, profile_tag="m19v1",
+                profile_calibrated=False, backend="numpy", output="cache", txy_name=provenance.txy_name("m19v1", shot),
+                txy_size=info.st_size, txy_mtime_ns=info.st_mtime_ns, txy_sha256="t" * 64, hits=1, converted_at=1.0,
+                helab_version="0", read_seconds=0.0, parse_seconds=0.0, reconstruct_seconds=0.0, format_seconds=0.0,
+                write_seconds=0.0), 1.0)
+    index_file = Path(root) / provenance.INDEX_NAME
+    full = index_file.stat().st_size
+    assert full > 100_000
+    assert helab_txy.clear_converted(root)["files"] == 400
+    assert index_file.stat().st_size < full / 4 and sorted(os.listdir(root)) == [provenance.INDEX_NAME]
+    assert provenance.read_shots(root, folder.name) == {}
+
+
+def test_the_clear_question_names_records_when_no_txy_is_left(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+                                                              tmp_path: Path) -> None:
+    """Review Nit-6: with only old records or a damaged index to clear, the question doesn't say "0 TXY files"."""
+    service, cache = frozen(monkeypatch)
+    try:
+        tab = CacheTab(cache, settings(tmp_path))
+        qtbot.addWidget(tab)
+        asked: list[str] = []
+
+        def decline(title: str, text: str, verb: str) -> bool:
+            asked.append(text)
+            return False
+        tab.confirm = decline
+        for files, clearable_bytes in ((0, 40_000), (3, 1500)):
+            tab.inventory = {"converted_txy": {"files": files, "bytes": 99_000, "clearable": 2,
+                                               "clearable_bytes": clearable_bytes}}
+            tab.clear_converted()
+        assert asked[0].startswith(f"Removes what is left of HeLab's converted TXY: old records and damaged indexes "
+                                   f"({byte_size(40_000, 'disk')}), from the cache and temp folders")
+        assert "0 TXY files" not in asked[0]
+        assert asked[1].startswith(f"Removes 3 TXY files HeLab converted, with their records ({byte_size(1500, 'disk')})")
+        tab.detach()
+    finally:
+        service.shutdown()
+
+
+def test_a_clear_keeps_the_row_of_a_txy_written_again_meanwhile(tmp_path: Path) -> None:
+    """Rows go only for the very files removed (name, size, mtime): one a conversion wrote since stays."""
+    root = str(tmp_path / "converted-txy")
+    folder = converted_folder(root, "a" * 24, {"d_txy_helab_m19v1_1.txt": b"x" * 10})
+    indexed(folder, 1)
+    with provenance.open_index(root, write=True) as index:
+        index.forget_removed(folder.name, [("d_txy_helab_m19v1_1.txt", 10, 1)])  # (Another file of that name.)
+        assert list(index.shots(folder.name)) == [("m19v1", 1)]
 
 
 def test_the_cache_tab_shows_and_clears_converted_txy(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
@@ -193,6 +322,11 @@ def test_the_cache_tab_shows_and_clears_converted_txy(qtbot: QtBot, monkeypatch:
     try:
         root = helab_txy.converted_root(store_options()["directory"])
         converted_folder(root, "a" * 24, {"d_txy_helab_m19v1_1.txt": b"x" * 1500, "d_txy_helab_m19v1_1.json": b"{}"})
+        # The temp folder's too (Q27.5): a Don't cache folder's, or one without a data root.
+        temp = converted_folder(os.path.join(constants.DIR_TEMPS, "converted-txy"), "b" * 24,
+                                {"d_txy_helab_m19v1_2.txt": b"y" * 498})
+        indexed(temp, 2, used=time.time() - 7200)
+        temp_bytes = 498 + os.path.getsize(temp.parent / provenance.INDEX_NAME)
         tab = CacheTab(cache, settings(tmp_path))
         qtbot.addWidget(tab)
         asked: list[str] = []
@@ -202,21 +336,39 @@ def test_the_cache_tab_shows_and_clears_converted_txy(qtbot: QtBot, monkeypatch:
             return True
         tab.confirm = accept
         events: list[Any] = []
-        cache_admin(store_options(), "inventory", events.append)
         request = admin(service, "inventory")
+        # (FolderCache sends the temp folder with every inventory and Clear of them: the helper never reads constants.)
+        assert request.payload["params"] == {"temps": constants.DIR_TEMPS}
+        cache_admin(store_options(), "inventory", events.append, **request.payload["params"])
         for event in (events[0], {"kind": "done"}):
             service.resultReady.emit(request, event)
         service.pending.remove(request)
-        assert tab.converted_label.text() == "1 file · 1.5 kB" and tab.converted_button.isEnabled()
+        assert tab.converted_label.text() == f"2 files · {byte_size(1502 + temp_bytes, 'disk')} · last used 2h ago"
+        assert tab.converted_button.isEnabled()
+        assert tab.converted_label.toolTip().endswith(
+            f"Cache folder: 1 file in 1 folder · {byte_size(1502, 'disk')}\n"
+            f"Temp folder: 1 file in 1 folder · {byte_size(temp_bytes, 'disk')} · last used 2h ago")
         tab.clear_converted()
-        assert "Removes 1 TXY file HeLab converted" in asked[0]
-        assert admin(service, "clear_converted_txy").payload["params"] == {}
+        assert "Removes 2 TXY files HeLab converted" in asked[0] and "from the cache and temp folders" in asked[0]
+        clear = admin(service, "clear_converted_txy")
+        assert clear.payload["params"] == {"temps": constants.DIR_TEMPS}
         tab.detach()
         cleared: list[Any] = []
-        cache_admin(store_options(), "clear_converted_txy", cleared.append)
+        cache_admin(store_options(), "clear_converted_txy", cleared.append, **clear.payload["params"])
         assert cleared[0] == {"kind": "removed", "kinds": ["converted_txy"], "paths": None, "datasets": 0,
-                              "bytes": 1502}
-        assert helab_txy.converted_usage(root)["files"] == 0
+                              "bytes": 1502 + 498}
+        assert helab_txy.converted_usage(root)["files"] == 0 and helab_txy.converted_usage(str(temp.parent))["files"] == 0
+        # Nit-4: what is left is the temp folder's index, which Clear keeps: shown, but nothing to clear.
+        events.clear()
+        cache_admin(store_options(), "inventory", events.append, **request.payload["params"])
+        tab._job = ""  # (The Clear's job is done: the tab is writable again, as Clear all shows.)
+        tab.inventory = events[0]["inventory"]
+        tab._update()
+        assert tab.clear_all_button.isEnabled()
+        index_bytes = os.path.getsize(temp.parent / provenance.INDEX_NAME)
+        assert tab.converted_label.text() == f"0 files · {byte_size(index_bytes, 'disk')}"  # (No folder left to be used.)
+        assert not tab.converted_button.isEnabled()
+        assert "keeps the index" in tab.converted_label.toolTip()
     finally:
         service.shutdown()
 

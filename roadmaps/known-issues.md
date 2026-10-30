@@ -94,10 +94,41 @@ How to use it:
 - [ ] `test_gui_responsiveness.py::test_timeout_retry_releases_dead_helper_slot_while_artifact_reader_is_blocked[2]`:
   `waitUntil timed out in 3000 milliseconds` at line 292 (the `finally`'s wait for the killed fake
   helpers to exit after `service.shutdown()`), on Windows CI run 40803552596 (`agent/txy-ship`) and
-  once locally on macOS; passed on retry. A candidate: 3 s under load.
+  once locally on macOS; passed on retry. Again on Windows: Ground CI 40861772277 (`9f0b21f`) and
+  `agent/txy-index` CI 40874212130. A candidate: 3 s under load.
 - [ ] `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`: an
   xdist worker crashed on Windows CI run 40803552596; passed on retry (no traceback; look for a
-  faulthandler dump).
+  faulthandler dump). Again: the Plotly case on `agent/byte-units` CI 40865344851 (job 123418722344,
+  gw3), and `[values1-Matplotlib-CountsPerShot]` on `agent/txy-index` CI 40883472651 (job
+  123480992297, gw1).
+- [ ] `test_io_service_run.py::test_writing_held_data_out_counts_as_progress`: `assert (2 == 1)` at
+  line 40 (two progress marks, 0.7 ms and 1.4 ms, where one is expected), Windows CI 40863356565
+  (job 123411955603, `agent/txy-index`); passed on retry. A Windows timing flake; IOService untouched.
+- [ ] `test_root_discovery.py::test_volume_check_alone_refreshes_hints_without_visiting_markers`:
+  xdist worker gw2 crashed on macOS CI 40866574094 attempt 1 (job 123422851726, `agent/txy-index`
+  `9691873`; `INTERNALERROR> AssertionError: (…, <WorkerController gw2>)`, exit code 3, no RERUN);
+  attempt 2 passed; it also reran on macOS in CI 40879735789 (job 123467827712). The test patches
+  `os.lstat` for the whole process; an unraisable reached pytest's hook, whose `tracemalloc_message`
+  ran coverage's `canonical_filename` → `os.path.realpath` → the patched `lstat` → `Failed` inside the
+  hook. Fix: patch the name the code under test calls (`data_roots`' or `infra`'s), or `gc.collect()`
+  before patching. The collected object may be one of `test_cache_switch.py`'s leaked connections
+  (next).
+- [ ] `test_cache_switch.py` leaves three `sqlite3.Connection`s unclosed (`ResourceWarning:
+  unclosed database` with `-W always::ResourceWarning`): two in
+  `test_load_that_cannot_read_the_cache_leaves_its_flag_unknown`, one in
+  `test_newer_store_is_read_but_never_written` (the store's error paths). They surface when the GC
+  collects them, in whatever test runs then. Found by the TXY Index floor on `9f0b21f`.
+- [ ] `test_folder_cache.py::test_scan_reports_cached_children_without_loading_or_probing_them`: reran
+  once on Windows CI 40894080358 (job 123518429856, `agent/txy-index` `1b71c37`): `assert scanned ==
+  [str(root)]` at line 1155, with a `helab_io_…` temp folder first. Its process-wide `os.scandir` patch
+  caught `IOService.release`'s `shutil.rmtree` on the "HeLab-artifact-cleanup" daemon thread
+  (`io_service.py:963`), the same trap as the fixed `test_folder_summary` entry below. Fix: record
+  only the test thread's calls (`threading.get_ident()`) or paths under `tmp_path`.
+- [ ] `test_folder_summary.py::test_cached_scan_age_and_failed_refresh_retain_counts` fails across
+  midnight UTC: 3 RERUNs on Windows CI 40975825607 (job 123803535756, `agent/txy-index` `c6277f0`):
+  `assert '2026-10-29' in 'Last successful status scan: 2026-10-30 00:00:19 …'` at line 286. It takes
+  the expected date from a timestamp ~35 s before the scan the tooltip shows. Fix: the date of the time
+  the tooltip shows, or a frozen clock.
 - [ ] `test_root_gui.py::test_the_gui_never_writes_the_saved_file_itself`: xdist worker gw0 crashed
   once on macOS CI (run 40790093719, `agent/quick-fixes-5` `ed0635c`, job 123172940859, 2026-10-29);
   passed on its rerun. A crash, not an assertion (a native fault in a GUI test?); cause unknown.
@@ -170,6 +201,15 @@ crashed" on CI with no traceback is usually CI's 120 s timeout, whose stacks
 ## Fixed
 
 Landed in `dev/v0.0.7`:
+
+- [x] `test_convert_helab.py::test_two_writers_side_by_side_lose_nothing` starved on Windows
+  (`IndexUnavailable … database is locked … SQLITE_BUSY` after 10.75 s; one RERUN in CI 40977028554,
+  `0b00fdc`, Windows Converter backends; earlier, with a rollback journal, CI 40879735789). SQLite's
+  write lock isn't fair, and the test's two processes wrote 150 rows each back to back, opening the
+  index per row, so WAL's `-wal` was rebuilt on each open too; a conversion opens it once per run and
+  spends a shot's work between rows. Fixed on `agent/txy-index` (landed `460360b`): WAL, then the
+  writers pause 5 ms per row (a lost row still fails it). If it reruns again: a blocking OS lock
+  around each write transaction (A30.3 notes the related connection reuse).
 
 - [x] CI's Windows test job hit its 30-min limit at 99% (run 40790912863, `02cda86`): the six
   `tests/test_typing.py` tests ran last, serially on one xdist worker (a 2-4 min tail on every OS).
