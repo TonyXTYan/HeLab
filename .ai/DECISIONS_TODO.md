@@ -316,6 +316,17 @@ Tony in Chat, 2026-10-30, on the byte units floor (block 32,
   minimum) becomes 1 GiB at the next Settings Save: "ok (a)" (the minimum is 1 GiB, Q26.1 (c); HeLab
   already uses 1 GiB from startup).
 
+Tony in Chat, 2026-10-30, via the Assistant, on the Smoke ready floor (block 34,
+[handoff](sessions/2026-10-30-claude-smoke-ready/handoff.md)):
+
+- **Q34.1** Debug › Save Window Screenshot to Temp Folder, without a dialog: yes, built.
+- **Q34.2** a folder tab's own controls keep the same IDs in every tab (only the shown tab's are on
+  screen); the tab bar's close buttons and the Debug items carry the tab's number: keep.
+- **Q34.3** Debug › Close Folder Tab › <title>, with Debug › Show Folder Tab › <title> beside it
+  ("tabs switchable by name"): yes, built.
+- **Q34.4** a conversion running at quit is waited for in the quit window (its shot finishes; Quit now
+  skips it): yes, as built.
+
 ## Converter stage 4, HeLab core (block 12)
 
 From the `agent/txy-helab-core` handoff (`sessions/2026-10-29-claude-txy-helab-core/handoff.md`).

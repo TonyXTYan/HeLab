@@ -227,7 +227,10 @@ modules are listed by hand in `PURE`; a new one is added there). Every converter
 **UI** ([app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md)): keep Qt's normal
 main-window resize and repaint handling (no `setUpdatesEnabled(False)` on the window).
 Navigation stays available during I/O. No vertical padding around panel blocks; status rows are
-one line, with detail in tooltips.
+one line, with detail in tooltips. Every interactive control has an accessible name and a stable ID
+(`helab/utils/accessible.py`, `identify`; test-enforced: `tests/test_accessible_names.py`). Never
+connect a lambda (or `partial`) that captures its sender when Qt made the sender (`findChildren`,
+`tabBar()`, `widgetForAction`): a garbage collection empties it; use a bound slot and `sender()`.
 
 **Versions and releases** ([release-and-ci](.ai/architecture/release-and-ci.md)):
 - `helab/_version.py` is the only version source (PEP 440, no `v`).

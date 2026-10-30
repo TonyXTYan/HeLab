@@ -349,6 +349,18 @@ floor (Q33.6).
 - [ ] **A33.4** After a plot floats, the settings panel's Float button floats whichever plot the panel
   names, not the one just floated; make it act on (or show) the right plot.
 
+## Smoke ready (block 34)
+
+From the Smoke ready floor's [handoff](sessions/2026-10-30-claude-smoke-ready/handoff.md) (landed `4ad8ac5`).
+
+- **A34.1 Screenshots of QtWebEngine panes on the lab PCs** paint black on screen and so in the grab
+  ([memory](memory/results/lab-pc-qtwebengine-black-render.md)); the plot's HTML export covers them.
+  No workaround built; the 3D scatter's OpenGL fallback view wasn't grabbed (M34.2).
+- **A34.2 A test guard for Qt-made senders**: fail on `X.<signal>.connect(lambda …)` whose lambda
+  refers to `X` where `X` comes from `findChildren`/`findChild`/`tabBar()`/`widgetForAction` (Wren's
+  AST scan finds 14 such connections, all safe today). It backs AGENTS.md's rule; a sender reached
+  through another name would escape it.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

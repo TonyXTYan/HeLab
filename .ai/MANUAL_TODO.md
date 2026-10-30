@@ -244,6 +244,20 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
 - [ ] **M23.3 Damaged raw files on the acquisition PC**: a deliberately truncated raw file is reported
   damaged after ~20 s with one notification; later shots convert.
 
+- [ ] **M34.1 Accessibility on Windows** (block 34; a lab PC): Accessibility Insights or `inspect.exe`
+  on HeLab: the toolbar's Live shows AutomationId `live` and Name "Live", a script's Plot button
+  `run_helab.counts_per_shot_Plot` / "Plot Counts per shot", a plot tab's close button
+  `close_plot_tab_1`; Debug › Run Plot runs a plot.
+- [ ] **M34.2 Screenshots on a lab PC**: Debug › Save Window Screenshot… with a PyQtGraph plot and a 3D
+  scatter open: what each pane looks like in the PNG.
+- [ ] **M34.3 The runner's view on the Mac** (the built `.app`): `app_ax_find` finds "Folder path" and
+  `run_…` by AXIdentifier; the Group combo's AXTitle is its current group (expected) and its
+  AXIdentifier `script_group`; `app_menu` reaches Debug › Run Plot › … with its items filled (an item
+  pressed without the menu opening may be stale and then does nothing); whether a menu item's
+  objectName reaches accessibility.
+- [ ] **M34.4 `--geometry` and Dump State on the Mac**: `helab --geometry 1600x928+0+39` opens the
+  window there (content 1600×928, the frame's top-left at 0,39); Debug › Dump State… writes a JSON
+  naming the open folder and plot tabs.
 - [ ] **M32.1 Byte units on Windows** (Q26.1, block 32; a lab PC or a CI build): Settings → Cache
   shows "8.0 GiB" for a fresh setting, and an existing 8 GB setting shows "7.5 GiB" and stays
   8 000 000 000 after Save; Folder details' rate reads MiB/s; the status bar's RAM reads GiB.
