@@ -42,7 +42,12 @@ def window(qtbot: QtBot) -> Iterator[HelabMainWindow]:
     qtbot.waitUntil(lambda: isinstance(made.tab_widget.currentWidget(), FolderExplorer), timeout=10_000)
     yield made
     made.close()
-    qtbot.waitUntil(lambda: made._closing, timeout=30_000)
+    try:
+        qtbot.waitUntil(lambda: made._closing, timeout=30_000)
+    except Exception as error:  # Name what quitting still waited for (a Windows CI rerun, handoff A~5).
+        from helab.utils.folder_cache import get_folder_cache
+        from helab.utils.io_service import get_io_service
+        raise AssertionError(f"Quitting still waits for {get_folder_cache(get_io_service()).quit_entries()}") from error
 
 
 def load(window: HelabMainWindow, qtbot: QtBot, run: Path) -> None:

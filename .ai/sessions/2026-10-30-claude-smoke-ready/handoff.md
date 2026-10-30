@@ -297,6 +297,15 @@ Merged `origin/dev/v0.0.7` at c492242 (TXY Index) first: one conflict, `QuitSave
   failing, frames all in QtWebEngineCore under an NSRunLoop source), not Python and not HeLab's
   code. The test opens a few Plotly panes (3D scatter, Counts per shot in Plotly) in one window, so
   it shares that exposure; a fix belongs with the existing entries (QtWebEngine in tests).
+- **A~5** (for known-issues): CI 40995895223 (4620adc), Windows Tests (2/2), job 123868892347:
+  `test_debug_runner_menu.py::test_show_and_close_folder_tab` reran once. Its body passed; the
+  `window` fixture's teardown failed (`waitUntil timed out in 30000 milliseconds`,
+  `test_debug_runner_menu.py:45`): after the test closed the loaded folder's tab, the window's close
+  didn't finish quitting within 30 s, so the quit window was waiting for something (most likely
+  that folder's disk cache save, still running on a slow Windows runner; a save waits up to its
+  no-progress timeout). Locally the save ends within milliseconds of the tab closing (3 runs), so it
+  didn't reproduce. The teardown now names `quit_entries()` when it times out, so a recurrence says
+  what the quit waited for (committed locally, not pushed).
 - **Q~2, decided (Tony: keep shared IDs):** a folder tab's own controls keep the same IDs in every tab
   (`folder_path`, `folder_tree`; only the shown tab's are on screen); the tab bar's close buttons and
   the Debug items carry the tab's number.
