@@ -154,7 +154,8 @@ class SettingsDialog(QDialog):
 
 
 
-        self.dir_scroll_layout.addWidget(QLabel("DIR_TEMPS:"))
+        # (Read once at start, constants.DIR_TEMPS; worded like the cache folder's row: A33.3.)
+        self.dir_scroll_layout.addWidget(QLabel("Temp folder (a change applies at the next start):"))
         self.dir_scroll_layout.addWidget(self.dir_temps_edit)
         dir_temps_btn_layout = QHBoxLayout()
         dir_temps_btn_layout.addWidget(self.dir_temps_browse_btn)
@@ -290,7 +291,7 @@ class SettingsDialog(QDialog):
         super().done(a0)
 
     def browse_dir_temps(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select DIR_TEMPS Folder")
+        folder = QFileDialog.getExistingDirectory(self, "Choose the temp folder")
         if folder:
             self.dir_temps_edit.setText(folder)
 
