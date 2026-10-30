@@ -29,9 +29,9 @@ def load_tool() -> ModuleType:
 dev_app = load_tool()
 
 
-def checkout(tmp_path: Path, *, python: bool = True) -> Path:
+def checkout(tmp_path: Path, *, python: bool = True, name: str = "check out") -> Path:
     """A fake checkout whose ``venv/bin/python`` prints where it runs, its arguments and ``DEV_APP_TEST``."""
-    folder = tmp_path / "check out"
+    folder = tmp_path / name
     (folder / "helab").mkdir(parents=True)
     (folder / "helab" / "_version.py").write_text('__version__ = "1.2.3a4"\n', encoding="utf-8")
     if python:
@@ -95,6 +95,28 @@ def test_only_a_stub_of_its_own_is_replaced(tmp_path: Path) -> None:
     assert not (other / "Contents" / "Resources" / "stale.txt").exists()
 
 
+def test_a_malformed_info_plist_is_no_stub_of_its_own(tmp_path: Path) -> None:
+    app = tmp_path / "HeLab-dev.app"
+    (app / "Contents").mkdir(parents=True)
+    (app / "Contents" / "Info.plist").write_text('<?xml version="1.0"?><plist><dict><key>HeLab', encoding="utf-8")
+    assert not dev_app.is_stub(app)
+    with pytest.raises(ValueError, match="isn't a stub"):
+        dev_app.build(app, checkout(tmp_path))
+
+
+@pytest.mark.parametrize("bad", ['quo"te', "back\\slash", "new\nline", "line\u2028break"])
+def test_a_path_the_launcher_cant_quote_is_refused(tmp_path: Path, bad: str) -> None:
+    with pytest.raises(ValueError, match="quote, backslash or control"):
+        dev_app.build(tmp_path / "HeLab-dev.app", tmp_path / bad)
+    env_file = tmp_path / f"env-{bad}.sh"
+    try:
+        env_file.write_text("", encoding="utf-8")
+    except OSError:  # (Not a name this file system takes: nothing to refuse.)
+        return
+    with pytest.raises(ValueError, match="quote, backslash or control"):
+        dev_app.build(tmp_path / "HeLab-dev.app", checkout(tmp_path), env_file=str(env_file))
+
+
 def test_a_missing_env_file_is_refused(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="no such file"):
         dev_app.build(tmp_path / "HeLab-dev.app", checkout(tmp_path), env_file=str(tmp_path / "none.sh"))
@@ -105,7 +127,7 @@ needs_sh = pytest.mark.skipif(os.name == "nt" or shutil.which("sh") is None, rea
 
 def launch(app: Path, *args: str) -> subprocess.CompletedProcess[str]:
     env = {key: value for key, value in os.environ.items() if key != "DEV_APP_TEST"}
-    env["HELAB_DEV_APP_NO_ALERT"] = "1"
+    env["HELAB_DEV_APP_QUIET"] = "1"
     return subprocess.run(["sh", str(app / "Contents" / "MacOS" / "HeLab-dev"), *args], capture_output=True,
                           text=True, env=env, cwd=str(app.parent), timeout=30)
 
@@ -123,6 +145,25 @@ def test_the_launcher_runs_the_checkout_with_its_arguments_and_env_file(tmp_path
     assert Path(lines[0].removeprefix("cwd=")).resolve() == source.resolve()
     assert lines[1:] == ["arg=-m", "arg=helab", "arg=--geometry", "arg=1600x928+0+39", "arg=two words",
                          "env=from the env file"]
+
+
+@needs_sh
+def test_the_env_file_is_sourced_in_the_checkout_and_a_missing_one_is_said(tmp_path: Path) -> None:
+    """Sourced after the ``cd``, so a relative path in it is the checkout's; gone at launch, the stub
+    says so and HeLab doesn't start. A checkout path with ``$`` and a backtick stays as it is."""
+    source = checkout(tmp_path, name="check $HOME `out`")
+    env_file = tmp_path / "floor-env.sh"
+    env_file.write_text('export DEV_APP_TEST="$(pwd)/folders"\n', encoding="utf-8", newline="\n")
+    app = dev_app.build(tmp_path / "HeLab-dev.app", source, env_file=str(env_file))
+    done = launch(app)
+    assert done.returncode == 0, done.stderr
+    lines = done.stdout.splitlines()
+    assert Path(lines[0].removeprefix("cwd=")).resolve() == source.resolve()
+    assert Path(lines[-1].removeprefix("env=")).resolve() == (source / "folders").resolve()
+    env_file.unlink()
+    done = launch(app)
+    assert done.returncode == 1 and done.stdout == ""
+    assert f"the env file {env_file.resolve()} is missing" in done.stderr
 
 
 @needs_sh

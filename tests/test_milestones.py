@@ -20,7 +20,9 @@ from helab.views.FolderExplorer import FolderExplorer
 from test_analysis import Blocking, Harness, dataset, harness  # noqa: F401
 from test_cache_first import browser, show_cached  # noqa: F401
 from test_convert_helab import raw_bytes
-from test_live import open_loaded, run, service  # noqa: F401
+from test_live import (  # noqa: F401
+    age_folder, checks, next_request, open_loaded, replay, run, service, write_shot,
+)
 from test_live_convert import cycle, of, one_worker, watching_raw_folder, write_raw  # noqa: F401
 
 
@@ -74,6 +76,23 @@ def test_a_line_without_a_milestone_has_none() -> None:
     assert parse_milestone("2026-10-30 10:00:00,000 INFO [1 MainThread] root: Logging to /x") is None
     assert parse_milestone("MILESTONES load_done") is None
     assert parse_milestone("MILESTONE") is None
+    # Another logger's line that holds the word (a folder named so) isn't one, nor is a line with junk.
+    assert parse_milestone("2026-10-30 10:00:00,000 INFO [1 MainThread] root: Live on /data/MILESTONE load_done") is None
+    assert parse_milestone("... INFO [1 MainThread] root: MILESTONE load_done folder=a") is None
+    assert parse_milestone("MILESTONE load_done folder=a junk tail") is None
+    assert parse_milestone('MILESTONE load_done folder="a') is None
+    assert parse_milestone("... INFO [1 MainThread] helab.milestone: MILESTONE load_done folder=a") == (
+        "load_done", {"folder": "a"})
+
+
+@pytest.mark.parametrize("separator", ["\n", "\r", "\x0b", "\x0c", "\x1c", "\x1d", "\x1e", "\x85", "\u2028",
+                                       "\u2029"])
+def test_a_value_never_splits_the_line(separator: str) -> None:
+    """Every character ``str.splitlines`` breaks at is escaped in a value (a folder named with one)."""
+    text = f"/data/a{separator}b"
+    message = milestone("load_done", folder=text, shots=1)
+    assert message.splitlines() == [message]
+    assert parse_milestone(message) == ("load_done", {"folder": text, "shots": 1})
 
 
 def test_the_log_file_line_reads_back(tmp_path: Path) -> None:
@@ -127,6 +146,30 @@ def test_a_folder_loaded_from_its_files_says_shots_events_and_source(
     seconds = line.pop("seconds")
     assert isinstance(seconds, float) and 0 <= seconds < 60
     assert line == {"folder": str(run), "shots": 2, "events": 4, "source": "folder", "live": False}
+    explorer.close_cleanup()
+
+
+def test_a_live_shot_and_lives_save_say_so(
+        qtbot: QtBot, service: IOService, run: Path, tmp_path: Path, milestones: pytest.LogCaptureFixture) -> None:
+    """A Live check that reads a new shot is ``live=true``; Live's save (at Live off) is ``source=save``,
+    never taken for a check of the folder."""
+    path = str(run)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    cache = explorer.model.cache
+    assert explorer.start_live()
+    next_request(qtbot, explorer, path)
+    replay(cache, path, tmp_path)  # (Nothing new: no line.)
+    write_shot(run, 3)
+    age_folder(run, 60)
+    checks(qtbot, explorer, path, tmp_path)
+    explorer.stop_live()
+    save = next_request(qtbot, explorer, path)
+    assert save.payload.get("save_memory")
+    replay(cache, path, tmp_path)
+    qtbot.waitUntil(lambda: not explorer.live_control._live_sessions)
+    lines = logged(milestones, "load_done")
+    assert [(line["folder"], line["shots"], line["source"], line["live"]) for line in lines] == [
+        (path, 2, "folder", False), (path, 3, "folder", True), (path, 3, "save", True)]
     explorer.close_cleanup()
 
 

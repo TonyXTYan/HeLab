@@ -4042,8 +4042,9 @@ class FolderCache(QObject):
                 app_log.milestone("load_done", folder=job.path, shots=len(job.data),
                                   events=sum(len(array) for array in job.data.values()),
                                   seconds=time.monotonic() - job.created,
-                                  source="cache" if job.operation == "cached" else "folder" if job.clock.total_bytes
-                                  else "check", live=bool(job.payload.get("live")))
+                                  source="save" if job.payload.get("save_memory") else "cache"
+                                  if job.operation == "cached" else "folder" if job.clock.total_bytes else "check",
+                                  live=bool(job.payload.get("live") or job.payload.get("save_memory")))
                 event = {**event, "dataset": entry}
                 # Subscribers pin the dataset during delivery before eviction.
                 for request in tuple(job.subscribers.values()):

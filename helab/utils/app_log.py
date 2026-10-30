@@ -52,8 +52,15 @@ _BARE = re.compile(r"[A-Za-z0-9_.:/+-]+")
 _INT = re.compile(r"-?\d+")
 _FLOAT = re.compile(r"-?\d+\.\d+")
 _LITERALS: dict[str, bool | None] = {"true": True, "false": False, "null": None}
-_MILESTONE_LINE = re.compile(rf"\b{MILESTONE} ([a-z][a-z0-9_]*)((?: [a-z][a-z0-9_]*=\S.*)?)$")
-_FIELD = re.compile(r'([a-z][a-z0-9_]*)=("(?:[^"\\]|\\.)*"|\S+)')
+_VALUE = r'"(?:[^"\\]|\\.)*"|[^\s"]+'
+_FIELD = re.compile(rf"([a-z][a-z0-9_]*)=({_VALUE})")
+# The message alone, or a log line whose logger is ``helab.milestone``: never another line that
+# happens to hold the word (a folder named ".../MILESTONE load_done"). Every field, nothing between.
+_MILESTONE_LINE = re.compile(rf"(?:^|\s{re.escape(MILESTONE_LOGGER)}: ){MILESTONE} ([a-z][a-z0-9_]*)"
+                             rf"((?: [a-z][a-z0-9_]*=(?:{_VALUE}))*)$")
+# What ``str.splitlines`` breaks a line at beyond what JSON escapes: escaped too, so a value never
+# splits the log line.
+_LINE_BREAKS = {0x85: "\\u0085", 0x2028: "\\u2028", 0x2029: "\\u2029"}
 
 MilestoneValue = str | int | float | bool | None
 
@@ -103,12 +110,12 @@ def _milestone_value(value: MilestoneValue) -> str:
         return f"{value:.3f}" if math.isfinite(value) else "null"
     if _BARE.fullmatch(value) and value not in _LITERALS and not _FLOAT.fullmatch(value) and not _INT.fullmatch(value):
         return value
-    return json.dumps(value, ensure_ascii=False)
+    return json.dumps(value, ensure_ascii=False).translate(_LINE_BREAKS)
 
 
 def parse_milestone(line: str) -> tuple[str, dict[str, MilestoneValue]] | None:
-    """A log line's milestone (``milestone``'s form) as its event and fields, typed back; None for a
-    line that has none."""
+    """A milestone (``milestone``'s message, or its line in the log file) as its event and fields,
+    typed back; None for any other line, or one not wholly in that form."""
     match = _MILESTONE_LINE.search(line.rstrip("\r\n"))
     if match is None:
         return None

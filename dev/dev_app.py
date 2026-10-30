@@ -34,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from xml.parsers.expat import ExpatError
 
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_ID = "au.edu.anu.he-bec-lab"
@@ -47,18 +48,27 @@ MARKER = "HeLabCheckout"  # Info.plist key: the checkout the stub runs (and what
 LSREGISTER = ("/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/"
               "Support/lsregister")
 
-# The executable. ``-psn_…`` (a process serial number some launchers still pass) is dropped: HeLab
-# would take it for its own argument. ``HELAB_DEV_APP_NO_ALERT`` set: no alert without a venv (tests).
+# The executable. A failure (no checkout, env file or venv) is said on stderr, in the system log
+# (``logger``; ``log show --predicate 'senderImagePath ENDSWITH "logger"'``) and in an alert, since
+# under ``open`` stderr goes nowhere; ``HELAB_DEV_APP_QUIET`` set: stderr only (tests). The env file is
+# sourced in the checkout, so a relative path in it is the checkout's. ``-psn_…`` (a process serial
+# number some launchers still pass) is dropped: HeLab would take it for its own argument. Paths are
+# checked when the stub is built (``plain``), so none can break out of the quoting.
 LAUNCHER = """#!/bin/sh
-# {name}: runs HeLab from the checkout {checkout} (made by dev/dev_app.py).
+# {name}: runs HeLab from the checkout in Info.plist's HeLabCheckout (made by dev/dev_app.py).
 CHECKOUT={checkout_q}
 PYTHON="$CHECKOUT/venv/bin/python"
-{env_line}
-if [ ! -x "$PYTHON" ]; then
-    echo "{name}: $PYTHON not found: set up that checkout's venv (README)" >&2
-    [ -n "$HELAB_DEV_APP_NO_ALERT" ] || /usr/bin/osascript -e "display alert \\"{name}\\" message \\"$PYTHON not found: set up that checkout's venv (README).\\"" >/dev/null 2>&1
+fail() {{
+    echo "{name}: $1" >&2
+    if [ -z "$HELAB_DEV_APP_QUIET" ]; then
+        /usr/bin/logger -t "{name}" "$1" >/dev/null 2>&1
+        /usr/bin/osascript -e "display alert \\"{name}\\" message \\"$1\\"" >/dev/null 2>&1
+    fi
     exit 1
-fi
+}}
+cd "$CHECKOUT" || fail "the checkout $CHECKOUT can't be opened"
+{env_line}
+[ -x "$PYTHON" ] || fail "$PYTHON not found: set up that checkout's venv (README)"
 for arg do
     shift
     case $arg in
@@ -66,7 +76,6 @@ for arg do
         *) set -- "$@" "$arg" ;;
     esac
 done
-cd "$CHECKOUT" || exit 1
 exec "$PYTHON" -m helab "$@"
 """
 
@@ -110,10 +119,20 @@ def info_plist(checkout: Path, bundle_id: str, name: str, env_file: str) -> dict
     }
 
 
+def plain(path: str, what: str) -> str:
+    """``path``, if the launcher can quote it safely (no ``"``, backslash or control character, which
+    the alert's AppleScript string or a line of the script would take as its own)."""
+    if any(char in '"\\' or ord(char) < 0x20 or char in "\x7f\x85\u2028\u2029" for char in path):
+        raise ValueError(f"{what} {path!r}: a quote, backslash or control character in it; move it first")
+    return path
+
+
 def launcher(checkout: Path, name: str, env_file: str) -> str:
-    env_line = (f"set -a; . {shlex.quote(env_file)} || exit 1; set +a" if env_file
+    env_line = (f"ENV_FILE={shlex.quote(env_file)}\n"
+                '[ -r "$ENV_FILE" ] || fail "the env file $ENV_FILE is missing"\n'
+                'set -a; . "$ENV_FILE" || fail "the env file $ENV_FILE failed"; set +a' if env_file
                 else "# (No --env-file: HeLab's own settings, cache and app folders.)")
-    return LAUNCHER.format(name=name, checkout=checkout, checkout_q=shlex.quote(str(checkout)), env_line=env_line)
+    return LAUNCHER.format(name=name, checkout_q=shlex.quote(plain(str(checkout), "The checkout")), env_line=env_line)
 
 
 def is_stub(app: Path) -> bool:
@@ -121,7 +140,7 @@ def is_stub(app: Path) -> bool:
     try:
         with open(app / "Contents" / "Info.plist", "rb") as file:
             return MARKER in plistlib.load(file)
-    except (OSError, plistlib.InvalidFileException, ValueError):
+    except (OSError, plistlib.InvalidFileException, ValueError, ExpatError):
         return False
 
 
@@ -129,9 +148,10 @@ def build(out: Path, checkout: Path = ROOT, tag: str = "", env_file: str = "") -
     """Write the stub at ``out`` (replacing a stub of ours there, nothing else) and return it."""
     bundle_id, name = identity(tag)
     if env_file:
-        env_file = str(Path(env_file).expanduser().resolve())
+        env_file = plain(str(Path(env_file).expanduser().resolve()), "--env-file")
         if not os.path.isfile(env_file):
             raise ValueError(f"--env-file {env_file}: no such file")
+    plain(str(checkout), "The checkout")
     if out.exists() and not is_stub(out):
         raise ValueError(f"{out} exists and isn't a stub made by this tool: not replaced")
     out.parent.mkdir(parents=True, exist_ok=True)
