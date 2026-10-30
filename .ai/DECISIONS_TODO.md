@@ -296,6 +296,8 @@ polish" floor after Smoke ready lands (Q33.6):
   "Debug - validate tab status") go.
 - **Q33.6** go for the UI polish floor (Q33.1–Q33.5, A33.1–A33.4), after Smoke ready lands, since it
   touches the same widgets.
+- **Q23.7** `helab convert --once` calls a raw file damaged only at 60 s by its mtime (its settle
+  age), not 20 s: "c" (Tony, 2026-10-30). Live and `--watch` keep 20 s with two checks.
 
 Tony in Chat, 2026-10-30, on the byte units floor (block 32,
 [handoff](sessions/2026-10-29-claude-byte-units/handoff.md)):
@@ -364,11 +366,6 @@ Q12.7 confirmed as Q18.6 (the patterns now tagged).
 - **Q23.6 A beside TXY from another computer with a colliding `u` tag** would be taken as current (no
   record there). Proposed (revised 2026-10-30, explained to Tony): `u` + 12 hex digits now (≈1e-13;
   existing custom-profile beside TXY convert again once), rather than accept (≈1e-6).
-- **Q23.7 `helab convert --once` and damaged files**: one look has no "first seen", so `--once` goes
-  by the mtime alone (≥ 20 s; its settle rule is 60 s by the mtime alone too). Alternative: `--once`
-  never reports damaged. Proposed (revised 2026-10-30, explained to Tony): `--once` calls a file
-  damaged only at 60 s, its settle age, so a stale share time or a slow clock rarely gives a false one.
-
 ## Versions across machines (block 27)
 
 Tony asked (2026-10-29) how robust HeLab is when the acquisition PC runs an older frozen build, his
