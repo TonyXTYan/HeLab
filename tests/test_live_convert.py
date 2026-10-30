@@ -361,6 +361,32 @@ def test_a_damaged_file_is_said_once_and_survives_auto_convert_off_and_on(
     explorer.close_cleanup()
 
 
+def test_a_file_unconvertible_under_one_profile_is_tried_under_another(
+        qtbot: QtBot, service: IOService, tmp_path: Path, notifier: FakeNotifier,
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    """Codex 4425255663: the unconvertible list is the profile's, as the done one is. Under another profile
+    a damaged file is read again (still damaged here: said again on the Live line, notified only once,
+    as the notification is per file, size and date)."""
+    monkeypatch.setattr(convert, "DAMAGED_SECONDS", 0.0)
+    explorer, path = watching_raw_folder(qtbot, tmp_path)
+    cycle(qtbot, explorer, path, tmp_path)
+    write_raw(Path(path), 4, b"\r\n\r\n")
+    cycle(qtbot, explorer, path, tmp_path)
+    _, sent = cycle(qtbot, explorer, path, tmp_path)
+    assert [event["shot"] for event in of(sent, "shot_unconvertible")] == [4] and len(notifier.sent) == 1
+    _, sent = cycle(qtbot, explorer, path, tmp_path)
+    assert not of(sent, "shot_unconvertible")  # (Skipped under the same profile.)
+    explorer.model.cache.set_convert_profile(MATLAB_2023_LAB_EDIT)
+    # (Its first conversion under that profile has no lists of its own: the file waits one tick, unseen.)
+    retried = [event for _ in range(2) for event in of(cycle(qtbot, explorer, path, tmp_path)[1], "shot_unconvertible")]
+    assert [event["shot"] for event in retried] == [4] and retried[0]["reason"] == "damaged"
+    session = explorer.live
+    assert session is not None and session.convert is not None and session.convert.damaged == {"d4.txt"}
+    assert len(notifier.sent) == 1
+    explorer.stop_live(save=False)
+    explorer.close_cleanup()
+
+
 def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService) -> None:
     cache = folder_cache.get_folder_cache(service)
     path = FolderCache.key("/data/run")
@@ -380,9 +406,11 @@ def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService) -> N
     app_settings().setValue(CONVERT_BACKEND_SETTING, "reference")
     assert cache.convert("t", path)
     payload = next(r for r in service.pending if r.operation == "convert").payload
+    # Nor its unconvertible ones (Codex 4425255663): a file damaged for one profile's trigger channel is tried
+    # again under the corrected one.
     assert payload["profile"] == MATLAB_2023_LAB_EDIT.to_dict() and "done" not in payload and "kept" not in payload
-    assert payload["backend"] == "reference"
-    assert payload["seen"] and payload["skip"]
+    assert payload["backend"] == "reference" and "skip" not in payload
+    assert payload["seen"]
     cache.cancel("t")
 
 
