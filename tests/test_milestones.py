@@ -17,6 +17,7 @@ from helab.utils import app_log
 from helab.utils.app_log import MILESTONE_LOGGER, MilestoneValue, milestone, parse_milestone
 from helab.utils.io_service import IOService
 from helab.views.FolderExplorer import FolderExplorer
+import test_app_log
 from test_analysis import Blocking, Harness, dataset, harness  # noqa: F401
 from test_cache_first import browser, show_cached  # noqa: F401
 from test_convert_helab import raw_bytes
@@ -113,6 +114,25 @@ def test_the_log_file_line_reads_back(tmp_path: Path) -> None:
     assert len(lines) == 1 and f" INFO [{os.getpid()} " in lines[0] and f" {MILESTONE_LOGGER}: MILESTONE " in lines[0]
     assert parse_milestone(lines[0]) == ("convert_done", {"folder": str(tmp_path / "a run"), "by": "live",
                                                           "converted": 2, "seconds": 0.5})
+
+
+@pytest.mark.parametrize("check", ["milestone", "own file"])
+def test_the_log_file_tests_hold_after_an_info_line_at_warning(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, check: str) -> None:
+    """Regression: an INFO line logged while the root logger is at WARNING caches "INFO is off" in it,
+    which only ``setLevel`` clears; a test that raised the level by setting the attribute then wrote
+    an empty log file (``test_each_helab_writes_its_own_log_file``, seen once in a -n 4 run)."""
+    root = logging.getLogger()
+    level = root.level
+    root.setLevel(logging.WARNING)
+    logging.info("cached as off")
+    try:
+        if check == "milestone":
+            test_the_log_file_line_reads_back(tmp_path)
+        else:
+            test_app_log.test_each_helab_writes_its_own_log_file(tmp_path, monkeypatch)
+    finally:
+        root.setLevel(level)
 
 
 # plot_done

@@ -119,7 +119,8 @@ def test_each_helab_writes_its_own_log_file(tmp_path: Path, monkeypatch: pytest.
     """Two HeLabs at once never share a file (a Windows rollover in one would lose the other's lines):
     each writes helab-<its process ID>.log, rotated on its own."""
     root = logging.getLogger()
-    monkeypatch.setattr(root, "level", logging.INFO)
+    level = root.level
+    root.setLevel(logging.INFO)  # (Not the attribute: setLevel clears the loggers' cached "INFO is off".)
     handlers = []
     try:
         for pid in (101, 202):
@@ -137,3 +138,4 @@ def test_each_helab_writes_its_own_log_file(tmp_path: Path, monkeypatch: pytest.
         for handler in handlers:
             root.removeHandler(handler)
             handler.close()
+        root.setLevel(level)
