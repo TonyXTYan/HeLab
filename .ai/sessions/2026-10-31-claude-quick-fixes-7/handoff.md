@@ -216,3 +216,43 @@ None touches the files this brief changed.
 `done`/`kept`/`skip` only for the same profile, and under another `seen` without its reasons: a file waiting or
 unconvertible under one profile is read again under the next)". `converter.md`'s `seen` row, if it names the
 reasons, the same.
+
+# Round 5 (Codex's fifth review 5715183970 on `b836b56`)
+
+Detail in `notes.md` (Round 5). Round 4's CI and its RERUN: above (Round 4, CI reruns).
+
+| Finding | Commit | Files |
+|---|---|---|
+| P1 4425801677, cached quick check reused RAM of another kind | `8e11ffe` | `helab/io_ops/loading.py`, `tests/test_txy_sources.py` |
+| P2 4425801688, HeLab only: MATLAB-origin cached shots "missing" | `924109a` | `helab/io_ops/loading.py`, `tests/test_txy_sources.py` |
+
+8. **Verified first: it can happen.** Two HeLab instances on one computer share the store (no single-instance
+   guard), and the signature is the folder's MATLAB TXY, so B saving shot 3 from HeLab's TXY leaves it as it was.
+   Reproduced: "Folder not modified since cached", `memory_shots` [1, 2, 3] with origins {3: helab}. **Fix:** the
+   quick check applies only while every shot held and cached has the same (size, mtime) and kind in both; else
+   the load compares each file (RAM reused only for matching shots).
+9. `listed` also has the shots whose MATLAB TXY are listed, so a shot HeLab only leaves out isn't missing. **The
+   user sees** the HeLab subset (shots and total HeLab's, the source line HeLab only, the folder's status still its
+   MATLAB TXY count) and, in Folder details' load line, "N files removed" for the shots left out (Q~3).
+
+**Tests (fail on `3a30bbd`, pass now):** `test_the_quick_check_never_reuses_ram_of_another_kind` (3 in
+`memory_shots`); `test_helab_only_leaves_out_matlabs_shots_without_a_mismatch` (`shots_missing` [1, 2]).
+
+**Checks:** full suite -n 12: 8509 passed, 672 skipped, no RERUN; five type checks clean.
+
+**Pushed:** `dev/v0.0.7` with `8e11ffe`, `924109a` and this session commit (with `3a30bbd` before them); hash, CI
+run and its job logs' RERUNs in the report.
+
+**Doc proposals:** `cache-store.md` or `io-and-browsing.md`, the cached quick check: "the held dataset is the
+cached one only while its signature matches **and** every shot both have has the same (size, mtime) and kind
+(another HeLab on this computer may have saved the folder with a shot from another TXY)". `converter.md`'s TXY
+sources: "HeLab only leaves out shots that have only MATLAB's TXY: not missing (no mismatch), removed from the
+data shown".
+
+**Q~3** (Tony, wording): after switching to HeLab only, Folder details' load line counts the shots left out as
+"N files removed". Proposed: say "N left out (TXY source)" for them, apart from files really gone (needs a
+`load_counts` key and `FolderExplorer.load_count_details`).
+
+**Memory note:** my Claude memory folder links to the repo's `.ai/memory/`, so a memory I saved in round 4
+(`feedback_ci_reruns_in_logs.md` and its `MEMORY.md` line) landed there, uncommitted. Per CoCo, left as is, not
+staged; CoCo folds it in at the tidy-up.

@@ -136,3 +136,29 @@ Codex accepted round 3 and found one more, next to round 2's item 5. Same rules 
 
 Commit on `dev/v0.0.7` (message names comment 4425610377), full suite + five type checks, push once, a "Round 4"
 section in `handoff.md`, then report back: `maestri ask "CoCo" "QF7 round 4 pushed at <hash>, CI <run id>"`.
+
+## Round 5: Codex's fifth review (review 5715183970, on `b836b56`)
+
+Codex accepted round 4 and found two more in `helab/io_ops/loading.py` (CoCo checked the second against the code;
+check the first yourself before fixing: if it can't happen, say why in the handoff and in the reply). Also allowed:
+`helab/io_ops/loading.py`, `helab/utils/folder_cache.py` and their tests.
+
+8. **P1, `loading.py` cached quick check (comment 4425801677).** Dataset signatures describe only the folder's MATLAB
+   TXY, so when **another HeLab instance** converts shots this one holds from MATLAB and saves the dataset with HeLab
+   origins, `base_signature` is unchanged; the quick check validates the newer disk row against the files but never
+   compares its fingerprints/origins with the RAM base, and `memory_shots` makes `FolderCache` reuse the MATLAB arrays
+   while adopting the cached HeLab fingerprints and origins (data labelled HeLab-origin that is MATLAB's; with a
+   non-matlab-2019 profile the arrays genuinely differ). Fix: before the shortcut, compare the held fingerprints and
+   `memory_origins` with the cached dataset's; on any difference, don't reuse RAM for those shots. Test: two-instance
+   scenario simulated (RAM base from MATLAB, disk row updated with HeLab origins): the shots are read, not reused.
+9. **P2, `loading.py` `stop_if_missing` (comment 4425801688).** `listed` comes from the source-filtered `chosen`, so
+   after Settings › TXY converter › "Tabs and Live read" → HeLab only, cached MATLAB-origin shots without a current
+   HeLab TXY count as deleted and the load stops with `shots_missing` (a mismatch hold), though their MATLAB files are
+   still there. Fix: check missing shots against the unfiltered listing (MATLAB TXY that exist), so a shot merely left
+   out by the source mode isn't "missing"; the load gives the HeLab subset. Say what the user sees then (counts,
+   the source line). Test: cached MATLAB shots, switch to helab-only with HeLab TXY for some: loads that subset, no
+   `shots_missing` (fails on today's code).
+
+Commit each (messages name the comment IDs), full suite + five type checks, read **every** job log of the CI run you
+report (RERUNs with reasons), push once, a "Round 5" section in `handoff.md`, then report back:
+`maestri ask "CoCo" "QF7 round 5 pushed at <hash>, CI <run id>"`.

@@ -239,3 +239,50 @@ conversion, whose `seen` has its fingerprint, `""` reasons and its first-seen ti
 
 Full suite -n 12: 8507 passed, 672 skipped, 2 warnings (as before) in 137.68 s, no RERUN
 (`.ai/temp/qf7-suite-r4.log`); the five type checks clean. Round 3's CI run 41084197666 passed.
+
+# Round 5 (Codex's fifth review 5715183970 on `b836b56`)
+
+## 8. P1 `loading._unchanged_since_cache` reused RAM of another kind (comment 4425801677)
+
+**Can it happen? Yes, verified before the fix.** Two HeLab instances on one computer share the store (no
+single-instance guard: no QLockFile/QLocalServer in `helab/`). A dataset's signature is the folder's MATLAB TXY
+(`summary["signature"]`, shadowed ones included), so it doesn't change when a shot moves to HeLab's TXY. The
+test plays both: A loads shots 1-3 from MATLAB (helab-priority, no HeLab TXY yet) and saves; B converts shot 3,
+loads (shot 3 from HeLab's) and saves, same signature; A asks again with its RAM. Today's code: `source`
+"memory", "Folder not modified since cached", `memory_shots` [1, 2, 3], origins {3: helab}: A's MATLAB array
+for shot 3 labelled HeLab's. (The quick check's other tests pass: folder mtime unchanged, the sample is B's
+HeLab TXY, HeLab's folders as B's record has them.)
+
+**Fix.** `_unchanged_since_cache(..., held_origins)`: before the folder stat, every shot in both the held
+`memory` and the row's fingerprint must have the same (size, mtime) and the same kind (`held_origins` vs the
+row's `txy.origins`, `""` MATLAB's); otherwise None ("not the dataset held"), and the load lists the folder: RAM
+is reused only for shots whose stat and kind match (`in_memory`, unchanged), the rest from the cache (same kind)
+or the files. Shots in one and not the other keep their old meaning (not reused / failed). The `cache_base` path
+(the held shots are the row's) always matches. `_unchanged_since_memory` is unchanged: it checks the app's own
+listing with its own record, so its labels are its data's.
+
+**Test.** `test_txy_sources.py::test_the_quick_check_never_reuses_ram_of_another_kind`: on `3a30bbd`, `3 in
+memory_shots`; now `memory_shots` [1, 2], origins {3}, not served from memory.
+
+## 9. P2 `loading.stop_if_missing` under HeLab only (comment 4425801688)
+
+**Cause.** `listed = set(chosen)`, the source-filtered choice: under HeLab only, cached (or held) shots from
+MATLAB's TXY without a current HeLab TXY were "missing", and the load stopped with `shots_missing` (the
+mismatch hold) though their MATLAB TXY were listed.
+
+**Fix.** `listed = set(chosen) | set(matlab)` (the listing's MATLAB TXY, settled or not): a shot merely left
+out by the source isn't missing. `listed` is used only there (and its `listed_count`).
+
+**What the user sees.** The load gives the HeLab subset: shots and total = HeLab's current TXY (1 of 3 in the
+test), the source line HeLab only as chosen, the folder's own status still counting its MATLAB TXY (3, the
+scan summary). Folder details' load line: "1 new file loaded · 2 files removed · 1 TXY file read" from the
+cache, "1 reused from cache · 2 files removed" with the shots held: `load_counts["removed"]` counts the shots
+left out, though no file was removed (Q~3).
+
+**Test.** `test_helab_only_leaves_out_matlabs_shots_without_a_mismatch` (from the cache, and with the shots
+held): on `3a30bbd`, `shots_missing` [1, 2]; now shot 3 alone, origins {3}, removed 2.
+
+## Round 5 checks
+
+Full suite -n 12: 8509 passed, 672 skipped, 2 warnings (as before) in 204.55 s, no RERUN
+(`.ai/temp/qf7-suite-r5.log`); the five type checks clean. CI: every job log read (below, after the push).
