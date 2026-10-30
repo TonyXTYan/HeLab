@@ -7,12 +7,16 @@ import logging
 import math
 import os
 from pathlib import Path
+import subprocess
+import sys
 from typing import Any
 
 import pytest
 from pytestqt.qtbot import QtBot
 
+from helab import convert_cli
 from helab.analysis.dataset_view import build_view
+from helab.io_ops.convert import convert_folder
 from helab.utils import app_log
 from helab.utils.app_log import MILESTONE_LOGGER, MilestoneValue, milestone, parse_milestone
 from helab.utils.io_service import IOService
@@ -20,7 +24,7 @@ from helab.views.FolderExplorer import FolderExplorer
 import test_app_log
 from test_analysis import Blocking, Harness, dataset, harness  # noqa: F401
 from test_cache_first import browser, show_cached  # noqa: F401
-from test_convert_helab import raw_bytes
+from test_convert_helab import raw_bytes, source, typed  # noqa: F401
 from test_live import (  # noqa: F401
     age_folder, checks, next_request, open_loaded, replay, run, service, write_shot,
 )
@@ -235,3 +239,50 @@ def test_each_live_conversion_says_what_that_run_did(
     assert all(before != after for before, after in zip(counts, counts[1:]))
     assert sum(line["converted"] for line in lines) == 2 and sum(line["no_hit"] for line in lines) == 1
     explorer.close_cleanup()
+
+
+def test_each_helab_convert_run_says_what_it_did(
+        source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch,
+        milestones: pytest.LogCaptureFixture) -> None:
+    """``helab convert --watch``'s runs (``_Log``, driven as ``main``'s loop drives it): the same counts
+    and rule as Live's, ``no_hit`` counted from this run's ``shot_converted`` events."""
+    request, _ = typed(source, tmp_path, private_store, monkeypatch, "--output", "beside")
+    log = convert_cli._Log()
+
+    def again() -> list[dict[str, Any]]:
+        before = len(logged(milestones, "convert_done"))
+        convert_folder(str(source), request, log)
+        summary = log.summary
+        request["seen"], request["done"] = summary["waiting"], summary["current"]
+        request["skip"], request["kept"] = summary["unconvertible"], summary["kept"]
+        return logged(milestones, "convert_done")[before:]
+    write_raw(source, 1, raw_bytes(10_000, 20_000))
+    write_raw(source, 2, b"5,1000\r\n")  # The trigger alone: no hits.
+    write_raw(source, 3, b"")  # Unconvertible.
+    first = again()
+    assert len(first) == 1 and isinstance(first[0].pop("seconds"), float)
+    assert first[0] == {"folder": str(source), "by": "cli", "converted": 2, "no_hit": 1, "unconvertible": 1,
+                        "waiting": 0, "kept": 0, "output": "beside"}
+    assert again() == []  # Nothing changed: no line.
+    write_raw(source, 4, raw_bytes(10_000, 20_000))
+    lines = [line for _ in range(3) for line in again()]
+    assert [line["converted"] for line in lines][-1] == 1 and sum(line["no_hit"] for line in lines) == 0
+    assert again() == []
+
+
+def test_helab_convert_once_writes_its_line_in_its_log_file(source: Path, tmp_path: Path) -> None:
+    """The real command: its log file (``helab-<pid>.log`` in its app folder) has the line, parsed back."""
+    write_raw(source, 1, raw_bytes(10_000, 20_000))
+    write_raw(source, 2, b"5,1000\r\n")
+    env = dict(os.environ, HELAB_APP_DIR_OVERRIDE=str(tmp_path / "app"))
+    process = subprocess.Popen([sys.executable, "-m", "helab", "convert", "--watch", str(source), "--once",
+                                "--output", "beside"], stderr=subprocess.PIPE, text=True,
+                               cwd=Path(__file__).resolve().parents[1], env=env)
+    _, stderr = process.communicate(timeout=60)
+    assert process.returncode == 0, stderr
+    log = Path(app_log.log_folder(str(tmp_path / "app"))) / app_log.LOG_NAME.format(pid=process.pid)
+    lines = [parsed for line in log.read_text(encoding="utf-8").splitlines()
+             if (parsed := parse_milestone(line)) is not None]
+    assert [(event, fields["by"], fields["converted"], fields["no_hit"]) for event, fields in lines] == [
+        ("convert_done", "cli", 2, 1)]
+    assert lines[0][1]["folder"] == str(source)
