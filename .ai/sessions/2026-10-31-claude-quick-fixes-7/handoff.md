@@ -126,3 +126,35 @@ report to CoCo).
   one is read again under another, its damaged notification not repeated)".
 
 No new Q~/M~/A~ items.
+
+# Round 3 (Codex's third review 5714741098 on `c7859b8`)
+
+Detail in `notes.md` (Round 3). Round 2's CI run **41081757658 passed** (every 3.13 job on the three OSes).
+
+| Finding | Commit | Files |
+|---|---|---|
+| P2 4425456506, a MATLAB-held shot switched to HeLab's TXY and tripped `shots_missing(changed)` | `fefe6ab` | `helab/io_ops/live.py`, `helab/io_ops/save_held.py`, `tests/test_txy_sources.py` |
+
+6. `live_check` and `save_held` pass `compose()` every held shot's kind (`""` for MATLAB's), so the held-kind
+   rule keeps a MATLAB-held shot while its MATLAB TXY is there. `held_origins` is unchanged (`held_helab`,
+   `trusted`, `could_take`, `kept_origins` keep reading it as HeLab's only); `helab_txy.py` untouched.
+   **When the user gets HeLab's TXY for it:** at the folder's next load (Refresh, reopening, restart, or a
+   load from the saved dataset, which reads that one shot anew): loads compose without held kinds. Not by
+   Live off/on alone, nor by Live's saves.
+
+**Test (fails on `8d40dca`, on each of the two files alone):**
+`test_a_shot_held_from_matlabs_keeps_it_when_helabs_is_converted` (`shots_missing` changed `[1]`).
+
+**Checks:** full suite -n 12: 8506 passed, 672 skipped, no RERUN; five type checks clean.
+
+**Pushed:** `dev/v0.0.7` with `fefe6ab` and this session commit on top (hash and CI run in the report).
+
+**Doc proposals:** `live.md`, the held-shot sentence about Q6.6 / held kinds (where it says a held shot keeps
+its kind while that TXY is there) → add "held from MATLAB's too (its kind `""`), so under HeLab priority a
+HeLab TXY converted during Live replaces it only at the folder's next load". `converter.md`'s TXY source rules,
+if they state the held rule for HeLab shots only, the same.
+
+**Q~2** (Tony, optional): under HeLab priority, should Live itself switch a MATLAB-held shot to a newly
+converted HeLab TXY (read it again as a changed shot, like a HeLab-held shot converted again), rather than at
+the next load? Proposed: no, keep it as now (no mismatch, no surprise rereads during a run; the next load
+takes HeLab's).

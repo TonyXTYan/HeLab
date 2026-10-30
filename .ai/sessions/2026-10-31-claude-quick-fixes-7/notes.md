@@ -145,3 +145,39 @@ asserted `payload["skip"]` under another profile, the flagged behaviour: now ass
 2 warnings (pyqtgraph's NumPy 2.5 `arr.shape`, as before) in 107.85 s; no RERUN
 (`.ai/temp/qf7-suite-r2.log`). The five type checks: no issues / 0 errors. Round 1's CI run 41078799066:
 every job green (13 run, the rest skipped as on a dev branch).
+
+# Round 3 (Codex's third review 5714741098 on `c7859b8`)
+
+## 6. P2 `live.py` / `save_held.py`: a shot held from MATLAB's TXY switched to HeLab's (comment 4425456506)
+
+**Cause.** `held_origins` holds HeLab-origin shots only (the dataset's `txy.origins`), and both calls passed
+it to `helab_txy.compose` as `held`, so `txy_sources.choose()` had no held kind for a MATLAB-held shot and
+fell back to the source's order. Under HeLab priority, once a current HeLab TXY of that shot appeared
+(auto-convert), it was chosen; its stat was compared with the held MATLAB fingerprint, and
+`shots_missing(reason="changed")` stopped Live (or failed the save) though the MATLAB file was unchanged.
+
+**Fix.** Both calls pass every held shot's kind: `{shot: held_origins.get(shot, "") for shot in held}`
+(`known` in `save_held`), `""` being MATLAB's (`choose`: `not is_helab(held) and matlab` → MATLAB).
+`held_origins` itself is untouched, so `held_helab`, `trusted`, `could_take`'s `held` and `kept_origins`
+still read it as HeLab's shots only. `helab_txy.py` unchanged.
+
+**When the shot moves to HeLab's TXY.** At the folder's next **load**: `loading.py` composes without held
+kinds and reads again a shot whose origin differs (`held_origins.get(shot, "") == origins.get(shot, "")`).
+So: Refresh, opening the folder again, a restart, and a load from the saved dataset (checked: "Reused 2
+shots from disk cache; 1 new or changed TXY file to read", origins 1–3 HeLab's). **Not** by Live off and on
+alone (Live starts on the data shown, holding its kinds), nor by Live's saves. If the MATLAB TXY goes, the
+shot falls to the source's order as before (unchanged behaviour).
+
+**Test.** `test_txy_sources.py::test_a_shot_held_from_matlabs_keeps_it_when_helabs_is_converted`: raw 1–3,
+MATLAB's TXY of 1 (settled), HeLab's of 2 and 3; a HeLab-priority load holds 1 from MATLAB's; HeLab's of 1 is
+converted; Live's check → `["live_unchanged"]`; a Live save → no mismatch, origins 2 and 3, shot 1 named
+`d_txy_forc1.txt`; a load (with memory) and a load from the store → shot 1 HeLab's. Fails on `8d40dca`'s
+`live.py` alone and, separately, on its `save_held.py` alone (`shots_missing` changed `[1]`).
+
+## Round 3 checks
+
+Full suite -n 12: 8506 passed, 672 skipped, 2 warnings (as before) in 95.30 s, no RERUN
+(`.ai/temp/qf7-suite-r3.log`); the five type checks clean (tests' mypy and both pyrights rerun after a
+last test-only edit). Round 2's CI run 41081757658 passed. (A slip, caught: one `&&` chain amended the
+commit after a failing test because `tail` hid pytest's exit code; the test was fixed and the suite rerun
+before the push, nothing pushed in between.)

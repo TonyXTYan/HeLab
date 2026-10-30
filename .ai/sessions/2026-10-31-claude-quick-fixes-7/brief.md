@@ -99,3 +99,23 @@ and their tests (still ask before any other file).
 Commit each on `dev/v0.0.7` (message names the Codex comment ID), full suite + five type checks, push once, add a
 "Round 2" section to `handoff.md` (and any doc proposals), then report back:
 `maestri ask "CoCo" "QF7 round 2 pushed at <hash>, CI <run id>"`.
+
+## Round 3: Codex's third review (review 5714741098, on `c7859b8`)
+
+Codex accepted round 2 and found one more (CoCo checked it against the code). Same rules; also allowed:
+`helab/io_ops/live.py`, `helab/io_ops/helab_txy.py` (only if needed) and their tests.
+
+6. **P2, `helab/io_ops/live.py` ~line 186 and `helab/io_ops/save_held.py`'s same call (comment 4425456506).**
+   `held_origins` holds only HeLab-origin shots, so `helab_txy.compose(..., held_origins)` gives `choose()` no
+   sign that a shot is held **from MATLAB**. Under `helab-priority` (the default), a shot Live holds from MATLAB's
+   TXY switches to a HeLab TXY converted later (auto-convert, cache or beside); the check then compares that file
+   with the held MATLAB fingerprint and sends `shots_missing(reason="changed")`, stopping Live when the shot isn't
+   in the recent-reread set, though the MATLAB file is unchanged. Fix as Codex suggests if it holds: pass an origin
+   for every held shot (`""` for MATLAB) so `choose()`'s held-kind rule keeps it, in both calls; check that
+   nothing else reads `held_origins` as "HeLab shots only" (`held_helab`, `trusted`, `kept_origins`,
+   `could_take`) and keep those as they are. Tests: one held MATLAB shot, then a current HeLab TXY of it appears:
+   Live's check and a Live save keep the MATLAB one, no mismatch (fails on today's code). Say in the handoff when
+   the held shot does move to HeLab's TXY (e.g. a load, Live off and on), so a user still gets HeLab's in the end.
+
+Commit on `dev/v0.0.7` (message names comment 4425456506), full suite + five type checks, push once, a "Round 3"
+section in `handoff.md`, then report back: `maestri ask "CoCo" "QF7 round 3 pushed at <hash>, CI <run id>"`.
