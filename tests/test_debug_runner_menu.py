@@ -6,6 +6,7 @@ from __future__ import annotations
 import gc
 import os
 import time
+from datetime import datetime, tzinfo
 from pathlib import Path
 from typing import Iterator
 
@@ -224,3 +225,55 @@ def test_a_plot_tabs_close_button_closes_that_plot_when_clicked(
     qtbot.mouseClick(button, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
     qtbot.waitUntil(lambda: first.is_closed)
     assert window.panel_right_bottom_script_selector.instances() == [second]
+
+
+def test_show_and_close_folder_tab(window: HelabMainWindow, qtbot: QtBot, tmp_path: Path) -> None:
+    """Debug › Show Folder Tab and Close Folder Tab (Q~3): each folder tab by its title, with IDs from
+    the tab's number; showing one is a click on its tab, closing one its ×."""
+    first = window.tab_widget.widget(0)
+    load(window, qtbot, run_folder(tmp_path))
+    second = window.tab_widget.currentWidget()
+    assert isinstance(first, FolderExplorer) and isinstance(second, FolderExplorer)
+    shown = submenu(window, "Show Folder Tab")
+    titles = [window.tab_widget.tabText(index) for index in range(2)]
+    assert list(items(shown)) == titles and items(shown)[titles[1]].isChecked()
+    assert [action.objectName() for action in shown.actions()] == [
+        f"debug_show_{first.objectName()}", f"debug_show_{second.objectName()}"]
+    items(shown)[titles[0]].trigger()
+    assert window.tab_widget.currentWidget() is first
+    window.tab_widget.tabBar().moveTab(0, 1)  # type: ignore[union-attr]  # (Found where it is now.)
+    closing = submenu(window, "Close Folder Tab")
+    assert [action.objectName() for action in closing.actions()] == [
+        f"debug_close_{second.objectName()}", f"debug_close_{first.objectName()}"]
+    items(closing)[titles[1]].trigger()
+    assert window.tab_widget.count() == 1 and window.tab_widget.widget(0) is first and second.closed
+    assert list(items(submenu(window, "Close Folder Tab"))) == [titles[0]]
+
+
+def test_screenshot_to_the_temp_folder_asks_nothing(
+        window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+    """Debug › Save Window Screenshot to Temp Folder (Q~1): no dialog; ``helab-<window>-<time>.png`` in the
+    temp folder's screenshots, a second one in the same second ``-2``; logged and in the status bar."""
+    import logging
+    from helab.views import HelabMainWindow as module
+
+    def no_dialog(*args: object) -> tuple[str, str]:
+        raise AssertionError("A dialog was opened")
+
+    monkeypatch.setattr("helab.views.HelabMainWindow.QFileDialog.getSaveFileName", no_dialog)
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz: tzinfo | None = None) -> "Frozen":
+            return cls(2026, 10, 30, 9, 15, 0)
+
+    monkeypatch.setattr(module, "datetime", Frozen)
+    with caplog.at_level(logging.INFO):
+        window.action_screenshot_temp.trigger()
+        second = window.save_window_screenshot_to_temp()
+    from helab.utils.accessible import id_part
+    from helab.utils.constants import DIR_TEMPS
+    folder = os.path.join(DIR_TEMPS, "screenshots")
+    first = os.path.join(folder, f"helab-{id_part(window.windowTitle()).lower()[:40]}-20261030-091500.png")
+    assert os.path.isfile(first) and second == first[:-4] + "-2.png" and os.path.isfile(second)
+    assert not QImage(first).isNull() and f"Screenshot saved: {first}" in caplog.text
+    assert f"Screenshot saved: {second}" in window.status_bar_message_left.text()

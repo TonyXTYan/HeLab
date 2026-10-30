@@ -582,6 +582,8 @@ class HelabMainWindow(QMainWindow):
         menu.aboutToShow.connect(self._remember_screenshot_target)
         for title, fill in (("Run Plot", self._fill_run_menu), ("Script Group", self._fill_group_menu),
                             ("Show Plot Tab", self._fill_show_plot_menu), ("Close Plot Tab", self._fill_close_plot_menu),
+                            ("Show Folder Tab", self._fill_show_folder_menu),
+                            ("Close Folder Tab", self._fill_close_folder_menu),
                             ("Settings Tab", self._fill_settings_tab_menu)):
             submenu = menu.addMenu(title)
             if submenu is not None:
@@ -594,12 +596,22 @@ class HelabMainWindow(QMainWindow):
         self.action_screenshot = QAction("Save Window Screenshot…", self)
         self.action_screenshot.setToolTip("Save a picture of the HeLab window in front (when this menu opened) "
                                           "as a PNG file")
+        self.action_screenshot.setObjectName("debug_save_screenshot")
         self.action_screenshot.triggered.connect(lambda: self.save_window_screenshot(self.screenshot_target()))
         menu.addAction(self.action_screenshot)
+        # Q~1 (Tony): no dialog, for a runner: the same window, a fixed name in the temp folder's screenshots.
+        self.action_screenshot_temp = QAction("Save Window Screenshot to Temp Folder", self)
+        self.action_screenshot_temp.setObjectName("debug_save_screenshot_temp")
+        self.action_screenshot_temp.setToolTip("Save a picture of the HeLab window in front (when this menu opened) "
+                                               "in the temp folder's screenshots folder, without asking where; "
+                                               "the status bar and the log name the file")
+        self.action_screenshot_temp.triggered.connect(lambda: self.save_window_screenshot_to_temp())
+        menu.addAction(self.action_screenshot_temp)
         screenshot_of = menu.addMenu("Save Screenshot of Window")
         if screenshot_of is not None:
             screenshot_of.aboutToShow.connect(lambda: self._fill_screenshot_menu(screenshot_of))
         self.action_dump_state = QAction("Dump State…", self)
+        self.action_dump_state.setObjectName("debug_dump_state")
         self.action_dump_state.setToolTip("Save what this window shows (summary lines, Folder details, the status "
                                           "bar, folder and plot tabs, Live) as a JSON file, from memory")
         self.action_dump_state.triggered.connect(lambda: self.dump_state())
@@ -657,6 +669,7 @@ class HelabMainWindow(QMainWindow):
         for dock in self._open_plot_docks():
             action = menu.addAction(dock.windowTitle())
             if action is not None:
+                action.setObjectName(f"debug_show_plot_tab_{getattr(dock, 'plot_id', '')}")
                 action.setCheckable(True)
                 action.setChecked(dock is settings.current_plot())
                 action.triggered.connect(
@@ -670,9 +683,46 @@ class HelabMainWindow(QMainWindow):
         for dock in self._open_plot_docks():
             action = menu.addAction(dock.windowTitle())
             if action is not None:
+                action.setObjectName(f"debug_close_plot_tab_{getattr(dock, 'plot_id', '')}")
                 action.triggered.connect(lambda _=False, d=dock: None if sip.isdeleted(d) else d.close())
         if menu.isEmpty():
             self._unavailable(menu, "no plots open")
+
+    def _fill_show_folder_menu(self, menu: QMenu) -> None:
+        """Debug › Show Folder Tab: each folder tab; one shows it, as clicking its tab does."""
+        menu.clear()
+        for index, explorer in self._explorers():
+            action = menu.addAction(self.tab_widget.tabText(index))
+            if action is not None:
+                action.setObjectName(f"debug_show_{explorer.objectName()}")  # debug_show_folder_tab_<n>
+                action.setCheckable(True)
+                action.setChecked(explorer is self.tab_widget.currentWidget())
+                action.triggered.connect(lambda _=False, e=explorer: self._folder_tab_action(e, close=False))
+        if menu.isEmpty():
+            self._unavailable(menu, "no folder tabs open")
+
+    def _fill_close_folder_menu(self, menu: QMenu) -> None:
+        """Debug › Close Folder Tab: each folder tab; one closes it, as its tab's × does."""
+        menu.clear()
+        for index, explorer in self._explorers():
+            action = menu.addAction(self.tab_widget.tabText(index))
+            if action is not None:
+                action.setObjectName(f"debug_close_{explorer.objectName()}")  # debug_close_folder_tab_<n>
+                action.triggered.connect(lambda _=False, e=explorer: self._folder_tab_action(e, close=True))
+        if menu.isEmpty():
+            self._unavailable(menu, "no folder tabs open")
+
+    def _folder_tab_action(self, explorer: FolderExplorer, *, close: bool) -> None:
+        """Show or close ``explorer``'s tab where it is now (tabs move), by the tab's own paths: the tab
+        widget's current tab (a click on the tab), or its close request (the tab's ×). Nothing if it
+        has closed meanwhile."""
+        index = -1 if sip.isdeleted(explorer) else self.tab_widget.indexOf(explorer)
+        if index < 0:
+            return
+        if close:
+            self.tab_widget.tabCloseRequested.emit(index)
+        else:
+            self.tab_widget.setCurrentIndex(index)
 
     def _fill_settings_tab_menu(self, menu: QMenu) -> None:
         """Debug › Settings Tab: Settings opened on each tab (File › Settings… with that tab shown)."""
@@ -727,6 +777,17 @@ class HelabMainWindow(QMainWindow):
         self.show_status_notice(f"Screenshot saved: {path}")
         return path
 
+    def save_window_screenshot_to_temp(self) -> str:
+        """Debug › Save Window Screenshot to Temp Folder (Q~1): as Save Window Screenshot…, without a
+        dialog: ``helab-<window>-<time>.png`` in the temp folder's ``screenshots`` (``-2``, ``-3`` … if
+        that name is taken), logged and named in the status bar. The file written ("": none)."""
+        window = self.screenshot_target()
+        path = self._runner_file_path("", window.windowTitle() or type(window).__name__, "png", "", ask=False)
+        written = self.save_window_screenshot(window, path)
+        if written:
+            logging.info("Screenshot saved: %s", written)
+        return written
+
     def dump_state(self, path: str = "") -> str:
         """Debug › Dump State…: ``state_dump.dump_state`` (memory only) as JSON, to ``path`` or one
         chosen as for a screenshot. The file written ("": none)."""
@@ -743,14 +804,22 @@ class HelabMainWindow(QMainWindow):
         self.show_status_notice(f"State saved: {path}")
         return path
 
-    def _runner_file_path(self, caption: str, name: str, suffix: str, filter: str) -> str:
+    def _runner_file_path(self, caption: str, name: str, suffix: str, filter: str, *, ask: bool = True) -> str:
         """A file for a runner's screenshot or state, chosen in a save dialog that offers
-        ``helab-<name>-<time>.<suffix>`` in the temp folder's ``screenshots`` ("": cancelled)."""
+        ``helab-<name>-<time>.<suffix>`` in the temp folder's ``screenshots`` ("": cancelled), or
+        without ``ask``, that name itself (``-2``, ``-3`` … if taken)."""
         # On the GUI thread: one folder in HeLab's own temp folder and one small file the user asked for
         # (a debug item, as Settings' profile export), never a source folder or the store.
         folder = os.path.join(DIR_TEMPS, "screenshots")
         os.makedirs(folder, exist_ok=True)
-        suggested = os.path.join(folder, f"helab-{id_part(name).lower()[:40]}-{datetime.now():%Y%m%d-%H%M%S}.{suffix}")
+        stem = os.path.join(folder, f"helab-{id_part(name).lower()[:40]}-{datetime.now():%Y%m%d-%H%M%S}")
+        suggested = f"{stem}.{suffix}"
+        if not ask:
+            taken = 1
+            while os.path.exists(suggested):
+                taken += 1
+                suggested = f"{stem}-{taken}.{suffix}"
+            return suggested
         return QFileDialog.getSaveFileName(self, caption, suggested, filter)[0]
 
     def show_about_dialog(self) -> None:

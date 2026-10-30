@@ -32,7 +32,8 @@ Phase A (brief.md items 4, 1, 2 and phase B item 1, the IDs) is done; phase B it
   with `QMessageBox(...)`. Labels a runner reads (summary lines, Folder details values
   `details_<row>`, status bar, plot source/status lines, central hint) get IDs only.
 - **Debug menu** (`HelabMainWindow`): Run Plot ›, Script Group ›, Show Plot Tab ›, Close Plot Tab ›,
-  Settings Tab ›, Save Window Screenshot…, Save Screenshot of Window ›. Filled from memory as they
+  Show Folder Tab ›, Close Folder Tab › (Q~3), Settings Tab ›, Save Window Screenshot…, Save Window
+  Screenshot to Temp Folder (Q~1), Save Screenshot of Window ›, Dump State…. Filled from memory as they
   show; each calls its control's path (the run button's `click()`, the Group combo's
   `setCurrentIndex`, the Settings panel's `show_plot(raise_dock=True)`, the dock's `close()` as the
   tab ×, `show_settings_dialog(tab=…)`). Unavailable items are disabled with a "(reason)" line
@@ -69,6 +70,17 @@ the test checks the name Qt gives on Windows; on macOS and Linux Qt names a comb
 choice (see the runbook line below). **A new window or dialog:** add a builder to `DIALOGS` (or a
 case with `@covers`), with synthetic data if its controls need a folder or a plot; a new message box
 built where it asks: an entry in `ASKS`.
+
+## Tony's answers (2026-10-30): Q~1 and Q~3 built before landing
+
+- **Debug menu items' IDs:** each menu item a runner uses has an objectName: `debug_save_screenshot`,
+  `debug_save_screenshot_temp`, `debug_dump_state`, `debug_show_plot_tab_<n>` /
+  `debug_close_plot_tab_<n>` (the plot's number), `debug_show_folder_tab_<n>` /
+  `debug_close_folder_tab_<n>` (the folder tab's number). Whether macOS gives a native menu item's
+  objectName to accessibility isn't known (menu items are found by title in `app_menu`): M~3 can check.
+- **Tests:** `tests/test_debug_runner_menu.py`: Show and Close Folder Tab (titles, IDs, the checked
+  tab, a moved tab found where it is, the closed tab gone), and the temp-folder screenshot (no dialog,
+  the name, `-2` in the same second, logged, in the status bar).
 
 ## Phase B items 5 and 6: Quit that confirms, and the quit window's list
 
@@ -162,6 +174,9 @@ Merged `origin/dev/v0.0.7` at c492242 (TXY Index) first: one conflict, `QuitSave
 
 ## Checks
 
+- After Tony's answers (Q~1, Q~3 built; merge of e74a5cf, docs only): full suite 8303 passed, 669
+  skipped, **1 RERUN** (`test_every_script_and_each_library`: worker crash, a QtWebEngine SIGTRAP,
+  A~4); run again: 8303 passed, no RERUN. The five type checks clean.
 - After the review fixes (on top of phase B 2–4): full suite (`-n 4 --reruns 5 --reruns-delay 1`)
   8222 passed, 669 skipped, no RERUN; CI's group 1/2 command locally 4099 passed, 322 skipped, no
   RERUN (three times since the H1 fix); the five type checks clean.
@@ -191,8 +206,9 @@ Merged `origin/dev/v0.0.7` at c492242 (TXY Index) first: one conflict, `QuitSave
 - **Runbook** (`.ai/sessions/2026-10-28-claude-smoke-automation/plan.md`), what a runner uses now
   instead of pixels: Debug › Script Group › <group> instead of the Group combo's popup; Debug › Run
   Plot › Plot <script>; Debug › Show/Close Plot Tab › <title> instead of the tab and its ×; Debug ›
-  Settings Tab › <tab>; Debug › Save Window Screenshot… for each `Shot:` (type the path in the save
-  panel); `app_ax_find` by name ("Folder path", "Check folder status", "Live", "Cancel loading",
+  Debug › Show/Close Folder Tab › <title>; Settings Tab › <tab>; **Debug › Save Window Screenshot to
+  Temp Folder for each `Shot:`** (no dialog; the status bar names the file, then copy it to
+  `shots/M1.x-n.png`); Debug › Dump State… for what the window shows; `app_ax_find` by name ("Folder path", "Check folder status", "Live", "Cancel loading",
   "Apply preset", "Rerun with these settings") or by AXIdentifier (`folder_path`, `live`, `run_…`).
   **Combo boxes by AXIdentifier only** (`script_group`, `preset_combo`, `txy_source`, `txy_profile`,
   `plot_chooser`, the Settings combos such as `load_mode`): on macOS Qt titles a combo by its current
@@ -235,9 +251,11 @@ Merged `origin/dev/v0.0.7` at c492242 (TXY Index) first: one conflict, `QuitSave
 
 ## For Tony, follow-ups and manual checks
 
-- **Q~1** Screenshot without a dialog: a runner would rather not drive a save panel. Proposed:
-  Debug › Save Window Screenshot to Temp Folder, writing `screenshots/helab-<window>-<time>.png` at
-  once and naming it in the status bar (later the `--smoke` channel's `shot <name>`).
+- **Q~1, decided (Tony, 2026-10-30: yes, on this floor): built.** Debug › Save Window Screenshot to
+  Temp Folder writes the same window as Save Window Screenshot… (the one in front when the menu
+  opened) to `<temp folder>/screenshots/helab-<window>-<YYYYmmdd-HHMMSS>.png` without a dialog
+  (`-2`, `-3` … if that name is taken in the same second), logs the path and names it in the status
+  bar for 10 s. Later, the `--smoke` channel's `shot <name>` can call the same method.
 - **A~1** On the lab PCs QtWebEngine panes paint black on screen (results/lab-pc-qtwebengine-black-render),
   so their grab is black too; the plot's HTML export covers them. No workaround here. The 3D
   scatter's OpenGL view (`opengl_view`, used where QtWebEngine can't paint) wasn't grabbed on this
@@ -262,11 +280,23 @@ Merged `origin/dev/v0.0.7` at c492242 (TXY Index) first: one conflict, `QuitSave
   <title>, the Settings panel's "Close plot" (`close_plot`), or the dock title bar's × ("Close"). The
   same holds for folder tabs' ×. No cheap way to expose it: a tab's context menu wouldn't help, as a
   PageTab offers no ShowMenu action; only Qt itself could list the close buttons.
-- **Q~3** A Debug › Close Folder Tab › <title> item (as for plots), for a runner closing folder tabs?
+- **Q~3, decided (Tony: yes, on this floor, with Show Folder Tab beside it): built.** Debug › Show
+  Folder Tab › <title> (checked: the current tab) switches to that tab as a click on it does
+  (`setCurrentIndex`); Debug › Close Folder Tab › <title> closes it as its × does (the tab widget's
+  `tabCloseRequested`). Both are filled from memory as they show, find the tab where it is now (tabs
+  move), do nothing if it has closed meanwhile, and say "(no folder tabs open)" when there are none.
 - **M~4** On the Mac: `helab --geometry 1600x928+0+39` opens the window there (content 1600×928, the
   frame's top-left at 0,39); Debug › Dump State… writes a JSON naming the open folder and plot tabs.
-- **Q~4** A conversion running at quit: wait for it in the quit window (as built: its shot finishes;
-  Quit now skips), or list it and let quitting end it as before?
-- **Q~2** IDs of a folder tab's own controls are the same in every tab (`folder_path`, `folder_tree`;
-  only the shown tab's are on screen), while the tab bar's close buttons carry the tab's number. Keep
-  it so (a runner needn't know the tab's number), or prefix every tab's controls?
+- **Q~4, decided (Tony: yes, as built):** a conversion running at quit is waited for in the quit window
+  (its shot finishes; Quit now skips it).
+- **A~4** (for known-issues, beside the Plotly/Scatter3D worker crashes): in a local full run
+  (2026-10-30 14:03, before the push of the Q~1/Q~3 items) the xdist worker crashed during
+  `test_accessible_names.py::test_every_script_and_each_library`, which reran and passed; the next full
+  run was clean. macOS's crash report (`python3.13-2026-10-30-140329.ips`) gives the mechanism the
+  existing entries lacked: **SIGTRAP (EXC_BREAKPOINT) on a QtWebEngineCore thread** (a Chromium check
+  failing, frames all in QtWebEngineCore under an NSRunLoop source), not Python and not HeLab's
+  code. The test opens a few Plotly panes (3D scatter, Counts per shot in Plotly) in one window, so
+  it shares that exposure; a fix belongs with the existing entries (QtWebEngine in tests).
+- **Q~2, decided (Tony: keep shared IDs):** a folder tab's own controls keep the same IDs in every tab
+  (`folder_path`, `folder_tree`; only the shown tab's are on screen); the tab bar's close buttons and
+  the Debug items carry the tab's number.
