@@ -441,6 +441,25 @@ limit, `MARK_FLUSH_TIMEOUT`)". In `app-runtime-and-ui.md`'s main-window part, on
   without a TXY in HeLab's folder" would have to tell them from beside rows, whose TXY is never there
   and which are the only provenance of those TXY; Clear removes only the rows of the very files it
   removes. No follow-up proposed.
+- **Known issue to file (Coordinator): `tests/test_convert_helab.py::test_two_writers_side_by_side_lose_nothing`
+  starves on Windows in WAL mode too.** One RERUN in CI run 40977028554 (head `0b00fdc`), job "windows
+  Converter backends" (123807566257), then passed: `AssertionError: shot 36: IndexUnavailable: HeLab's
+  TXY index couldn't be written (database is locked) (cause OperationalError: database is locked; code
+  SQLITE_BUSY) after 10.75 s`, `tests\test_convert_helab.py:1556`. Six Windows runs in a row since WAL
+  (5dc161f) had passed it. Not caused by `0b00fdc` (Q~2/Q~3 don't touch the index's writes). Cause:
+  SQLite's write lock isn't fair. Each of the test's two processes opens the index and writes a row
+  150 times back to back, with no work between, so it takes two write transactions per shot (`open_index`'s
+  `_prepare` under `BEGIN IMMEDIATE`, then `record`). The waiter retries with sleeps of up to 100 ms
+  (`_patient`, and SQLite's own busy handler), and on Windows it can keep missing the other writer's gaps
+  for the whole `BUSY_SECONDS`. A real conversion spends tens of milliseconds or more converting each shot
+  between its writes, and a failed write only fails that conversion, so its shots convert again on the
+  next pass; nothing is lost or damaged (the test's integrity check passes on the rerun). Proposed, in
+  order: (1) `_prepare` skips its `BEGIN IMMEDIATE` when `user_version` already equals `SCHEMA` (a read),
+  which halves the write transactions per shot; (2) the test's writers pause a few milliseconds between
+  shots, as a conversion does, so the test keeps checking "nothing lost" rather than lock fairness;
+  (3) if it stays, serialize writers with a blocking OS lock on `converted-txy/index.lock` around each
+  write transaction (`LockFileEx`/`flock` queue waiters, so none starves). (1) and (2) are small, and
+  on this branch I would do them in the next round if wanted.
 - **Known issue to file (Coordinator):** `tests/test_io_service_run.py::test_writing_held_data_out_counts_as_progress`,
   one RERUN in CI run 40863356565, job "windows Tests (2/2)" (123411955603), then passed: `assert (2 ==
   1)` with `where 2 = len([0.000682100000005903, 0.0014403000000129396])`, `tests\test_io_service_run.py:40`.
