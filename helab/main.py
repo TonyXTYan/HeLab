@@ -162,7 +162,9 @@ def main() -> None:
 
     # font_db = QFontDatabase()
 
-    app = QApplication(sys.argv)
+    # --geometry WxH+X+Y: this run's window size and place (a test runner's fixed coordinates).
+    geometry, argv = HelabMainWindow.take_geometry(sys.argv)
+    app = QApplication(argv)
     app.setStyle("Fusion")
     # app.setStyleSheet("QWidget { background-color: #fafafa; }")
     if "SF Mono" in QFontDatabase.families():
@@ -180,6 +182,8 @@ def main() -> None:
     moved = _start_cache()
 
     main_window = HelabMainWindow()
+    if geometry is not None:
+        main_window.apply_geometry(geometry)
     app_log.catch_unhandled(main_window.show_status_notice)
     main_window.show()
     # Registered as a running instance by now, so other HeLabs keep its log file.

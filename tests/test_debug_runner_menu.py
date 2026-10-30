@@ -11,7 +11,7 @@ from typing import Iterator
 import pytest
 from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before any QApplication: the main window)
 from PyQt6.QtGui import QAction, QImage
-from PyQt6.QtWidgets import QMenu
+from PyQt6.QtWidgets import QMenu, QWidget
 from pytestqt.qtbot import QtBot
 
 from helab.views.FolderExplorer import FolderExplorer
@@ -166,3 +166,57 @@ def test_the_screenshot_target_is_the_window_in_front_as_the_menu_opens(
     assert window.save_window_screenshot(tool, str(tmp_path / "tool.png")) == str(tmp_path / "tool.png")
     tool.close()
     assert window.screenshot_target() is window  # (No longer shown.)
+
+
+def test_dump_state_saves_what_the_window_shows_from_memory(
+        window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    import json
+    from helab.utils.io_service import IOService
+    from helab.views.state_dump import SCHEMA
+    run = run_folder(tmp_path)
+    load(window, qtbot, run)
+    plot(window, qtbot, "Counts per shot")
+
+    def no_io(*args: object, **kwargs: object) -> bool:
+        raise AssertionError("Dump state submitted I/O")
+
+    monkeypatch.setattr(IOService, "submit", no_io)
+    path = tmp_path / "state.json"
+    monkeypatch.setattr("helab.views.HelabMainWindow.QFileDialog.getSaveFileName", lambda *args: (str(path), ""))
+    window.action_dump_state.trigger()
+    state = json.loads(path.read_text(encoding="utf-8"))
+    assert state["schema"] == SCHEMA and state["pid"] == os.getpid()
+    [first, current] = state["folder_tabs"]
+    assert not first["current"] and current["current"] and current["selected_path"] == str(run)
+    assert current["id"] == "folder_tab_2" and current["shown_data"] == str(run) and current["live"] is None
+    explorer = window.tab_widget.currentWidget()
+    assert isinstance(explorer, FolderExplorer)
+    assert current["summary"]["counts"]["text"] == explorer.folder_summary_label.text()
+    assert state["folder_details"]["folder"]["shown"] and state["status_bar"]["activity"]["shown"]
+    assert state["plot_count"] == 1
+    [shown] = state["plots"]
+    assert shown["script"] == "helab.counts_per_shot" and shown["path"] == str(run) and shown["shown_in_settings"]
+    assert shown["source"]["text"].startswith("Data source: run") and not shown["released"]
+    assert state["script_group"] == window.panel_right_bottom_script_selector.group_selector.currentText()
+
+
+def test_a_plot_tabs_close_button_closes_that_plot_when_clicked(
+        window: HelabMainWindow, qtbot: QtBot, tmp_path: Path) -> None:
+    """A mouse click on a plot tab's × closes its plot (known-issues: computer-use clicks on it did
+    nothing: Qt's tab bar doesn't expose its close buttons to accessibility, so a click by
+    accessibility presses the tab; Debug › Close Plot Tab and the Settings panel's Close plot do it)."""
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QTabBar
+    load(window, qtbot, run_folder(tmp_path))
+    plot(window, qtbot, "Counts per shot")
+    plot(window, qtbot, "T, X, Y histograms")
+    first, second = window.panel_right_bottom_script_selector.instances()
+    qtbot.waitUntil(lambda: window.plots.middle_mainwindow.findChild(QTabBar, "plot_tabs_1") is not None)
+    bar = window.plots.middle_mainwindow.findChild(QTabBar, "plot_tabs_1")
+    assert isinstance(bar, QTabBar)
+    button = bar.findChild(QWidget, f"close_plot_tab_{first.instance_id}")
+    assert button is not None and first.dock_widget is not None
+    assert button.accessibleName() == f"Close plot tab: {first.dock_widget.windowTitle()}"
+    qtbot.mouseClick(button, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(lambda: first.is_closed)
+    assert window.panel_right_bottom_script_selector.instances() == [second]

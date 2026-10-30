@@ -1,7 +1,9 @@
 import gc
+import json
 import logging
 import os
 import platform
+import re
 import signal
 import sys
 import types
@@ -52,7 +54,7 @@ from helab.views.FolderExplorer import (
 )
 from helab.views.explorer_text import large_text
 from helab.views.FolderTabWidget import FolderTabWidget
-from helab.views import live_launch
+from helab.views import live_launch, state_dump
 from helab.views.MemoryUsageWindow import MemoryUsageWindow
 from helab.views.MissingShotsWindow import MissingShotsWindow
 from helab.views.QuitSaveDialog import QuitSaveDialog
@@ -596,6 +598,11 @@ class HelabMainWindow(QMainWindow):
         screenshot_of = menu.addMenu("Save Screenshot of Window")
         if screenshot_of is not None:
             screenshot_of.aboutToShow.connect(lambda: self._fill_screenshot_menu(screenshot_of))
+        self.action_dump_state = QAction("Dump State…", self)
+        self.action_dump_state.setToolTip("Save what this window shows (summary lines, Folder details, the status "
+                                          "bar, folder and plot tabs, Live) as a JSON file, from memory")
+        self.action_dump_state.triggered.connect(lambda: self.dump_state())
+        menu.addAction(self.action_dump_state)
         menu.addSeparator()
         self._screenshot_target: QWidget | None = None
 
@@ -706,19 +713,39 @@ class HelabMainWindow(QMainWindow):
         save dialog (first offered in the temp folder's ``screenshots``). Plots come out as shown,
         QtWebEngine's (Plotly) too; where QtWebEngine can't paint (the lab PCs) they are black there as
         on screen. A floating plot is a window of its own. The file written ("": none)."""
+        path = path or self._runner_file_path("Save window screenshot", window.windowTitle() or type(window).__name__,
+                                              "png", "PNG images (*.png)")
         if not path:
-            folder = os.path.join(DIR_TEMPS, "screenshots")
-            os.makedirs(folder, exist_ok=True)
-            name = id_part(window.windowTitle() or type(window).__name__).lower()[:40]
-            suggested = os.path.join(folder, f"helab-{name}-{datetime.now():%Y%m%d-%H%M%S}.png")
-            path = QFileDialog.getSaveFileName(self, "Save window screenshot", suggested, "PNG images (*.png)")[0]
-            if not path:
-                return ""
+            return ""
         if not window.grab().save(path, "PNG"):
             QMessageBox.warning(self, "Screenshot", f"The screenshot couldn't be saved to {path}.")
             return ""
         self.show_status_notice(f"Screenshot saved: {path}")
         return path
+
+    def dump_state(self, path: str = "") -> str:
+        """Debug › Dump State…: ``state_dump.dump_state`` (memory only) as JSON, to ``path`` or one
+        chosen as for a screenshot. The file written ("": none)."""
+        state = state_dump.dump_state(self)  # Taken before the save dialog shows.
+        path = path or self._runner_file_path("Save HeLab's state", "state", "json", "JSON (*.json)")
+        if not path:
+            return ""
+        try:
+            with open(path, "w", encoding="utf-8") as file:
+                json.dump(state, file, indent=2, ensure_ascii=False)
+        except OSError as error:
+            QMessageBox.warning(self, "Dump state", f"The state couldn't be saved to {path}: {error}")
+            return ""
+        self.show_status_notice(f"State saved: {path}")
+        return path
+
+    def _runner_file_path(self, caption: str, name: str, suffix: str, filter: str) -> str:
+        """A file for a runner's screenshot or state, chosen in a save dialog that offers
+        ``helab-<name>-<time>.<suffix>`` in the temp folder's ``screenshots`` ("": cancelled)."""
+        folder = os.path.join(DIR_TEMPS, "screenshots")
+        os.makedirs(folder, exist_ok=True)
+        suggested = os.path.join(folder, f"helab-{id_part(name).lower()[:40]}-{datetime.now():%Y%m%d-%H%M%S}.{suffix}")
+        return QFileDialog.getSaveFileName(self, caption, suggested, filter)[0]
 
     def show_about_dialog(self) -> None:
         QMessageBox.about(self, "About HeLab", APP_BUILD_INFO.description())
@@ -1195,6 +1222,38 @@ class HelabMainWindow(QMainWindow):
         self.splitter.addWidget(self.plots.middle_mainwindow)
 
         self.plots.update_placeholder_visibility()
+
+    GEOMETRY = re.compile(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)")
+
+    @staticmethod
+    def take_geometry(argv: list[str]) -> tuple[Optional[QRect], list[str]]:
+        """``--geometry WxH+X+Y`` (or ``--geometry=WxH+X+Y``) in ``argv``: the main window's size W×H and
+        its frame's top-left at X,Y (screen points; a sign each, "-" for a screen left of or above the
+        main one), for this run only. The rectangle (None: not given, or not of that form, which is
+        logged) and ``argv`` without the option (Qt reads its own ``-geometry`` on Linux)."""
+        rest, value, found = [], None, False
+        args = iter(argv)
+        for arg in args:
+            if arg == "--geometry":
+                value, found = next(args, ""), True
+            elif arg.startswith("--geometry="):
+                value, found = arg.partition("=")[2], True
+            else:
+                rest.append(arg)
+        if not found:
+            return None, rest
+        match = HelabMainWindow.GEOMETRY.fullmatch(value or "")
+        if match is None:
+            logging.warning("--geometry %r ignored: give WxH+X+Y, e.g. 1600x928+0+39", value)
+            return None, rest
+        width, height, x, y = (int(group) for group in match.groups())
+        return QRect(x, y, width, height), rest
+
+    def apply_geometry(self, geometry: QRect) -> None:
+        """Size and place the window as ``--geometry`` asks (no less than its minimum size); nothing
+        is saved."""
+        self.resize(geometry.size())
+        self.move(geometry.topLeft())
 
     def _start_with_rhi_surface(self) -> None:
         """The 3D scatter's web view needs the window drawn through Qt's RHI; Qt switches a shown

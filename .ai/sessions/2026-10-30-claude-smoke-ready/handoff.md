@@ -85,6 +85,36 @@ folder or a plot.
   panel); `app_ax_find` by name ("Folder path", "Check folder status", "Live", "Cancel loading",
   "Preset", "Apply preset", "TXY source") or by AXIdentifier (`folder_path`, `live`, `run_…`).
 
+## Phase B items 2–4
+
+- **Debug › Dump State…** (`helab/views/state_dump.py`, `HelabMainWindow.dump_state`): JSON of what the
+  window shows, from memory only (a test makes `IOService.submit` fail during it): `schema`
+  (`helab.state/1`), time, pid, version, the window (title, geometry, offline), the status bar
+  (activity, resources, buttons shown by ID), Folder details (each row `details_<key>`: text,
+  tooltip, shown), the plot area's hint, each folder tab (its ID `folder_tab_<n>`, title, paths, the
+  four summary lines, summary buttons shown, load state and error, data shown, Live: path, on, error,
+  shots, new, checks), the script group, and each plot (its number, title, script ID, action, path,
+  shown in Settings, floating, released, running, following Live, its source, status and error
+  lines). Saved like a screenshot (temp folder's `screenshots/`, or a picked path). **The shape is
+  meant as the `--smoke` channel's state answer (v0.0.8)**: the channel can return `dump_state()`
+  as it is, and its fields name controls by the phase A IDs.
+- **`--geometry WxH+X+Y`** (`helab/main.py`; `HelabMainWindow.take_geometry`, `apply_geometry`): the
+  window's content size and its frame's top-left, this run only (HeLab saves no window geometry, so
+  nothing changes later); `--geometry=…` too; signed X/Y for screens left or above; a malformed value
+  is logged and ignored; taken out of argv before Qt sees it (Qt reads `-geometry` itself on Linux);
+  never below the window's minimum size (1000×600).
+- **Return in a plot's settings** (approved change in `helab/analysis/parameter_tree.py`): Return
+  always committed the value (pyqtgraph's spin box), but left the row's editor open, which looked as
+  if nothing was taken. Now Return or Enter closes the editor after the box takes the value (the row
+  deselects and shows its value; a click opens it again); an invalid entry then Return gives the
+  value back, as Tab does; **Escape now cancels for real**: it puts the value back and closes the
+  editor (before, the typed text stayed and was taken when focus left). Numbers (`UnitNumberItem`) and
+  choices (a new `ChoiceItem`, type `helab_list`); multi-line text keeps Return as a newline and
+  Ctrl+Enter to commit. In the main window, Escape is also Cancel Loading's shortcut while a load
+  runs (unchanged). Tests: `tests/test_parameter_return.py`, including that the plot's next run gets
+  the value.
+- **Plot tab ×**: real clicks work (a test); background/accessibility clicks can't, see A~2.
+
 ## For Tony, follow-ups and manual checks
 
 - **Q~1** Screenshot without a dialog: a runner would rather not drive a save panel. Proposed:
@@ -103,6 +133,20 @@ folder or a plot.
 - **M~3** On the Mac with the built `.app`: `app_ax_find` finds "Folder path" and `run_…` by
   AXIdentifier, and `app_menu` reaches Debug › Run Plot › … with its items filled (Qt fills them on
   the menu's opening; check that the accessibility route opens it the same way).
+- **A~2** (for known-issues, replacing "A plot tab's x didn't respond to computer-use clicks"): Qt's
+  tab bar never exposes its tabs' close buttons to accessibility: `QAccessibleTabBar`
+  (qtbase `complexwidgets.cpp`) lists only the tabs (role PageTab, its rect the whole tab with its ×,
+  one action: press, which selects it) and the two scroll arrows, so a click by accessibility at the ×
+  presses the tab, already selected, and nothing happens. PyQt6 has no `QAccessible` bindings, so
+  HeLab can't add the button to the tree. Real clicks work (test). Runner routes: Debug › Close Plot
+  Tab › <title>, the Settings panel's "Close plot" (ID `close_plot`), or the dock title bar's ×, which
+  Qt does expose ("Close"). The same holds for folder tabs' × (Debug has no folder-tab item; File has
+  none either). No cheap fix: a tab's context menu wouldn't help, as PageTab offers no ShowMenu action
+  to open it by accessibility. Only Qt itself (a `QAccessibleTabBar` that lists the close buttons,
+  upstream) would.
+- **Q~3** A Debug › Close Folder Tab › <title> item (as for plots), for a runner closing folder tabs?
+- **M~4** On the Mac: `helab --geometry 1600x928+0+39` opens the window there (content 1600×928, the
+  frame's top-left at 0,39); Debug › Dump State… writes a JSON naming the open folder and plot tabs.
 - **Q~2** IDs of a folder tab's own controls are the same in every tab (`folder_path`, `folder_tree`;
   only the shown tab's are on screen), while the tab bar's close buttons carry the tab's number. Keep
   it so (a runner needn't know the tab's number), or prefix every tab's controls?
