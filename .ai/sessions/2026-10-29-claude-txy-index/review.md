@@ -1,0 +1,1002 @@
+# Review: one index for HeLab's converted TXY (`agent/txy-index`)
+
+Reviewer (Claude Opus 5.5), 2026-10-29. Branch `agent/txy-index` at `1e7329c`; base `1d3bbb9`, with
+`dev/v0.0.7` (`9f0b21f`) merged. I reviewed `git diff 9f0b21f...HEAD` (17 files) against the brief,
+`AGENTS.md`, `.ai/architecture/converter.md` and Ledger's handoff. I didn't edit any code.
+
+**Count: 1 High (it blocks landing: Windows CI is red), 4 Low, 3 Nit.**
+
+## Checks I ran (floor venv, `.ai/local/floor-env.sh`, macOS)
+
+- Full suite: `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8195 passed, 669 skipped, 0 reruns** (123.6 s).
+- `mypy helab/ --strict`: no issues (191 files). `mypy tests --strict`: no issues (159).
+  `mypy helab/ --strict --platform win32`: no issues (191). `pyright helab tests`: 0 errors.
+  `pyright --pythonplatform Windows helab tests`: 0 errors.
+- I reproduced Low-1 and Low-2 by hand with a script in my scratchpad (output quoted below).
+
+## CI run 40863356565 (head `1e7329c`)
+
+**Conclusion: failure.** I read every job's log (the `ERROR:root:` lines are tests' expected log
+output).
+
+| Job ID | Job | Result |
+|---|---|---|
+| 123411955202 / 123411955244 / 123411955281 | Build (ubuntu / macos / windows) | success |
+| 123411955434 | macos Converter backends | success: 675 passed, 516 skipped |
+| 123411955614 | ubuntu Converter backends | success: 675 passed, 516 skipped |
+| 123411955568 | **windows Converter backends** | **failure:** 1 failed, 673 passed, 517 skipped, 5 rerun: `…[newer]` (High-1) |
+| 123411955474 | macos Tests (1/2) | success: 4082 passed, 322 skipped |
+| 123411955446 | macos Tests (2/2) | success: 4113 passed, 347 skipped |
+| 123411956066 | ubuntu Tests (1/2) | success: 4080 passed, 324 skipped |
+| 123411955657 | ubuntu Tests (2/2) | success: 4113 passed, 347 skipped |
+| 123411955728 | windows Tests (1/2) | success: 4069 passed, 333 skipped, no rerun |
+| 123411955603 | **windows Tests (2/2)** | **failure:** 1 failed, 4096 passed, 361 skipped, 6 rerun |
+
+RERUNs, quoted from the "rerun reasons":
+
+- `tests/test_convert_helab.py::test_a_missing_or_damaged_index_only_means_shots_convert_again[newer]`:
+  five reruns, then FAILED, in both Windows jobs. `IndexUnavailable: HeLab's TXY index is newer and
+  couldn't be set aside ([WinError 32] The process cannot access the file because it is being used by
+  another process …)`. This is High-1.
+- `tests/test_io_service_run.py::test_writing_held_data_out_counts_as_progress` (windows Tests
+  (2/2), one rerun, then passed): `assert (2 == 1)` with
+  `where 2 = len([0.000682100000005903, 0.0014403000000129396])`, at `tests\test_io_service_run.py:40`.
+  This branch doesn't touch `IOService` or that test, so I don't think this branch caused it. It
+  isn't in `roadmaps/known-issues.md`, so it needs an entry there (a Windows timing flake: two
+  progress marks where the test expects one).
+
+## Findings
+
+### High-1: on Windows, the `[newer]` damaged-index test fails every run because the test leaves its own SQLite connection open
+
+- **Where:** `tests/test_convert_helab.py:1306` (`with sqlite3.connect(index) as conn:` in
+  `test_a_missing_or_damaged_index_only_means_shots_convert_again`). The same pattern is at
+  `tests/test_convert_helab.py:172` in `test_provenance_rows_round_trip_and_say_what_is_stale`.
+- **Why:** used as a context manager, Python's `sqlite3.Connection` commits or rolls back but
+  **doesn't close** (checked locally: the connection still answers after the `with` block). In the
+  `newer` case, the test's `conn` keeps `index.sqlite` open. On Windows a file another handle holds
+  open can't be renamed, so `provenance.set_aside` (`helab/convert/provenance.py:173`,
+  `os.rename(path, aside)`) raises `WinError 32`, and `open_index` turns that into `IndexUnavailable`.
+  CI job 123411955568 ("windows + py3.13 / Converter backends") shows
+  `RERUN …test_a_missing_or_damaged_index_only_means_shots_convert_again[newer]` five times, then
+  `FAILED` with "HeLab's TXY index is newer and couldn't be set aside ([WinError 32] The process
+  cannot access the file because it is being used by another process …)". Summary:
+  `1 failed, 673 passed, 517 skipped, 5 rerun`. The production code closes its own connection
+  before setting the file aside (`open_index`'s `conn.close()`), so the fault is the test's.
+- **Fix:** in both places, `with contextlib.closing(sqlite3.connect(...)) as conn:`. Line 172 also
+  needs an explicit `conn.commit()` after its `UPDATE`, because `closing` doesn't commit. Then push
+  and read the new run job by job. The handoff should also note that on Windows a damaged or newer
+  index can't be set aside while another process has it open (for example a running `helab convert`
+  or a load). That case is transient: the conversion fails with `IndexUnavailable` and is tried
+  again.
+
+### Low-1: Settings › Cache's Clear sets aside and then deletes a *newer* HeLab's index, including its beside rows
+
+- **Where:** `helab/io_ops/helab_txy.py:428` (`open_index(root, write=True)` in `clear_converted`)
+  and `:469` (removing the files that match `SET_ASIDE_PATTERN`).
+- **Why:** `open_index(write=True)` sets aside an index with `user_version` above 1 as
+  `index-newer-…`, and the same Clear then deletes every set-aside file. An older build's Clear
+  therefore destroys a newer build's whole index, including the rows of beside TXY. The docstring
+  promises those rows stay ("the only account of how they were made"). Reproduced:
+  `user_version = 2` index plus one TXY → after `clear_converted`, the directory holds `['abc',
+  'index.sqlite']` (a fresh index) and the newer one is gone (its 4096 bytes are counted in
+  `cleared`).
+- **Fix:** in `clear_converted`, open the index as a reader first. Write rows only when its schema is
+  `SCHEMA`; set a file aside only when it is damaged. Leave a newer index untouched and skip its row
+  updates. Add a `newer` case to a Clear test.
+
+### Low-2: old builds' `.folder.json.<16 hex>.partial` leftovers are no longer removed, measured or cleared by anything
+
+- **Where:** `helab/io_ops/helab_txy.py:316` (`_OWN_FILE`) and `helab/io_ops/convert.py`
+  (`own_partial()` is now `partial()`).
+- **Why:** before this branch, `own_partial()` removed `.folder.json.<hex>.partial` as housekeeping.
+  Now it doesn't, and `_OWN_FILE` never matched that name. The handoff says old builds' JSON
+  temporaries "are cleared only by Settings › Cache", but that holds only for
+  `.d_txy_helab_*.json.*.partial`. The leftover also keeps Clear from removing its hash folder.
+  Reproduced: after `clear_converted`, `abc/` still holds `.folder.json.0123456789abcdef.partial`.
+  Only tonight's dev builds could have made one.
+- **Fix:** add `|\.folder\.json\.[0-9a-f]{16}\.partial` to `_OWN_FILE`, with a test that Clear
+  counts and removes it and that look-alikes stay.
+
+### Low-3: `helab_txy.find` imports `read_shots` by value, and tests patch that name
+
+- **Where:** `helab/io_ops/helab_txy.py:105`. The patch is in
+  `tests/test_txy_sources.py::test_records_are_read_only_for_shots_helab_could_give`
+  (`monkeypatch.setattr(provenance, "read_shots", …)`).
+- **Why:** the rule in AGENTS.md and io-and-browsing says a name tests patch is called as
+  `module.name` from other modules, never imported by value. The code works today only because the
+  import sits inside the function.
+- **Fix:** call `provenance.read_shots(...)` in `find`, and propose adding `provenance.read_shots` to
+  io-and-browsing's list of patched names.
+
+### Low-4: proposed docs: the network-share wording and "read-only"
+
+- **Where:** the handoff's "Journal mode" section ("If the cache folder isn't local") and its
+  io-and-browsing proposal ("read-only, never created or set aside by a load").
+- **Why:**
+  - `cache_location.cache_location_problem` (`helab/utils/cache_location.py:52`) already refuses a
+    cache folder on a network drive or a UNC path. Separately, `provenance._connect` builds a
+    `file://server/share/…` URI from a UNC path, which SQLite refuses ("invalid uri authority:
+    server"; checked locally on SQLite 3.53.1). So the share case can't happen for the cache folder,
+    and with a UNC temp-folder override every index open would fail.
+  - A load isn't read-only on the index: `_mark_used` → `TxyIndex.touch` writes `last_used` (Q~3).
+- **Fix:** in converter.md, say the cache folder can't be on a share (it is refused), so DELETE mode
+  is for local disks. In io-and-browsing, say "never created or set aside by a load, which only
+  moves its folder's `last_used` on at most hourly".
+
+### Nit-1: `converted_usage` reports a file's size from its row, not the file
+
+`helab/io_ops/helab_txy.py:385`: `size = known.get((folder.name, entry.name))`. Suppose a redo is
+killed after its row: the row pins the new temporary file's size, while the older TXY stays on
+disk. Or someone replaces a TXY by hand. In both cases the row's size is reported. It only affects
+the byte figure shown. Either take the row's size only when its `(size, mtime)` match the entry,
+or use `entry.stat()` (free on Windows).
+
+### Nit-2: orphan rows are never pruned
+
+Some rows name a TXY that isn't on disk (a conversion killed between its row and the rename, or a
+TXY deleted by hand). Nothing removes them, and Clear removes only rows of the files it deletes, so
+their `folders` row stays too. It's harmless: the primary key replaces them on the next
+conversion, and Settings › Cache counts files, not rows. Worth an A~ follow-up: Clear could drop
+non-beside rows whose TXY is missing.
+
+### Nit-3: `read_shots` closes its index twice
+
+`helab/convert/provenance.py`: `read_shots` calls `index.close()` in its `except` and again in
+`finally`. That's harmless (`close` is idempotent), but the `except` call can go.
+
+## What I checked and found right
+
+- **When a shot is current:** the row is written in `before_rename` with `os.stat(temporary)` after
+  fsync and close. The rename keeps size and mtime (`os.replace`, and the hard-link and rename
+  routes for beside). The test checks this on all three OSes. A kill between row and rename leaves a
+  row matching no TXY, and `stale` compares `(size, mtime)`, so an older TXY of the same size isn't
+  taken (`[False]` case). `forget` deletes the row only where `txy_sha256` and `txy_mtime_ns` are
+  this write's, and is suppressed on `OSError`. `finish` runs on the helper's main thread, so the
+  single connection is never shared across threads.
+- **Two writers:** each write is one `BEGIN IMMEDIATE` transaction with a 10 s busy timeout. Index
+  creation re-checks `user_version` under the lock. DELETE journal. The two-process test checks
+  every row and `integrity_check`. Readers use `mode=rw` and never create a file.
+- **Missing, damaged or newer index:** shots convert again. The set-aside name matches
+  `SET_ASIDE_PATTERN` exactly, and nothing deletes it but Clear (see Low-1 for the newer case).
+  `IndexUnavailable` fails the conversion before the rename.
+- **Q27.4:** the store's `no_cache` flag is read for the exact folder, as `FolderCache.folder_prefs`
+  does ("never its parent's or subfolders'"). If the flag can't be read, or the store can't be
+  opened, the TXY go to temp, with the right fallback text. `folders()` looks in `(temps, key)`, so
+  loads find them (test passes).
+- **Q27.5:** Clear removes only the files it lists, never a link. It removes rows by
+  (name, size, mtime) and never beside rows, keeps the index, and is confirmed first in the GUI
+  (`CacheTab.clear_converted`). `FolderCache.cache_admin` passes `temps`. The GUI never opens the
+  index: no `provenance`, `open_index` or `sqlite3` use in `helab/views`, `helab/utils` (outside the
+  store and the move), `helab/models` or `helab/analysis`.
+- **Housekeeping:** `own_partial()` is `partial()`, and its tests include the look-alikes and the
+  index names. Old JSON is ignored, but measured and cleared (except Low-2).
+- **Cache-folder move:** `converted-txy/` is inside the cache folder. The rename and copy routes are
+  both tested, and nothing converts again afterwards.
+- **Converter bytes:** `tests/data/convert/` and the byte-for-byte tests are untouched, and
+  `write_atomic` writes the same bytes. Converter-backends jobs on macOS and Ubuntu: 675 passed.
+- **Helper events:** `ConvertedUsageField` and `ConvertedSummaryField` are typed at the send, and
+  `test_the_converted_txy_summary_is_the_declared_shape` checks both admin paths.
+- **Strict typing, win32 included:** all clean (above).
+- **Q~1–Q~4, A~1, A~2, M~1, M~2:** I agree with the proposals. Q~1 (size and mtime) is what makes
+  "row before rename" safe.
+
+## Round 1 re-check (head `9691873`, `git diff 1e7329c..9691873`)
+
+**Result: no open findings.** High-1, Low-1 to Low-4 and Nit-1 and Nit-3 are fixed. Nit-2 is kept
+on purpose and I accept the reason. I add one new Nit (Nit-4), which doesn't block landing.
+
+| Finding | Status | What I checked |
+|---|---|---|
+| High-1 | **closed** | `contextlib.closing` plus `commit()` at `tests/test_convert_helab.py:172` and `:1330`. The `[newer]` case passes on both Windows jobs of run 40866574094. The new `test_an_index_that_cant_be_set_aside_fails_the_conversion_to_be_tried_again` covers a set-aside refused while another process has the file open. The handoff explains why that never retries in a fast loop: Live waits for Retry, `--watch` waits for its `--interval`, and IOService never retries a helper's `error`. |
+| Low-1 | **closed** | `clear_converted` opens the index for writing only when `index_schema(root) == SCHEMA`. `_index_files` puts a newer HeLab's live index and its `index-newer-…` files in a separate list, so Clear doesn't count them as ours and never removes them. Settings › Cache reports them as `newer` (typed in `events.ConvertedUsageField`; the tooltip has a line for them). `test_a_clear_leaves_a_newer_helabs_index_alone` checks the bytes are unchanged and the `newer` file stays, while a damaged set-aside file goes. |
+| Low-2 | **closed** | `_OWN_FILE` now includes `\.folder\.json\.[0-9a-f]{16}\.partial`. `own_partial()` is back to its pattern from before this branch (the TXY and JSON temporaries, and `folder.json`'s). Tests check the folder gets removed, that an uppercase-hex look-alike stays, and the full look-alike list for housekeeping. AGENTS.md's housekeeping line stays as it was. |
+| Low-3 | **closed** | `find` calls `provenance.read_shots(...)`. The handoff proposes adding it to io-and-browsing's list of patched names. |
+| Low-4 | **closed** | `provenance.py`'s docstring and the doc proposals now say the cache folder is never on a share (`cache_location` refuses one), and that a load moves its folder's `last_used` on. |
+| Nit-1 | **closed** | Every file is measured by its `stat`. `TxyIndex.held` is gone; nothing else used it. |
+| Nit-2 | **kept, accepted** | Orphan rows stay. Pruning would have to tell them apart from beside rows, which are the only provenance of their TXY. CoCo agreed. |
+| Nit-3 | **closed** | `read_shots` closes its index once on each path, before any set-aside (Windows can't rename an open file). |
+| Nit-4 (new) | open, Nit | `CacheTab` keeps Clear enabled whenever `bytes` > 0, and `bytes` always includes our live `index.sqlite`, which Clear keeps. So after a Clear the row shows "0 files · 12 kB" with Clear still enabled, and pressing it removes nothing. This dates from round 0. A damaged live index is likewise left by Clear now (for the next conversion to set aside) and still counted. Possible fix: enable on `files` alone, or count the index separately. |
+
+### Checks (floor venv, macOS)
+
+- Touched and new tests: `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`
+  on `test_convert_helab`, `test_converter_tab`, `test_txy_sources`, `test_helper_events`,
+  `test_cache_switch` and `test_headless_imports`: **150 passed, 0 reruns**.
+- `mypy helab/ --strict` (191 files), `mypy tests --strict` (159), and `mypy helab/ --strict --platform
+  win32` (191): no issues. `pyright helab tests` and `pyright --pythonplatform Windows helab tests`:
+  0 errors.
+
+### CI run 40866574094 (head `9691873`)
+
+**Attempt 1: failure.** I read every job's log. These jobs passed: macOS Converter backends
+(123422851803: 676 passed), Ubuntu Converter backends (123422851804: 676 passed), Windows Converter
+backends (123422851980: 675 passed), macOS Tests (2/2) (123422851805: 4115 passed), Ubuntu Tests
+(1/2) (123422851876: 4079 passed), Ubuntu Tests (2/2) (123422851827: 4116 passed), Windows Tests
+(1/2) (123422851982: 4069 passed), Windows Tests (2/2) (123422852009: 4099 passed), and the three
+Builds. **No RERUN in any job.**
+
+**macOS Tests (1/2) (123422851726): failure.** 3108 passed, then xdist stopped with
+`INTERNALERROR> AssertionError: ('tests/test_root_discovery.py::test_volume_check_alone_refreshes_hints_without_visiting_markers', <WorkerController gw2>)`.
+
+**Attempt 2: success.** "Re-run failed jobs" ran only macOS Tests (1/2) (123440148708: 4082 passed,
+322 skipped, no RERUN). The other jobs in attempt 2 have new IDs but carry attempt 1's logs (the
+same counts and times).
+
+**Ledger's diagnosis: I agree.** The worker's log shows the chain. `test_root_discovery.py:347`
+patches `os.lstat` for the whole process (`lambda *_: pytest.fail("visited a source folder")`). While
+that patch was in place, pytest's unraisable hook ran `tracemalloc_message`. Coverage's tracer
+(`_should_trace` → `canonical_filename` → `abs_file` → `os.path.realpath`) then called the patched
+`lstat`. That raised `Failed` inside `sys.unraisablehook` and the xdist worker crashed. A crashed
+worker is an INTERNALERROR, which `--reruns` never retries. This branch doesn't touch
+`test_root_discovery.py`, data roots or markers.
+
+It still needs a known-issues entry: neither the handoff nor `roadmaps/known-issues.md` names it.
+A fix would patch `os.lstat` only for the paths under test, or patch the name in `data_roots`
+rather than in `os`. Together with the Windows `test_writing_held_data_out_counts_as_progress`
+RERUN from run 40863356565 (already in the handoff for CoCo to file), that makes two known-issues
+entries for the landing.
+
+## Round 3 review (head `5dc161f`, `git diff 9691873..5dc161f`)
+
+**Result: no blocker.** Nit-4 is closed. WAL, `_patient`, the move and the 200 ms wait hold up under
+the checks below. I add two Low findings (both about where the docs promise more than the code does)
+and three Nits. None of them stops the landing if CoCo accepts them as follow-ups.
+
+| Finding | Status | What I checked |
+|---|---|---|
+| Nit-4 | **closed** | `CacheTab.py:668` enables Clear only when `clearable` > 0. `converted_usage` computes `clearable`/`clearable_bytes` with the same `_cleared` rule `clear_converted` uses, plus a `folder.json` left alone in its folder (as Clear removes it, now with its bytes counted). `test_the_cache_tab_shows_and_clears_converted_txy` shows "0 files · <index>" with Clear disabled after a Clear. |
+| Low-5 (new) | open, Low | See below: the temp folder is user-set, so it isn't always local. |
+| Low-6 (new) | open, Low | See below: the index never shrinks, and the tooltip says "a few kB". |
+| Nit-5 (new) | open, Nit | An index made by an earlier head of this branch stays in DELETE mode. |
+| Nit-6 (new) | open, Nit | The confirm text can read "Removes 0 TXY files … with their records (40 kB)". |
+| Nit-7 (new) | open, Nit | `_patient` can wait up to about 2 × `BUSY_SECONDS`, not "up to 10 s". |
+
+### Low-5: "the temp folder is the OS's" isn't so; WAL (and the URI) need a local, plain path
+
+- **Where:** `helab/convert/provenance.py:35` ("and the temp folder is the OS's"), and the handoff's
+  lines 70–71 ("A UNC *temp* override, a developer setting").
+- **Why:** Settings has an editable temp folder with Browse… (`SettingsDialog.py:127`, `:143`,
+  `:329`). Nothing checks it with `cache_location_problem`; only Help › Record I/O trace warns
+  (`io_ops/trace_check.py:18`). So a user can put it on a network drive, a UNC path or a synced
+  folder. There:
+  - **WAL** needs shared memory (`-shm`) that SQLite doesn't support over a network filesystem, and
+    a sync client can copy `index.sqlite` and `-wal` separately. The likely outcome is a "damaged"
+    index (set aside, shots converted again) or lock errors (`IndexUnavailable`, conversions to temp
+    fail). Don't-cache folders always convert to temp (Q27.4).
+  - **A UNC path** still fails every open, as I noted in round 0 (Low-4): `pathlib.Path.as_uri()`
+    gives `file://server/share/…` and SQLite refuses the authority. With WAL nothing changes here,
+    but the handoff now calls it a developer setting, and it isn't.
+- **Fix (any one):** refuse a network or synced temp folder in Settings the way the cache folder is
+  refused (Tony's call on wording, so a `Q~` for DECISIONS); or, for a base where
+  `cache_location_problem(base)` is non-empty, keep the index in DELETE mode and build the URI as
+  `file:` plus the quoted path, which keeps a UNC host inside the path. At least correct the
+  docstring and the doc proposal.
+
+### Low-6: the index never shrinks, and the row says "a few kB"
+
+- **Where:** `CacheTab.py:57` ("which keeps the index (a few kB, counted here)"), and the handoff's
+  line 369.
+- **Why:** each row is about 400 bytes. I measured 5000 rows at 1,986,560 bytes. The index has
+  `auto_vacuum` 0, and nothing runs `VACUUM`. After `clear_converted` removed all 5000 TXY and their
+  rows, the file was still 1,986,560 bytes. The row then reads "0 files · 2.0 MB" with Clear
+  disabled. The user has no way to get that space back short of deleting the file by hand. A lab
+  that converts tens of thousands of shots ends up with tens of MB.
+- **Fix:** run `VACUUM` on the index at the end of a Clear that removed rows. Clear is rare and
+  asked for. In WAL, `VACUUM` takes the write lock, and `_patient` covers a busy answer. Then the
+  tooltip can say "counted here" without "a few kB". At least drop "a few kB".
+
+### Nits
+
+- **Nit-5:** `provenance.py:351` sets WAL only when it creates the file (`user_version` 0). An index
+  made by an earlier head of this branch (1e7329c–c546394, on dev machines or the floor) stays in
+  DELETE mode for good. My probe confirmed it. Nothing shipped with DELETE, so accepting this is
+  fine. Otherwise, switch it on a writable open when `PRAGMA journal_mode` says `delete`, ignoring
+  busy.
+- **Nit-6:** `CacheTab.py:474`: with only a damaged set-aside index or old records to clear, Clear is
+  now enabled and the confirm reads "Removes 0 TXY files HeLab converted, with their records (40
+  kB)". Possible fix: name the files when `files` is 0 ("Removes HeLab's leftover records (40 kB)").
+- **Nit-7:** `provenance.py:181–196`: the deadline is checked only between attempts. An attempt that
+  starts just before the deadline can wait SQLite's own 10 s busy timeout, so the total approaches
+  20 s. CI's "after 13.41 s" (run 40879735789) shows the overshoot. That is still inside the 60 s
+  no-progress timeout. Only the docstring and the handoff ("up to the same 10 s") need a change.
+
+### What I checked and found sound
+
+- **WAL with two writers and readers:** `BEGIN IMMEDIATE` per write, with `_patient` retrying
+  `SQLITE_BUSY`/`SQLITE_LOCKED` (extended codes by `& 0xFF`). `_transaction` and `_prepare` roll
+  themselves back first, so each retry starts clean. A damaged file raises `DatabaseError`, which
+  `_patient` doesn't retry, so it still goes to set-aside. Readers open with `mode=rw`, so the last
+  one to close checkpoints and removes `-wal`/`-shm`. A `mode=ro` reader would leave them, but no
+  HeLab code opens one. Under a write transaction held by another connection, `read_shots`,
+  `index_schema` and `converted_usage` each answered in under 1 ms (probe).
+- **Checkpoints:** SQLite's automatic checkpoint (1000 pages) on commit. No connection holds a read
+  transaction between operations (autocommit, `isolation_level=None`), so nothing pins the `-wal`.
+  The last close removes it: two-writer test, `listdir == [index.sqlite]`, on all three OSes.
+- **A killed writer:** probe with `wal_autocheckpoint = 0`, one committed update and one open
+  `BEGIN IMMEDIATE`, then `os._exit`. `-wal`/`-shm` were left. The next reader saw the committed row
+  and not the uncommitted one. The next writer wrote in 1 ms, and its close left only
+  `index.sqlite`.
+- **The move:** `_copy_tree` copies `-wal` and skips `-shm` (`SKIP_SUFFIXES`). `checkpoint` covers
+  only the store, which is fine because no index writer runs during a move: helpers are stopped and
+  `helab convert` registers in `cache_locks`. `test_a_cache_move_carries_rows_still_in_the_wal`
+  proves the rows replay at the new place, and that `-wal`/`-shm` are measured with the index but
+  are neither TXY nor `clearable`, and Clear leaves them.
+- **Windows file handles:** a set-aside while another process has the index open fails at the first
+  companion rename, since SQLite's win32 VFS doesn't share delete. `_COMPANIONS` puts `-journal`
+  then `-wal` first, so nothing is half renamed, and it fails as `IndexUnavailable` (accepted in
+  round 1). Clear never touches `-wal`/`-shm`. The move's test exits its writer before cleanup.
+  Windows CI passes all of it.
+- **The 200 ms wait (`helab_txy.py:217`):** `touch` is a single autocommit statement, not wrapped in
+  `_patient`. So `PRAGMA busy_timeout = 200` bounds it: 0.25 s in my probe under a held write. On a
+  timeout, `sqlite3.OperationalError` is swallowed, `last_used` doesn't move, and the load returns
+  its shots as usual. Opening and reading in `find` don't wait on a writer in WAL. One gap: no test
+  pins the 200 ms. The probe is in the review scratch, not the suite.
+- **The GUI never opens the index:** unchanged. `CacheTab` reads only the inventory.
+- **`events.py`:** `ConvertedUsageField` has `clearable` and `clearable_bytes`, and
+  `ConvertedSummaryField` sums them. `test_helper_events` passes.
+
+### Checks (floor venv, macOS, head `5dc161f`)
+
+- Touched tests: `test_convert_helab`, `test_converter_tab`, `test_txy_sources`,
+  `test_helper_events`, `test_cache_switch`, `test_cache_move` and `test_headless_imports`, with
+  `-n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **195 passed, 0 reruns**.
+- Full suite, same flags: **8199 passed, 669 skipped, 0 reruns** (2 min 3 s).
+- `mypy helab/ --strict` (191 files), `mypy tests --strict` (159), and `mypy helab/ --strict
+  --platform win32` (191): no issues. `pyright helab tests` and `pyright --pythonplatform Windows
+  helab tests`: 0 errors.
+
+### CI run 40883472651 (head `5dc161f`, attempt 1): success
+
+I read every job's log:
+
+| Job | ID | Result |
+|---|---|---|
+| macOS Converter backends | 123480992365 | 678 passed |
+| Ubuntu Converter backends | 123480992493 | 678 passed |
+| Windows Converter backends | 123480992308 | 677 passed |
+| macOS Tests (1/2) | 123480992457 | 4082 passed |
+| macOS Tests (2/2) | 123480992782 | 4117 passed |
+| Ubuntu Tests (1/2) | 123480992399 | 4079 passed |
+| Ubuntu Tests (2/2) | 123480992535 | 4117 passed |
+| Windows Tests (2/2) | 123480992168 | 4101 passed |
+| Windows Tests (1/2) | 123480992297 | 4069 passed, **1 rerun** |
+| Three Builds, Detect branch | — | success |
+
+The compat matrix (3.11, 3.12, 3.14) was skipped because this is a push, not a PR.
+
+- **The rerun, quoted from "rerun reasons":**
+  `RERUN tests/test_plot_backends.py::test_2d_plots_draw_with_every_library[values1-Matplotlib-CountsPerShot]`,
+  "worker 'gw1' crashed while running …", with no traceback.
+- **Is it known?** `roadmaps/known-issues.md:98` has the same test's worker crash on Windows, but
+  for the `[values0-Plotly-CountsPerShot]` case (run 40803552596). This one is the Matplotlib case,
+  so the entry should be widened to name it and this run. It isn't this branch's: the branch
+  doesn't touch plots.
+- **The two-writer test passed on every OS with no rerun.** On Windows Tests (2/2) it took about
+  10 s from start to pass (13:41:40 → 13:41:50, including two interpreter starts), against about
+  2 s on Ubuntu. That is worth watching, but it isn't a failure.
+
+## Round 4 review (head `1b71c37`, `git diff 5dc161f..1b71c37`)
+
+**Result: no blocker.** Low-5, Low-6, Nit-6 and Nit-7 are closed, and the 200 ms wait is pinned by a
+test. Nit-5 is accepted. I add one new Low (Low-7), small and in the spirit of Low-5, and one Nit
+about the timing test (Nit-8).
+
+| Finding | Status | What I checked |
+|---|---|---|
+| Low-5 | **closed** (except Low-7) | `convert.journal_for(base)` returns DELETE when `cache_location.cache_location_problem` objects, otherwise WAL. `convert_folder` (`convert.py:561`) passes it on. `_uri` percent-quotes the whole path, so a UNC `\\server\share` has no URI authority. The test runs both modes and checks `?`, `#`, `%` and spaces in a name (no `?` on Windows). The docstring is corrected, and Q~5 asks Tony about refusing such a temp folder. |
+| Low-6 | **closed** | `clear_converted` ends with `TxyIndex.vacuum()` (through `_patient`, its `sqlite3.Error` ignored), but only after a `forget_removed` that succeeded. In WAL, `VACUUM` leaves a full-size `-wal` until the last connection closes, which is normal and gone after the Clear. The tooltip drops "a few kB". The test shows 400 rows and a file under a quarter of its size afterwards. |
+| Nit-5 | **accepted** | Nothing with DELETE reached Ground or a release. |
+| Nit-6 | **closed** | With `files` 0, the question names old records and damaged indexes. Tested. |
+| Nit-7 | **closed** | Each attempt's `busy_timeout` is what is left of `BUSY_SECONDS`. The last sleep is capped by it, and `finally` restores the 10 s timeout. The bound is now BUSY_SECONDS plus one 1 ms attempt. |
+| 200 ms touch | **pinned** | `test_a_load_whose_last_used_mark_times_out_still_returns_its_shots` holds `BEGIN IMMEDIATE` while a load runs: four shots returned, `last_used` unchanged, under 5 s. It fails at about 11 s without the limit, per the handoff. |
+| Low-7 (new) | open, Low | See below. |
+| Nit-8 (new) | open, Nit | The timing test (see (a) below). |
+
+### Low-7: a damaged index set aside during a write comes back in WAL, even on a non-local temp folder
+
+- **Where:** `provenance.py:293`, `TxyIndex._write`:
+  `self.conn = open_index(self.root, write=True).conn`. No `journal` is passed, so the default is
+  WAL.
+- **Why:** `open_index`'s own set-aside retry keeps the caller's `journal`, but `_write` doesn't. On
+  a network or synced temp folder, where an index is most likely to be found damaged, the
+  replacement is made in WAL, which is what Low-5 set out to avoid. `clear_converted`
+  (`helab_txy.py:471`) also opens with the default. That only matters if the index vanishes between
+  `index_schema` and the open, which is a race, so it can be ignored.
+- **Fix:** keep the journal on the `TxyIndex`, set by `open_index`, and pass it on in `_write`. Or
+  make `open_index`'s default `journal_for(os.path.dirname(root))`. That needs a helper in
+  `helab/convert/` (it is Qt-free; `cache_location` would have to be checked for `PURE`), or a
+  caller-supplied default. Add a test: a write that finds the index damaged on a base that
+  `cache_location_problem` objects to leaves a DELETE index.
+
+### (a) The `_patient` timing test: robust now?
+
+- **The CI evidence:**
+  - At 0.3 + 0.2 s (87d0475, run 40888404379), the test failed after 5 reruns on macOS Tests (2/2)
+    (job 123498366886): `assert (180.245601541 - 179.548123916) < (0.3 + 0.2)`.
+  - At 1.0 + 0.6 s (463c44e, run 40890989136), it reran on macOS Tests (2/2) (123507559816),
+    Windows Converter backends (123507559950) and macOS Converter backends (123507560022). The
+    held-lock case took 1.68 s, 1.66 s, 1.68 s and 1.63 s:
+    `assert (281.217096666 - 279.533168416) < (1.0 + 0.6)`.
+  - The overshoot is steady at about 0.65 s on both OSes, not a rare spike: SQLite counts its
+    busy-wait sleeps nominally.
+- **Locally:** 15 runs while the full suite ran with `-n 8` took 2.09–2.16 s each, about 1.05 s per
+  case.
+- **At 1.0 + 2.0 s (1b71c37):** CI's worst is 1.68 s, so the margin is about 1.3 s, and run
+  40894080358 had no rerun of it. **Robust enough to land.** But the wall-time check discriminates
+  poorly: the regression it guards against waits the connection's 5 s default, only 2 s above the
+  bound. What actually catches a regression is the behaviour check (`timeouts` shrinking and starting
+  at ≤ 1000, the 10 s restored). The handoff says that check alone fails with the per-attempt
+  timeout removed.
+- **Nit-8 (suggested):**
+  - Open `conn` with `timeout=60`, so a regression would wait 60 s, and bound the held-lock case at
+    `BUSY_SECONDS + 5` s. That is loose enough for any runner and still catches the bug.
+  - Drop the wall-time assert on the fake-lock case, or drive it with a fake clock (patch
+    `provenance.time` with a `monotonic`/`sleep` pair that advances a counter). Then assert that the
+    sleeps add up to ≤ `BUSY_SECONDS`, and that the last sleep is capped.
+  - Also: the handoff's round 4 Nit-7 line still says "within `BUSY_SECONDS` plus 0.2 s". It is 2 s
+    now.
+
+### (b) The Windows rerun of `test_scan_reports_cached_children_without_loading_or_probing_them`: is it this branch?
+
+**No, and the branch can't plausibly cause it.**
+
+- **The failure:** "rerun reasons", Windows Tests (2/2), job 123518429856:
+  `tests\test_folder_cache.py:1155: assert scanned == [str(root)]`. The diff was
+  `'C:\\Users\\RUNNER~1\\AppData\\Local\\Temp\\helab_io_1p59fsr4'` at index 0, in front of the test's
+  `…\test_scan_reports_cached_child0\root`.
+- **Why it happens:** the test patches `os.scandir` for the whole process
+  (`monkeypatch.setattr("os.scandir", record_scandir)`) and records every call. A `helab_io_` folder
+  is `IOService._run`'s private folder for a non-load request (`io_service.py:800`).
+  `IOService.release` removes it with `shutil.rmtree` on a daemon thread, "HeLab-artifact-cleanup"
+  (`io_service.py:963`), and `rmtree` lists through `os.scandir`. A request from an earlier test on
+  worker gw0 was still being cleaned up when this test's patch went in.
+- **This exact trap is in known-issues already.** The `test_folder_summary.py::test_scan_metadata_survives_restart_without_reading_txy_contents`
+  entry (`roadmaps/known-issues.md:212–214`) says "its process-wide `os.scandir` patch caught
+  `IOService.release`'s `shutil.rmtree` on a daemon thread; the patches now act only on the test's
+  own thread". `test_folder_cache.py` has the same pattern unfixed.
+- **The branch:** it changes what an admin helper computes (the converted-TXY inventory, the `temps`
+  parameter). It adds no threads, doesn't touch `release` or the `helab_io_` folders, and doesn't
+  touch `test_folder_cache.py`. The gw0 tests just before were `test_constant_layers` and
+  `test_constants`, and none of the branch's tests. Any IOService request from any earlier test
+  leaves the same thread.
+- **Fix (for the known-issues entry):** record only calls from the test's own thread
+  (`threading.get_ident()` check), as `test_folder_summary` now does, or only paths under
+  `tmp_path`.
+
+### Checks (floor venv, macOS, head `1b71c37`)
+
+- Touched tests: `test_convert_helab`, `test_converter_tab`, `test_txy_sources`,
+  `test_helper_events`, `test_cache_switch`, `test_cache_move`, `test_cache_mover`,
+  `test_headless_imports` and `test_folder_cache`, with
+  `-n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **261 passed, 0 reruns**.
+- Full suite (`-n 8`, same rerun flags): **8205 passed, 669 skipped, 0 reruns** (1 min 21 s).
+- `mypy helab/ --strict` (191), `mypy tests --strict` (159), and `mypy helab/ --strict --platform
+  win32` (191): no issues. `pyright helab tests` and `pyright --pythonplatform Windows helab tests`:
+  0 errors.
+
+### CI run 40894080358 (head `1b71c37`, attempt 1): success
+
+I read every job's log:
+
+| Job | ID | Result |
+|---|---|---|
+| macOS Converter backends | 123518429781 | 681 passed |
+| Ubuntu Converter backends | 123518429771 | 681 passed |
+| Windows Converter backends | 123518429768 | 680 passed |
+| macOS Tests (1/2) | 123518429785 | 4086 passed |
+| macOS Tests (2/2) | 123518429895 | 4119 passed |
+| Ubuntu Tests (1/2) | 123518429866 | 4084 passed |
+| Ubuntu Tests (2/2) | 123518429867 | 4120 passed |
+| Windows Tests (1/2) | 123518429983 | 4073 passed |
+| Windows Tests (2/2) | 123518429856 | 4103 passed, **1 rerun** (`test_folder_cache`, (b) above) |
+| Three Builds, Detect branch | — | success |
+
+The `_patient` timing test passed with no rerun in every job.
+
+## Round 5 check (head `11389a9`, `git diff 1b71c37..11389a9`, Low-7 and Nit-8 only)
+
+**Result: 0 open findings.** Low-7 and Nit-8 are closed. From my side, the floor can land.
+
+| Finding | Status | What I checked |
+|---|---|---|
+| Low-7 | **closed** | `TxyIndex` keeps the `journal` it was opened with: `open_index` passes it on both its reader and writer paths. `_write`'s replacement after a set-aside reopens with `journal=self.journal` (`provenance.py:294`). `clear_converted` now opens with `journal_for(dirname(root))`, which covers the race I set aside. The new `test_a_damaged_index_replaced_mid_write_keeps_its_bases_journal` damages a DELETE index under its open connection: pages after the first are overwritten, and the change counter is bumped so the cached pages are dropped. The next `record` sets the damaged index aside and writes the row to a DELETE replacement. I checked that the test catches the old behaviour with a probe: forcing `journal = WAL` on the same `TxyIndex` gives a WAL replacement, and a DELETE one with the fix. |
+| Nit-8 | **closed** | The retry part now runs on a fake clock (`provenance.time` patched; time passes only by sleeps). It asserts the back-off sequence 5, 10, 20, 40, 80, 100 ms, the capped last sleep, sleeps adding up to exactly `BUSY_SECONDS`, shrinking per-attempt timeouts starting at 1000 ms (one more attempt than sleeps), and the timeout restored. The real-lock case uses a connection with `timeout=60`, so a regression would wait 60 s, against a bound of `BUSY_SECONDS + 5` s. That is loose enough for loaded runners and still catches the bug. The class-level `sleeps` list is new for each test call (the class is defined inside the test), so reruns don't share it. |
+
+### Checks (floor venv, macOS, head `11389a9`)
+
+- `test_convert_helab`, `test_converter_tab`, `test_txy_sources`, `test_cache_switch`,
+  `test_helper_events` and `test_headless_imports`, with `-n 4 --reruns 5 --reruns-delay 1
+  --basetemp=.ai/temp/pytest-review`: **159 passed, 0 reruns**. The two changed tests passed 5 times
+  out of 5 in a loop, each run about 1.35 s.
+- `mypy helab/ --strict` (191), `mypy tests --strict` (159), and `mypy helab/ --strict --platform
+  win32` (191): no issues. `pyright helab tests` and `pyright --pythonplatform Windows helab tests`:
+  0 errors.
+
+### CI run 40898587803 (head `11389a9`, attempt 1): success, no RERUN
+
+I read every job's log:
+
+| Job | ID | Result |
+|---|---|---|
+| Windows Converter backends | 123534527562 | 681 passed |
+| macOS Converter backends | 123534527796 | 682 passed |
+| Ubuntu Converter backends | 123534527985 | 682 passed |
+| Windows Tests (1/2) | 123534527631 | 4074 passed |
+| Windows Tests (2/2) | 123534528047 | 4103 passed |
+| macOS Tests (1/2) | 123534527835 | 4087 passed |
+| macOS Tests (2/2) | 123534527652 | 4119 passed |
+| Ubuntu Tests (1/2) | 123534527941 | 4085 passed |
+| Ubuntu Tests (2/2) | 123534527676 | 4119 passed |
+| Three Builds, Detect branch | — | success |
+
+**No RERUN in any job.** Both changed tests passed on all three OSes (Tests (1/2) on each). The
+compat matrix was skipped because this is a push.
+
+## Round 6 review (head `0b00fdc`, `git diff 11389a9..0b00fdc`: Q~2 and Q~3 as Tony decided)
+
+**Result: no blocker. One new Low (Low-8) and two Nits (Nit-9, Nit-10).** Q~2 and Q~3 are built as
+the handoff describes. The quit path and the FolderCache hook change nothing else: IOService and
+`io_helper` are untouched.
+
+| Finding | Status | Where |
+|---|---|---|
+| Low-8 (new) | open, Low | `helab/convert_cli.py:204`, `_on_terminal` |
+| Nit-9 (new) | open, Nit | `helab/views/HelabMainWindow.py:1585–1587`, marks sent after the flush |
+| Nit-10 (new) | open, Nit | `helab/views/QuitSaveDialog.py:88–91`, the header's wording |
+
+### Low-8: `helab convert --output cache` crashes when there is no stdin (the packaged Windows app)
+
+- **Where:** `convert_cli.py:204`: `return sys.stdin.isatty()`.
+- **Why:** `HeLab.spec` builds with `console=False`, and `converter.md:358` says so: "on Windows the
+  windowed exe has no console, so lines go only to the log". In that process `sys.stdin` is `None`.
+  So `HeLab.exe convert --watch F --output cache`, on a folder marked Don't cache, raises
+  `AttributeError: 'NoneType' object has no attribute 'isatty'` in `_request`, before the first check.
+  `main` catches only `KeyboardInterrupt`, and the windowed bootloader shows "Unhandled exception in
+  script". Q~2 says "without a terminal, temp with the warning". The same happens on any OS when
+  stdin is closed (`0<&-`).
+- **Probe:** with `sys.stdin = None`, `_on_terminal()` raised that `AttributeError`; `python -c …
+  0<&-` prints `sys.stdin` as `None`.
+- **Fix:** `return sys.stdin is not None and sys.stdin.isatty()`, plus a parametrised case in
+  `test_a_typed_output_cache_asks_before_writing_a_dont_cache_folder_to_the_cache` with `sys.stdin`
+  set to `None` and `_on_terminal` *not* patched (expect temp and the warning). `_ask` writes to
+  `sys.stderr`, but it is reached only on a terminal.
+
+### Nit-9: a last use reported after the flush is dropped
+
+`_wait_for_saves` calls `stop_live()` and then `flush_txy_marks()` straight away. Live's closing
+save (`save_held`, which calls `helab_txy.find`), or a load still running, can send `txy_unmarked`
+after the one flush was submitted. That mark stays in `FolderCache.txy_unmarked` and is never
+written. The cost is a `last_used` up to an hour old, which is best effort as designed. Either say so
+in the handoff's Q~3 paragraph, or flush again from `_on_event` when a mark arrives while
+`quitting` (still one helper at a time).
+
+### Nit-10: the quit window's header says "to the disk cache"
+
+With other saves the header reads "Saving 1 folder and converted TXY's last use to the disk cache
+before HeLab quits:", and the index may be under the temp folder. Wording is Tony's: the M~3 check
+could show him the text. (A three-way " and " join, "1 folder and presets and converted TXY's last
+use", is possible but rare.)
+
+### For Tony (not a finding)
+
+Every load after the first within the hour, and every Live check that takes a HeLab TXY, is skipped
+by `LAST_USED_STEP` and so owes a mark. So the quit window will show briefly on most quits after
+working with converted folders, not now and then. M~3 shows it; CoCo may want Tony to know it is the
+usual case when he runs M~3.
+
+### What I checked and found sound
+
+- **Q~2:** `cache_confirmed` is set only by `_request`, and only for a typed `cache`/`cache-forced`.
+  The setting's default and `--output temp` never ask (tested), and the app never sets it. `_places`
+  skips only the Don't cache read with it, so beside's check and the data-root fallback are
+  unchanged. `dont_cache` returns "" for a store it can't read or for no data root, as documented
+  (those go to temp anyway). The question goes to stderr; only `y`/`yes` writes, and EOF or Enter
+  doesn't (tested). Ctrl-C at the question stops cleanly. It is asked once per run. Tests never read
+  the real stdin.
+- **Q~3, the helper side:** `touch` returns False only for a row that is there but newer. A busy
+  index (200 ms) raises, so `written = False`. `_mark_used` sends `txy_unmarked` through
+  `infra.emit` (stdout, the helper's channel). Its three callers (`loading`, `save_held`, `live`) all
+  run in helpers whose `send` is that `emit`. `mark_used` writes only `last_used < at`, so it never
+  moves a use back. A reader `open_index` returns None for a missing, damaged or newer index, and
+  each statement's error is suppressed. `cache_admin` answers `mark_used` before it opens the store.
+  `ADMIN_ACTIONS` has no other user.
+- **Q~3, the GUI side:** the only listener that takes every producer is `FolderCache._on_event`
+  (`main.py`, `CacheMover`, `HelabMainWindow`'s drive and trace handlers and `DataRootsTab` filter by
+  owner). It keeps the newest `at` and returns before anything else, so the new kind reaches no
+  other handler. The flush's events stop at its owner check. They end on `done`, `error` or
+  `cancelled`, which is all IOService sends for a non-load: a no-progress timeout is `error` with no
+  retry, since retries are only for loads' files. `flush_txy_marks` submits once; a failed submit
+  keeps the marks. `quit_saves()` gains the entry only while it runs. `cancel_for_quit` doesn't
+  cancel `cache_admin`. Quit now → `shutdown()` cancels it.
+- **Outside the owned paths:** `HelabMainWindow` changes by one line, `QuitSaveDialog` by its
+  `state` line, header and count, and `folder_cache` by its additions and the first lines of
+  `_on_event`. `quit_save_started` and `txy_marks_flushing` are used only by tests and are kept for
+  Beacon's quit window, as the handoff says.
+
+### Checks (floor venv, macOS)
+
+- **Full suite**, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8222 passed, 669 skipped, 0 reruns** (2 min 5 s).
+  - The suite was collected at 11:18:04 from HEAD 2213dcc. That HEAD is 0b00fdc plus two
+    handoff-only commits, so `helab/` and `tests/` were identical to 0b00fdc.
+  - Ledger's uncommitted edit to `tests/test_convert_helab.py` (the writers' `PAUSE`) landed at
+    11:20:04, after collection, so this run didn't test it.
+- **Type checks:** `mypy helab/ --strict` (191), `mypy tests --strict` (160) and `mypy helab/ --strict
+  --platform win32` (191) found no issues. `pyright helab tests` and `pyright --pythonplatform
+  Windows helab tests` found 0 errors.
+
+### CI run 40977028554 (head `0b00fdc`, attempt 1): success, one RERUN
+
+I read every job's log:
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123807566083 | 4097 passed |
+| Ubuntu Tests (2/2) | 123807565984 | 4123 passed |
+| macOS Tests (1/2) | 123807566050 | 4100 passed |
+| macOS Tests (2/2) | 123807567065 | 4122 passed |
+| Windows Tests (1/2) | 123807566077 | 4087 passed |
+| Windows Tests (2/2) | 123807566128 | 4106 passed |
+| Ubuntu Converter backends | 123807566151 | 690 passed |
+| macOS Converter backends | 123807566381 | 690 passed |
+| Windows Converter backends | 123807566257 | 689 passed, **1 rerun** |
+| Detect branch; ubuntu, windows, macos Build | 123807485147; 123807565170, 123807565171, 123807565363 | success |
+
+The compat matrix was skipped (a push, not a PR). Every new Q~2/Q~3 test passed on every OS.
+
+- **The rerun, quoted from "rerun reasons":** `tests/test_convert_helab.py::test_two_writers_side_by_side_lose_nothing`.
+  `AssertionError: shot 36: IndexUnavailable: HeLab's TXY index couldn't be written (database is
+  locked) (cause OperationalError: database is locked; code SQLITE_BUSY) after 10.75 s`, at
+  `tests\test_convert_helab.py:1556`. It passed on the rerun.
+- **Not caused by round 6:** Q~2 and Q~3 don't touch the index's writes, and this test doesn't run
+  `mark_used`.
+- **Ledger's proposal** (e259c43) is in the handoff for known-issues. Ledger blames writer starvation:
+  SQLite's lock isn't fair, and two processes write back to back with no gap. That fits the evidence:
+  10.75 s is `BUSY_SECONDS` plus the last attempt, and the integrity check passes on the rerun.
+  - Proposal (1), `_prepare` skipping `BEGIN IMMEDIATE` when `user_version` is already `SCHEMA`,
+    fixes the cause: two write transactions per shot become one. I'd prefer it to (2), which only
+    makes the test gentler.
+  - Ledger is making (2) now (uncommitted). It's acceptable as a test fix if the known-issues entry
+    keeps (1) and (3) open.
+  - Whichever lands needs its own green CI run before landing.
+
+## Round 7 check (head `460360b`, `git diff 0b00fdc..460360b`)
+
+**Result: 0 open findings.** Low-8, Nit-9 and Nit-10 are closed. The paced two-writer test still
+catches a lost write. A~4 is sound as a later item. When the quit flush runs is still Tony's open
+question (Q~3), so I judged the flush only as built.
+
+| Finding | Status | What I checked |
+|---|---|---|
+| Low-8 | **closed** | `_on_terminal` (`convert_cli.py:203–209`) is now `sys.stdin is not None and sys.stdin.isatty()`, and it catches the `ValueError` a closed file object raises. Two new `no-stdin` cases run the real `_on_terminal` with `sys.stdin = None`: `--output cache` → temp and the warning; `cache-forced` → the cache. `test_a_missing_or_closed_stdin_is_no_terminal` covers None and a closed stream. |
+| Nit-9 | **closed** (documented) | Handoff, Design › Q~3, "One flush, best effort": a mark that arrives after the flush isn't written, so `last_used` can be up to an hour old, and it only orders Settings › Cache's list. Whether to flush later is part of Tony's pending answer. |
+| Nit-10 | **closed** | The header no longer says "to the disk cache" for the last uses. Alone: "Recording when converted TXY were last used before HeLab quits:". With other saves: "Saving 1 folder to the disk cache and recording when … before HeLab quits:". Both are tested, and M~3 shows the wording to Tony. |
+
+### A correction to my round 6: fix (1) was already the code
+
+`_prepare` (`provenance.py:376–396`) takes `BEGIN IMMEDIATE` only when `user_version` is 0, and checks it
+again inside the transaction. For an existing index it only reads. So each shot in the test was one
+write transaction, as Ledger now writes. I backed fix (1) on the handoff's wrong account, without
+reading `_prepare`. The corrected cause fits:
+- In WAL, the last connection to close checkpoints and deletes the `-wal`, so each per-shot open
+  rebuilds it. That is the test's churn.
+- `convert_folder` opens the index once per run (`convert.py:585`) and closes it in its `finally`
+  (`:713`), so a real conversion doesn't churn this way.
+
+### The 5 ms pause doesn't hide a lost write
+
+The probe is `scratchpad/pause_probe.py`. It runs the test's own `WRITER` (read from the test file),
+two processes, 150 rows each, with one mutation: a write that meets the other writer's lock gives up
+silently (busy timeout 0, no retry, returns 0, the process still exits 0).
+
+| Pause | Mutated | Runs | Rows (helper / command line) | The test |
+|---|---|---|---|---|
+| 5 ms | no | 3 | 150 / 150 each time | passes |
+| 5 ms | yes | 8 | 127–145 / 134–145; 5–23 writes lost per writer per run | **fails 8 of 8** |
+| 0 | yes | 3 | 121–131 / 130–134 | fails 3 of 3 |
+
+So the pause keeps both writers contending, about a tenth of the writes meeting the other's lock on
+macOS, and a dropped write still fails the count assert. Ledger's own probe, one row dropped, gives
+`149 == 150`.
+
+On CI 40979891876, Windows Tests (2/2) took about 11.3 s for this test (00:33:27 → 00:33:39,
+including the 1 s start delay and two interpreter starts). That is slow but within the 120 s
+`communicate` timeout, and it didn't rerun. If it reruns again, the known-issues entry already names
+(3), an OS lock serialising writers, as the last resort.
+
+### A~4: sound, for later
+
+The handoff's claims hold:
+- Per-shot churn is test-only, since `convert_folder` opens the index once.
+- `helab convert --watch` reopens each pass, and the app's helper once per request.
+- While `helab convert` holds a connection, the helper's close isn't the last, so it neither
+  checkpoints nor deletes the `-wal`, and the next open has nothing to rebuild.
+- It doesn't change the lock's fairness.
+
+One cost to add to A~4: on Windows a long-held connection keeps the file open without delete
+sharing. So while `helab convert` runs, the app's helper can't set aside a damaged index
+(`IndexUnavailable`, as accepted in round 1). The proposal's "reopen after `IndexUnavailable` or a
+set-aside" covers `helab convert`'s side, but the app's conversions would fail until it notices.
+That is rare and acceptable, but worth a line in A~4.
+
+### Checks (floor venv, macOS, head `460360b`, clean tree before and after)
+
+- **Full suite**, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8225 passed, 669 skipped, 0 reruns** (2 min 9 s).
+- **Type checks:** `mypy helab/ --strict` (191), `mypy tests --strict` (160) and `mypy helab/ --strict
+  --platform win32` (191) found no issues. `pyright helab tests` and `pyright --pythonplatform Windows
+  helab tests` found 0 errors.
+
+### CI run 40979891876 (head `460360b`, attempt 1): success, no RERUN
+
+I read every job's log. No job has a "rerun reasons" section or a RERUN line.
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123817092786 | 4098 passed |
+| Ubuntu Tests (2/2) | 123817092481 | 4124 passed |
+| macOS Tests (1/2) | 123817092567 | 4101 passed |
+| macOS Tests (2/2) | 123817092637 | 4124 passed |
+| Windows Tests (1/2) | 123817092525 | 4088 passed |
+| Windows Tests (2/2) | 123817092680 | 4108 passed |
+| Ubuntu Converter backends | 123817092638 | 693 passed |
+| macOS Converter backends | 123817092455 | 693 passed |
+| Windows Converter backends | 123817092454 | 692 passed |
+| Detect branch; ubuntu, macos, windows Build | 123817037145; 123817092477, 123817092676, 123817092833 | success |
+
+The compat matrix was skipped (a push). The two-writer test passed with no rerun in every job that
+runs it: Tests (2/2) on each OS, and the Converter backends jobs, which run `test_convert_helab.py`.
+
+## Round 8 review (head `18514ff`, `git diff c492242..18514ff`: A30.4, background last-use writes)
+
+**Result: 0 open findings, no blocker.** I add one optional Nit (Nit-11). Every point CoCo asked about
+holds.
+
+| Question | Answer | Where |
+|---|---|---|
+| No write after quit starts | **holds** | `flush_txy_marks` sets `_marks_quit`, stops `_marks_timer` and cancels a background write in flight. `_schedule_marks` and `_marks_due` both refuse once `_marks_quit`, `quitting`, `_closing` or `service.closed` is set, so a mark that arrives later (a save's load ending) starts nothing (tested). |
+| No write after shutdown | **holds** | `shutdown()` sets `_closing` and stops the timer. A background write still running then is cancelled by `IOService.shutdown()`, and its late `cancelled` can't reschedule (`_closing`). |
+| No older time from a race | **holds** | Both writers run `UPDATE … SET last_used = at WHERE … AND last_used < at`, so the final value is the larger `at`, whatever order the writes land in. The quit flush sends the current `txy_unmarked`, which is never older per key than what the background write took: it keeps the max. A cancelled background helper that is still writing can't move a value back. |
+| The timer can't spin | **holds** | One single-shot timer, armed only when not already active, with nothing owed and nothing running. Retries are 600 s (offline, cache off, after a write ends with marks still owed) or `SWEEP_RETRY` 5 s (foreground busy, or the queue full). |
+| 5 s under sustained foreground work | **fine** | Each retry is a memory-only check, no I/O and no submit. `hold_background` lasts only while a foreground load reads a file or a listing progresses, plus `RESUME_DELAY` 0.5 s, and a Live check holds only while it reads a new file. So gaps come often, and the background write isn't starved during Live, which is when marks pile up. The sweep uses the same 5 s retry. |
+| Not during a cache move | **holds** (not asked) | `cache_admin` is in `IOService.CACHE_OPERATIONS`. `hold_cache()` cancels a running one and starts none, and a cancelled write's marks stay owed. One thing for the record: a mark taken before the move names the old `converted-txy`. Afterwards `open_index` finds nothing there, so the mark is dropped as nothing to write. The cost is a `last_used` up to an hour old at the new place. |
+| Events contract, both sides | **holds** | `AdminResultFields` gains `unwritten: list[list[Any]]` (optional; standard library only). `admin.cache_admin` sends it for `mark_used`, and `FolderCache._on_marks_written` reads it with `.get(…) or ()`. `test_helper_events` passes. |
+| Marks dropped only if unchanged | **holds** | On `done`, an entry is deleted only when `txy_unmarked[mark] == at` sent. `unwritten` entries are taken out of `_mark_sent` first, so they stay owed. An `error` (timeout) or `cancelled` keeps everything. `admin_result` always comes before `done` on the same stdout. |
+| Q~ → Q30.x renames | **comments only** | A word diff of `convert_cli.py`, `io_ops/convert.py`, `HelabMainWindow.py` and `QuitSaveDialog.py` shows only `Q~2`→`Q30.2` and `Q~3`→`Q30.3`. In `admin.py`, `events.py`, `helab_txy.py` and `folder_cache.py` the IDs change in comments and docstrings beside the real changes. The removed `import contextlib` was unused after `mark_used`'s rewrite. |
+| Handoff "A30.4 done" | **accurate** | It matches the code, including the offline choice (left as Tony's) and the proposed `converter.md`, `io-and-browsing.md`, M30.3 and A30.4 lines. |
+
+### Nit-11 (optional): a cancelled background write's `cancelled` goes to FolderCache's listeners
+
+- **Where:** `flush_txy_marks` clears `_mark_background` and then calls `service.cancel(owner)`.
+  `IOService.cancel` emits `cancelled` synchronously.
+- **Why it matters little:** that event no longer matches the background owner, so `_on_event` passes
+  it on through `FolderCache.resultReady`, under a `job is None` request. Every listener filters by
+  owner (`FolderExplorer._io_event`, `SnapshotFileSystemModel._on_event`, `DataRootsTab`,
+  `DataRootDialogs`, `RootDuplicatesWindow`), so it is harmless.
+- **Fix:** cancel first, then clear. `_on_marks_written` takes the `cancelled`, and its
+  `_schedule_marks()` refuses because `_marks_quit` is already set.
+
+### Other notes (no change needed)
+
+- **A missing index:** `mark_used` drops marks whose index `open_index(write=False)` returns None
+  for (missing, newer, damaged, or a DELETE-mode read failing). A busy DELETE-mode reader instead
+  waits its connection timeout and hits the 5 s no-progress limit, so it ends as `error` and the marks
+  stay owed.
+- **Many marks on a busy index:** each waits 500 ms, so more than about 10 can hit the 5 s limit.
+  Then everything stays owed for 10 min. Any writes already made are forward-only. Fine.
+
+### Checks (floor venv, macOS, head `18514ff`)
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8230 passed, 669 skipped, 0 reruns** (2 min 8 s). The tree was clean and HEAD was `18514ff`,
+  before and after the run.
+
+- **Type checks:** `mypy helab/ --strict` (191), `mypy tests --strict` (160) and `mypy helab/ --strict
+  --platform win32` (191) found no issues. `pyright helab tests` and `pyright --pythonplatform Windows
+  helab tests` found 0 errors.
+
+### CI run 40989459638 (head `18514ff`, attempt 1): success, no RERUN
+
+I read every job's log. None has a "rerun reasons" section or a RERUN line.
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123848143631 | 4101 passed |
+| Ubuntu Tests (2/2) | 123848143652 | 4127 passed |
+| macOS Tests (1/2) | 123848143930 | 4103 passed |
+| macOS Tests (2/2) | 123848143570 | 4127 passed |
+| Windows Tests (1/2) | 123848143577 | 4090 passed |
+| Windows Tests (2/2) | 123848143555 | 4111 passed |
+| Ubuntu Converter backends | 123848143609 | 693 passed |
+| macOS Converter backends | 123848143595 | 693 passed |
+| Windows Converter backends | 123848143545 | 692 passed |
+| Detect branch; ubuntu, macos, windows Build | 123848076179; 123848143828, 123848143859, 123848143862 | success |
+
+The compat matrix was skipped (a push). All 13 tests in `test_txy_last_used_quit.py` passed on each OS
+(7 in Tests (1/2), 6 in Tests (2/2)).
+
+## Round 9 review (head `0f69731`, `git diff 18514ff..0f69731` without the merge `b8e1022`)
+
+**Result: 0 open findings, no blocker.** Q23.7 (c) and Nit-11 are as described, the merge changed no
+code of its own, and CI is green with no rerun.
+
+### The merge `b8e1022` changed no code of its own
+
+- No conflict hunks: `git show --cc b8e1022` prints none.
+- Its `helab/` and `tests/` equal dev's tip (`e74a5cf`) plus this branch's A30.4 change, line for line:
+  - the added and removed lines of `git diff e74a5cf b8e1022 -- helab tests` and of `git diff c492242
+    18514ff -- helab tests` are identical, and only hunk offsets and `index` lines differ;
+  - both are 10 files, +241 −35.
+- `e74a5cf` itself adds one findings doc. The merge does bring in Byte Units' code (`c5f99ba` …
+  `bc9375a`), but that had already landed on dev and been reviewed there, not on this floor.
+
+### Q23.7 (c): `max(ONCE_SETTLE_SECONDS, DAMAGED_SECONDS)` against Tony's wording
+
+Tony's wording: "only at 60 s by mtime, not 20 s; Live/`--watch` unchanged". The code
+(`convert.py:508–520`): with `seen` None the limit is `max(ONCE, DAMAGED)` on the mtime age. With
+`seen` given it is `DAMAGED` on `min(mtime age, first-seen age)`, exactly as before.
+
+| Values | `--once` limit | Live / `--watch` | Matches the wording? |
+|---|---|---|---|
+| Real: 60, 20 | 60 s by mtime | 20 s, mtime and first seen | **yes** |
+| `DAMAGED` patched 1e9 (`test_files_that_may_still_be_written_wait`, `test_live_convert.py:167`) | 1e9: never | 1e9 | yes, it's the patch's "not damaged here". With `ONCE` alone, shots 2 and 3 (dated long ago) became damaged: Ledger's reason for `max`. |
+| `DAMAGED` patched 5 (`test_convert_helab.py:367`) | 60 s (that test's `--once` file is now dated `ONCE` + 1 s) | 5 s | yes |
+| `DAMAGED` patched 0 (`test_live_convert.py:332`) | 60 s | 0 | yes (that test is Live) |
+| `ONCE` lowered below 20 (nothing does this) | `DAMAGED`, not `ONCE` | 20 s | outside the wording. `max` keeps "one look is never quicker than two", which is the safer reading; it's in the docstring. |
+
+**In production the change can't be seen.** With `fingerprints.SETTLE_SECONDS` 5 > 0, `--once`
+settles for `max(5, 60)` = 60 s by the same mtime (`convert.py:480–482`, `:564`). So a file under 60 s
+waits as `settling` before its content is read. A file that reaches `unfinished_or_damaged` is
+already ≥ 60 s old and both limits agree: damaged at once, as before.
+
+The new limit decides only when the settle age is 0: tests (`HELAB_SETTLE_SECONDS=0` in conftest) or a
+developer's override. Ledger's note says the same. The boundaries are both `>=` at 60 s, so settle and
+damaged can't disagree.
+
+**Tests:**
+- `test_once_calls_a_file_damaged_only_after_the_once_settle_age`: 30 s waits (`no_final_newline`), 61 s
+  is damaged. It also pins (60, 20).
+- `test_live_and_watch_still_call_a_file_damaged_after_20_s`: with `seen` aged 30 s, the file is damaged.
+- The damaged test's `--once` case is re-dated. Ledger's probe: the old limit fails `30s-waits`.
+
+### Nit-11: closed
+
+`flush_txy_marks` cancels `_mark_background` before clearing it. The synchronous `cancelled` reaches
+`_on_marks_written`, which keeps every mark owed, and its `_schedule_marks()` refuses because
+`_marks_quit` is already set. The takeover test connects to `cache.resultReady` before
+`flush_txy_marks()` and asserts the background owner isn't passed on.
+
+### The handoff addendum
+
+It's accurate. The proposed `converter.md` lines (about 232 and 382) and `DECISIONS_TODO` Q23.7 → (c),
+built, match the code.
+
+### Checks (floor venv, macOS, head `0f69731`)
+
+- **Full suite**, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8258 passed, 669 skipped, 1 rerun** (2 min 9 s). The tree was clean and HEAD was `0f69731`,
+  before and after the run.
+- **The rerun, quoted from the output:** `[gw2] darwin -- Python 3.13.15 …` / `worker 'gw2' crashed while running
+  'tests/test_live_plots.py::test_each_plot_keeps_its_scripts_minimum_size[Scatter3D]'`, with no
+  traceback. It passed on the rerun.
+  - This branch doesn't touch plots.
+  - It is the test in `roadmaps/known-issues.md:96`, which so far names only Windows CI (run
+    40808815122). Widen that entry to a macOS local worker crash too (`agent/txy-index` `0f69731`,
+    2026-10-30).
+
+- **Type checks:** `mypy helab/ --strict` (191), `mypy tests --strict` (160) and `mypy helab/ --strict
+  --platform win32` (191) found no issues. `pyright helab tests` and `pyright --pythonplatform Windows
+  helab tests` found 0 errors.
+
+### CI run 40994921961 (head `0f69731`, attempt 1): success, no RERUN
+
+I read every job's log. None has a "rerun reasons" section or a RERUN line.
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123865772715 | 4111 passed |
+| Ubuntu Tests (2/2) | 123865772580 | 4144 passed |
+| macOS Tests (1/2) | 123865772401 | 4114 passed |
+| macOS Tests (2/2) | 123865772535 | 4144 passed |
+| Windows Tests (1/2) | 123865772519 | 4101 passed |
+| Windows Tests (2/2) | 123865772502 | 4128 passed |
+| Ubuntu Converter backends | 123865772569 | 696 passed |
+| macOS Converter backends | 123865772457 | 696 passed |
+| Windows Converter backends | 123865772414 | 695 passed |
+| Detect branch; ubuntu, macos, windows Build | 123865704593; 123865772393, 123865772463, 123865772402 | success |
+
+The compat matrix was skipped (a push). The new and changed tests (the two Q23.7 tests, three cases,
+and the takeover test) passed on each OS.
+
+## Round 10 review (head `e06d891`, the merge of `origin/dev/v0.0.7` `cb05f27` into `0f69731`)
+
+**Result: 0 open findings, no blocker.** The merge is clean: it changes nothing of Smoke ready's or
+Runner Tools', and the fixture fix has the right cause.
+
+### The merge
+
+- **Against dev, the merge adds only this branch's work.** I compared `git diff -U0 cb05f27 e06d891 --
+  helab tests` with this branch's own work, `git diff -U0 e74a5cf 0f69731 -- helab tests` (`e74a5cf`
+  is the merge base). Hunk headers aside, the two differ only in these lines:
+  - the Q~3 → Q30.3 comment renames in the comments Smoke ready brought: the `if self._mark_flush:`
+    line, the `QUIT_*` kinds' comment and `QuitSaveDialog`'s docstring;
+  - in `tests/test_txy_last_used_quit.py`: the `QApplication` and `QUIT_LAST_USED` imports, the
+    `frozen(qapp)` fixture and its docstring, `quit_entries() == []` beside `quit_saves() == []`, and
+    the four lines that check the quit flush's entry in the takeover test.
+
+  So nothing of Smoke ready's or Runner Tools' changed. Outside `helab/` and `tests/`, the merge
+  touches only this floor's three session files.
+- **The four conflict hunks** (`git show --cc e06d891`): `quit_saves` returns the paths of
+  `quit_entries()`. `quit_entries` adds `QuitSave(QUIT_LAST_USED, TXY_LAST_USED, "writing",
+  self._mark_flush_started)` only while `_mark_flush` is set. `quit_save_started` is Smoke ready's,
+  the earliest start among the entries. `QuitSaveDialog._show` is Smoke ready's. In each, Smoke
+  ready's side is taken with the renamed comment. `_schedule_marks`, `_marks_due` and
+  `_on_marks_written` came in unchanged beside them.
+- **The background write is not a quit entry.** It is submitted straight to `service.submit`
+  (`folder_cache.py:2815`) and kept only in `_mark_background`/`_mark_sent`. `quit_entries` reads
+  none of those, and none of the lists it does read (`_finishing`, `jobs`, `_deferred_saves`,
+  `_pref_writes`, `_constant_writes`, `_result_writes`, `_preset_jobs`) holds that write. The test
+  asserts `quit_entries() == []` while it runs.
+- **The quit flush is a quit entry**, of kind `QUIT_LAST_USED` with its start. The takeover test
+  asserts `(kind, path, state)` and that `started == quit_save_started(TXY_LAST_USED)`, and is not
+  None.
+- **`_wait_for_saves`** (`HelabMainWindow.py:1904`) still calls `cache.flush_txy_marks()` before
+  `quit_saves()`, unchanged.
+- **The takeover's "cancel first" (Nit-11) survived** (`folder_cache.py:2767–2772`). It sets
+  `_marks_quit`, stops `_marks_timer`, then calls `service.cancel(_mark_background)`, and only then
+  clears `_mark_background`/`_mark_sent`. `shutdown` still stops `_marks_timer`.
+
+### The `frozen` fixture: is the cause right? Yes.
+
+- **What the fixture lacked:** `frozen` builds an `IOService` and a `FolderCache` with no
+  `QApplication`. Its tests take no `qtbot`, and so no `qapp`.
+- **Why that fails:** A30.4's tests assert `_marks_timer.isActive()`. My probe, in a fresh
+  interpreter with no application, started a `QTimer` with 600 s:
+  - Without an application, Qt printed "QObject::startTimer: current thread's event dispatcher has
+    already been destroyed". The timer reported `isActive()` False, with `interval()` still
+    600000.
+  - With a `QCoreApplication`, `isActive()` was True.
+- **Why it shows only sometimes:** a test fails whenever it is the first Qt test its xdist worker
+  runs. That depends only on where the tests fall in each worker, so it is deterministic for a given
+  set of tests. That is why it failed all five reruns, and why the merge's new tests from dev could
+  bring it out.
+- **The fix is the right one:** requesting `qapp` (pytest-qt's session application) fixes the cause.
+  The round 1 test that also uses `frozen` needs no timer, which is why the gap went unseen until
+  A30.4.
+
+### Checks (floor venv, macOS, head `e06d891`)
+
+- **Full suite**, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8361 passed, 669 skipped, 0 reruns** (2 min 54 s).
+- **Type checks:**
+  - `mypy helab/ --strict` (194 files), `mypy tests --strict` (167) and `mypy helab/ --strict
+    --platform win32` (194): no issues.
+  - `pyright helab tests` and `pyright --pythonplatform Windows helab tests`: 0 errors.
+
+### CI run 41007355018 (head `e06d891`, attempt 1): success, no RERUN
+
+I read every job's log. None has a RERUN line or a "rerun reasons" section.
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123905239426 | 4164 passed |
+| Ubuntu Tests (2/2) | 123905239298 | 4194 passed |
+| macOS Tests (1/2) | 123905239436 | 4167 passed |
+| macOS Tests (2/2) | 123905239571 | 4194 passed |
+| Windows Tests (1/2) | 123905239393 | 4152 passed |
+| Windows Tests (2/2) | 123905239342 | 4176 passed |
+| Ubuntu Converter backends | 123905239313 | 696 passed |
+| macOS Converter backends | 123905239353 | 696 passed |
+| Windows Converter backends | 123905239445 | 695 passed |
+| Detect branch; ubuntu, macos, windows Build | 123905171606; 123905239345, 123905239503, 123905239262 | success |
+
+- **The Build jobs:** each logs "mlx/numba/rust: unavailable", the developer-only backends (A9.1),
+  and passes.
+- **The compat matrix** was skipped (a push).
+- **The A30.4 tests that use `frozen`** passed on every OS: the ten-minute test and the takeover
+  test in each Tests (2/2), and the offline/cache-off/foreground test in each Tests (1/2).
+- **Still open from round 9, for landing:** `roadmaps/known-issues.md:95`, the Scatter3D worker
+  crash, still names only Windows CI. Widening it to the macOS local crash from round 9 waits for
+  the landing.

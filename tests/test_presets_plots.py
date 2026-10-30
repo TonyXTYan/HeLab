@@ -4,6 +4,7 @@ data shows), and the plots that reopen at start, each running on its folder's da
 local cached read only, never the folder."""
 from __future__ import annotations
 
+import gc
 import json
 import math
 from dataclasses import replace as dataclass_replace
@@ -1679,12 +1680,15 @@ def test_the_cache_tabs_presets_line_lets_go_of_the_store_with_its_label(qtbot: 
     from PyQt6.QtCore import QEvent
     from helab.views.PresetsInspector import show_summary
     store = preset_store()
+    gc.collect()  # (Labels earlier tests let go of let go of the store first: the count below is this one's.)
     before = store.receivers(store.presetsChanged)
     label = QLabel()
     show_summary(label, store)
     assert store.receivers(store.presetsChanged) == before + 1
     label.deleteLater()
     QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    del label  # Once its Python object goes too (weakref.finalize, not a callable on destroyed).
+    gc.collect()
     assert store.receivers(store.presetsChanged) == before
 
 

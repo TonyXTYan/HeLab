@@ -13,8 +13,8 @@ from uuid import uuid4
 
 from PyQt6 import sip
 from PyQt6.QtCore import QObject, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QDockWidget, QLabel, QPushButton, QVBoxLayout, QWidget
-from pyqtgraph.parametertree import Parameter
+from PyQt6.QtWidgets import QDockWidget, QLabel, QPushButton, QTabWidget, QTreeWidgetItemIterator, QVBoxLayout, QWidget
+from pyqtgraph.parametertree import Parameter, ParameterTree
 
 from helab.analysis.backends import BACKEND, backend_specs
 from helab.analysis.constant_layers import (changed_keys, describe_constants, source_name, value_and_origin,
@@ -22,7 +22,7 @@ from helab.analysis.constant_layers import (changed_keys, describe_constants, so
 from helab.analysis.physics import TABLE, ResolvedConstants
 from helab.analysis.budget import RamBudget
 from helab.analysis.budget_core import RELOAD_GRACE, Restored, hollow, restore, shots_list, view_buffers
-from helab.analysis.dataset_view import DatasetView, ViewKey
+from helab.analysis.dataset_view import DatasetView, ViewKey, revise, view_of
 from helab.analysis.follow import FOLLOW, Follow, changes, live_specs, policy_of, shots_text
 from helab.analysis.live_feed import LiveFeed
 from helab.analysis.parameter_tree import build_tree, commit_pending_text, parameter_of, settings_widget, tree_values
@@ -31,19 +31,54 @@ from helab.analysis.parameters import describe
 from helab.analysis.presets import PlotCheck, SavedPlot, ScriptPreset, ScriptRef, check_plot, is_waiting
 from helab.analysis.results import DISK_CACHED, RAM_ONLY, AnalysisContext, AnalysisResult
 from helab.analysis.runner import AnalysisRunner, get_analysis_runner
+from helab.convert.profile import DetectorProfile, file_tag
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.utils.accessible import id_part, identify
 from helab.utils.constants import QDOCKWIDGET_STYLESHEET
 from helab.utils.folder_cache import Dataset, FolderCache, get_folder_cache, store_options
 from helab.utils.io_service import IORequest, get_io_service
 from helab.utils.number_format import byte_size
+from helab.utils import txy_sources
 from helab.utils.ram_buffers import Buffers, arrays_in, buffers
 from helab.views.plots.cached_results import PENDING_NOTE, VERIFY_NOTE, CachedRuns
-from helab.views.plots.dock import AnalysisDock
+from helab.views.plots.dock import AnalysisDock, release_figures
 from helab.views.plots.pictures import ReleasedPlot, snapshot
+from helab.views.plots.txy_source import TxySourceRow, known_profiles, profile_by_tag
 if TYPE_CHECKING:
     from helab.views.plots.arrangement import FolderWait
     from helab.views.plots.presets import PresetBar
     from helab.views.plots.workspace import PlotWorkspace
+
+
+def identify_parameters(settings: QWidget) -> QWidget:
+    """IDs and names for a plot's settings (pyqtgraph's parameter trees, helab/utils/accessible.py):
+    each tree ``plot_settings`` (with pages, ``plot_settings_<n>`` and the page tabs
+    ``plot_settings_pages``), each value's editor ``param_<group>.<name>`` named by its title, and
+    its reset button ``param_<group>.<name>_reset``. ``settings`` itself, for chaining."""
+    trees = [settings] if isinstance(settings, ParameterTree) else settings.findChildren(ParameterTree)
+    if isinstance(settings, QTabWidget) and (bar := settings.tabBar()) is not None:
+        identify(bar, "plot_settings_pages", "Plot settings pages")
+    for number, tree in enumerate(trees, start=1):
+        identify(tree, "plot_settings" if len(trees) == 1 else f"plot_settings_{number}", "Plot settings")
+        found = QTreeWidgetItemIterator(tree)
+        while (item := found.value()) is not None:
+            found += 1
+            param = getattr(item, "param", None)
+            if not isinstance(param, Parameter):
+                continue
+            path: List[str] = []
+            step: Optional[Parameter] = param
+            while step is not None and step.parent() is not None:
+                path.insert(0, id_part(step.name()))
+                step = step.parent()
+            ident, title = "param_" + ".".join(path), str(param.title())
+            for attribute, suffix, name in (("widget", "", title), ("addWidget", "_add", f"Add to {title}"),
+                                            ("button", "", ""), ("defaultBtn", "_reset", f"Reset {title}")):
+                widget = getattr(item, attribute, None)
+                if isinstance(widget, QWidget):
+                    identify(widget, ident + suffix, name,
+                             "Set it back to its default" if attribute == "defaultBtn" else "")
+    return settings
 
 
 class LinkedAnalysisInstance(QObject):
@@ -79,6 +114,7 @@ class LinkedAnalysisInstance(QObject):
             return
             
         dock = AnalysisDock(f"{self.name} ({self.instance_id})", self.workspace.host)
+        dock.plot_id = self.instance_id
         dock.setStyleSheet(QDOCKWIDGET_STYLESHEET)
         dock.setWidget(content)
         dock.closed.connect(self.close)
@@ -113,6 +149,8 @@ class LinkedAnalysisInstance(QObject):
         if dock is None or sip.isdeleted(dock):
             return  # Deleted with the plot area: the Settings panel drops the page itself.
         plots.middle_mainwindow.removeDockWidget(dock)
+        if (plot := dock.widget()) is not None:
+            release_figures(plot)  # Now, not when this plot's cycles are collected (a figure's page goes).
         dock.deleteLater()
         if self.param_tab is not None:
             plots.panel_right_top_plot_settings.remove_plot(dock)
@@ -157,8 +195,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.policy = policy
         self.follow = Follow(view, self.policy)
         self.parameter_root: Optional[Parameter] = None
-        self.status_label = QLabel()
-        self.input_label = QLabel()
+        self.status_label = identify(QLabel(), "plot_status")
+        self.input_label = identify(QLabel(), "plot_input")
         self.feed: Optional[LiveFeed] = workspace.live_feed if workspace is not None else None
         self._follow_timer = QTimer(self)
         self._follow_timer.setSingleShot(True)
@@ -202,6 +240,18 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._waiting_message: Optional[QLabel] = None
         self.reopen_check: Optional[PlotCheck] = None  # What its saved settings gave when reopened
         self.open_error = ""  # Why its settings page couldn't open ("": it did)
+        # Its TXY choice (Q6.6, Q18.2, ``txy_source``): a source ("": as the folder's tab) and the profile
+        # whose HeLab TXY it reads (None: the conversion profile's). The tab's choice is the tab's data;
+        # another is a dataset the plot loads itself (``_source_owner``: that load in flight), again
+        # whenever Live finds new shots. A reopened plot starts as the tab (Q14.2).
+        self.txy_source = ""
+        self.txy_profile: Optional[DetectorProfile] = None
+        if view.txy_choice:
+            self._choice_from(view.txy_choice)
+        self.txy_row: Optional[TxySourceRow] = None
+        self._source_owner = ""
+        self._source_again = False  # Live found new shots while it loaded: load once more after.
+        self._reload_from_source = False  # A deliberate Reload of a released plot waits for that load.
 
     @property
     def view(self) -> DatasetView:
@@ -260,8 +310,12 @@ class AnalysisInstance(LinkedAnalysisInstance):
         layout.setSpacing(0)
         self.input_label.setToolTip(self.path)
         layout.addWidget(self.input_label)
-        layout.addWidget(settings_widget(self.parameter_root, [*specs, *drawing, *live]), 1)
-        self.rerun_button = QPushButton("Rerun with these settings")
+        self.txy_row = TxySourceRow(self.txy_source, self.set_txy_source,
+                                    self.txy_profile.name if self.txy_profile is not None else "")
+        layout.addWidget(self.txy_row)
+        self._show_txy()
+        layout.addWidget(identify_parameters(settings_widget(self.parameter_root, [*specs, *drawing, *live])), 1)
+        self.rerun_button = identify(QPushButton("Rerun with these settings"), "plot_rerun")
         self.rerun_button.setEnabled(bool(specs))
         self.rerun_button.clicked.connect(self.run)
         layout.addWidget(self.rerun_button)
@@ -310,7 +364,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if self._reload_owner:
                 self._reload_values = self.values()
             else:
-                self.reload(self.values())
+                self.reload(self.values(), deliberate=True)
             return
         if self.job_id:
             self._cancel_run()
@@ -437,7 +491,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if self._save_note:
             self._cached_warning("")
         if size > result_cache.LARGE_RESULT_BYTES and self.workspace is not None:
-            self.workspace.notice(f"Saved {self.name} ({self.view.identity.name}) in the disk cache: {byte_size(size)}")
+            self.workspace.notice(f"Saved {self.name} ({self.view.identity.name}) in the disk cache: {byte_size(size, 'disk')}")
         shown = self.shown
         if shown is None or shown.job_id != result.job_id or self.released is not None:
             return
@@ -817,6 +871,158 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if parameter.opts.get("title") != title:
                 parameter.setOpts(title=title)
 
+    # The TXY source (Q6.6)
+
+    def _choice_from(self, choice: str) -> None:
+        """The plot's source and profile from a view's choice (``txy_sources.choice_text``), unless it is the
+        tab's (then the plot is as the tab)."""
+        cache = self._cache()
+        if choice == cache.tab_choice():
+            return
+        source, _, tag = choice.partition("@")
+        self.txy_source = txy_sources.normal_source(source) or ""
+        if tag and tag != cache.convert_profile_tag():
+            self.txy_profile = profile_by_tag(tag)
+
+    def txy_choice(self) -> str:
+        """The plot's TXY choice as a dataset records it (``FolderCache.dataset_choice``)."""
+        cache = self._cache()
+        tag = file_tag(self.txy_profile) if self.txy_profile is not None else cache.convert_profile_tag()
+        return txy_sources.choice_text(self.txy_source or cache.tab_source(), tag)
+
+    def on_tab_choice(self) -> bool:
+        """Whether the plot runs on the folder tab's data ("As the folder's tab": whatever choice the tab's
+        data was loaded with; a choice made here, even the tab's, is the plot's own dataset)."""
+        return not self.txy_source and self.txy_profile is None
+
+    def txy_label(self) -> str:
+        source = self.txy_source or self._cache().tab_source()
+        shown = self.txy_profile is not None and source != txy_sources.MATLAB_ONLY
+        return txy_sources.LABELS[source] + (f" ({self.txy_profile.name})" if self.txy_profile is not None and shown
+                                             else "")
+
+    def set_txy_source(self, source: str, profile: str = "") -> None:
+        """Run on another TXY choice's data of the plot's folder: the tab's (as the tab), else a dataset of
+        it the plot loads (RAM only; ``FolderCache`` keeps it apart from the tab's). ``source`` "": as the
+        tab; ``profile``: a profile's name ("": the conversion profile)."""
+        if self.is_closed or source and source not in txy_sources.SOURCES:
+            return
+        chosen = known_profiles().get(profile) if profile else None
+        if source == self.txy_source and chosen == self.txy_profile:
+            return
+        self.txy_source, self.txy_profile = source, chosen
+        cache = self._cache()
+        if self._source_owner:
+            self._end_source_load(cache)
+        if self.on_tab_choice():
+            dataset = cache.current_dataset(self.path) or cache.latest_dataset(self.path)
+            if dataset is None:
+                self.status_label.setText("The folder's data isn't in RAM: load it in its tab, then Rerun.")
+            else:
+                self._switch_view(view_of(dataset, cache.root_of(dataset.path)))
+        else:
+            self._load_source()
+        self._show_follow()
+
+    def _load_source(self) -> None:
+        """Load the folder's dataset of the plot's TXY source (shots it holds already are kept)."""
+        if self._source_owner:
+            self._source_again = True
+            return
+        cache = self._cache()
+        owner = f"plot-txy:{self.instance_id}:{uuid4().hex}"
+        cache.resultReady.connect(self._source_event)
+        self._source_owner = owner
+        txy: Dict[str, Any] = {"source": self.txy_source or cache.tab_source()}
+        if self.txy_profile is not None:
+            profile = self.txy_profile
+            txy.update({"profile_hash": profile.content_hash(), "profile_tag": file_tag(profile),
+                        "profile": {"name": profile.name, "version": profile.version,
+                                    "calibrated": profile.calibrated}})
+        payload: Dict[str, Any] = {
+            txy_sources.TXY_FIELD: txy, "cache": store_options(), "no_cache": True,
+            "check_level": cache.check_level, "limits": cache.large_limits(), "deliberate": True,
+            "allow_large": True}
+        if not cache.submit(owner, 0, self.path, "load", payload, priority=True):
+            self._end_source_load(cache)
+            self.status_label.setText("Can't load this TXY source now (the I/O queue is full, or HeLab works "
+                                      "offline).")
+            return
+        self.status_label.setText(f"Loading {self.txy_label()}…")
+
+    def _end_source_load(self, cache: FolderCache) -> None:
+        owner, self._source_owner = self._source_owner, ""
+        if owner:
+            try:
+                cache.resultReady.disconnect(self._source_event)
+            except TypeError:
+                pass
+            cache.cancel(owner)
+
+    @pyqtSlot(object, object)
+    def _source_event(self, request: IORequest, event: Dict[str, Any]) -> None:
+        if request.owner != self._source_owner or self.is_closed:
+            return
+        kind = event.get("kind")
+        if kind not in ("loaded", "error", "too_large", "cancelled"):
+            return
+        cache = self._cache()
+        self._end_source_load(cache)
+        dataset = event.get("dataset")
+        if kind == "loaded" and isinstance(dataset, Dataset):
+            self._source_loaded(dataset)
+        else:
+            why = str(event.get("message") or "") if kind == "error" else (
+                "too large" if kind == "too_large" else "cancelled")
+            self.status_label.setText(f"{self.txy_label()}: couldn't load ({why})")
+            if self._reload_from_source:
+                self._reload_from_source = False
+                self._reload_failed(f"its TXY source couldn't be loaded ({why})")
+        if self._source_again:
+            self._source_again = False
+            self._load_source()
+        self._show_follow()
+
+    def _source_loaded(self, dataset: Dataset) -> None:
+        """The plot's source's dataset: its first (a new input), or a newer one Live asked for (a revision)."""
+        cache = self._cache()
+        if cache.is_tab_dataset(dataset) or cache.dataset_choice(dataset) != self.txy_choice():
+            return  # Asked for before the choice was changed again.
+        if self._reload_from_source:
+            self._reload_from_source = False
+            if self.released is not None and self.shown is not None and not self.job_id:
+                # The user's Reload of a released plot: drawn again on exactly its shots, as from RAM.
+                view = self._shown_view or self.follow.ran
+                self._reload_from(restore(view, dataset, self._reload_shots), "its TXY source")
+                return
+        root = self._cache().root_of(dataset.path)
+        latest = self.follow.latest
+        if latest.txy_choice == txy_sources.metadata_choice(dataset.metadata):
+            view = revise(latest, dataset, root)
+            if view is latest:
+                self.status_label.setText("")
+                return  # Nothing new.
+            if view.revision == 1:
+                self._switch_view(view)  # Not a revision of it (shots gone): new data of its source.
+                return
+            if self.follow.offer(view):
+                self._follow_next()
+            return
+        self._switch_view(view_of(dataset, root))
+
+    def _switch_view(self, view: DatasetView) -> None:
+        """Run on ``view`` now, the plot's data from now on (another TXY source's)."""
+        if self.job_id:
+            self._cancel_run()
+        self.follow.pending = view
+        self._submit(view, one_off=True)
+
+    def _show_txy(self) -> None:
+        if self.txy_row is None or sip.isdeleted(self.txy_row):
+            return
+        self.txy_row.set_source(self.txy_source, self.txy_profile.name if self.txy_profile is not None else "")
+        self.txy_row.show_profile(self._shown_view or self.view, self._cache().convert_profile().name)
+
     # Following Live
 
     def live(self) -> Optional[DatasetView]:
@@ -828,6 +1034,13 @@ class AnalysisInstance(LinkedAnalysisInstance):
         if self.is_closed or view.identity.source_path != self.path:
             return  # Plots of other folders stay put.
         if self._look_again():
+            return
+        if not self.on_tab_choice():
+            # Live found new shots in the tab's data: this plot's own source is loaded again (its held
+            # shots kept), and that revision is offered (``_source_loaded``).
+            self.follow.live_on()
+            if self.follow.on:
+                self._load_source()
             return
         self.follow.live_on()
         if self.follow.offer(view):
@@ -888,8 +1101,23 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._follow_next()
 
     def follow_text(self) -> str:
-        """The plot's Live state for its source line: ``following Live · 3 new shots waiting``
-        ("" when Live doesn't watch its folder and nothing waits)."""
+        """The plot's TXY source when it isn't MATLAB's alone (Q6.6) and its Live state, for its source
+        line: ``TXY: HeLab only · following Live · 3 new shots waiting`` ("" when neither applies)."""
+        txy = self._txy_text()
+        text = self._live_text()
+        return " · ".join(part for part in (txy, text) if part)
+
+    def _txy_text(self) -> str:
+        view = self._shown_view or self.view
+        if self.on_tab_choice():
+            count = len(view.origins)
+            return f"TXY: {count:,} shot{'' if count == 1 else 's'} from HeLab's" if count else ""
+        source = self.txy_source or self._cache().tab_source()
+        shown = self.txy_profile is not None and source != txy_sources.MATLAB_ONLY
+        profile = f" ({file_tag(self.txy_profile)})" if self.txy_profile is not None and shown else ""
+        return f"TXY: {txy_sources.SHORT[source]}{profile}" + (" (loading…)" if self._source_owner else "")
+
+    def _live_text(self) -> str:
         live = self.live()
         follow = self.follow
         if not follow.on:
@@ -923,6 +1151,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         else:
             self.input_label.setText(f"Input: {self._shown_key().short()}"
                                      + (" · following Live" if following else " (stays with this plot)"))
+        self._show_txy()
         dock, plots = self.dock_widget, self.workspace
         if dock is None or plots is None or sip.isdeleted(dock):
             return
@@ -1029,7 +1258,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
         view = hollow(drawn)
         self.follow.ran = view if self.follow.ran is drawn else hollow(self.follow.ran)
         self._shown_view = view
-        self.released = ReleasedPlot(picture, self.reload)
+        self.released = ReleasedPlot(picture, lambda: self.reload(deliberate=True))
         self._content = self.released
         self._swap_content(self.released)
         self.status_label.setText("Released to free RAM: Reload or Rerun draws it again")
@@ -1074,12 +1303,14 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return self._given_cache
         return self.budget.cache if self.budget is not None else get_folder_cache(get_io_service())
 
-    def reload(self, values: Optional[Dict[str, Any]] = None) -> None:
+    def reload(self, values: Optional[Dict[str, Any]] = None, *, deliberate: bool = False) -> None:
         """Draw a released plot again: by default with the settings it was drawn with, on exactly
         the shots it drew (``coverage``), by their fingerprints, never a shot it didn't draw; with
         ``values`` (Rerun's new settings), on its view's shots. From the folder's dataset in RAM,
         else from the local disk cache, never from the folder. If neither has them, it says so
-        and keeps its picture; shots changed or missing are left out and named."""
+        and keeps its picture; shots changed or missing are left out and named. A plot on another TXY
+        source than the default (Q6.6: RAM only, not disk cached) is loaded again from its folder, as
+        choosing that source does, but only on the user's Reload or Rerun (``deliberate``)."""
         if self.is_closed or self.released is None or self.shown is None or self.job_id:
             return
         self._reload_values = dict(self.shown.parameters) if values is None else values
@@ -1101,6 +1332,15 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._reload_found = None
         if found is not None:
             self._reload_from(found, "RAM")
+        elif not self.on_tab_choice() and deliberate:
+            # Another TXY source's data is RAM only (not disk cached): the user's Reload (or Rerun) loads it
+            # again, from the folder, as choosing the source did; a reload on showing the plot never does.
+            self._reload_from_source = True
+            self.released.set_state("loading its TXY source…", busy=True)
+            self._load_source()
+        elif not self.on_tab_choice():
+            self._reload_failed(f"its TXY source's data ({self.txy_label()}) isn't in RAM, and only the tab's is "
+                                "disk cached; Reload loads it again from the folder")
         else:
             self._reload_failed("its data isn't in RAM or in the disk cache")
 
@@ -1108,7 +1348,9 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def _in_ram(cache: FolderCache, view: DatasetView, shots: Optional[Tuple[int, ...]]) -> Optional[Restored]:
         """The folder's dataset held in RAM (shown in a tab or not) with most of the shots wanted."""
         path = cache.key(view.identity.source_path)
-        held = {id(entry): entry for entry in (*cache.pins.values(), *cache.datasets.values()) if entry.path == path}
+        choice = view.txy_choice or cache.tab_choice()  # (Only its own TXY choice's data.)
+        held = {id(entry): entry for entry in (*cache.pins.values(), *cache.datasets.values())
+                if entry.path == path and cache.dataset_choice(entry) == choice}
         found = [restore(view, entry, shots) for entry in held.values()]
         return max(found, key=lambda item: (len(item.kept), -len(item.changed)), default=None)
 
@@ -1116,8 +1358,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         """Ask a helper for the folder's dataset from the local disk cache (the local lane: it
         never reads the folder). False if the disk cache is off or can't be asked now."""
         options = store_options()
-        if not options or path in cache.mismatched:
-            return False
+        if not options or path in cache.mismatched or not self.on_tab_choice():
+            return False  # (The disk cache holds the tab's choice's dataset only.)
         owner = f"plot-reload:{uuid4().hex}"
         cache.resultReady.connect(self._reload_event)
         self._reload_owner = owner
@@ -1215,6 +1457,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self._forget_runs()
         if self._reload_owner:
             self._end_disk_read(self._cache())
+        if self._source_owner:
+            self._end_source_load(self._cache())
         if self._watching_folder:
             cache = self._cache()
             for signal in (cache.datasetChanged, cache.diskCacheChanged):

@@ -1,0 +1,3 @@
+.5,+Inf,,nan
+1d20Inf,NaNxabc
+1e400

@@ -1,0 +1,17 @@
+mixed_eol_noeol 3 1 10 2 20 3 30
+mixed_eol_eol 3 1 10 2 20 3 30
+lf_then_crlf 2 1 10 2 20
+crlf_then_lf_noeol 3 1 10 2 20 3 30
+lf_noeol 3 1 10 2 20 3 30
+commas_end 3 1 10 2 20 NaN NaN
+commas_mid 3 1 10 NaN NaN 2 20
+comma_end 3 1 10 2 20 NaN NaN
+comma5_end 3 1 10 2 20 NaN 5
+comma5_mid 3 1 10 NaN 5 2 20
+comma_nul 2 1 10 NaN NaN
+comma_garbage 2 1 10 NaN NaN
+num_garbage 2 1 10 7 NaN
+d_exp 1 100 5
+d_exp2 2 1 100 2 3
+E_exp 1 1 100
+after_nan_d 2 1 NaN 100 NaN

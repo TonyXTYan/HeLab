@@ -1,0 +1,5 @@
+profile matlab-2019: 309 shots x 4 rust variants, 0 differ
+  whole         pieces per shot: mean       1.0, max 1
+  every-gap     pieces per shot: mean   18425.9, max 741370
+  every-gap x8  pieces per shot: mean   18425.9, max 741370
+  auto x8       pieces per shot: mean      31.2, max 32

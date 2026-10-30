@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QApplication, QHBoxLayout, QLabe
                              QPushButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from helab.utils import folder_cache
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache, marker_path
 from helab.utils.number_format import byte_size
 from helab.utils.io_service import IORequest
@@ -140,6 +141,14 @@ class DataRootsTab(QWidget):
         self.review_button.clicked.connect(self.review_selected)
         footer.addWidget(self.review_button)
         layout.addLayout(footer)
+        # IDs and names (helab/utils/accessible.py).
+        for widget, ident, name in (
+                (self.list, "data_roots_list", "Data roots"), (self.path_line, "data_root_path", "Data root path"),
+                (self.uuid_line, "data_root_id", "Data root ID"), (self.refresh_button, "data_roots_refresh", ""),
+                (self.forget_button, "data_root_forget", ""), (self.delete_button, "data_root_delete", ""),
+                (self.clear_button, "data_root_clear", ""), (self.clear_results_button, "data_root_clear_results", ""),
+                (self.review_button, "data_root_review", "")):
+            identify(widget, ident, name)
         if cache is not None:
             cache.cacheAdminResult.connect(self._on_result)
             cache.cacheAdminDone.connect(self._on_done)
@@ -170,6 +179,7 @@ class DataRootsTab(QWidget):
         cancel = box.addButton(QMessageBox.StandardButton.Cancel)
         if cancel is not None:
             box.setDefaultButton(cancel)  # Return never forgets or deletes.
+        identify_buttons(box, "data_root_confirm")
         box.exec()
         return box.clickedButton() is accept
 
@@ -269,7 +279,7 @@ class DataRootsTab(QWidget):
             return
         cached = row.get("cached")
         what = (f"{cached['folders']:,} cached folder{'' if cached['folders'] == 1 else 's'} "
-                f"({byte_size(cached['bytes'])})" if cached else "the cached data")
+                f"({byte_size(cached['bytes'], 'disk')})" if cached else "the cached data")
         if not self.confirm("Clear this data root's cached data?",
                             f"Clears {what} for data root “{row['label']}” on this computer. "
                             "The .helab-root, folder flags and cached analysis stay.", "Clear"):
@@ -286,7 +296,7 @@ class DataRootsTab(QWidget):
             return
         cached = row.get("cached") or {}
         count = int(cached.get("results", 0))
-        what = (f"{count:,} saved result{'' if count == 1 else 's'} ({byte_size(int(cached.get('result_bytes', 0)))})"
+        what = (f"{count:,} saved result{'' if count == 1 else 's'} ({byte_size(int(cached.get('result_bytes', 0)), 'disk')})"
                 if count else "the saved analysis results")
         if not self.confirm("Clear this data root's cached analysis?",
                             f"Clears {what} for data root “{row['label']}” on this computer: plots compute them "
@@ -359,7 +369,7 @@ class DataRootsTab(QWidget):
             item = QTreeWidgetItem([
                 row["label"], status if folder or row["decision"] != "confirmed" else NOT_MOUNTED,
                 f"{datetime.fromtimestamp(row['last_seen']):%Y-%m-%d %H:%M}",
-                byte_size(row["cached"]["bytes"]) if row.get("cached") and row["cached"]["folders"] else "—"])
+                byte_size(row["cached"]["bytes"], "disk") if row.get("cached") and row["cached"]["folders"] else "—"])
             item.setData(self.LABEL, Qt.ItemDataRole.UserRole, row)
             item.setToolTip(self.LABEL, marker_path(folder) if folder
                             else f"{NOT_MOUNTED_TOOLTIP} · {row['location']}")
@@ -374,7 +384,7 @@ class DataRootsTab(QWidget):
                                           "computer" if cached and cached["folders"] else
                                           "No data cached below this data root on this computer")
                             + (f"\nCached analysis: {results:,} saved result{'' if results == 1 else 's'} "
-                               f"({byte_size(int(cached.get('result_bytes', 0)))})" if cached and results else ""))
+                               f"({byte_size(int(cached.get('result_bytes', 0)), 'disk')})" if cached and results else ""))
             self.list.addTopLevelItem(item)
         for column in range(len(self.COLUMNS)):
             self.list.resizeColumnToContents(column)

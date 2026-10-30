@@ -106,6 +106,17 @@ class Window(QMainWindow):
         self.budget: RamBudget = self.plots.ram_budget
 
 
+@pytest.fixture(autouse=True)
+def reuse_on() -> None:
+    """Settings → Cache › Reuse saved analysis results on (off by default since Q27.1). Modules
+    that import it from here get it too."""
+    from helab.utils.settings_defaults import RESULT_REUSE_SETTING
+    from helab.utils.settings_store import app_settings
+    settings = app_settings()
+    settings.setValue(RESULT_REUSE_SETTING, True)
+    settings.sync()
+
+
 @pytest.fixture
 def cache() -> Iterator[FolderCache]:
     """A cache whose helpers run (the local lane), with the test's own store."""
@@ -480,7 +491,10 @@ def test_the_cache_tab_saves_the_reuse_setting(qtbot: QtBot, cache: FolderCache,
     settings = QSettings(str(tmp_path / "cache-tab.ini"), QSettings.Format.IniFormat)
     tab = CacheTab(cache, settings)
     qtbot.addWidget(tab)
-    assert tab.result_reuse.isChecked()  # On by default.
+    assert not tab.result_reuse.isChecked()  # Off by default (Q27.1).
+    tab.result_reuse.setChecked(True)
+    tab.save(settings)
+    assert read_setting(settings, RESULT_REUSE_SETTING, typed=True) is True
     tab.result_reuse.setChecked(False)
     tab.save(settings)
     assert read_setting(settings, RESULT_REUSE_SETTING, typed=True) is False

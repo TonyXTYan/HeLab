@@ -84,6 +84,7 @@ jobs:
       python-minor: '13'
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
   required-builds:
     name: ${{ matrix.os }} + py3.13
@@ -122,6 +123,7 @@ jobs:
       experimental: true
     secrets:
       CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
 
   compatibility-builds:
     name: ${{ matrix.os }} + py3.${{ matrix.python3-version }}

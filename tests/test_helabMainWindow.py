@@ -1,4 +1,5 @@
 # tests/test_helabMainWindow.py
+import os
 from pathlib import Path
 import signal
 from typing import Generator, Any
@@ -493,15 +494,23 @@ def test_earlier_io_traces_ask_with_keep_as_the_default(
     monkeypatch.setattr(QMessageBox, "exec", run)
     assert main_window._ask_delete_old_traces(2, 3000, str(tmp_path)) is (choice == "Delete old traces")
     text, default, buttons = seen[0]
-    assert text == f"2 earlier I/O traces ({byte_size(3000)}) in {tmp_path}."
+    assert text == f"2 earlier I/O traces ({byte_size(3000, 'disk')}) in {tmp_path}."
     assert default == "Keep" and sorted(buttons) == ["Delete old traces", "Keep"]
 
 
 def test_window_icon_is_found_from_any_launch_folder(
-        qtbot: QtBot, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+        qtbot: QtBot, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     """The packaged app and ``python -m helab`` from elsewhere don't start in the repository's root."""
-    monkeypatch.chdir(tmp_path)
-    window = HelabMainWindow()
+    # Launched from tmp_path while the window is built (it finds its icon then), and back at once: a
+    # helper inherits the working folder, which its constants list as a developer's data folder, so
+    # one started meanwhile (the window's data-root check) refused tmp_path when --basetemp was
+    # outside the system temp and the checkout, failing whichever test was running.
+    launch = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        window = HelabMainWindow()
+    finally:
+        os.chdir(launch)
     qtbot.addWidget(window)
     assert "Icon file not found" not in caplog.text and not window.windowIcon().isNull()
     window.close()

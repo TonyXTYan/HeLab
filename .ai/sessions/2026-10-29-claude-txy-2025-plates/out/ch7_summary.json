@@ -1,0 +1,145 @@
+{
+ "per_set": {
+  "2025-01 pre-swap": {
+   "files": 6,
+   "with_ch7": 0,
+   "ch7": 0,
+   "mean_per_shot": 0.0,
+   "var": 0.0
+  },
+  "2026-06-20 Rabi (s)": {
+   "files": 43,
+   "with_ch7": 35,
+   "ch7": 62,
+   "mean_per_shot": 1.442,
+   "var": 0.919
+  },
+  "2026-06-25 Ramsey (s)": {
+   "files": 43,
+   "with_ch7": 32,
+   "ch7": 49,
+   "mean_per_shot": 1.14,
+   "var": 0.932
+  },
+  "2026-06-25 Ramsey all": {
+   "files": 519,
+   "with_ch7": 384,
+   "ch7": 681,
+   "mean_per_shot": 1.312,
+   "var": 1.25
+  },
+  "2026-06-26 Ramsey (s)": {
+   "files": 43,
+   "with_ch7": 30,
+   "ch7": 56,
+   "mean_per_shot": 1.302,
+   "var": 1.406
+  },
+  "2026-06-27 Ramsey (s)": {
+   "files": 43,
+   "with_ch7": 27,
+   "ch7": 46,
+   "mean_per_shot": 1.07,
+   "var": 1.162
+  },
+  "2026-07 tight trap": {
+   "files": 24,
+   "with_ch7": 6,
+   "ch7": 7,
+   "mean_per_shot": 0.292,
+   "var": 0.303
+  },
+  "v1 2019-halos-old-plates": {
+   "files": 43,
+   "with_ch7": 0,
+   "ch7": 0,
+   "mean_per_shot": 0.0,
+   "var": 0.0
+  },
+  "v1 2020-halos-weak-trap": {
+   "files": 42,
+   "with_ch7": 0,
+   "ch7": 0,
+   "mean_per_shot": 0.0,
+   "var": 0.0
+  },
+  "v1 2022-07-old-plates-he3he4": {
+   "files": 42,
+   "with_ch7": 0,
+   "ch7": 0,
+   "mean_per_shot": 0.0,
+   "var": 0.0
+  },
+  "v1 2022-07-old-plates-large-he3": {
+   "files": 43,
+   "with_ch7": 0,
+   "ch7": 0,
+   "mean_per_shot": 0.0,
+   "var": 0.0
+  },
+  "v1 2022-11-ghost-counts-mcp": {
+   "files": 10,
+   "with_ch7": 0,
+   "ch7": 0,
+   "mean_per_shot": 0.0,
+   "var": 0.0
+  },
+  "v1 2023-02-new-plates-he3he4": {
+   "files": 43,
+   "with_ch7": 0,
+   "ch7": 0,
+   "mean_per_shot": 0.0,
+   "var": 0.0
+  },
+  "v1 2023-03-momentum-bells": {
+   "files": 43,
+   "with_ch7": 0,
+   "ch7": 0,
+   "mean_per_shot": 0.0,
+   "var": 0.0
+  },
+  "v1 2024-11-rt-low-occupancy": {
+   "files": 43,
+   "with_ch7": 0,
+   "ch7": 0,
+   "mean_per_shot": 0.0,
+   "var": 0.0
+  }
+ },
+ "ks_uniform_0_4.03s_p": 0.4282550054546894,
+ "poisson": {
+  "mean": 1.3121387283236994,
+  "var": 1.2474634412554155,
+  "observed": [
+   135,
+   187,
+   124,
+   52,
+   15,
+   6
+  ],
+  "expected": [
+   139.7,
+   183.4,
+   120.3,
+   52.6,
+   17.3,
+   4.5
+  ]
+ },
+ "associated_hits": {
+  "n": 135,
+  "of_ch7": 681,
+  "X_mm_median": -6.605316,
+  "Y_mm_median": -10.315872,
+  "X_mm_iqr": 5.460569999999999,
+  "Y_mm_iqr": 5.842151999999999,
+  "hit_T_minus_t7_bins_median": -1056.75
+ },
+ "prompt_coincidence_within_300_bins_of_ch7": {
+  "x1": 278,
+  "x2": 196,
+  "y1": 332,
+  "y2": 20
+ }
+}

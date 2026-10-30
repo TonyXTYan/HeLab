@@ -9,6 +9,7 @@ from PyQt6.QtCore import QBuffer, QByteArray, QIODevice, QRect, QSize, Qt
 from PyQt6.QtGui import QHideEvent, QImage, QPainter, QPaintEvent, QPixmap
 from PyQt6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget
 
+from helab.utils.accessible import identify
 from helab.utils.ram_buffers import Buffers
 
 
@@ -100,7 +101,7 @@ class ReleasedPlot(QWidget):
         self.state.setTextFormat(Qt.TextFormat.PlainText)
         self.state.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         row.addWidget(self.state, 1)
-        self.reload_button = QPushButton("Reload", self)
+        self.reload_button = identify(QPushButton("Reload", self), "plot_reload", "Reload plot")
         self.reload_button.setToolTip("Draw this plot again from its data in RAM or in the disk cache "
                                       "(never from its folder): exactly its shots, by their fingerprints")
         self.reload_button.clicked.connect(lambda: reload())
@@ -120,7 +121,8 @@ class ReleasedPlot(QWidget):
         self.state.setText(line)
         self.state.setToolTip(
             f"{line}\nHeLab released this plot when RAM in use passed 80 % of the RAM budget "
-            "(Settings → Cache). Reload draws it again from RAM or the disk cache, never from its folder.")
+            "(Settings → Cache). Reload draws it again from RAM or the disk cache, never from its folder "
+            "(a plot on another TXY source than the default, whose data isn't disk cached, loads it again).")
         self.reload_button.setEnabled(not busy)
 
     def ram_buffers(self) -> Buffers:

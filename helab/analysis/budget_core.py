@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Optional, Protocol, Sequence
 import numpy as np
 
 from helab.analysis.dataset_view import DatasetView, Events, fingerprints_of, read_only
+from helab.utils import txy_sources
 from helab.utils.ram_buffers import Buffers, buffers
 
 if TYPE_CHECKING:
@@ -64,6 +65,9 @@ def restore(view: DatasetView, dataset: Dataset, shots: Optional[Iterable[int]] 
     them) that ``dataset`` holds with the same fingerprint, and no other shot. Shots with another
     fingerprint (rewritten since) and shots ``dataset`` lacks are left out and named."""
     prints = fingerprints_of(dataset.metadata)
+    origins = txy_sources.origins_of(dataset.metadata)
+    if not txy_sources.same_choice(txy_sources.metadata_choice(dataset.metadata), view.txy_choice):
+        origins = {shot: "another source" for shot in view.shots}  # (Another choice's data is never its.)
     wanted = view.shots if shots is None else sorted(set(shots) & set(view.shots))
     kept: dict[int, Events] = {}
     changed: list[int] = []
@@ -72,7 +76,7 @@ def restore(view: DatasetView, dataset: Dataset, shots: Optional[Iterable[int]] 
         array = dataset.data.get(shot)
         if array is None:
             missing.append(shot)
-        elif prints.get(shot) != view.fingerprints.get(shot):
+        elif prints.get(shot) != view.fingerprints.get(shot) or origins.get(shot, "") != view.origins.get(shot, ""):
             changed.append(shot)
         else:
             kept[shot] = read_only(array)

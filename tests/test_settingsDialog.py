@@ -42,7 +42,7 @@ def test_settings_dialog_tab_widget(qtbot: QtBot, settings_dialog: SettingsDialo
     assert settings_dialog.tabs is not None
     
     # Verify default tabs
-    expected_tabs = ["General", "Lab parameters", "Scripts", "Cache", "Data roots"]
+    expected_tabs = ["General", "Lab parameters", "TXY converter", "Scripts", "Cache", "Data roots"]
     assert [settings_dialog.tabs.tabText(i) for i in range(settings_dialog.tabs.count())] == expected_tabs
 
 def test_cache_tab_controls(qtbot: QtBot, settings_dialog: SettingsDialog) -> None:
@@ -171,3 +171,13 @@ def test_the_placeholder_settings_are_gone_and_their_saved_values_removed(
     assert {"example_checkbox", "example_text"} <= set(RETIRED)
     dialog.save_settings()
     assert not settings.contains("example_checkbox") and not settings.contains("example_text")
+
+
+def test_the_temp_folder_row_is_worded_like_the_cache_folders(qtbot: QtBot, settings_dialog: SettingsDialog) -> None:
+    """A33.3: prose, not the constant's name ("DIR_TEMPS:")."""
+    from PyQt6.QtWidgets import QLabel
+    qtbot.addWidget(settings_dialog)
+    labels = [label.text() for label in settings_dialog.dir_scroll_content.findChildren(QLabel)]
+    assert "Temp folder (a change applies at the next start):" in labels
+    assert "Cache folder (moving it keeps its contents):" in labels
+    assert not any("DIR_" in text for text in labels)

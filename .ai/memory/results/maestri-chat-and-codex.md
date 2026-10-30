@@ -1,6 +1,11 @@
 ---
 date: 2026-10-12
 status: settled
+name: maestri-chat-and-codex
+description: "Reply through maestri say; avoid heredocs for auto-approved commands; verify terminal identity live; Maestri color threads and Codex chats have separate histories"
+metadata:
+  node_type: memory
+  type: result
 ---
 Maestri Chat routing, command approvals and Codex chat context are separate concerns.
 

@@ -66,12 +66,12 @@ here are some more random badges because they look cool
 
 For 'downstairs' and 'upstairs' lab deployment (most stable version) use: https://github.com/HeBECANU/HeLab
 
-Development branch: (all sorts of bugs and features) see: https://github.com/TonyXTYan/HeLab 
+Development repo: (all sorts of bugs and features) see: https://github.com/TonyXTYan/HeLab 
 
 
 ---
 
-HeLab targets **Python 3.13**: CI requires 3.13 to pass, and other versions (3.10–3.12) run as non-blocking compatibility checks. See the CI runs [here](https://github.com/TonyXTYan/HeLab/actions).
+HeLab targets **Python 3.13**: CI requires 3.13 to pass, and other versions (3.11, 3.12 and 3.14) run as non-blocking compatibility checks. See the CI runs [here](https://github.com/TonyXTYan/HeLab/actions).
 
 ## Setup (any machine)
 
@@ -108,7 +108,10 @@ uv venv --seed --python 3.13 venv
 source venv/bin/activate       # macOS / Linux
 venv\Scripts\activate          # Windows (cmd or PowerShell)
 uv pip install -r requirements.lock -e .
+python native/build.py          # optional: the converter's compiled backend, cython (needs a C compiler; HeLab works without it)
 ```
+
+A release build (`pyinstaller HeLab.spec`) ships cython's kernel only if `native/build.py` ran first; numba, mlx and rust never ship (their code stays for developers: install the package, or maturin and Rust for `native/build.py --only rust`).
 
 `requirements.lock` pins every package to the versions CI tests (Python 3.13, macOS, Windows and Linux); `requirements.txt` lists only the direct dependencies, unpinned.
 
@@ -116,14 +119,26 @@ uv pip install -r requirements.lock -e .
 
 ```bash
 helab              # or: python -m helab
+helab convert --watch FOLDER [--once] [--output temp|cache|beside]   # headless TXY converter
 ```
 
 On later runs, just activate `venv` and run `helab`. Without activating, run `venv/bin/helab` (macOS/Linux) or `venv\Scripts\helab` (Windows).
+
+On macOS, to drive a source run with computer-use tools (which need a bundle ID), build a small app stub once: `python dev/dev_app.py`, then `open .ai/local/HeLab-dev.app --args …`. It runs this checkout's `venv/bin/python -m helab` as "HeLab-dev" (`au.edu.anu.he-bec-lab.dev`).
 
 Notes:
 - Bare `python` on lab PCs is often an old interpreter (for example Python 2.7). Use the one in `venv`.
 - On Windows, start HeLab from the desktop, not over SSH. An SSH session as an administrator runs elevated, and it can leave cache folders that a normal launch can't write to.
 - The submodule (`legacy/tdc_autoconverter`) is MATLAB reference code only. HeLab runs without it. In an existing clone, fetch it with `git submodule update --init --recursive`.
+- The `testdata` submodule is HeLab's test data (the private Hugging Face dataset `TonyXTYan/HeLab-TestData`, about 100 MB), used only by tests, which skip without it. It is never fetched by default (`update = none`). With access to the dataset: `hf auth login --add-to-git-credential` once, then `git submodule update --init --checkout testdata`. Or download it anywhere and point `HELAB_TESTDATA` at it: `hf download TonyXTYan/HeLab-TestData --type dataset --revision v1 --local-dir <folder>`.
+- Legacy references for porting work (not submodules, and not needed to run HeLab): clone them into `legacy/` at the commits the port was read from:
+  ```bash
+  git clone --recurse-submodules -b LaserMac-BECMachine-cloudstor https://github.com/HeBECANU/DLD_front_panel legacy/DLD_front_panel
+  git -C legacy/DLD_front_panel checkout 6c7352c1cd950e9fc9c35e28a60eb8379b97b85b
+  git clone -b OneDrive-Yogesh https://github.com/HeBECANU/Momentum_Bells_test legacy/Momentum_Bells_test
+  git -C legacy/Momentum_Bells_test checkout fdfcb6b589c73ac0bce36b3571e06ddf86a0b002
+  ```
+  One of DLD_front_panel's nested submodules (`lib/Core_BEC_Analysis/bin/MBeautifier`) pins a commit its upstream no longer has, so that one submodule fails to clone; the rest of the reference is there.
 - Without uv: if Python 3.13 is already installed, `python3.13 -m venv venv` then `pip install -r requirements.lock -e .` also works. With conda: `conda create -n HeLab python=3.13`, `conda activate HeLab`, then the same `pip install`.
 - Updating dependencies: edit `requirements.txt`, then refresh the lock with `uv pip compile requirements.txt --universal --python-version 3.13 --upgrade -o requirements.lock` and install it. Commit both; CI's Python 3.13 jobs install the lock (the 3.11, 3.12 and 3.14 compatibility jobs install `requirements.txt` unpinned).
 - macOS with iCloud Drive syncing this folder: create the environment as `venv.nosync` and symlink it (`ln -s venv.nosync venv`), which keeps the constantly changing venv files out of iCloud. Activation and imports work the same either way.

@@ -7,7 +7,8 @@ table can't be read (``KeyError``) and no read has a default of its own
 reader still checks the value it gets (a malformed or out-of-range saved value is replaced by
 the default there, e.g. ``constants.read_disk_budget``).
 
-Standard library and QtCore only: ``helab.utils.constants`` and the I/O helpers import it.
+Standard library, QtCore, ``number_format`` and ``settle_time`` (standard library only): ``helab.utils.constants``
+and the I/O helpers import it.
 """
 from __future__ import annotations
 
@@ -15,6 +16,9 @@ from dataclasses import dataclass
 from typing import Any
 
 from PyQt6.QtCore import QSettings
+
+from helab.utils import number_format
+from helab.utils.settle_time import DEFAULT_SETTLE_SECONDS
 
 
 @dataclass(frozen=True)
@@ -34,15 +38,40 @@ AUTO_SCAN_VISIBLE_SETTING = "auto_basic_scan_visible_folders"
 DISK_BUDGET_SETTING = "disk_cache_budget"
 RAM_BUDGET_SETTING = "ram_budget_steps"
 LIVE_INTERVAL_SETTING = "live_check_interval_seconds"
+# A file modified this recently may still be being written: never read (Q33.7; io_ops.fingerprints).
+SETTLE_SECONDS_SETTING = "settle_seconds"
 LIVE_AUTOSAVE_SETTING = "live_autosave_shots"
 PLOT_AUTO_RELOAD_SETTING = "plot_auto_reload"
-RESULT_REUSE_SETTING = "result_reuse"
+# A new key off by default (Q27.1): saves of the old ``result_reuse`` (on) no longer turn it on.
+RESULT_REUSE_SETTING = "reuse_saved_results"
 # File › Work Offline (cache-only browsing): remembered across restarts (Tony, 2026-10-26: D2).
 WORK_OFFLINE_SETTING = "work_offline"
 LOG_KEEP_SETTING = "log_files_keep"
+# Where HeLab's own TXY go (Q9.3): HeLab's temp folder or its disk cache folder; writing them beside
+# the raw files is a per-folder flag (Q9.7, the store's ``convert_prefs.write_beside``), not this.
+CONVERT_OUTPUT_SETTING = "converted_txy_output"
+CONVERT_OUTPUTS = ("cache", "temp")
+# Which detector profile and backend HeLab's conversions use (Settings → TXY converter; Q6.11). The
+# profile is a built-in's name or a user profile's (``helab.convert.user_profiles``).
+CONVERT_PROFILE_SETTING = "convert_profile"
+CONVERT_BACKEND_SETTING = "convert_backend"
+# Live auto-convert (TXY converter stage 4): the folder that starts Live and auto-convert when HeLab
+# launches (Q9.6, Q18.3: one; helab/views/live_launch.py), and the hits below which a converted shot notifies (Q9.4).
+LIVE_LAUNCH_FOLDER_SETTING = "live_launch_folder"
+LIVE_LAUNCH_FOLDERS_SETTING = "live_launch_folders"  # (Before Q18.3: a list; its first becomes the folder.)
+CONVERT_LOW_HITS_SETTING = "convert_low_hits"
+TXY_SOURCE_SETTING = "txy_source"
 # The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).
 REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
 OPEN_PLOTS_SETTING = "open_plots"
+# The main window's folder and settings panels' widths, the plots taking the rest (Q33.2).
+MAIN_SPLIT_SETTING = "main_window_split"
+
+def default_disk_budget(platform: str | None = None) -> int:
+    """8 GB on macOS and Linux, 8 GiB on Windows (Q22.7, Q26.1): disk units follow the OS
+    (``number_format.byte_unit``). The table's row takes this platform's, at import."""
+    return 8 * number_format.byte_unit(3, "disk", platform)[0]
+
 
 SETTINGS: tuple[Setting, ...] = (
     Setting(DIR_TEMPS_SETTING, str, "",
@@ -62,23 +91,30 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(AUTO_SCAN_VISIBLE_SETTING, bool, False,
             "Check the status of visible folders without saved results automatically "
             "(Settings → General, View menu)."),
-    Setting(DISK_BUDGET_SETTING, int, 8 * 10**9,
-            "The disk cache budget in bytes (SI: 8 GB), at least 1 GB; live data only (Settings → Cache)."),
+    Setting(DISK_BUDGET_SETTING, int, default_disk_budget(),
+            "The disk cache budget in bytes: 8 GB on macOS and Linux, 8 GiB on Windows (default_disk_budget), "
+            "at least 1 GB or 1 GiB; live data only (Settings → Cache)."),
     Setting(RAM_BUDGET_SETTING, int, 16,
-            "The RAM budget in steps of 1/128 of the computer's RAM, at least max(1 GB, 1 step), at "
+            "The RAM budget in steps of 1/128 of the computer's RAM, at least max(1 GiB, 1 step), at "
             "most 64 (Settings → Cache)."),
     Setting(LIVE_INTERVAL_SETTING, float, 3.0,
             "Seconds from the end of one Live check to the start of the next, 0.5 to 600 "
             "(Settings → General)."),
+    Setting(SETTLE_SECONDS_SETTING, float, DEFAULT_SETTLE_SECONDS,
+            "Seconds a file must be unmodified before HeLab reads it, 2 to 60 (Settings → General, Q33.7): newer "
+            "files may still be being written, so every read leaves them for later (browsing, loads, Live, cache "
+            "checks and conversions). Below 2 s a file still being written can't be told apart. Sent with every "
+            "I/O request; HELAB_SETTLE_SECONDS, when set, wins (tests)."),
     Setting(LIVE_AUTOSAVE_SETTING, int, 10,
             "New Live shots held in RAM before the folder is saved to the disk cache, 1 to 100,000 "
             "(Settings → Cache)."),
     Setting(PLOT_AUTO_RELOAD_SETTING, bool, True,
             "A plot released to free RAM reloads when it is shown again (Settings → Cache)."),
-    Setting(RESULT_REUSE_SETTING, bool, True,
+    Setting(RESULT_REUSE_SETTING, bool, False,
             "Plots that support it (Correlations, Release time) show their result saved in the disk cache "
             "for the same data, script and settings instead of computing it again, and save new ones; off: "
-            "neither (Settings → Cache)."),
+            "neither (Settings → Cache). Off by default until the plots are polished and saved results "
+            "carry store-v4's versioning (Q27.1)."),
     Setting(WORK_OFFLINE_SETTING, bool, False,
             "File › Work Offline: browse and analyse cached data only, reading no source folder and no "
             "server, until turned off (also at the next start)."),
@@ -86,6 +122,30 @@ SETTINGS: tuple[Setting, ...] = (
             "Log files to keep, every session's helab-<pid>.log files and their rotated copies counted; "
             "at startup the oldest beyond it are deleted, never a running HeLab's, 1 to 100,000 "
             "(Settings → General)."),
+    Setting(CONVERT_OUTPUT_SETTING, str, "cache",
+            "Where HeLab's own TXY files (d_txy_helab_<tag>_<N>.txt) go: cache (the disk cache's folder, keyed by "
+            "the folder's data root; a folder without one goes to temp) or temp (HeLab's temp folder). "
+            "Folders set to write them beside the raw files do that instead."),
+    Setting(CONVERT_PROFILE_SETTING, str, "matlab-2019",
+            "The detector profile HeLab's conversions use (Settings → TXY converter): a built-in's name or a user "
+            "profile's; one that no longer exists reads as matlab-2019. HeLab's TXY of another profile aren't "
+            "loaded until converted again."),
+    Setting(CONVERT_BACKEND_SETTING, str, "numpy",
+            "The converter backend HeLab's conversions use (Settings → TXY converter): numpy (always there), or an "
+            "optional compiled one; a conversion with a backend that can't run says why."),
+    Setting(LIVE_LAUNCH_FOLDER_SETTING, str, "",
+            "The folder that opens, alone, and starts Live with auto-convert when HeLab launches (the Live line's "
+            "Auto-convert menu; one folder, Q18.3): its path. Unset: none, and HeLab opens its usual first tab."),
+    Setting(LIVE_LAUNCH_FOLDERS_SETTING, str, "",
+            "Before Q18.3: the launch folders as a JSON list of paths. Read once when the single folder isn't set: "
+            "its first becomes that folder, and this key is removed."),
+    Setting(TXY_SOURCE_SETTING, str, "helab-priority",
+            "Which TXY tabs and Live load (Settings → TXY converter, Q18.2): helab-priority (HeLab's of the "
+            "conversion profile where they exist, MATLAB's for the rest), matlab-priority, helab-only or "
+            "matlab-only; anything else reads as helab-priority. A plot may choose another in its settings."),
+    Setting(CONVERT_LOW_HITS_SETTING, int, 100,
+            "Live auto-convert: a converted shot with fewer hits than this raises a system notification, once "
+            "per shot (the Auto-convert menu); 0: never."),
     # The plots that reopen at start (keep these rows together).
     Setting(REOPEN_PLOTS_SETTING, bool, True,
             "Reopen the plots open when HeLab last quit; each reruns on its folder's data in RAM or the disk "
@@ -93,6 +153,10 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(OPEN_PLOTS_SETTING, str, "",
             "The plots open when HeLab last quit (or last opened or closed a plot), with their settings and "
             "places: an arrangement record (helab.analysis.presets, JSON). Unset: none."),
+    Setting(MAIN_SPLIT_SETTING, str, "380,320",
+            "The main window's folder panel and plot settings panel widths in logical pixels, \"<folders>,<settings>\", "
+            "saved as HeLab quits; the plots take the rest of the window. Folders 80 to 4000, settings 250 to 4000; "
+            "otherwise the default (Q33.2)."),
 )
 
 # Keys under a prefix: Settings → Lab parameters saves only the lab constants the user set,

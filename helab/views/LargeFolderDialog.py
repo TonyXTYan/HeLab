@@ -6,6 +6,7 @@ import os
 
 from PyQt6.QtWidgets import QCheckBox, QDialog, QDialogButtonBox, QLabel, QVBoxLayout, QWidget
 
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.number_format import byte_size
 
 
@@ -17,12 +18,12 @@ class LargeFolderDialog(QDialog):
         self.setWindowTitle("Load a large folder?")
         layout = QVBoxLayout(self)
         self.text = QLabel(
-            f"{name} would take about {byte_size(estimate)} in RAM (its TXY files' size on disk).\n"
-            f"RAM budget {byte_size(ram_budget)} · this computer has {byte_size(total)} of RAM.\n"
+            f"{name} would take about {byte_size(estimate, 'ram')} in RAM (its TXY files' size on disk).\n"
+            f"RAM budget {byte_size(ram_budget, 'ram')} · this computer has {byte_size(total, 'ram')} of RAM.\n"
             "While it loads, HeLab may briefly use about 2–3× this.")
         self.text.setToolTip(path)
         layout.addWidget(self.text)
-        self.understood = QCheckBox("I understand this may slow down or stop HeLab")
+        self.understood = identify(QCheckBox("I understand this may slow down or stop HeLab"), "large_understood")
         layout.addWidget(self.understood)
         buttons = QDialogButtonBox()
         load_button = buttons.addButton("Load anyway", QDialogButtonBox.ButtonRole.AcceptRole)
@@ -31,6 +32,7 @@ class LargeFolderDialog(QDialog):
         buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
         self.load_button.setEnabled(False)
         self.understood.toggled.connect(self.load_button.setEnabled)
+        identify_buttons(buttons, "large")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

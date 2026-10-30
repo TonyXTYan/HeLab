@@ -12,6 +12,8 @@ from PyQt6.QtGui import QColor, QFont, QHideEvent, QMouseEvent, QPainter, QPaint
 from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QProgressBar, QScrollArea, QSizePolicy, QVBoxLayout, QWidget
 
 from helab.models.StatusReport import StatusReport
+from helab.utils import txy_sources
+from helab.utils.accessible import identify
 from helab.utils.folder_cache import analysis_cached_text, data_root_row
 from helab.utils.number_format import fnum
 from helab.utils.io_service import IOService
@@ -21,6 +23,7 @@ from helab.views.FolderExplorer import (
     AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP,
     LOAD_SPINNER, FolderExplorer, load_origin,
 )
+from helab.views.explorer_live import no_hits_text
 from helab.views.explorer_text import large_text
 
 
@@ -100,7 +103,7 @@ class FolderDetailsPanel(QScrollArea):
 
     ROWS = (("folder", "Folder"), ("state", "State"), ("files", "Files"), ("time", "Time"), ("rate", "Rate"),
             ("data", "Data"), ("loaded", "Loaded"), ("source", "Source"), ("cache", "Disk cache"),
-            ("errors", "Problems"),
+            ("convert", "Auto-convert"), ("errors", "Problems"),
             ("tab", "This tab"), ("io", "All I/O"))
 
     def __init__(self, parent: QWidget | None = None) -> None:
@@ -134,7 +137,7 @@ class FolderDetailsPanel(QScrollArea):
         for key, name in self.ROWS:
             label = QLabel(name)
             label.setEnabled(False)  # Dimmed, like a form's field names.
-            value = ElidedLabel()
+            value = identify(ElidedLabel(), f"details_{key}")  # (Named by its text; the ID finds the row.)
             grid.addWidget(label, row, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             grid.addWidget(value, row, 1)
             self.names[key], self.values[key] = label, value
@@ -218,6 +221,10 @@ class FolderDetailsPanel(QScrollArea):
             style = f"color: {AMBER};"
         if self.values["state"].styleSheet() != style:
             self.values["state"].setStyleSheet(style)
+        # Shots converted with no hits are amber (A17.1).
+        style = f"color: {AMBER};" if "with no hits" in rows.get("convert", ("", ""))[0] else ""
+        if self.values["convert"].styleSheet() != style:
+            self.values["convert"].setStyleSheet(style)
 
     def _folder_rows(self, explorer: FolderExplorer) -> dict[str, tuple[str, str]]:
         path = explorer.selected_path_globally
@@ -249,8 +256,12 @@ class FolderDetailsPanel(QScrollArea):
                              REFUSED_TOOLTIP if large[1] else LARGE_TOOLTIP)
         elif opened:
             # Not loading: shown from the cache with auto-load off, or its check was cancelled.
-            rows["state"] = ("Loaded from cache · not checked yet", "Shown from memory or the disk cache; "
-                             "Load data checks it against the folder.") if unchecked else ("Loaded", "")
+            if unchecked and explorer.model.cache.offline:  # (As the summary says it: A33.2.)
+                rows["state"] = ("Loaded from cache · not checked (offline)", "Shown from memory or the disk cache; "
+                                 "working offline, it isn't checked against the folder. Work online to check it.")
+            else:
+                rows["state"] = ("Loaded from cache · not checked yet", "Shown from memory or the disk cache; "
+                                 "Load data checks it against the folder.") if unchecked else ("Loaded", "")
         elif shown:
             changed = node is not None and dataset is not None and FolderExplorer._changed_since_load(node, dataset)
             rows["state"] = ("Folder changed · showing previous data" if changed else "Showing previous data",
@@ -293,9 +304,21 @@ class FolderDetailsPanel(QScrollArea):
             # A save held for the user's answer (Make room / Save update); one question at a time.
             rows["cache"] = (waiting, "The disk cache asks before this save: Make room or Save update, or don't "
                                       "cache it now. The loaded data stays in RAM either way.")
+        session = explorer.live
+        if session is not None and session.path == path and session.convert is not None:
+            # Live's auto-convert (TXY converter stage 4): what it converts and what waits, and why.
+            text, lines, _ = explorer.live_control.convert_line(session)
+            # (The row is "Auto-convert": its text doesn't say it again.)
+            text = text.removeprefix("auto-convert ")
+            rows["convert"] = (text[:1].upper() + text[1:], "\n".join(lines))
+        elif dataset is not None and shown:
+            # A folder loaded later: its data's shots HeLab converted with no hits (A17.1), from RAM.
+            text, line = no_hits_text(txy_sources.empty_helab_shots(dataset.metadata, dataset.data))
+            if text:
+                rows["convert"] = (text[:1].upper() + text[1:], line)
         if dataset is None or not shown:
             return rows
-        self._data_rows(explorer, dataset.metadata, rows, loading, opened)
+        self._data_rows(explorer, dataset.metadata, rows, loading, opened, unchecked=unchecked)
         return rows
 
     def _load_rows(self, explorer: FolderExplorer, rows: dict[str, tuple[str, str]]) -> None:
@@ -340,8 +363,9 @@ class FolderDetailsPanel(QScrollArea):
 
     @staticmethod
     def _data_rows(explorer: FolderExplorer, meta: Mapping[str, Any], rows: dict[str, tuple[str, str]],
-                   loading: bool, opened: bool) -> None:
-        """The shown dataset: counts, size, when it was loaded, where from and its problem shots."""
+                   loading: bool, opened: bool, *, unchecked: bool = False) -> None:
+        """The shown dataset: counts, size, when it was loaded, where from and its problem shots. Shown
+        unchecked (``unchecked``), it never says an earlier check found it unchanged."""
         def number(key: str) -> int:
             value = meta.get(key, 0)
             return int(value) if isinstance(value, (int, float)) and math.isfinite(value) else 0
@@ -370,15 +394,19 @@ class FolderDetailsPanel(QScrollArea):
                          relative_age(time.time() - loaded_at)]
                 seconds = meta.get("load_seconds")
                 took = seconds if isinstance(seconds, (int, float)) and math.isfinite(seconds) else None
+                unchanged = bool(meta.get("unchanged")) and not unchecked
+                offline = unchecked and explorer.model.cache.offline
                 if took is not None:
                     parts.append(f"took {stopwatch(took)}")
-                elif meta.get("unchanged"):
+                elif unchanged:
                     parts.append("checked, unchanged")
+                if offline:
+                    parts.append("not checked (offline)")
                 rows["loaded"] = (" · ".join(parts), "\n".join(filter(None, (
                     f"Read into memory {when:%Y-%m-%d %H:%M:%S %Z}",
                     "Load time: running time, without queued or paused time" if took is not None else "",
-                    "The folder was not modified since the disk cache; nothing was read"
-                    if meta.get("unchanged") else ""))))
+                    "The folder was not modified since the disk cache; nothing was read" if unchanged else "",
+                    "Working offline: not checked against the folder" if offline else ""))))
         origin = load_origin(explorer.load_source, explorer.load_counts) if opened else None
         if origin:
             rows["source"] = (origin, "\n".join(filter(None, (

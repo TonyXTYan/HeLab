@@ -18,7 +18,8 @@ A QC provider may offer a user-initiated **Try auto fix** action bound to a
 compatible repair script. Repairs create a new derived file, never modify raw
 `d*.txt` or an existing `d_txy*.txt`, and record provenance. **Repaired files
 live in HeLab's cache folder, not the source folder** (Tony, 2026-10-15), so
-HeLab keeps never writing to source folders and other lab tools, the TXY
+HeLab keeps never writing to source folders (the one exception: converted TXY beside the raw
+files, a per-folder option, Q9.7) and other lab tools, the TXY
 matcher and the missing-shot checks never see them. They are their own kind
 in the store: never removed by budgets or Make room, cleared only on their own
 after asking (they may be expensive or impossible to recreate), and moved with

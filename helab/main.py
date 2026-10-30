@@ -1,5 +1,9 @@
 # Frozen I/O helpers must bypass GUI, caches and Dash initialization.
 import sys
+if getattr(sys, "frozen", False):
+    # A process the converter's helper spawned (``io_ops.convert``'s worker pool) runs here and exits.
+    import multiprocessing
+    multiprocessing.freeze_support()
 if "--helab-io-helper" in sys.argv:
     # Windowed PyInstaller executables may have no standard streams. Exchange
     # requests/results through local files instead of relying on console handles.
@@ -9,6 +13,12 @@ if "--helab-io-helper" in sys.argv:
     from helab.io_helper import main as io_helper_main
     io_helper_main()
     raise SystemExit(0)
+
+# The headless converter (``helab convert --watch <folder>``, also ``HeLab convert …`` in the
+# packaged app): before any Qt widgets, caches or Dash.
+if len(sys.argv) > 1 and sys.argv[1] == "convert":
+    from helab.convert_cli import main as convert_main
+    raise SystemExit(convert_main(sys.argv[2:]))
 
 # Query provenance before importing Qt, opening settings/caches or starting Dash.
 if "--version" in sys.argv:
@@ -43,6 +53,7 @@ from helab.utils import app_log
 from helab.utils.constants import (
     APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, app_folder, read_log_keep, start_cache_dir)
 from helab.utils.settings_store import app_settings
+from helab.views import quit_watch
 from helab.views.HelabMainWindow import HelabMainWindow
 
 
@@ -152,7 +163,9 @@ def main() -> None:
 
     # font_db = QFontDatabase()
 
-    app = QApplication(sys.argv)
+    # --geometry WxH+X+Y: this run's window size and place (a test runner's fixed coordinates).
+    geometry, argv = HelabMainWindow.take_geometry(sys.argv)
+    app = QApplication(argv)
     app.setStyle("Fusion")
     # app.setStyleSheet("QWidget { background-color: #fafafa; }")
     if "SF Mono" in QFontDatabase.families():
@@ -170,6 +183,8 @@ def main() -> None:
     moved = _start_cache()
 
     main_window = HelabMainWindow()
+    if geometry is not None:
+        main_window.apply_geometry(geometry)
     app_log.catch_unhandled(main_window.show_status_notice)
     main_window.show()
     # Registered as a running instance by now, so other HeLabs keep its log file.
@@ -177,7 +192,9 @@ def main() -> None:
     if moved:
         QTimer.singleShot(0, lambda: QMessageBox.information(main_window, "Disk cache", moved))
 
-    sys.exit(app.exec())
+    code = app.exec()
+    quit_watch.exit_soon(code)  # Never left running without windows (helab/views/quit_watch.py).
+    sys.exit(code)
 
 
 if __name__ == "__main__":

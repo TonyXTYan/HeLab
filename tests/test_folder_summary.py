@@ -7,6 +7,7 @@ from typing import Any, Iterator
 import time
 import os
 import re
+import threading
 
 import numpy as np
 import pytest
@@ -160,6 +161,12 @@ def test_folder_details_and_hint_describe_each_folder_state(
     # Data shown before its check, a failed check, and data the folder has moved on from.
     browser._unchecked_path = path
     assert show() == ("Loaded from cache · not checked yet", "Loaded run — run a script to plot it")
+    cache.service.offline = True  # Offline, as the summary says it (A33.2).
+    try:
+        assert show()[0] == "Loaded from cache · not checked (offline)"
+        assert browser.folder_cache_label.text().endswith("not checked (offline)")
+    finally:
+        cache.service.offline = False
     browser.load_error = "Timed out — Retry"
     assert show() == ("Check failed · Timed out — Retry", "Could not check run — see Folder details")
     browser.load_error = ""
@@ -188,6 +195,22 @@ def test_folder_details_and_hint_describe_each_folder_state(
     # A check answered without reading files has no load time; it says it found no change.
     FolderDetailsPanel._data_rows(browser, {"loaded_at": time.time(), "unchanged": True}, rows, False, False)
     assert rows["loaded"][0].endswith("just now · checked, unchanged")
+
+
+def test_offline_folder_details_agree_with_the_summary(browser: FolderExplorer, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A33.2: offline, data shown unchecked is "not checked (offline)" in Folder details' rows as in the
+    summary, never "checked, unchanged" from an earlier check."""
+    monkeypatch.setattr(browser.model.cache.service, "offline", True)  # (Only what the panel reads.)
+    rows: dict[str, tuple[str, str]] = {}
+    FolderDetailsPanel._data_rows(browser, {"loaded_at": time.time(), "unchanged": True}, rows, False, True,
+                                  unchecked=True)
+    assert rows["loaded"][0].endswith("just now · not checked (offline)") and "checked, unchanged" not in rows["loaded"][0]
+    assert "Working offline" in rows["loaded"][1] and "nothing was read" not in rows["loaded"][1]
+    monkeypatch.setattr(browser.model.cache.service, "offline", False)
+    rows.clear()
+    FolderDetailsPanel._data_rows(browser, {"loaded_at": time.time(), "unchanged": True}, rows, False, True,
+                                  unchecked=True)  # Online, unchecked: being checked, not yet "unchanged".
+    assert rows["loaded"][0].endswith("just now")
 
 
 @pytest.mark.parametrize("known_counts", [False, True])
@@ -398,7 +421,10 @@ def test_disk_cache_summary_tracks_shared_save_completion(
     second = FolderExplorer(path, path, path, [0, 4, 5])
     qtbot.addWidget(second)
     second.selectionPathChanged.connect(lambda p: second.load_to_ram_cache(p, dwell=False))
-    qtbot.waitUntil(lambda: second.displayed_dataset is not None)
+    # The data in RAM shows first; the shared listing's replay brings the row's folder date (its
+    # freshness) a timer later, so a slow event-loop pass can return between the two.
+    qtbot.waitUntil(lambda: second.displayed_dataset is not None
+                    and path in second.model.nodes and second.model.nodes[path].modified is not None)
     assert second.folder_cache_label.text() == "Creating cache…"
     event: dict[str, Any] = {"kind": finish}
     if finish == "cache_saved":
@@ -711,10 +737,14 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     assert isinstance(saved, dict)
     assert saved["scanned_at"] == initial["scanned_at"]
     scanned: list[str] = []
-    original_scandir = __import__("os").scandir
+    original_scandir = os.scandir
+    # The patch is process-wide: other threads' calls (a previous test's IOService.release runs
+    # shutil.rmtree, which lists by file descriptor, on a daemon thread) go through untouched.
+    test_thread = threading.get_ident()
 
-    def record_scandir(path: str) -> Any:
-        scanned.append(path)
+    def record_scandir(path: Any) -> Any:
+        if threading.get_ident() == test_thread:
+            scanned.append(path)
         return original_scandir(path)
 
     monkeypatch.setattr("os.scandir", record_scandir)
@@ -731,8 +761,10 @@ def test_scan_metadata_survives_restart_without_reading_txy_contents(
     with stores._cache_store(options["directory"], [str(child)]) as store:
         previous = store.read_record("summaries", str(child)).value
 
-    def unavailable(path: str) -> Any:
-        raise OSError("Volume unavailable")
+    def unavailable(path: Any) -> Any:
+        if threading.get_ident() == test_thread:
+            raise OSError("Volume unavailable")
+        return original_scandir(path)
 
     monkeypatch.setattr("os.scandir", unavailable)
     events.clear()

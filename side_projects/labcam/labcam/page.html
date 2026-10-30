@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lab camera</title>
+<script src="plotly.min.js"></script>
+<style>
+:root{color-scheme:dark;--bg:#111;--fg:#ddd;--dim:#888;--ok:#50c850;--off:#ffa028;--unknown:#aaa;--line:#333}
+body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.35 -apple-system,system-ui,sans-serif}
+#view{position:relative;max-width:1280px;margin:0 auto}
+details{border-top:1px solid var(--line);margin:4px 0}
+summary{cursor:pointer;color:var(--dim);font-weight:600;padding:4px 0;user-select:none}
+summary:hover{color:var(--fg)}
+#view img{display:block;width:100%;height:auto}
+#view canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;display:none}
+main{max-width:1280px;margin:0 auto;padding:6px 10px}
+.bar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;color:var(--dim);margin:4px 0}
+.bar b{color:var(--fg)}
+button{background:#222;color:var(--fg);border:1px solid #444;border-radius:4px;padding:2px 8px;font:inherit;cursor:pointer}
+button:hover{border-color:#777}
+table{border-collapse:collapse;width:100%}
+td,th{border-bottom:1px solid var(--line);padding:3px 6px;text-align:left;vertical-align:top}
+th{color:var(--dim);font-weight:normal}
+.ok{color:var(--ok)}.off{color:var(--off)}.unknown{color:var(--unknown)}
+.values{color:var(--dim);font-family:ui-monospace,monospace;font-size:12px;word-break:break-all}
+#log{height:260px;overflow:auto;background:#000;border:1px solid var(--line);padding:4px;font:12px ui-monospace,monospace;white-space:pre-wrap}
+.WARNING{color:var(--off)}.ERROR,.CRITICAL{color:#f55}.DEBUG{color:#777}
+#msg{color:var(--ok)}
+#charts{background:#000;min-height:20px}
+.locks{display:flex;gap:10px;margin:6px 0;flex-wrap:wrap}
+.lock{padding:6px 12px;border-radius:6px;border:1px solid var(--line);width:360px;max-width:calc(100% - 26px);box-sizing:border-box}
+.lock .values{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lock b{font-size:16px}
+.lock.locked{border-color:var(--ok)}.lock.lost{border-color:var(--off);background:#2a1a05}
+
+</style></head><body>
+<main>
+  <div id="locks" class="locks"></div>
+  <details open data-key="view"><summary>Camera</summary>
+    <div class="bar"><label><input type="checkbox" id="overlay" checked> show the overlay (boxes, readings, marks)</label></div>
+    <div id="view"><img id="stream" alt="Camera stream"><canvas id="draw"></canvas></div>
+    <div class="bar">
+      <span>Source: <b id="src">…</b></span>
+      <span>Alignment: <b id="align">…</b></span>
+      <span>Timing: <b id="timing">…</b></span>
+    </div>
+  </details>
+  <details open data-key="instruments"><summary>Instruments</summary>
+    <table><thead><tr><th>Instrument</th><th>Status</th><th>Reading</th><th title="now, and over the last 10 s: median ± std">Sure</th><th>Details</th><th></th></tr></thead>
+      <tbody id="rows"></tbody></table>
+    <div class="bar">
+      <button id="ref" title="Use the current frame as the one boxes are drawn on; later frames are matched to it">Set reference frame</button>
+      <a href="raw.jpg" target="_blank"><button>Camera frame</button></a>
+      <a href="locks.csv" target="_blank"><button>Today's locks (CSV)</button></a>
+      <a href="history.csv" target="_blank"><button>Today's history (CSV)</button></a>
+      <span id="msg"></span>
+    </div>
+  </details>
+  <details open data-key="history"><summary>History</summary>
+    <div class="bar">
+      <select id="hours"><option value="0.25">15 min</option><option value="1" selected>1 h</option>
+        <option value="6">6 h</option><option value="24">24 h</option><option value="168">7 days</option></select>
+      <span id="histinfo"></span>
+    </div>
+    <div id="charts"></div>
+  </details>
+  <details open data-key="log"><summary>Log</summary>
+    <div class="bar">
+      <label><input type="checkbox" id="debug"> debug lines</label>
+      <label><input type="checkbox" id="pause"> pause</label>
+    </div>
+    <div id="log"></div>
+  </details>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+let editing = null;
+const img = $("stream"), canvas = $("draw"), ctx = canvas.getContext("2d");
+img.onerror = () => setTimeout(() => { if (viewSection.open) img.src = streamUrl(); }, 2000);
+
+function say(text) { $("msg").textContent = text; setTimeout(() => { $("msg").textContent = ""; }, 5000); }
+
+async function post(path, body) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  const j = await r.json(); say(j.message || j.error);
+}
+$("ref").onclick = () => post("api/reference");
+
+function frameXY(ev) {
+  const r = canvas.getBoundingClientRect();
+  return [(ev.clientX - r.left) * img.naturalWidth / r.width, (ev.clientY - r.top) * img.naturalHeight / r.height];
+}
+// Editing a region: click its four corners (top-left, top-right, bottom-right, bottom-left), or drag a rectangle.
+let clicks = [], down = null;
+function edit(name) {
+  editing = name; clicks = []; down = null; canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+  canvas.style.display = "block";
+  say(`${name}: click its 4 corners (top-left, top-right, bottom-right, bottom-left) or drag a rectangle; Esc cancels`);
+}
+function sketch(points, closed) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.strokeStyle = "#f0f"; ctx.fillStyle = "#f0f"; ctx.lineWidth = 2;
+  ctx.beginPath(); points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); if (closed) ctx.closePath(); ctx.stroke();
+  points.forEach(([x, y]) => ctx.fillRect(x - 2, y - 2, 4, 4));
+}
+function finish(corners) {
+  canvas.style.display = "none"; ctx.clearRect(0, 0, canvas.width, canvas.height);
+  post("api/region", {name: editing, corners: corners.map(p => p.map(v => Math.round(v * 10) / 10))});
+  editing = null; clicks = []; down = null;
+}
+canvas.onmousedown = ev => { down = frameXY(ev); };
+canvas.onmousemove = ev => {
+  const p = frameXY(ev);
+  if (down && Math.hypot(p[0] - down[0], p[1] - down[1]) > 5) {
+    sketch([down, [p[0], down[1]], p, [down[0], p[1]]], true);
+  } else if (clicks.length) sketch([...clicks, p], false);
+};
+canvas.onmouseup = ev => {
+  const p = frameXY(ev), d = down; down = null;
+  if (d && Math.hypot(p[0] - d[0], p[1] - d[1]) > 5) {
+    const [x0, x1] = [Math.min(d[0], p[0]), Math.max(d[0], p[0])], [y0, y1] = [Math.min(d[1], p[1]), Math.max(d[1], p[1])];
+    return finish([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+  }
+  clicks.push(p); sketch(clicks, clicks.length === 4);
+  if (clicks.length === 4) finish(clicks);
+};
+document.onkeydown = ev => { if (ev.key === "Escape") { canvas.style.display = "none"; editing = null; clicks = []; down = null; } };
+
+async function refresh() {
+  try {
+    const s = await (await fetch("state.json")).json();
+    showLocks(s.locks);
+    const src = s.source;
+    $("src").textContent = src.connected ? `connected, frame ${src.last_frame_age ?? "–"} s old` : `not connected: ${src.error}`;
+    $("src").className = src.connected ? "ok" : "off";
+    const a = s.alignment;
+    $("align").textContent = a.ok ? `${a.inliers} matches, shift ${a.shift.join(", ")} px${a.note ? " · " + a.note : ""}` : a.note;
+    $("align").className = a.ok ? (a.note.startsWith("camera moved") ? "off" : "ok") : "off";
+    const t = s.timings_ms;
+    $("timing").textContent = `analysis ${t.analysis_ms ?? "–"} ms, decode ${t.decode_ms ?? "–"} ms, draw ${t.draw_ms ?? "–"} ms`;
+    $("rows").innerHTML = Object.entries(s.instruments).map(([name, i]) => {
+      const r = i.reading || {status: "unknown", text: "waiting…", values: {}, confidence: 0, note: ""};
+      const age = r.at ? Math.round(s.now - r.at) : null;
+      const values = Object.entries(r.values || {}).map(([k, v]) => `${k}=${v}`).join("  ");
+      return `<tr><td>${esc(i.label)}<br><span class="values">${name} · ${i.kind}</span></td>
+        <td class="${r.status}">${r.status}</td><td>${esc(r.text)}${age > 5 ? ` <span class="values">(${age} s ago)</span>` : ""}</td>
+        <td>${Math.round((r.confidence || 0) * 100)}%<br><span class="values">${sure10(i.sure_10s).trim()}</span></td>
+        <td class="values">${esc(values)}${r.note ? "<br>" + esc(r.note) : ""}<br>corners ${i.corners.map(p => p.map(Math.round).join(",")).join(" ")}</td>
+        <td><button onclick="edit('${name}')">Edit region</button>${["trace", "dot", "needle"].includes(i.kind) ? `<br><button onclick="post('api/snap', {name: '${name}'})" title="Fit the region to the screen's edges on the current frame (shadows and bezels stay outside)">Snap</button>` : ""}</td></tr>`;
+    }).join("");
+  } catch (e) { $("src").textContent = "labcam server not answering"; $("src").className = "off"; }
+}
+let logSeq = 0;
+async function pollLog() {
+  if ($("pause").checked) return;
+  try {
+    const lines = await (await fetch("log?after=" + logSeq)).json();
+    const box = $("log"), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 5;
+    for (const [seq, line] of lines) {
+      logSeq = seq;
+      const level = (line.match(/ (DEBUG|INFO|WARNING|ERROR|CRITICAL) /) || [])[1] || "INFO";
+      if (level === "DEBUG" && !$("debug").checked) continue;
+      const div = document.createElement("div"); div.className = level; div.textContent = line; box.appendChild(div);
+    }
+    while (box.childNodes.length > 1000) box.removeChild(box.firstChild);
+    if (atEnd) box.scrollTop = box.scrollHeight;
+  } catch (e) {}
+}
+// "How sure" over the last 10 s: median ± standard deviation.
+const sure10 = s => s && s.n > 1 ? ` · 10 s: ${Math.round(s.median * 100)} ± ${Math.round(s.std * 100)}%` : "";
+
+// Lock banner -------------------------------------------------------------------------------------------
+function showLocks(locks) {
+  $("locks").innerHTML = Object.entries(locks || {}).map(([laser, l]) =>
+    `<div class="lock ${l.state}" title="${esc(l.signs.map(s => (s.holds === null ? "?" : s.holds ? "✓" : "✗") + " " + s.why).join("\n"))}">
+       <b>${esc(laser)}</b> <span class="${l.state === "locked" ? "ok" : l.state === "lost" ? "off" : "unknown"}"><b>${l.state}</b></span>
+       <span class="values" style="display:inline">sure ${Math.round(l.confidence * 100)}%${sure10(l.sure_10s)}</span><span class="values">${esc(l.why)}</span></div>`).join("");
+}
+
+// History plots (Plotly, served by labcam) --------------------------------------------------------------
+// One figure, panels stacked on a shared time axis; hovering shows each point's time, value and status.
+const STATE_COLOUR = {locked: "#50c850", lost: "#ffa028", unknown: "#777", ok: "#50c850", off: "#ffa028"};
+const PANELS = [
+  {title: "Locks", kind: "state"},
+  {title: "Wavemeter", match: k => k === "wavemeter.value"},
+  {title: "Power (µW)", match: k => k === "wavemeter_power.value"},
+  {title: "Trace thickness", match: k => k.endsWith(".thickness")},
+  {title: "Trace level (0 top, 1 bottom)", match: k => k.endsWith(".level"), range: [1, 0]},
+  {title: "Needle offset", match: k => k.endsWith(".offset"), range: [-1, 1]},
+  {title: "Dot movement (px)", match: k => k.endsWith(".spread_px")},
+  {title: "People", match: k => k.endsWith(".present"), kind: "bars", range: [0, 1.05]},
+];
+let historyDrawn = false;
+
+function lockTraces(c, axis) {
+  const lasers = Object.keys(c).filter(k => !k.includes(".") && k !== "time" && !/_(sure|why)$/.test(k));
+  return lasers.map(laser => ({
+    type: "scatter", mode: "markers", name: laser, x: c.time, y: c.time.map(() => laser), yaxis: axis,
+    marker: {symbol: "square", size: 9, color: c[laser].map(s => STATE_COLOUR[s] || "#333"),
+             opacity: c[laser + "_sure"] ? c[laser + "_sure"].map(v => 0.35 + 0.65 * (v ?? 0)) : 1},
+    customdata: c[laser].map((s, i) => [s, Math.round(100 * ((c[laser + "_sure"] || [])[i] ?? 0)), (c[laser + "_why"] || [])[i] ?? ""]),
+    hovertemplate: `<b>${laser}</b> %{customdata[0]} (sure %{customdata[1]}%)<br>%{customdata[2]}<br>%{x}<extra></extra>`,
+    showlegend: false,
+  }));
+}
+
+const LINE_COLOURS = ["#4fc3f7", "#ba68c8", "#fff176", "#f06292"];
+function valueTraces(c, panel, axis) {
+  return Object.keys(c).filter(panel.match).map((col, n) => {
+    const name = col.split(".")[0], status = c[name + ".status"] || [], shape = c[name + ".shape"] || [];
+    const bars = panel.kind === "bars";
+    return {
+      type: bars ? "bar" : "scatter", mode: bars ? undefined : "lines+markers", name: col, x: c.time, y: c[col], yaxis: axis,
+      marker: bars ? {color: "#ffa028"} : {size: 4, color: status.map(s => STATE_COLOUR[s] || "#4fc3f7")},
+      line: {width: 1, color: LINE_COLOURS[n % LINE_COLOURS.length]}, connectgaps: false, showlegend: false,
+      customdata: c.time.map((_, i) => [status[i] ?? "", shape[i] ? ", " + shape[i] : ""]),
+      hovertemplate: `<b>${name}</b> %{y}<br>status %{customdata[0]}%{customdata[1]}<br>%{x}<extra></extra>`,
+    };
+  });
+}
+
+// The 1st–99th percentile of a panel's values, padded: one misread (a wavemeter "GHz" read of a nm display)
+// shouldn't flatten everything else. Points outside stay in the data and show on zooming out.
+function robustRange(traces) {
+  const v = traces.flatMap(t => t.y.filter(n => typeof n === "number")).sort((a, b) => a - b);
+  if (!v.length) return undefined;
+  const lo = v[Math.floor(0.01 * (v.length - 1))], hi = v[Math.ceil(0.99 * (v.length - 1))];
+  const pad = (hi - lo) * 0.1 || Math.abs(hi) * 0.001 || 0.5;
+  return [lo - pad, hi + pad];
+}
+
+async function refreshHistory() {
+  if (!document.querySelector('details[data-key="history"]').open) return;
+  try {
+    const hours = $("hours").value;
+    const data = await (await fetch("history.json?hours=" + hours)).json();
+    const c = data.columns;
+    if (!c.time || !c.time.length) { $("histinfo").textContent = "no history yet"; return; }
+    $("histinfo").textContent = `${data.rows} rows (${c.time.length} shown) · hover for time and status, drag to zoom, double-click to reset`;
+    const panels = PANELS.map(p => ({...p, traces: []}));
+    panels.forEach((p, i) => { const axis = i ? "y" + (i + 1) : "y"; p.traces = p.kind === "state" ? lockTraces(c, axis) : valueTraces(c, p, axis); });
+    const shown = panels.filter(p => p.traces.length);
+    const gap = 0.045, h = (1 - gap * (shown.length - 1)) / shown.length;
+    const layout = {
+      // Dark whatever the browser's or Plotly's theme says.
+      template: {}, paper_bgcolor: "#111", plot_bgcolor: "#000", font: {color: "#ccc", size: 11},
+      hoverlabel: {bgcolor: "#222", bordercolor: "#555", font: {color: "#eee"}},
+      margin: {l: 50, r: 10, t: 22, b: 30}, height: 150 * shown.length, showlegend: false,
+      hovermode: "closest", uirevision: "keep", annotations: [],
+      xaxis: {type: "date", gridcolor: "#222", anchor: "y" + (shown.length > 1 ? shown.length : "")},
+    };
+    const traces = [];
+    shown.forEach((p, i) => {
+      const n = i + 1, axis = n === 1 ? "y" : "y" + n, key = n === 1 ? "yaxis" : "yaxis" + n;
+      const top = 1 - i * (h + gap);
+      // The panel's title above it, with a key to its lines when it has more than one (no shared legend).
+      const key_ = p.kind === "state" || p.traces.length < 2 ? "" : "   " + p.traces.map(t =>
+        `<span style="color:${t.line.color}">━ ${t.name.split(".")[0]}</span>`).join("  ");
+      layout.annotations.push({text: `<b>${p.title}</b>${key_}`, xref: "paper", yref: "paper", x: 0, y: top,
+                               xanchor: "left", yanchor: "bottom", showarrow: false, font: {size: 11, color: "#bbb"}});
+      layout[key] = {domain: [top - h, top], gridcolor: "#222", zeroline: false,
+                     ...(p.kind === "state" ? {type: "category"} : {range: p.range || robustRange(p.traces)})};
+      p.traces.forEach(t => traces.push({...t, yaxis: axis}));
+    });
+    layout.xaxis.anchor = shown.length > 1 ? "y" + shown.length : "y";
+    Plotly.react("charts", traces, layout, {displaylogo: false, responsive: true});
+    historyDrawn = true;
+  } catch (e) { $("histinfo").textContent = "history unavailable: " + e; }
+}
+$("hours").onchange = refreshHistory;
+
+// Sections remember being open or closed (per browser). A closed camera section stops its stream.
+for (const d of document.querySelectorAll("details[data-key]")) {
+  try { const v = localStorage.getItem("labcam-open-" + d.dataset.key); if (v !== null) d.open = v === "1"; } catch (e) {}
+  d.addEventListener("toggle", () => {
+    try { localStorage.setItem("labcam-open-" + d.dataset.key, d.open ? "1" : "0"); } catch (e) {}
+    if (d.dataset.key === "view") img.src = d.open ? streamUrl() : "";
+    if (d.dataset.key === "history" && d.open) refreshHistory();
+  });
+}
+const viewSection = document.querySelector('details[data-key="view"]');
+const streamUrl = () => (($("overlay").checked ? "stream?" : "stream?overlay=0&") + Date.now());
+try { $("overlay").checked = localStorage.getItem("labcam-overlay") !== "0"; } catch (e) {}
+$("overlay").onchange = () => {
+  try { localStorage.setItem("labcam-overlay", $("overlay").checked ? "1" : "0"); } catch (e) {}
+  if (viewSection.open) img.src = streamUrl();
+};
+img.src = viewSection.open ? streamUrl() : "";
+
+setInterval(refresh, 1000); setInterval(pollLog, 1000); setInterval(refreshHistory, 10000);
+refresh(); pollLog(); refreshHistory();
+</script>
+</body></html>

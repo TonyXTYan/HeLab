@@ -66,6 +66,9 @@ CMakeLists.txt.user*
 
 # Python byte code
 *.pyc
+# numba's compiled-code cache (cache=True), beside the module in a checkout
+*.nbi
+*.nbc
 
 # Binaries
 # --------
@@ -109,8 +112,15 @@ venv
 side_projects/rga_visualiser/RGAData
 venv.nosync
 legacy/tdc_launcher/*
+# MATLAB references cloned by hand (README, "Legacy references"): not submodules, since a
+# nested submodule of DLD_front_panel stopped Dependabot's scan (Q6.4).
+legacy/DLD_front_panel/
+legacy/Momentum_Bells_test/
 
 *.lnk
 .ai/session-export-*/
 .codegraph/
 .maestri/
+
+# Raw per-file tables of the post-2025 plates session (Q29.6): kept in .ai/local/sessions-data/
+.ai/sessions/2026-10-29-claude-txy-2025-plates/out/*.csv

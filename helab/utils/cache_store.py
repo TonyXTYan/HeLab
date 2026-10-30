@@ -93,6 +93,14 @@ RESULT_SCHEMA = (
     "file TEXT NOT NULL, bytes INTEGER NOT NULL, computed_at REAL NOT NULL, guard TEXT NOT NULL, "
     "created_at REAL NOT NULL, UNIQUE (path, lookup))")
 
+# The converter's per-folder choices (TXY converter stage 4), flags like ``folder_prefs`` (the user's,
+# one row per folder's ``root://`` key, the newest ``set_at`` winning; never removed by Clear all,
+# purges or making room; turned off by Clear folder preferences; moved by a nested root's re-key):
+# ``write_beside``, HeLab's TXY written beside the folder's raw files (Q9.7). A table of its own, so
+# older HeLabs' writes of ``folder_prefs`` rows (INSERT OR REPLACE) never touch it.
+CONVERT_PREFS_SCHEMA = ("CREATE TABLE IF NOT EXISTS convert_prefs (path TEXT PRIMARY KEY, "
+                        "write_beside INTEGER NOT NULL DEFAULT 0, set_at REAL NOT NULL);\n")
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS folder_epochs (
@@ -110,7 +118,7 @@ CREATE TABLE IF NOT EXISTS folder_prefs (
     path TEXT PRIMARY KEY, no_cache INTEGER NOT NULL DEFAULT 0, no_auto_load INTEGER NOT NULL DEFAULT 0,
     set_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS folder_constants (path TEXT PRIMARY KEY, record TEXT NOT NULL, set_at REAL NOT NULL);
-CREATE TABLE IF NOT EXISTS presets (
+""" + CONVERT_PREFS_SCHEMA + """CREATE TABLE IF NOT EXISTS presets (
     kind TEXT NOT NULL, scope TEXT NOT NULL, name TEXT NOT NULL, record TEXT, set_at REAL NOT NULL,
     PRIMARY KEY (kind, scope, name));
 CREATE TABLE IF NOT EXISTS pending_saves (
@@ -750,9 +758,10 @@ class CacheStore:
         if not old.startswith("root://") or not new.startswith("root://") or old == new:
             return []
         tables = ("folder_epochs", "folder_summaries", "scan_histories", "subtrees", "listings",
-                  "folder_prefs", "folder_constants", "pending_saves", "datasets")
+                  "folder_prefs", "convert_prefs", "folder_constants", "pending_saves", "datasets")
         timestamps = {"folder_summaries": "saved_at", "scan_histories": "saved_at",
-                      "subtrees": "saved_at", "listings": "saved_at", "folder_prefs": "set_at", "folder_constants": "set_at",
+                      "subtrees": "saved_at", "listings": "saved_at", "folder_prefs": "set_at",
+                      "convert_prefs": "set_at", "folder_constants": "set_at",
                       "pending_saves": "created_at", "datasets": "last_used"}
         moved: set[str] = set()
         try:
@@ -942,9 +951,50 @@ class CacheStore:
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
 
+    def read_convert_prefs(self, paths: Sequence[str]) -> dict[str, Read[dict[str, Any]]]:
+        """Each folder's converter flags (``write_beside``, ``set_at``); missing if none set. A
+        folder Clear folder preferences cleared after its row was set reads as cleared."""
+        unique = list(dict.fromkeys(paths))
+        keys = list(dict.fromkeys(self._path_key(path) for path in unique))
+        rows: dict[str, dict[str, Any]] = {}
+        try:
+            with self.transaction(write=False):
+                if not _has_table(self._conn, "convert_prefs"):
+                    keys = []  # (A read-only store from before it: none set.)
+                for start in range(0, len(keys), 500):
+                    chunk = keys[start:start + 500]
+                    for path, write_beside, set_at in self._conn.execute(
+                            f"SELECT path, write_beside, set_at FROM convert_prefs "
+                            f"WHERE path IN ({','.join('?' * len(chunk))})", chunk):
+                        rows[path] = {"write_beside": bool(write_beside), "set_at": float(set_at)}
+        except (sqlite3.Error, StoreError) as exc:
+            failure: Read[dict[str, Any]] = _error(f"Disk cache could not be read: {exc}")
+            return {path: failure for path in unique}
+        return {path: _found(rows[self._path_key(path)]) if self._path_key(path) in rows else _missing()
+                for path in unique}
+
+    def set_convert_prefs(self, path: str, write_beside: bool, set_at: float) -> dict[str, Any]:
+        """Set a folder's converter flags unless a later choice is saved (as :meth:`set_prefs`);
+        returns the flags now saved. A flag turned off keeps its row."""
+        path = self._path_key(path)
+        try:
+            with self.transaction():
+                row = self._conn.execute("SELECT write_beside, set_at FROM convert_prefs WHERE path = ?",
+                                         (path,)).fetchone()
+                cleared = float(self._meta().get("prefs_cleared_at", 0.0))
+                if row is not None and float(row[1]) > set_at:
+                    return {"write_beside": bool(row[0]), "set_at": float(row[1])}
+                if cleared > set_at:
+                    return {"write_beside": False, "set_at": cleared}
+                self._conn.execute("INSERT OR REPLACE INTO convert_prefs (path, write_beside, set_at) VALUES (?, ?, ?)",
+                                   (path, int(write_beside), set_at))
+                return {"write_beside": write_beside, "set_at": set_at}
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+
     def clear_prefs(self, set_at: float | None = None) -> list[str]:
-        """Turn every folder's flags off (the Cache tab's Folder preferences row), keeping each row's
-        ``set_at`` as the time of this choice; the paths that had a flag."""
+        """Turn every folder's flags off (the Cache tab's Folder preferences row), the converter's
+        too, keeping each row's ``set_at`` as the time of this choice; the paths that had a flag."""
         now = time.time() if set_at is None else set_at
         try:
             with self.transaction():
@@ -953,6 +1003,12 @@ class CacheStore:
                     "SELECT path FROM folder_prefs WHERE (no_cache OR no_auto_load) AND set_at <= ?", (now,))]
                 self._conn.execute("UPDATE folder_prefs SET no_cache = 0, no_auto_load = 0, set_at = ? "
                                    "WHERE set_at <= ?", (now, now))
+                if _has_table(self._conn, "convert_prefs"):
+                    paths += [path for (path,) in self._conn.execute(
+                        "SELECT path FROM convert_prefs WHERE write_beside AND set_at <= ?", (now,))
+                        if path not in paths]
+                    self._conn.execute("UPDATE convert_prefs SET write_beside = 0, set_at = ? WHERE set_at <= ?",
+                                       (now, now))
                 # Also stops a choice made before the Clear for a folder with no row yet.
                 self._conn.execute("INSERT INTO meta (key, value) VALUES ('prefs_cleared_at', ?) ON CONFLICT (key) "
                                    "DO UPDATE SET value = MAX(CAST(value AS REAL), CAST(excluded.value AS REAL))",
@@ -2350,6 +2406,9 @@ class CacheStore:
                 no_cache, no_auto_load = self._conn.execute(
                     "SELECT COALESCE(SUM(no_cache), 0), COALESCE(SUM(no_auto_load), 0) FROM folder_prefs").fetchone()
                 prefs = {"no_cache": int(no_cache), "no_auto_load": int(no_auto_load)}
+                if _has_table(self._conn, "convert_prefs"):
+                    prefs["write_beside"] = int(self._conn.execute(
+                        "SELECT COALESCE(SUM(write_beside), 0) FROM convert_prefs").fetchone()[0])
                 deadline = self.next_deadline()
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be read: {exc}") from exc
@@ -2545,12 +2604,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
     the ``folder_constants`` table (F0b), ``datasets.raw_times`` (D7; ``[]``: no raw times
     known), the ``presets`` table and the ``results`` table with its ``gen_results`` generation
     (result caching R2), and the ``listings`` table with its ``gen_listings`` generation and the
-    ``mount_hints`` table (cache-only browsing C2, D1). ``SCHEMA`` gives a new store all of them; a store created before one is
+    ``mount_hints`` table (cache-only browsing C2, D1), and the ``convert_prefs`` table (TXY
+    converter stage 4). ``SCHEMA`` gives a new store all of them; a store created before one is
     never created again, so without this it would lack it for good. Older HeLabs name the tables
     and columns they use, so they keep working with these (they never read or clear results).
     Checked again under the write lock: several helpers may open an old store at once, and only
     the first one changes it."""
-    def missing() -> tuple[bool, bool, bool, bool, bool, bool]:
+    def missing() -> tuple[bool, bool, bool, bool, bool, bool, bool]:
         return (not _has_table(conn, "folder_constants"),
                 _has_table(conn, "datasets") and not _has_raw_times(conn),
                 not _has_table(conn, "presets"),
@@ -2558,12 +2618,13 @@ def _migrate(conn: sqlite3.Connection) -> None:
                     "SELECT 1 FROM meta WHERE key = 'gen_results'").fetchone() is None,
                 not _has_table(conn, "listings") or conn.execute(
                     "SELECT 1 FROM meta WHERE key = 'gen_listings'").fetchone() is None,
-                not _has_table(conn, "mount_hints"))
+                not _has_table(conn, "mount_hints"),
+                not _has_table(conn, "convert_prefs"))
     if not any(missing()):
         return
     conn.execute("BEGIN IMMEDIATE")
     try:
-        constants, raw_times, presets, results, listings, hints = missing()  # (Another helper may have added them meanwhile.)
+        constants, raw_times, presets, results, listings, hints, convert = missing()  # (Another helper may have added them meanwhile.)
         if constants:
             conn.execute("CREATE TABLE IF NOT EXISTS folder_constants "
                          "(path TEXT PRIMARY KEY, record TEXT NOT NULL, set_at REAL NOT NULL)")
@@ -2583,6 +2644,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
             conn.execute("INSERT OR IGNORE INTO meta (key, value) VALUES ('gen_listings', '0')")
         if hints:
             conn.execute(MOUNT_HINTS_SCHEMA)
+        if convert:
+            conn.execute(CONVERT_PREFS_SCHEMA)
         conn.execute("COMMIT")
     except BaseException:
         conn.execute("ROLLBACK")

@@ -90,13 +90,13 @@ notification/push follows the remote connection stage. See the
 | L1 (done 2026-10-19) | Live on/off for the selected folder: new shots found by isolated I/O, settled shots merged into RAM, cache written at stop and quit (with Quit now) | Existing incremental loader |
 | L2 (done 2026-10-19) | Auto-save every N shots, with its setting | L1 |
 | L3 (done 2026-10-19) | Chosen analyses follow Live at a controlled cadence; unpinned views show revisions, pinned keep theirs | L1, [result caching](result-caching.md#stages) R3 |
-| L4 | Acquisition machine: raw → TXY conversion and QC as shots settle | L3, [QC](quality-control-and-repair.md) |
+| L4 | Acquisition machine: raw → TXY conversion and QC as shots settle ([plan](txy-converter.md)); auto-convert in Live, start at launch and low-count alerts done 2026-10-29 (`6454b4a`) | L3, [QC](quality-control-and-repair.md) |
 | L5 | Remote Live revision notifications | [Network extension](network-runners-and-web.md), result caching R5 |
 
 ## Decided in L1/L2 (2026-10-19)
 
 From the Live floor (`.ai/sessions/2026-10-19-claude-live-l1/`, handoff and
-Codex review); the architecture summary is in AGENTS.md.
+Codex review); the architecture summary is in [live](../.ai/architecture/live.md).
 
 - A check is one folder stat while the folder is unchanged, a names-only listing
   when it changed, while files are still being written, within 2 s of its mtime,
@@ -115,13 +115,25 @@ Codex review); the architecture summary is in AGENTS.md.
   check (metadata only, by Tony's decision: its content isn't checked). A writer
   paused longer than the settle age is read unfinished; a shot Live read in the
   last 5 minutes that then changes is read again (by checks and by saves), with a
-  note for a minute and a WARNING. The converter's temp-name rename remains the
-  real fix (planned).
+  note for a minute and a WARNING. HeLab's own conversions write to a temporary
+  name and rename (`write_atomic`, Q18.6); MATLAB's converter gets no change (Q9.8).
 - A Live check pauses background work only while it reads a file (measured: 15 %
   of a background load paused otherwise).
-- Live greys out the tab's explorer; switching tabs turns Live off and saves.
+- Live greys out the tab's explorer (since Q18.3, 2026-10-29: Live on collapses the
+  whole left panel, Q23.2); switching tabs turns Live off and saves.
   Errors keep Live on with the data and a Retry; nothing retries by itself.
 - Quit waits for every save a subscriber asked for, with Quit now.
+
+## Decided in L4 (2026-10-29)
+
+Built by the TXY Live floor (`6454b4a`) and the follow-ups (`c718c71`); mechanics in
+[live](../.ai/architecture/live.md) and [converter](../.ai/architecture/converter.md).
+
+- **Auto-convert** is a toggle shown once Live is on (Q6.8), reset each session (Q9.6).
+- **One launch folder** (Q9.6, Q18.3): Live runs in one folder only; a folder set to start Live
+  and auto-convert at launch opens alone, and Live on collapses the left panel.
+- **Low-count alerts** through system notifications: `convert_low_hits`, default 100 hits, once
+  per shot; a rate or per-folder thresholds later (Q15.3, open).
 
 ## Plots following Live: L3 (decided by Tony 2026-10-19)
 
@@ -173,7 +185,7 @@ has a defined recovery path.
 ## Open decisions
 
 - Built in L3 (2026-10-19, `.ai/sessions/2026-10-19-claude-live-l3/`): Live may start on any folder (its own files only, never subfolders) before the first shot; Live off catches held plots up once (Tony); the scatter keeps its 5 s wait and its camera across reruns; "Highlight the newest shot" in the scatter and histograms, the histograms' newest shot on its own right axis (Tony). By design: with Live off, a pending delay timer may still finish one rerun.
-- Live with settle age only: a writer stalled longer than 5 s mid-file leaves a partial shot held; when it completes, Live sees the shot changed and stops as mismatched. Keep, or re-read recently changed shots in Live? (Tony to decide, 2026-10-19.)
+- Live with settle age only: decided (Tony, 2026-10-20): settle age only, and a shot Live read in the last 5 minutes that then changes is read again (above).
 - Live's data grows in RAM without the large-folder limits: warn, and stop Live
   at 30 % of RAM? (with plots counting toward the RAM budget)
 - Add Cancel to the quit window (back to HeLab, saves carry on)?

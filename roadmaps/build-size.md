@@ -1,6 +1,6 @@
 # Build size
 
-Added: 2026-10-13. Draft; nothing implemented.
+Added: 2026-10-13. Step 1 done (2026-10-13); the rest is a draft.
 Priority and completion: [overview](_readme.md). Related:
 [app versioning](app-versioning.md) (release assets),
 [app updates](app-updates.md) (downloads).

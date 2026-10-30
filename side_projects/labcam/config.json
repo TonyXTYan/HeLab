@@ -1,0 +1,183 @@
+{
+  "source": "http://CAMERA-HOST:8081/stream",
+  "mirror": true,
+  "analysis_hz": 5.0,
+  "stream_fps": 10.0,
+  "jpeg_quality": 80,
+  "average_frames": 3,
+  "instruments": {
+    "left_top": {
+      "kind": "trace",
+      "label": "Left top scope",
+      "corners": [
+        [
+          282,
+          293
+        ],
+        [
+          350,
+          309
+        ],
+        [
+          350,
+          368
+        ],
+        [
+          282,
+          343
+        ]
+      ],
+      "tolerance": 0.15,
+      "background": [
+        75,
+        72,
+        73
+      ],
+      "contrast": 30
+    },
+    "left_middle": {
+      "kind": "trace",
+      "label": "Left middle scope",
+      "corners": [
+        [
+          239.2,
+          439.0
+        ],
+        [
+          297.2,
+          452.0
+        ],
+        [
+          297.3,
+          500.4
+        ],
+        [
+          241.9,
+          489.3
+        ]
+      ],
+      "tolerance": 0.15,
+      "background": [
+        208,
+        173,
+        152
+      ],
+      "contrast": 18
+    },
+    "wavemeter": {
+      "kind": "wavemeter",
+      "label": "Wavemeter",
+      "field": "main",
+      "corners": [
+        [
+          673,
+          3
+        ],
+        [
+          743,
+          10
+        ],
+        [
+          743,
+          25
+        ],
+        [
+          673,
+          19
+        ]
+      ],
+      "label_dx": -150
+    },
+    "wavemeter_power": {
+      "kind": "wavemeter",
+      "label": "Power",
+      "field": "power",
+      "corners": [
+        [
+          758,
+          11
+        ],
+        [
+          817,
+          19
+        ],
+        [
+          817,
+          33
+        ],
+        [
+          758,
+          26
+        ]
+      ]
+    },
+    "lockin": {
+      "kind": "needle",
+      "label": "Lock-in needle",
+      "corners": [
+        [
+          770,
+          90
+        ],
+        [
+          850,
+          100
+        ],
+        [
+          850,
+          140
+        ],
+        [
+          770,
+          129
+        ]
+      ],
+      "tolerance": 0.2
+    },
+    "scope_dot": {
+      "kind": "dot",
+      "label": "Scope dot",
+      "corners": [
+        [
+          652,
+          306
+        ],
+        [
+          750,
+          327
+        ],
+        [
+          747,
+          403
+        ],
+        [
+          650,
+          382
+        ]
+      ],
+      "want": "still",
+      "still": 0.1
+    },
+    "people": {
+      "kind": "motion",
+      "label": "People",
+      "box": [
+        0,
+        0,
+        1280,
+        720
+      ],
+      "min_area": 0.004
+    }
+  },
+  "locks": {
+    "He3": [
+      "left_middle:ok"
+    ],
+    "He4": [
+      "left_top:ok",
+      "scope_dot:still",
+      "lockin:middle"
+    ]
+  }
+}

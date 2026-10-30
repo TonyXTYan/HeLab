@@ -21,6 +21,7 @@ from helab.analysis.dataset_view import DatasetView, Fingerprint, ViewKey
 from helab.analysis.identity import AnalysisIdentity
 from helab.analysis.masks import mask_key
 from helab.analysis.physics import ResolvedConstants
+from helab.utils import txy_sources
 
 State = Literal["completed", "failed", "cancelled"]
 # Where a result is kept (result caching rule 2): in RAM only, or also in the disk cache (R2).
@@ -51,23 +52,27 @@ class CoverageDiff:
 
 @dataclass(frozen=True)
 class Coverage:
-    """The TXY shots a run used, ascending, with their fingerprints (those the view knew)."""
+    """The TXY shots a run used, ascending, with their fingerprints (those the view knew) and, for
+    those read from HeLab's TXY, their origins (Q6.6: ``helab:<profile hash>``)."""
     shots: tuple[int, ...] = ()
     fingerprints: Mapping[int, Fingerprint] = field(default_factory=lambda: MappingProxyType({}))
+    origins: Mapping[int, str] = field(default_factory=lambda: MappingProxyType({}))
 
     @classmethod
     def of(cls, view: DatasetView, shots: Iterable[int] | None = None) -> Coverage:
         """The view's ``shots`` (default: all of them); numbers the view lacks are left out."""
         chosen = tuple(sorted({int(shot) for shot in (view.shots if shots is None else shots)} & set(view.shots)))
         return cls(chosen, MappingProxyType({shot: view.fingerprints[shot] for shot in chosen
-                                             if shot in view.fingerprints}))
+                                             if shot in view.fingerprints}),
+                   MappingProxyType({shot: view.origins[shot] for shot in chosen if shot in view.origins}))
 
     def diff(self, view: DatasetView, shots: Iterable[int] | None = None) -> CoverageDiff:
         """``view``'s shots (or those of them chosen) against this coverage."""
         wanted = set(view.shots if shots is None else shots) & set(view.shots)
         covered = set(self.shots)
         changed = [shot for shot in sorted(wanted & covered)
-                   if view.fingerprints.get(shot) != self.fingerprints.get(shot)]
+                   if view.fingerprints.get(shot) != self.fingerprints.get(shot)
+                   or view.origins.get(shot, "") != self.origins.get(shot, "")]
         return CoverageDiff(tuple(sorted(wanted - covered)), tuple(changed), tuple(sorted(covered - wanted)))
 
     def text(self) -> str:
@@ -77,8 +82,11 @@ class Coverage:
         return f"{count:,} shot{'' if count == 1 else 's'} ({self.shots[0]}–{self.shots[-1]})"
 
     def to_json(self) -> dict[str, Any]:
+        """Origins only when some shot has one: MATLAB's TXY alone keep the key they had."""
         return {"shots": list(self.shots), "fingerprints": [list(self.fingerprints[shot])
-                                                           for shot in self.shots if shot in self.fingerprints]}
+                                                           for shot in self.shots if shot in self.fingerprints],
+                **({"origins": [[shot, self.origins[shot]] for shot in self.shots if shot in self.origins]}
+                   if self.origins else {})}
 
 
 @dataclass(frozen=True)
@@ -206,6 +214,8 @@ class AnalysisResult:
         return {"analysis_id": self.analysis.analysis_id, "version": self.analysis.version,
                 "file_hash": self.analysis.file_hash, "action": self.action, "root_key": identity.root_key,
                 "signature": identity.signature, "input_signature": self.input_signature,
+                # Which TXY (Q6.6, Q18.2); the priority sources' key is as it was (their origins differ).
+                **({"txy_source": identity.source} if identity.source else {}),
                 "parameters": {name: value for name, value in self.parameters.items() if name not in self.unused},
                 "coverage": self.coverage.to_json(),
                 **({"constants": record} if (record := self.constants_record) is not None else {}),
@@ -218,6 +228,8 @@ class AnalysisResult:
         lines = [f"{self.analysis.text()} · {self.action}",
                  f"Input: {identity.source_path} · revision {self.input.revision}",
                  f"Data root: {identity.root_key or 'none known'}",
+                 f"TXY source: {txy_sources.SHORT.get(identity.source, 'HeLab or MATLAB priority')}"
+                 + (f"; {len(self.coverage.origins):,} shots from HeLab's TXY" if self.coverage.origins else ""),
                  f"Signature: {identity.signature[:16] or 'none'}"
                  + (f" (this revision: {self.input_signature[:16]})"
                     if self.input_signature and self.input_signature != identity.signature else ""),

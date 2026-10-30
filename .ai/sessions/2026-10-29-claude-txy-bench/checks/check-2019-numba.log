@@ -1,0 +1,20 @@
+  2019-halos-old-plates/d3667 (position 42): cut, proof holds: TXY written 0.25 s after the raw file's last change: MATLAB read it half-written (identical when cut to 40,956-40,966 of 41,092 lines)
+  2020-halos-weak-trap/d400 (position 9): empty, proof holds: no hits; 2019 writes no file, the reference is 0 bytes (a wrapper that writes empty files)
+  2022-07-old-plates-he3he4/d2 (position 1): variant, proof holds: re-converted 2023-02-08 by a third MATLAB variant: matlab-2019 plus a 2 us x1 dead time
+  2022-07-old-plates-he3he4/d3 (position 2): variant, proof holds: re-converted 2023-02-08 by a third MATLAB variant: matlab-2019 plus a 2 us x1 dead time
+  2022-11-ghost-counts-mcp/d5 (position 4): empty, proof holds: no hits; 2019 writes no file, the reference is 0 bytes (a wrapper that writes empty files)
+  2023-02-new-plates-he3he4/d187 (position 7): empty, proof holds: no hits; 2019 writes no file, the reference is 0 bytes (a wrapper that writes empty files)
+
+profile matlab-2019 (fbaf472897b0), backend numba, positions all
+(cut: MATLAB read a half-written raw file; variant: re-converted by another MATLAB variant; empty: no hits, the reference a 0-byte file from another wrapper; each proved again above)
+set                              shots identical     cut variant   empty differ
+2019-halos-old-plates               43        42       1       0       0      0
+2020-halos-weak-trap                42        41       0       0       1      0
+2022-07-old-plates-he3he4           42        40       0       2       0      0
+2022-07-old-plates-large-he3        43        43       0       0       0      0
+2022-11-ghost-counts-mcp            10         9       0       0       1      0
+2023-02-new-plates-he3he4           43        42       0       0       1      0
+2023-03-momentum-bells              43        43       0       0       0      0
+2024-11-rt-low-occupancy            43        43       0       0       0      0
+all                                309       303       1       2       3      0
+checked 309 of 309 selected shots

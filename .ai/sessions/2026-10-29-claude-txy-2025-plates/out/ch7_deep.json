@@ -1,0 +1,140 @@
+{
+ "ch7_pulses": 681,
+ "first_pulse_within_-50_150ns": {
+  "x1": {
+   "share_ch7": 0.996,
+   "share_random": 0.0,
+   "median_offset_ns_ch7": 7.75,
+   "share_within_+-10ns_ch7": 0.816,
+   "share_within_+-10ns_random": 0.0
+  },
+  "x2": {
+   "share_ch7": 0.994,
+   "share_random": 0.0,
+   "median_offset_ns_ch7": 18.77,
+   "share_within_+-10ns_ch7": 0.325,
+   "share_within_+-10ns_random": 0.0001
+  },
+  "y1": {
+   "share_ch7": 0.997,
+   "share_random": 0.0,
+   "median_offset_ns_ch7": 8.18,
+   "share_within_+-10ns_ch7": 0.515,
+   "share_within_+-10ns_random": 0.0
+  },
+  "y2": {
+   "share_ch7": 1.0,
+   "share_random": 0.0,
+   "median_offset_ns_ch7": 21.12,
+   "share_within_+-10ns_ch7": 0.038,
+   "share_within_+-10ns_random": 0.0
+  }
+ },
+ "prompt_order_counts": {
+  "y1 < x1": 166,
+  "x1": 95,
+  "x2 < x1": 71,
+  "x1 < x2": 69,
+  "x2 < y1 < x1": 60,
+  "x1 < y1": 51,
+  "y1": 34,
+  "y1 < x1 < x2": 30,
+  "x2 < y1": 18,
+  "x1 < y2": 15
+ },
+ "timesum_x_vs_ch7": {
+  "pairs": 790,
+  "random_pairs_per_ch7_equiv": 0.1,
+  "largest_excess_bin_ns": 5.0,
+  "excess_counts": 106.0,
+  "expected_if_mcp_ns": 84.0
+ },
+ "timesum_y_vs_ch7": {
+  "pairs": 728,
+  "random_pairs_per_ch7_equiv": 0.15,
+  "largest_excess_bin_ns": 70.0,
+  "excess_counts": 120.0,
+  "expected_if_mcp_ns": 82.3
+ },
+ "burst_multiplicity_corner_pulses": {
+  "+-1us": {
+   "ch7": {
+    "mean": 23.1,
+    "median": 23.0,
+    "p90": 25.0
+   },
+   "rand": {
+    "mean": 0.02,
+    "median": 0.0,
+    "p90": 0.0
+   },
+   "x1": {
+    "mean": 15.34,
+    "median": 15.0,
+    "p90": 25.0
+   }
+  },
+  "+-10us": {
+   "ch7": {
+    "mean": 26.1,
+    "median": 26.0,
+    "p90": 29.0
+   },
+   "rand": {
+    "mean": 0.16,
+    "median": 0.0,
+    "p90": 0.0
+   },
+   "x1": {
+    "mean": 115.65,
+    "median": 119.0,
+    "p90": 210.5999999999999
+   }
+  }
+ },
+ "associated_hits": {
+  "n": 135,
+  "X_mm_median": -6.605316,
+  "Y_mm_median": -10.315872,
+  "corner_offsets_ns_median": {
+   "x1": 7.85,
+   "x2": 20.78,
+   "y1": 1.85,
+   "y2": 21.15
+  },
+  "corner_offsets_ns_iqr": {
+   "x1": 1.53,
+   "x2": 9.78,
+   "y1": 1.68,
+   "y2": 7.18
+  },
+  "mcp_time_minus_t7_ns_median": -25.939999999999998
+ },
+ "spot_in_image": {
+  "centre_mm": [
+   -6.61,
+   -10.32
+  ],
+  "bg_hits_r<3mm": 590,
+  "expected_from_4-8mm_ring": 450.7,
+  "ratio": 1.309,
+  "pairs_within_1ms": 8,
+  "expected_pairs_within_1ms_poisson": 0.16
+ },
+ "ch5": {
+  "rows_per_shot": {
+   "1": 190,
+   "4": 1,
+   "8": 4,
+   "9": 148,
+   "10": 165,
+   "11": 10,
+   "12": 1
+  },
+  "extra_rows_after_trigger_us_p5_p50_p95": [
+   -1012869.842,
+   3873494.513,
+   7702894.071
+  ]
+ }
+}

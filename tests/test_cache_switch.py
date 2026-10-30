@@ -53,7 +53,7 @@ def dataset_row(options: dict[str, Any], path: str) -> DatasetRow:
 
 
 def test_file_kinds_match_count_and_size_from_one_table() -> None:
-    assert [kind.name for kind in file_kinds.FILE_KINDS] == ["raw", "txy"]
+    assert [kind.name for kind in file_kinds.FILE_KINDS] == ["raw", "txy", "helab_txy"]
     raw, txy = file_kinds.RAW, file_kinds.TXY
     assert file_kinds.match("d12.txt") == (raw, 12)
     assert file_kinds.match("d_txy_forc7.txt") == (txy, 7)
@@ -188,9 +188,12 @@ def test_folder_cache_submits_the_cleanup_once(monkeypatch: pytest.MonkeyPatch) 
         cache.clean_up_cache()
         cache.clean_up_cache()
         requests = [r for r in service.pending if r.operation == "cache_admin"]
-        # The sweep, and the inventory that restores saves still waiting for an answer.
-        assert [r.payload for r in requests] == [{"cache": store_options(), "action": action, "params": {}}
-                                                 for action in ("sweep", "inventory")]
+        # The sweep, and the inventory that restores saves still waiting for an answer (with the temp
+        # folder, whose converted TXY it measures too, Q27.5).
+        from helab.utils.constants import DIR_TEMPS
+        assert [r.payload for r in requests] == [
+            {"cache": store_options(), "action": "sweep", "params": {}},
+            {"cache": store_options(), "action": "inventory", "params": {"temps": DIR_TEMPS}}]
         assert store_options()["directory"].endswith("store-v3")
         assert "cache_admin" in service.LOCAL_OPERATIONS
     finally:

@@ -1,0 +1,8 @@
+date: 2026-10-30 12:58:46 AEDT
+model: Mac16,5 / Apple M4 Max
+cores: 16 (12 performance + 4 efficiency)
+macOS: 26.7, MATLAB R2025b
+python: 3.13.15, numpy 2.5.4
+commit: 2b7e74d
+uptime: 12:58  up 8 days, 14:40, 7 users, load averages: 21.83 12.19 8.37
+uptime after: 13:02  up 8 days, 14:44, 7 users, load averages: 15.07 15.11 10.74

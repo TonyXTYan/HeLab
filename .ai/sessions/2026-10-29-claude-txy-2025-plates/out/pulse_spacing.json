@@ -1,0 +1,345 @@
+{
+ "p25-0625-ramsey": {
+  "files": 519,
+  "hits": 1585096,
+  "pulses": {
+   "x1": 3508908,
+   "x2": 2865292,
+   "y1": 2656373,
+   "y2": 2639666
+  },
+  "pulses_per_hit": {
+   "x1": 2.214,
+   "x2": 1.808,
+   "y1": 1.676,
+   "y2": 1.665
+  },
+  "x1_over_mean_others": 1.2898293182815401,
+  "x2_over_mean_y": 1.08205094411125,
+  "random_combination_fraction_est": 0.053809569472974085,
+  "spacing": {
+   "x1": {
+    "min_ns_p0.01": 24.89,
+    "excess_below_300ns_frac": 0.5096,
+    "peak_ns": 170.0,
+    "frac_below_50ns": 0.0004,
+    "frac_below_300ns": 0.5253
+   },
+   "x2": {
+    "min_ns_p0.01": 31.14,
+    "excess_below_300ns_frac": 0.43,
+    "peak_ns": 190.0,
+    "frac_below_50ns": 0.0001,
+    "frac_below_300ns": 0.4488
+   },
+   "y1": {
+    "min_ns_p0.01": 63.34,
+    "excess_below_300ns_frac": 0.3636,
+    "peak_ns": 170.0,
+    "frac_below_50ns": 0.0001,
+    "frac_below_300ns": 0.3851
+   },
+   "y2": {
+    "min_ns_p0.01": 83.75,
+    "excess_below_300ns_frac": 0.3755,
+    "peak_ns": 185.0,
+    "frac_below_50ns": 0.0001,
+    "frac_below_300ns": 0.3975
+   }
+  }
+ },
+ "p25-07-tight": {
+  "files": 24,
+  "hits": 392211,
+  "pulses": {
+   "x1": 475404,
+   "x2": 575049,
+   "y1": 472473,
+   "y2": 449524
+  },
+  "pulses_per_hit": {
+   "x1": 1.212,
+   "x2": 1.466,
+   "y1": 1.205,
+   "y2": 1.146
+  },
+  "x1_over_mean_others": 0.9526841526579678,
+  "x2_over_mean_y": 1.2473988527077637,
+  "random_combination_fraction_est": 0.009484690638457362,
+  "spacing": {
+   "x1": {
+    "min_ns_p0.01": 30.17,
+    "excess_below_300ns_frac": 0.1627,
+    "peak_ns": 195.0,
+    "frac_below_50ns": 0.0001,
+    "frac_below_300ns": 0.185
+   },
+   "x2": {
+    "min_ns_p0.01": 40.94,
+    "excess_below_300ns_frac": 0.2614,
+    "peak_ns": 170.0,
+    "frac_below_50ns": 0.0001,
+    "frac_below_300ns": 0.2838
+   },
+   "y1": {
+    "min_ns_p0.01": 108.39,
+    "excess_below_300ns_frac": 0.1643,
+    "peak_ns": 185.0,
+    "frac_below_50ns": 0.0001,
+    "frac_below_300ns": 0.1867
+   },
+   "y2": {
+    "min_ns_p0.01": 109.52,
+    "excess_below_300ns_frac": 0.1049,
+    "peak_ns": 170.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.1295
+   }
+  }
+ },
+ "p22-2023-03-bells": {
+  "files": 43,
+  "hits": 202801,
+  "pulses": {
+   "x1": 318405,
+   "x2": 240690,
+   "y1": 232381,
+   "y2": 227336
+  },
+  "pulses_per_hit": {
+   "x1": 1.57,
+   "x2": 1.187,
+   "y1": 1.146,
+   "y2": 1.121
+  },
+  "x1_over_mean_others": 1.3637999049124294,
+  "x2_over_mean_y": 1.0471224688232108,
+  "random_combination_fraction_est": 0.00790265662726844,
+  "spacing": {
+   "x1": {
+    "min_ns_p0.01": 52.94,
+    "excess_below_300ns_frac": 0.3092,
+    "peak_ns": 175.0,
+    "frac_below_50ns": 0.0001,
+    "frac_below_300ns": 0.3253
+   },
+   "x2": {
+    "min_ns_p0.01": 122.9,
+    "excess_below_300ns_frac": 0.1408,
+    "peak_ns": 195.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.1581
+   },
+   "y1": {
+    "min_ns_p0.01": 118.15,
+    "excess_below_300ns_frac": 0.0926,
+    "peak_ns": 170.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.1118
+   },
+   "y2": {
+    "min_ns_p0.01": 116.97,
+    "excess_below_300ns_frac": 0.0914,
+    "peak_ns": 190.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.1102
+   }
+  }
+ },
+ "p22-2024-11-lowocc": {
+  "files": 43,
+  "hits": 33270,
+  "pulses": {
+   "x1": 52570,
+   "x2": 38643,
+   "y1": 39848,
+   "y2": 38957
+  },
+  "pulses_per_hit": {
+   "x1": 1.58,
+   "x2": 1.161,
+   "y1": 1.198,
+   "y2": 1.171
+  },
+  "x1_over_mean_others": 1.3428070294939036,
+  "x2_over_mean_y": 0.980724573313876,
+  "random_combination_fraction_est": 0.007374010620178339,
+  "spacing": {
+   "x1": {
+    "min_ns_p0.01": 99.19,
+    "excess_below_300ns_frac": 0.1323,
+    "peak_ns": 170.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.1658
+   },
+   "x2": {
+    "min_ns_p0.01": 123.85,
+    "excess_below_300ns_frac": 0.0987,
+    "peak_ns": 195.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.1249
+   },
+   "y1": {
+    "min_ns_p0.01": 114.62,
+    "excess_below_300ns_frac": 0.0666,
+    "peak_ns": 170.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.0968
+   },
+   "y2": {
+    "min_ns_p0.01": 113.14,
+    "excess_below_300ns_frac": 0.084,
+    "peak_ns": 190.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.1123
+   }
+  }
+ },
+ "p22-2022-11-ghost-mcp": {
+  "files": 10,
+  "hits": 70461,
+  "pulses": {
+   "x1": 100665,
+   "x2": 92903,
+   "y1": 80280,
+   "y2": 82806
+  },
+  "pulses_per_hit": {
+   "x1": 1.429,
+   "x2": 1.319,
+   "y1": 1.139,
+   "y2": 1.175
+  },
+  "x1_over_mean_others": 1.1797186597861626,
+  "x2_over_mean_y": 1.1393130005028023,
+  "random_combination_fraction_est": 0.011202414574492746,
+  "spacing": {
+   "x1": {
+    "min_ns_p0.01": 98.89,
+    "excess_below_300ns_frac": 0.2845,
+    "peak_ns": 175.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.3037
+   },
+   "x2": {
+    "min_ns_p0.01": 117.1,
+    "excess_below_300ns_frac": 0.2253,
+    "peak_ns": 195.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.2442
+   },
+   "y1": {
+    "min_ns_p0.01": 117.06,
+    "excess_below_300ns_frac": 0.1379,
+    "peak_ns": 170.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.1599
+   },
+   "y2": {
+    "min_ns_p0.01": 113.81,
+    "excess_below_300ns_frac": 0.1663,
+    "peak_ns": 190.0,
+    "frac_below_50ns": 0.0,
+    "frac_below_300ns": 0.1875
+   }
+  }
+ },
+ "p17-2022-07-large-he3": {
+  "files": 43,
+  "hits": 358269,
+  "pulses": {
+   "x1": 471751,
+   "x2": 433447,
+   "y1": 470199,
+   "y2": 477679
+  },
+  "pulses_per_hit": {
+   "x1": 1.317,
+   "x2": 1.21,
+   "y1": 1.312,
+   "y2": 1.333
+  },
+  "x1_over_mean_others": 1.0245619242394077,
+  "x2_over_mean_y": 0.9145628445854846,
+  "random_combination_fraction_est": 0.02745050971941939,
+  "spacing": {
+   "x1": {
+    "min_ns_p0.01": 14.03,
+    "excess_below_300ns_frac": 0.3173,
+    "peak_ns": 35.0,
+    "frac_below_50ns": 0.0479,
+    "frac_below_300ns": 0.349
+   },
+   "x2": {
+    "min_ns_p0.01": 13.76,
+    "excess_below_300ns_frac": 0.2835,
+    "peak_ns": 25.0,
+    "frac_below_50ns": 0.0389,
+    "frac_below_300ns": 0.318
+   },
+   "y1": {
+    "min_ns_p0.01": 13.55,
+    "excess_below_300ns_frac": 0.314,
+    "peak_ns": 25.0,
+    "frac_below_50ns": 0.047,
+    "frac_below_300ns": 0.3458
+   },
+   "y2": {
+    "min_ns_p0.01": 13.29,
+    "excess_below_300ns_frac": 0.3121,
+    "peak_ns": 25.0,
+    "frac_below_50ns": 0.0434,
+    "frac_below_300ns": 0.3435
+   }
+  }
+ },
+ "p17-2020-halos": {
+  "files": 42,
+  "hits": 123344,
+  "pulses": {
+   "x1": 215296,
+   "x2": 130257,
+   "y1": 143451,
+   "y2": 1299016
+  },
+  "pulses_per_hit": {
+   "x1": 1.745,
+   "x2": 1.056,
+   "y1": 1.163,
+   "y2": 10.532
+  },
+  "x1_over_mean_others": 0.410681085810352,
+  "x2_over_mean_y": 0.18060309178650188,
+  "random_combination_fraction_est": 0.003005145500929649,
+  "spacing": {
+   "x1": {
+    "min_ns_p0.01": 16.77,
+    "excess_below_300ns_frac": 0.0973,
+    "peak_ns": 45.0,
+    "frac_below_50ns": 0.0698,
+    "frac_below_300ns": 0.0998
+   },
+   "x2": {
+    "min_ns_p0.01": 17.23,
+    "excess_below_300ns_frac": 0.0255,
+    "peak_ns": 175.0,
+    "frac_below_50ns": 0.0033,
+    "frac_below_300ns": 0.0286
+   },
+   "y1": {
+    "min_ns_p0.01": 15.71,
+    "excess_below_300ns_frac": 0.0253,
+    "peak_ns": 190.0,
+    "frac_below_50ns": 0.0055,
+    "frac_below_300ns": 0.0289
+   },
+   "y2": {
+    "min_ns_p0.01": 15.95,
+    "excess_below_300ns_frac": 0.0284,
+    "peak_ns": 40.0,
+    "frac_below_50ns": 0.0197,
+    "frac_below_300ns": 0.0294
+   }
+  }
+ }
+}

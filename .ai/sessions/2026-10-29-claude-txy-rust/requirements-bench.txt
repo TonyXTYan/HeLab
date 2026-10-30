@@ -1,0 +1,4 @@
+# Floor-only packages for the rust backend (never requirements.txt or the lock; stage 4 decides, Q9.2).
+# Rust itself: Homebrew rustc/cargo 1.99.1, machine-wide, untouched. Crates: native/rust/Cargo.lock.
+maturin==1.15.0
+# then, in native/rust/: maturin develop --release   (installs helab-convert-rs 0.1.0, editable)

@@ -1,0 +1,26 @@
+[project]
+name = "labcam"
+version = "0.1.0"
+description = "Watches the lab rack camera: instrument checks, overlay stream and debug page"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "opencv-python-headless>=4.9",
+    "plotly>=5.18",  # its plotly.min.js, served to the page for the history plots
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+labcam = "labcam.__main__:main"
+
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["labcam"]
+
+[tool.setuptools.package-data]
+labcam = ["page.html"]

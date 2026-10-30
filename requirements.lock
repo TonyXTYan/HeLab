@@ -34,6 +34,8 @@ coverage==7.16.2
     # via pytest-cov
 cycler==0.12.1
     # via matplotlib
+cython==3.3.0
+    # via -r requirements.txt
 dash==4.4.1
     # via -r requirements.txt
 execnet==2.1.2

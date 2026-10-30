@@ -14,6 +14,7 @@ from PyQt6.QtCore import QObject, QTimer
 from PyQt6.QtWidgets import QAbstractButton, QApplication, QMessageBox, QWidget
 
 from helab.utils import folder_cache
+from helab.utils.accessible import identify_buttons
 from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import byte_size
 
@@ -35,7 +36,7 @@ def room_text(room: dict[str, Any] | None) -> str:
         day = datetime.fromtimestamp(since)
         when = f" not used since {day.day} {day:%b}"
     return (f"Make room removes cached data for {count} folder{'' if count == 1 else 's'} "
-            f"({byte_size(int(room.get('bytes', 0)))}){when}, least recently used first.")
+            f"({byte_size(int(room.get('bytes', 0)), 'disk')}){when}, least recently used first.")
 
 
 def result_room_text(room: dict[str, Any] | None) -> str:
@@ -52,7 +53,7 @@ def result_room_text(room: dict[str, Any] | None) -> str:
         day = datetime.fromtimestamp(since)
         when = f" not shown since {day.day} {day:%b}"
     return (f"Make room removes {count} saved analysis result{'' if count == 1 else 's'} "
-            f"({byte_size(int(room.get('bytes', 0)))}){when}, least recently shown first. "
+            f"({byte_size(int(room.get('bytes', 0)), 'disk')}){when}, least recently shown first. "
             "Cached data isn't touched.")
 
 
@@ -171,6 +172,7 @@ class CacheDialogs(QObject):
             self._warn_full = False
 
     def _open(self, box: QMessageBox, asking: tuple[str, str], answer: Callable[[QAbstractButton | None], None]) -> None:
+        identify_buttons(box, "disk_cache_question")
         self.dialog, self._asking = box, asking
 
         def finished() -> None:
@@ -198,7 +200,7 @@ class CacheDialogs(QObject):
             label = str(entry.get("label") or "a plot")
             box.setWindowTitle("Disk cache full")
             box.setText(f"Not enough room in the disk cache to save {label}'s result for {_name(path)} "
-                        f"({byte_size(int(entry.get('bytes', 0)))}, {byte_size(usage)} of {byte_size(budget)} used).")
+                        f"({byte_size(int(entry.get('bytes', 0)), 'disk')}, {byte_size(usage, 'disk')} of {byte_size(budget, 'disk')} used).")
             if kind == "too_large":
                 box.setInformativeText("Removing every other saved analysis result isn't enough. Free space in "
                                        "Settings → Cache (Clear cached data, Remove old entries) or raise the budget. "
@@ -212,14 +214,14 @@ class CacheDialogs(QObject):
             growth = max(0, int(entry.get("bytes", 0)) - int(entry.get("replaces", 0)))
             box.setWindowTitle("Save the cache update?")
             box.setText(f"{_name(path)} changed: save the update to the disk cache "
-                        f"(+{byte_size(growth)}, {byte_size(usage + growth)} of {byte_size(budget)})?")
+                        f"(+{byte_size(growth, 'disk')}, {byte_size(usage + growth, 'disk')} of {byte_size(budget, 'disk')})?")
             box.setInformativeText("The disk cache is 80% full. Either way, the updated data stays in RAM.")
             confirm = box.addButton("Save update", QMessageBox.ButtonRole.AcceptRole)
             decline = box.addButton("Don't cache this update now", QMessageBox.ButtonRole.RejectRole)
         else:
             box.setWindowTitle("Disk cache full")
             box.setText(f"Not enough room in the disk cache for {_name(path)} "
-                        f"({byte_size(int(entry.get('bytes', 0)))}, {byte_size(usage)} of {byte_size(budget)} used).")
+                        f"({byte_size(int(entry.get('bytes', 0)), 'disk')}, {byte_size(usage, 'disk')} of {byte_size(budget, 'disk')} used).")
             if kind == "too_large":
                 box.setInformativeText(f"{_name(path)} alone is larger than the disk cache budget. Raise the budget "
                                        "in Settings → Cache to cache it. The loaded data stays in RAM.")
@@ -287,7 +289,7 @@ class CacheDialogs(QObject):
         box.setIcon(QMessageBox.Icon.Warning)
         box.setWindowTitle("Disk cache nearly full")
         share = usage / budget if budget else 1.0
-        box.setText(f"Disk cache is {int(share * 100)}% full ({byte_size(usage)} of {byte_size(budget)}). "
+        box.setText(f"Disk cache is {int(share * 100)}% full ({byte_size(usage, 'disk')} of {byte_size(budget, 'disk')}). "
                     "Automatic loading of new folders is paused until you free space.")
         box.setInformativeText("Folders with cached data still open from the cache. Loading a folder yourself "
                                "(right-click › Load data) still works.")

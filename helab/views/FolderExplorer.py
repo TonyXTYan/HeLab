@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (QApplication, QMessageBox, QHBoxLayout, QLineEdit, 
 from helab.models.SnapshotFileSystemModel import FolderNode, SnapshotFileSystemModel
 from helab.models.StatusReport import StatusReport
 from helab.resources.icons import CHECK_COLOR, LOAD_COLOR, StatusIcons
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.io_service import IORequest
 from helab.utils import large_folder
 from helab.utils.colours import AMBER as AMBER  # Shared; the views import it from here too.
@@ -235,6 +236,8 @@ class FolderExplorer(QWidget):
         self._cache_read_waits: str | None = None
         self._load_path: str | None = None
         self._cancelled_load_path: str | None = None
+        # A typed folder without subfolders, selected once its parent's listing has its row (Q33.1).
+        self._select_when_listed: str | None = None
         # Large folders (S8): the folder the user just said yes to, only while the call that asked
         # submits its request. Whether a request was asked for (``deliberate``) and allowed
         # (``allow_large``) travels with the request, so neither outlives it.
@@ -280,7 +283,7 @@ class FolderExplorer(QWidget):
         if not self.model.cache.foreground_owners:
             # The first tab; FolderTabWidget hands the foreground to the current tab.
             self.claim_foreground()
-        self.tree = QTreeView(self)
+        self.tree = identify(QTreeView(self), "folder_tree", "Folders", "This tab's folders, their status and counts")
         self.tree.setModel(self.model)
         self.model.view = self.tree
         self.tree.setUniformRowHeights(True)
@@ -292,7 +295,8 @@ class FolderExplorer(QWidget):
         self.tree.setColumnWidth(self.model.COLUMN_STATUS_ICON, 150)
         self.delegate = ScanDelegate(self.tree)
         self.tree.setItemDelegateForColumn(self.model.COLUMN_STATUS_ICON, self.delegate)
-        self.path_edit = QLineEdit(self.view_path, self)
+        self.path_edit = identify(QLineEdit(self.view_path, self), "folder_path", "Folder path",
+                                  "Type a folder's path and press Return to show it")
         self.path_edit.returnPressed.connect(self._navigate_input)
         # Tab activity (basic scans, background loads) is shown in the main window's status bar.
         self.activity_text = ""
@@ -301,37 +305,59 @@ class FolderExplorer(QWidget):
         # Three fixed-height lines: the tree's rows never move when the summary changes.
         self.summary_widget = QWidget(self)
         self.folder_counts_row = QWidget(self.summary_widget)
-        self.selected_folder_label = ElidedLabel("", self.folder_counts_row, Qt.TextElideMode.ElideMiddle)
-        self.folder_summary_label = ElidedLabel("Scanning folder content for TXY files…", self.folder_counts_row)
+        self.selected_folder_label = identify(ElidedLabel("", self.folder_counts_row, Qt.TextElideMode.ElideMiddle),
+                                              "summary_selected")
+        self.folder_summary_label = identify(ElidedLabel("Scanning folder content for TXY files…",
+                                                         self.folder_counts_row), "summary_counts")
         # _fit_selected_label sets its width; the counts label takes the rest of the line.
         self.selected_folder_label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
-        self.folder_cache_label = ElidedLabel("Cache not checked", self.summary_widget)
-        self.folder_freshness_label = ElidedLabel("Live updates off", self.summary_widget)
-        self.cancel_load_button = QToolButton(self.folder_counts_row)
+        self.folder_cache_label = identify(ElidedLabel("Cache not checked", self.summary_widget), "summary_cache")
+        self.folder_freshness_label = identify(ElidedLabel("Live updates off", self.summary_widget),
+                                               "summary_freshness")
+        # Shown at the Live line's end once Live is on (Q6.8): auto-convert on or off, and its menu.
+        self.live_row = QWidget(self.summary_widget)
+        self.auto_convert_button = identify(QToolButton(self.live_row), "auto_convert",
+                                            description="Convert new shots' raw files to TXY while Live watches")
+        self.auto_convert_button.setText("Auto-convert")
+        self.auto_convert_button.setCheckable(True)
+        self.auto_convert_button.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.auto_convert_button.clicked.connect(lambda on: self.live_control.set_auto_convert(on))
+        self.auto_convert_menu = QMenu(self.auto_convert_button)
+        self.auto_convert_menu.aboutToShow.connect(lambda: self.live_control.fill_convert_menu(self.auto_convert_menu))
+        self.auto_convert_button.setMenu(self.auto_convert_menu)
+        self.auto_convert_button.hide()
+        self.cancel_load_button = identify(QToolButton(self.folder_counts_row), "summary_cancel",
+                                           "Cancel loading", "Cancel loading in this tab")
         self.cancel_load_button.setText("Cancel")
         self.cancel_load_button.setToolTip("Cancel loading in this tab (Esc)")
         self.cancel_load_button.clicked.connect(self.cancel_loading)
-        self.retry_button = QToolButton(self.folder_counts_row)
+        self.retry_button = identify(QToolButton(self.folder_counts_row), "summary_retry",
+                                     description="Check or load the selected folder again")
         self.retry_button.setText("Retry")
         self.retry_button.clicked.connect(self._retry)
         # Shown with Retry while the selected folder's cached data doesn't match it (shots missing).
-        self.review_button = QToolButton(self.folder_counts_row)
+        self.review_button = identify(QToolButton(self.folder_counts_row), "summary_review_mismatch",
+                                      "Review mismatched data", "Show the folders whose cached data doesn't match them")
         self.review_button.setText("Review…")
         self.review_button.setToolTip(MISMATCH_REVIEW_TOOLTIP)
         self.review_button.clicked.connect(lambda: self.reviewMismatchRequested.emit(self.selected_path_globally))
         # The selected folder is below a location whose .helab-root is also elsewhere (pending).
-        self.root_review_button = QToolButton(self.folder_counts_row)
+        self.root_review_button = identify(QToolButton(self.folder_counts_row), "summary_review_root",
+                                           "Review data root", "Say whether this .helab-root's other location is the "
+                                           "same folder or a copy")
         self.root_review_button.setText("Review…")
         self.root_review_button.setToolTip(REVIEW_ROOT_TOOLTIP)
         self.root_review_button.clicked.connect(self._review_root)
         # Offered with the large-folder warning (S10): stop it coming up at all.
-        self.no_auto_load_button = QToolButton(self.folder_counts_row)
+        self.no_auto_load_button = identify(QToolButton(self.folder_counts_row), "summary_no_auto_load",
+                                            description="Stop loading this folder when it is selected")
         self.no_auto_load_button.setText("No auto-load")
         self.no_auto_load_button.setToolTip("Don't auto-load this folder: selecting it won't load it again "
                                             "(right-click to change).")
         self.no_auto_load_button.clicked.connect(
             lambda: self.set_folder_flag(self.selected_path_globally, "no_auto_load", True))
-        self.deselect_button = QToolButton(self.folder_counts_row)
+        self.deselect_button = identify(QToolButton(self.folder_counts_row), "summary_deselect",
+                                        description="Clear the subfolder selection and show the displayed path")
         self.deselect_button.setText("Deselect")
         self.deselect_button.setToolTip("Clear subfolder selection and view the displayed path")
         self.deselect_button.clicked.connect(self.clear_selection)
@@ -350,7 +376,7 @@ class FolderExplorer(QWidget):
             self.selected_folder_label, self.folder_summary_label,
             self.folder_cache_label, self.folder_freshness_label))
         for line in (self.folder_counts_row, self.selected_folder_label, self.folder_summary_label,
-                     self.folder_cache_label, self.folder_freshness_label):
+                     self.folder_cache_label, self.folder_freshness_label, self.live_row):
             line.setFixedHeight(line_height)
         for button in self.summary_buttons:
             button.setFont(small_font)
@@ -361,6 +387,16 @@ class FolderExplorer(QWidget):
                 QToolButton:pressed { background: palette(mid); }
                 QToolButton:focus { border-color: palette(highlight); }
             """)
+        # (Its menu arrow needs a part of its own.)
+        self.auto_convert_button.setFont(small_font)
+        self.auto_convert_button.setFixedHeight(line_height)
+        self.auto_convert_button.setStyleSheet("""
+            QToolButton { padding: 0px 3px; padding-right: 15px; border: 1px solid palette(mid); border-radius: 2px; }
+            QToolButton:hover { background: palette(midlight); }
+            QToolButton:pressed, QToolButton:checked { background: palette(mid); }
+            QToolButton::menu-button { width: 12px; border-left: 1px solid palette(mid); }
+        """)
+        self.auto_convert_button.setFixedWidth(QFontMetrics(small_font).horizontalAdvance("Auto-convert") + 24)
         self._summary_button_width = max(button.sizeHint().width() for button in self.summary_buttons)
         for button in self.summary_buttons:
             button.setFixedWidth(self._summary_button_width)
@@ -376,7 +412,12 @@ class FolderExplorer(QWidget):
         summary_layout.setSpacing(0)
         summary_layout.addWidget(self.folder_counts_row)
         summary_layout.addWidget(self.folder_cache_label)
-        summary_layout.addWidget(self.folder_freshness_label)
+        live_layout = QHBoxLayout(self.live_row)
+        live_layout.setContentsMargins(0, 0, 0, 0)
+        live_layout.setSpacing(4)
+        live_layout.addWidget(self.folder_freshness_label, 1)
+        live_layout.addWidget(self.auto_convert_button)
+        summary_layout.addWidget(self.live_row)
         self.summary_widget.setFixedHeight(3 * line_height)
         self.summary_widget.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         layout = QVBoxLayout(self)
@@ -423,6 +464,7 @@ class FolderExplorer(QWidget):
             scroll_bar.valueChanged.connect(self._schedule_visible_checks)
         self.tree.collapsed.connect(self._schedule_visible_checks)
         self.model.rowsInserted.connect(self._schedule_visible_checks)
+        self.model.rowsInserted.connect(self._schedule_select)
         viewport = self.tree.viewport()
         if viewport:
             viewport.installEventFilter(self)
@@ -477,6 +519,7 @@ class FolderExplorer(QWidget):
         self._visible_seen.clear()
         self._release_load()
         self._cancelled_load_path = self._cache_read_path = None
+        self._select_when_listed = None
         self.target_path = self.view_path = self.model_root_path = os.path.abspath(os.path.expanduser(path))
         self.selected_path_globally = self.view_path
         self.path_edit.setText(self.view_path)
@@ -487,7 +530,47 @@ class FolderExplorer(QWidget):
         self.loadStateChanged.emit()
 
     def _navigate_input(self) -> None:
-        self.open_to_path(self.path_edit.text())
+        """A typed path. A folder memory knows has no subfolders opens its parent with its row
+        selected (and so loaded), as a double-click on it does (Q33.1); any other, as its top."""
+        text = self.path_edit.text()
+        if not text.strip():
+            return
+        path = os.path.abspath(os.path.expanduser(text))
+        parent = os.path.dirname(path)
+        if parent == path or not self.without_subfolders(path):
+            self.open_to_path(path)
+            return
+        self.open_to_path(parent)
+        self._select_when_listed = path
+        self._select_listed()
+
+    def without_subfolders(self, path: str) -> bool:
+        """Whether memory says ``path`` has no subfolders: its row's listing or saved summary, else
+        the session's snapshot or scan of it. Not known (never listed): False. Memory only."""
+        node = self.model.nodes.get(path)
+        if node is not None and node.loaded:
+            return not node.children
+        if node is not None and node.has_dirs is not None:
+            return node.has_dirs is False
+        snapshot = self.model.cache.snapshot(path)
+        if snapshot is not None:
+            return not snapshot.entries
+        summary = self.model.cache.scan_summaries.get(path)
+        return summary is not None and summary.get("has_dirs") is False
+
+    def _schedule_select(self, *_: object) -> None:
+        if self._select_when_listed is not None:
+            QTimer.singleShot(0, self._select_listed)  # (After the model's insertion.)
+
+    def _select_listed(self) -> None:
+        """Select the typed folder's row once its parent's listing has it (``_navigate_input``)."""
+        path = self._select_when_listed
+        if self.closed or path is None or path not in self.model.nodes:
+            return
+        self._select_when_listed = None
+        index = self.model.path_index(path)
+        self.tree.setCurrentIndex(index)
+        self.tree.scrollTo(index)
 
     def refresh_folder(self, path: str) -> None:
         """Right-click Retry / Refresh: list the folder again (no timeout), and check its cached
@@ -532,6 +615,8 @@ class FolderExplorer(QWidget):
         indexes = selected.indexes()
         if indexes:
             path = self.model.filePath(indexes[0])
+            if path != self._select_when_listed:
+                self._select_when_listed = None  # (Another row chosen first.)
             if self.live is not None and path != self.live.path:
                 self.stop_live()  # Another folder selected (the tree is locked: e.g. Show in tab).
             if path != self.selected_path_globally:
@@ -1690,7 +1775,7 @@ class FolderExplorer(QWidget):
         large = self.large_state(path) if path == self.selected_path_globally else None
         offer_large = large is not None and not large[1] and not self.load_error
         idle = not (self.loading or self.load_waiting or retrying)
-        live_error = bool(self.live is not None and self.live.error)
+        live_error = bool(self.live is not None and (self.live.error or self.live.convert and self.live.convert.error))
         self.retry_button.setVisible(bool(self.load_error or scan_error or root_error or paused or offer_large or off
                                           or live_error) and idle)
         retry_path = self.listing_retry_path
@@ -1856,6 +1941,23 @@ class FolderExplorer(QWidget):
         style = f"color: {AMBER};" if stopped else ""
         if self.folder_freshness_label.styleSheet() != style:
             self.folder_freshness_label.setStyleSheet(style)
+        self._update_auto_convert_button(path)
+
+    def _update_auto_convert_button(self, path: str) -> None:
+        """The Live line's Auto-convert: shown while Live watches the selected folder."""
+        button = self.auto_convert_button
+        watching = self.live is not None and self.live.path == path
+        if button.isHidden() == watching:
+            button.setVisible(watching)
+        on = self.live_control.auto_converting(path)
+        if button.isChecked() != on:
+            button.setChecked(on)
+        tooltip = ("Auto-convert is on: each Live check also converts the folder's new raw files (d<N>.txt) "
+                   "to HeLab's TXY once written. Click to stop; the arrow has its choices." if on else
+                   "Auto-convert: also convert the folder's new raw files (d<N>.txt) to HeLab's TXY once "
+                   "written, while Live is on. The arrow has its choices.")
+        if button.toolTip() != tooltip:
+            button.setToolTip(tooltip)
 
     def _fit_selected_label(self) -> None:
         """Share line 1: the selected path gets its full width or at least 2/5 of the free space."""
@@ -2271,11 +2373,12 @@ class FolderExplorer(QWidget):
 
     def _ask_remove_cached(self, path: str, size: int | None) -> bool:
         name = os.path.basename(path.rstrip(os.sep)) or path
+        cached = f" ({byte_size(size, 'disk')})" if size else ""
         box = QMessageBox(QMessageBox.Icon.Question, "Don't cache this folder",
-                          f"{name} won't be cached from now on. Remove its cached data"
-                          f"{f' ({byte_size(size)})' if size else ''}?", parent=self)
+                          f"{name} won't be cached from now on. Remove its cached data{cached}?", parent=self)
         remove = box.addButton("Remove cached data", QMessageBox.ButtonRole.AcceptRole)
         box.addButton("Keep it", QMessageBox.ButtonRole.RejectRole)
+        identify_buttons(box, "no_cache_confirm")
         box.exec()
         return box.clickedButton() is remove
 
@@ -2356,7 +2459,13 @@ class FolderExplorer(QWidget):
         self.loadStateChanged.emit()
 
     def on_double_click(self, index: QModelIndex) -> None:
-        self.open_to_path(self.model.filePath(index))
+        """A folder with no subfolders is selected (and so loaded) where it is, not made the
+        tree's top (Q33.1); one with subfolders, or not listed yet, becomes the top."""
+        path = self.model.filePath(index)
+        if path != self.view_path and self.without_subfolders(path):
+            self.tree.setCurrentIndex(index)
+        else:
+            self.open_to_path(path)
 
     def on_back_button_clicked(self) -> None:
         self.open_to_path(os.path.dirname(self.view_path))

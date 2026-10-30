@@ -1,0 +1,2517 @@
+{
+ "backend": "reference",
+ "profile": "matlab-2019",
+ "parallelism": "serial",
+ "workers": null,
+ "machine": "macOS-26.7-arm64-arm-64bit-Mach-O",
+ "summary": {
+  "all": {
+   "shots": 309,
+   "raw_MB": 217.507283,
+   "hits": 1480691,
+   "read_MBps": 475.07227117278774,
+   "reconstruct_MBps": 13.117512391599872,
+   "write_MBps": 277.2493975475784,
+   "total_MBps": 12.203192393757172,
+   "latency_median_s": 0.04171958297956735,
+   "latency_max_s": 0.48283408395946026,
+   "wall_MBps": 12.201478255691198
+  },
+  "small": {
+   "shots": 285,
+   "raw_MB": 115.758822,
+   "hits": 1184795,
+   "read_MBps": 458.9673972458431,
+   "reconstruct_MBps": 9.564507184156914,
+   "write_MBps": 176.27975023485578,
+   "total_MBps": 8.896415428042529,
+   "latency_median_s": 0.04005337506532669,
+   "latency_max_s": 0.25589649996254593
+  },
+  "large": {
+   "shots": 24,
+   "raw_MB": 101.748461,
+   "hits": 295896,
+   "read_MBps": 494.82624473922897,
+   "reconstruct_MBps": 22.719389874166865,
+   "write_MBps": 795.8941046633664,
+   "total_MBps": 21.14494530930895,
+   "latency_median_s": 0.12269531248603016,
+   "latency_max_s": 0.48283408395946026
+  }
+ },
+ "shots": [
+  {
+   "label": "2019-halos-old-plates/d1",
+   "raw_bytes": 383329,
+   "hits": 3423,
+   "read": 0.0012739170342683792,
+   "reconstruct": 0.03358783293515444,
+   "write": 0.0017472499748691916
+  },
+  {
+   "label": "2019-halos-old-plates/d95",
+   "raw_bytes": 433552,
+   "hits": 4550,
+   "read": 0.0010306250769644976,
+   "reconstruct": 0.04073545802384615,
+   "write": 0.0021592919947579503
+  },
+  {
+   "label": "2019-halos-old-plates/d189",
+   "raw_bytes": 492832,
+   "hits": 5766,
+   "read": 0.001000041957013309,
+   "reconstruct": 0.051193624967709184,
+   "write": 0.002782166004180908
+  },
+  {
+   "label": "2019-halos-old-plates/d283",
+   "raw_bytes": 469568,
+   "hits": 4869,
+   "read": 0.0009575419826433063,
+   "reconstruct": 0.044418875011615455,
+   "write": 0.0023447920102626085
+  },
+  {
+   "label": "2019-halos-old-plates/d377",
+   "raw_bytes": 466960,
+   "hits": 4901,
+   "read": 0.0009256250923499465,
+   "reconstruct": 0.0439392919652164,
+   "write": 0.0023607920156791806
+  },
+  {
+   "label": "2019-halos-old-plates/d471",
+   "raw_bytes": 575984,
+   "hits": 6492,
+   "read": 0.0012186249950900674,
+   "reconstruct": 0.06052729208022356,
+   "write": 0.0028730829944834113
+  },
+  {
+   "label": "2019-halos-old-plates/d565",
+   "raw_bytes": 549440,
+   "hits": 6037,
+   "read": 0.0012148329988121986,
+   "reconstruct": 0.06636424991302192,
+   "write": 0.002777458052150905
+  },
+  {
+   "label": "2019-halos-old-plates/d659",
+   "raw_bytes": 491328,
+   "hits": 5551,
+   "read": 0.0010211250046268106,
+   "reconstruct": 0.05185104196425527,
+   "write": 0.002511250087991357
+  },
+  {
+   "label": "2019-halos-old-plates/d753",
+   "raw_bytes": 623600,
+   "hits": 7428,
+   "read": 0.0012167909881100059,
+   "reconstruct": 0.06621900002937764,
+   "write": 0.005679999943822622
+  },
+  {
+   "label": "2019-halos-old-plates/d847",
+   "raw_bytes": 544256,
+   "hits": 5989,
+   "read": 0.001263915910385549,
+   "reconstruct": 0.05411479203030467,
+   "write": 0.002706750063225627
+  },
+  {
+   "label": "2019-halos-old-plates/d941",
+   "raw_bytes": 513648,
+   "hits": 5811,
+   "read": 0.0009781250264495611,
+   "reconstruct": 0.05512137501500547,
+   "write": 0.002656040946021676
+  },
+  {
+   "label": "2019-halos-old-plates/d1035",
+   "raw_bytes": 577920,
+   "hits": 6663,
+   "read": 0.0011496669612824917,
+   "reconstruct": 0.05930658301804215,
+   "write": 0.0029721249593421817
+  },
+  {
+   "label": "2019-halos-old-plates/d1129",
+   "raw_bytes": 503056,
+   "hits": 5519,
+   "read": 0.0009728330187499523,
+   "reconstruct": 0.050058583030477166,
+   "write": 0.002571958932094276
+  },
+  {
+   "label": "2019-halos-old-plates/d1223",
+   "raw_bytes": 531248,
+   "hits": 5706,
+   "read": 0.0010322080925107002,
+   "reconstruct": 0.05234137491788715,
+   "write": 0.002522833994589746
+  },
+  {
+   "label": "2019-halos-old-plates/d1317",
+   "raw_bytes": 641312,
+   "hits": 7392,
+   "read": 0.0012899580178782344,
+   "reconstruct": 0.06607683293987066,
+   "write": 0.0034756669774651527
+  },
+  {
+   "label": "2019-halos-old-plates/d1411",
+   "raw_bytes": 537152,
+   "hits": 6034,
+   "read": 0.0010752079542726278,
+   "reconstruct": 0.05359641695395112,
+   "write": 0.002776875044219196
+  },
+  {
+   "label": "2019-halos-old-plates/d1505",
+   "raw_bytes": 533440,
+   "hits": 5884,
+   "read": 0.0010553330648690462,
+   "reconstruct": 0.0707437499659136,
+   "write": 0.0029308750526979566
+  },
+  {
+   "label": "2019-halos-old-plates/d1599",
+   "raw_bytes": 586672,
+   "hits": 6747,
+   "read": 0.0028793750097975135,
+   "reconstruct": 0.062243917025625706,
+   "write": 0.0030723329400643706
+  },
+  {
+   "label": "2019-halos-old-plates/d1693",
+   "raw_bytes": 515184,
+   "hits": 5636,
+   "read": 0.0010212080087512732,
+   "reconstruct": 0.05356691696215421,
+   "write": 0.012991957948543131
+  },
+  {
+   "label": "2019-halos-old-plates/d1787",
+   "raw_bytes": 541952,
+   "hits": 5936,
+   "read": 0.0010930410353466868,
+   "reconstruct": 0.05990612495224923,
+   "write": 0.0028315840754657984
+  },
+  {
+   "label": "2019-halos-old-plates/d1881",
+   "raw_bytes": 655536,
+   "hits": 7455,
+   "read": 0.0019652920309454203,
+   "reconstruct": 0.0675561249954626,
+   "write": 0.00333724997472018
+  },
+  {
+   "label": "2019-halos-old-plates/d1937",
+   "raw_bytes": 23192028,
+   "hits": 19,
+   "read": 0.04947033291682601,
+   "reconstruct": 0.3999556250637397,
+   "write": 0.0005402499809861183
+  },
+  {
+   "label": "2019-halos-old-plates/d1975",
+   "raw_bytes": 537824,
+   "hits": 5738,
+   "read": 0.0010776660637930036,
+   "reconstruct": 0.05185091693419963,
+   "write": 0.0027486670296639204
+  },
+  {
+   "label": "2019-halos-old-plates/d2069",
+   "raw_bytes": 581136,
+   "hits": 6466,
+   "read": 0.001254500006325543,
+   "reconstruct": 0.05775383301079273,
+   "write": 0.0029354169964790344
+  },
+  {
+   "label": "2019-halos-old-plates/d2134",
+   "raw_bytes": 23755248,
+   "hits": 15,
+   "read": 0.048225584090687335,
+   "reconstruct": 0.41016020788811147,
+   "write": 0.000499958056025207
+  },
+  {
+   "label": "2019-halos-old-plates/d2163",
+   "raw_bytes": 479008,
+   "hits": 5104,
+   "read": 0.0009388340404257178,
+   "reconstruct": 0.04836274997796863,
+   "write": 0.0024672909639775753
+  },
+  {
+   "label": "2019-halos-old-plates/d2227",
+   "raw_bytes": 24131596,
+   "hits": 20,
+   "read": 0.04771049995906651,
+   "reconstruct": 0.4123347500571981,
+   "write": 0.00042108295019716024
+  },
+  {
+   "label": "2019-halos-old-plates/d2257",
+   "raw_bytes": 563536,
+   "hits": 6345,
+   "read": 0.0011189169017598033,
+   "reconstruct": 0.05595987499691546,
+   "write": 0.002849375014193356
+  },
+  {
+   "label": "2019-halos-old-plates/d2351",
+   "raw_bytes": 476624,
+   "hits": 5013,
+   "read": 0.0009267079876735806,
+   "reconstruct": 0.04535658401437104,
+   "write": 0.0022914159344509244
+  },
+  {
+   "label": "2019-halos-old-plates/d2445",
+   "raw_bytes": 460512,
+   "hits": 4972,
+   "read": 0.0009064999176189303,
+   "reconstruct": 0.04522612504661083,
+   "write": 0.0023779169423505664
+  },
+  {
+   "label": "2019-halos-old-plates/d2539",
+   "raw_bytes": 594816,
+   "hits": 6654,
+   "read": 0.001128540956415236,
+   "reconstruct": 0.06205204199068248,
+   "write": 0.002883667009882629
+  },
+  {
+   "label": "2019-halos-old-plates/d2633",
+   "raw_bytes": 511504,
+   "hits": 5550,
+   "read": 0.0009900829754769802,
+   "reconstruct": 0.0503208750160411,
+   "write": 0.0024918749695643783
+  },
+  {
+   "label": "2019-halos-old-plates/d2727",
+   "raw_bytes": 416,
+   "hits": 1,
+   "read": 0.00015812506899237633,
+   "reconstruct": 3.14170029014349e-05,
+   "write": 0.00028966600075364113
+  },
+  {
+   "label": "2019-halos-old-plates/d2821",
+   "raw_bytes": 587360,
+   "hits": 6585,
+   "read": 0.0010565409902483225,
+   "reconstruct": 0.05925649998243898,
+   "write": 0.002859917003661394
+  },
+  {
+   "label": "2019-halos-old-plates/d2915",
+   "raw_bytes": 513264,
+   "hits": 6045,
+   "read": 0.000979791977442801,
+   "reconstruct": 0.05381508299615234,
+   "write": 0.0028386670164763927
+  },
+  {
+   "label": "2019-halos-old-plates/d3009",
+   "raw_bytes": 1063920,
+   "hits": 12974,
+   "read": 0.001991666969843209,
+   "reconstruct": 0.11974183295387775,
+   "write": 0.005332584027200937
+  },
+  {
+   "label": "2019-halos-old-plates/d3103",
+   "raw_bytes": 723968,
+   "hits": 8346,
+   "read": 0.001370041980408132,
+   "reconstruct": 0.07592750003095716,
+   "write": 0.00383070798125118
+  },
+  {
+   "label": "2019-halos-old-plates/d3197",
+   "raw_bytes": 537872,
+   "hits": 5899,
+   "read": 0.0010491249850019813,
+   "reconstruct": 0.054089374956674874,
+   "write": 0.0026929170126095414
+  },
+  {
+   "label": "2019-halos-old-plates/d3291",
+   "raw_bytes": 1175776,
+   "hits": 14373,
+   "read": 0.002262915950268507,
+   "reconstruct": 0.12844866700470448,
+   "write": 0.00586241704877466
+  },
+  {
+   "label": "2019-halos-old-plates/d3385",
+   "raw_bytes": 625424,
+   "hits": 7522,
+   "read": 0.0011483749840408564,
+   "reconstruct": 0.0697196249384433,
+   "write": 0.0034014590783044696
+  },
+  {
+   "label": "2019-halos-old-plates/d3479",
+   "raw_bytes": 595568,
+   "hits": 7296,
+   "read": 0.0011210840893909335,
+   "reconstruct": 0.06538808299228549,
+   "write": 0.010672874981537461
+  },
+  {
+   "label": "2019-halos-old-plates/d3573",
+   "raw_bytes": 1109728,
+   "hits": 13474,
+   "read": 0.002035000012256205,
+   "reconstruct": 0.12005529191810638,
+   "write": 0.005603333003818989
+  },
+  {
+   "label": "2019-halos-old-plates/d3667",
+   "raw_bytes": 657472,
+   "hits": 7221,
+   "read": 0.0019262500572949648,
+   "reconstruct": 0.06546779104974121,
+   "write": 0.003268916974775493
+  },
+  {
+   "label": "2020-halos-weak-trap/d1",
+   "raw_bytes": 1684749,
+   "hits": 4644,
+   "read": 0.0030700829811394215,
+   "reconstruct": 0.06267520901747048,
+   "write": 0.002224540919996798
+  },
+  {
+   "label": "2020-halos-weak-trap/d4",
+   "raw_bytes": 1725084,
+   "hits": 4118,
+   "read": 0.0027584159979596734,
+   "reconstruct": 0.06247095891740173,
+   "write": 0.0020735830767080188
+  },
+  {
+   "label": "2020-halos-weak-trap/d7",
+   "raw_bytes": 1667038,
+   "hits": 4648,
+   "read": 0.002838833024725318,
+   "reconstruct": 0.06053187500219792,
+   "write": 0.002313458942808211
+  },
+  {
+   "label": "2020-halos-weak-trap/d58",
+   "raw_bytes": 923040,
+   "hits": 4591,
+   "read": 0.0016750000650063157,
+   "reconstruct": 0.0519088750006631,
+   "write": 0.002259249915368855
+  },
+  {
+   "label": "2020-halos-weak-trap/d115",
+   "raw_bytes": 902848,
+   "hits": 4473,
+   "read": 0.0017952920170500875,
+   "reconstruct": 0.050374875077977777,
+   "write": 0.002156374976038933
+  },
+  {
+   "label": "2020-halos-weak-trap/d172",
+   "raw_bytes": 711216,
+   "hits": 2260,
+   "read": 0.001301666023209691,
+   "reconstruct": 0.0352829999756068,
+   "write": 0.0013695420930162072
+  },
+  {
+   "label": "2020-halos-weak-trap/d229",
+   "raw_bytes": 650096,
+   "hits": 2393,
+   "read": 0.0012520409654825926,
+   "reconstruct": 0.041637166985310614,
+   "write": 0.0015223330119624734
+  },
+  {
+   "label": "2020-halos-weak-trap/d286",
+   "raw_bytes": 632496,
+   "hits": 2403,
+   "read": 0.0013729579513892531,
+   "reconstruct": 0.029959707986563444,
+   "write": 0.0014685840578749776
+  },
+  {
+   "label": "2020-halos-weak-trap/d343",
+   "raw_bytes": 694480,
+   "hits": 2539,
+   "read": 0.0012755000498145819,
+   "reconstruct": 0.04050062503665686,
+   "write": 0.001420249929651618
+  },
+  {
+   "label": "2020-halos-weak-trap/d400",
+   "raw_bytes": 208,
+   "hits": 0,
+   "read": 0.0001621670089662075,
+   "reconstruct": 2.174999099224806e-05,
+   "write": 3.7497375160455704e-07
+  },
+  {
+   "label": "2020-halos-weak-trap/d457",
+   "raw_bytes": 607728,
+   "hits": 2435,
+   "read": 0.0010848339879885316,
+   "reconstruct": 0.030400291085243225,
+   "write": 0.0013285839231684804
+  },
+  {
+   "label": "2020-halos-weak-trap/d514",
+   "raw_bytes": 582784,
+   "hits": 2598,
+   "read": 0.0011075419606640935,
+   "reconstruct": 0.03162670799065381,
+   "write": 0.0014179589925333858
+  },
+  {
+   "label": "2020-halos-weak-trap/d571",
+   "raw_bytes": 614320,
+   "hits": 2388,
+   "read": 0.0011440420057624578,
+   "reconstruct": 0.03015066694933921,
+   "write": 0.0014282910851761699
+  },
+  {
+   "label": "2020-halos-weak-trap/d628",
+   "raw_bytes": 665376,
+   "hits": 3160,
+   "read": 0.001241958001628518,
+   "reconstruct": 0.036166541976854205,
+   "write": 0.0015755000058561563
+  },
+  {
+   "label": "2020-halos-weak-trap/d685",
+   "raw_bytes": 616368,
+   "hits": 3068,
+   "read": 0.0011791670694947243,
+   "reconstruct": 0.03513887501321733,
+   "write": 0.0018067499622702599
+  },
+  {
+   "label": "2020-halos-weak-trap/d742",
+   "raw_bytes": 708416,
+   "hits": 2964,
+   "read": 0.0017978749237954617,
+   "reconstruct": 0.0364106249762699,
+   "write": 0.0015903330640867352
+  },
+  {
+   "label": "2020-halos-weak-trap/d799",
+   "raw_bytes": 707648,
+   "hits": 3138,
+   "read": 0.001296082977205515,
+   "reconstruct": 0.03922645794227719,
+   "write": 0.0015102500328794122
+  },
+  {
+   "label": "2020-halos-weak-trap/d856",
+   "raw_bytes": 611408,
+   "hits": 3100,
+   "read": 0.001161166001111269,
+   "reconstruct": 0.03584670904092491,
+   "write": 0.0018207909306511283
+  },
+  {
+   "label": "2020-halos-weak-trap/d913",
+   "raw_bytes": 722128,
+   "hits": 3282,
+   "read": 0.0016433330019935966,
+   "reconstruct": 0.03871679201256484,
+   "write": 0.0017368330154567957
+  },
+  {
+   "label": "2020-halos-weak-trap/d970",
+   "raw_bytes": 622960,
+   "hits": 3041,
+   "read": 0.0011846659472212195,
+   "reconstruct": 0.03498100000433624,
+   "write": 0.0017040419625118375
+  },
+  {
+   "label": "2020-halos-weak-trap/d1027",
+   "raw_bytes": 628912,
+   "hits": 2968,
+   "read": 0.001181083032861352,
+   "reconstruct": 0.03425499994773418,
+   "write": 0.0016160421073436737
+  },
+  {
+   "label": "2020-halos-weak-trap/d1084",
+   "raw_bytes": 603408,
+   "hits": 2903,
+   "read": 0.0011968330945819616,
+   "reconstruct": 0.03651391691528261,
+   "write": 0.0015045000473037362
+  },
+  {
+   "label": "2020-halos-weak-trap/d1141",
+   "raw_bytes": 638784,
+   "hits": 3245,
+   "read": 0.001207459019497037,
+   "reconstruct": 0.03712012490723282,
+   "write": 0.0016886660596355796
+  },
+  {
+   "label": "2020-halos-weak-trap/d1198",
+   "raw_bytes": 586496,
+   "hits": 2995,
+   "read": 0.0010950000723823905,
+   "reconstruct": 0.03401629196014255,
+   "write": 0.0017238750588148832
+  },
+  {
+   "label": "2020-halos-weak-trap/d1255",
+   "raw_bytes": 176,
+   "hits": 1,
+   "read": 0.00018129195086658,
+   "reconstruct": 3.13750933855772e-05,
+   "write": 0.00030474993400275707
+  },
+  {
+   "label": "2020-halos-weak-trap/d1312",
+   "raw_bytes": 631648,
+   "hits": 2945,
+   "read": 0.0011468749726191163,
+   "reconstruct": 0.034614042029716074,
+   "write": 0.0014870419399812818
+  },
+  {
+   "label": "2020-halos-weak-trap/d1369",
+   "raw_bytes": 604544,
+   "hits": 3143,
+   "read": 0.0011146250180900097,
+   "reconstruct": 0.03589808300603181,
+   "write": 0.001683457987383008
+  },
+  {
+   "label": "2020-halos-weak-trap/d1426",
+   "raw_bytes": 576032,
+   "hits": 2916,
+   "read": 0.0011454999912530184,
+   "reconstruct": 0.037108291988261044,
+   "write": 0.0015113750705495477
+  },
+  {
+   "label": "2020-halos-weak-trap/d1483",
+   "raw_bytes": 571424,
+   "hits": 3068,
+   "read": 0.0011355829192325473,
+   "reconstruct": 0.035046958015300333,
+   "write": 0.0015827090246602893
+  },
+  {
+   "label": "2020-halos-weak-trap/d1540",
+   "raw_bytes": 587536,
+   "hits": 2696,
+   "read": 0.0011602920712903142,
+   "reconstruct": 0.03279766591731459,
+   "write": 0.0014077500673010945
+  },
+  {
+   "label": "2020-halos-weak-trap/d1597",
+   "raw_bytes": 604416,
+   "hits": 3001,
+   "read": 0.0011215410195291042,
+   "reconstruct": 0.03454954200424254,
+   "write": 0.0015703330282121897
+  },
+  {
+   "label": "2020-halos-weak-trap/d1654",
+   "raw_bytes": 699776,
+   "hits": 2966,
+   "read": 0.0012829590123146772,
+   "reconstruct": 0.03610454092267901,
+   "write": 0.0016150000737980008
+  },
+  {
+   "label": "2020-halos-weak-trap/d1711",
+   "raw_bytes": 680352,
+   "hits": 2975,
+   "read": 0.0012612920254468918,
+   "reconstruct": 0.03570858296006918,
+   "write": 0.0015892089577391744
+  },
+  {
+   "label": "2020-halos-weak-trap/d1768",
+   "raw_bytes": 687968,
+   "hits": 3284,
+   "read": 0.0012546669458970428,
+   "reconstruct": 0.03940937505103648,
+   "write": 0.001747958012856543
+  },
+  {
+   "label": "2020-halos-weak-trap/d1825",
+   "raw_bytes": 598368,
+   "hits": 2975,
+   "read": 0.001131167053245008,
+   "reconstruct": 0.03391983301844448,
+   "write": 0.0015345839783549309
+  },
+  {
+   "label": "2020-halos-weak-trap/d1882",
+   "raw_bytes": 650720,
+   "hits": 2954,
+   "read": 0.0012550409883260727,
+   "reconstruct": 0.03464066702872515,
+   "write": 0.005979249952360988
+  },
+  {
+   "label": "2020-halos-weak-trap/d1939",
+   "raw_bytes": 606736,
+   "hits": 2965,
+   "read": 0.0011635830160230398,
+   "reconstruct": 0.035206542001105845,
+   "write": 0.0015702079981565475
+  },
+  {
+   "label": "2020-halos-weak-trap/d1996",
+   "raw_bytes": 663872,
+   "hits": 2967,
+   "read": 0.0012441659346222878,
+   "reconstruct": 0.03531191707588732,
+   "write": 0.0016477080062031746
+  },
+  {
+   "label": "2020-halos-weak-trap/d2053",
+   "raw_bytes": 608448,
+   "hits": 2621,
+   "read": 0.0011304999934509397,
+   "reconstruct": 0.032017832971177995,
+   "write": 0.0014236250426620245
+  },
+  {
+   "label": "2020-halos-weak-trap/d2110",
+   "raw_bytes": 626400,
+   "hits": 2945,
+   "read": 0.0011928329477086663,
+   "reconstruct": 0.03489137499127537,
+   "write": 0.00149591697845608
+  },
+  {
+   "label": "2020-halos-weak-trap/d2167",
+   "raw_bytes": 585328,
+   "hits": 2738,
+   "read": 0.0011198340216651559,
+   "reconstruct": 0.03235083294566721,
+   "write": 0.0015642499784007668
+  },
+  {
+   "label": "2020-halos-weak-trap/d2224",
+   "raw_bytes": 593328,
+   "hits": 2830,
+   "read": 0.0011312499409541488,
+   "reconstruct": 0.032775333034805954,
+   "write": 0.0014865839621052146
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d1",
+   "raw_bytes": 2479104,
+   "hits": 27346,
+   "read": 0.004668375011533499,
+   "reconstruct": 0.2941089170053601,
+   "write": 0.01094524993095547
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d2",
+   "raw_bytes": 2234800,
+   "hits": 27051,
+   "read": 0.003743666922673583,
+   "reconstruct": 0.27470595797058195,
+   "write": 0.010789125110022724
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d3",
+   "raw_bytes": 2331952,
+   "hits": 28367,
+   "read": 0.004147875006310642,
+   "reconstruct": 0.2865773329976946,
+   "write": 0.011267374968156219
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d6",
+   "raw_bytes": 2122077,
+   "hits": 18876,
+   "read": 0.003464292036369443,
+   "reconstruct": 0.22373420803342015,
+   "write": 0.007767917006276548
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d11",
+   "raw_bytes": 1770960,
+   "hits": 17525,
+   "read": 0.003113958053290844,
+   "reconstruct": 0.203559958958067,
+   "write": 0.007263250066898763
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d16",
+   "raw_bytes": 508368,
+   "hits": 7252,
+   "read": 0.0009969579987227917,
+   "reconstruct": 0.06248041696380824,
+   "write": 0.003172582946717739
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d21",
+   "raw_bytes": 743168,
+   "hits": 10637,
+   "read": 0.0013575840275734663,
+   "reconstruct": 0.09284920804202557,
+   "write": 0.004590499913319945
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d26",
+   "raw_bytes": 264128,
+   "hits": 3468,
+   "read": 0.0006017499836161733,
+   "reconstruct": 0.030988416983745992,
+   "write": 0.00170233310200274
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d31",
+   "raw_bytes": 299840,
+   "hits": 3883,
+   "read": 0.0006452909437939525,
+   "reconstruct": 0.03752316697500646,
+   "write": 0.0019985419930890203
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d36",
+   "raw_bytes": 276032,
+   "hits": 3690,
+   "read": 0.0006203750381246209,
+   "reconstruct": 0.03269554197322577,
+   "write": 0.001983624999411404
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d41",
+   "raw_bytes": 252448,
+   "hits": 3390,
+   "read": 0.0005983338924124837,
+   "reconstruct": 0.02992983302101493,
+   "write": 0.0017022499814629555
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d46",
+   "raw_bytes": 318608,
+   "hits": 4411,
+   "read": 0.0006792909698560834,
+   "reconstruct": 0.03868887503631413,
+   "write": 0.0021150000393390656
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d51",
+   "raw_bytes": 317648,
+   "hits": 4320,
+   "read": 0.0006843330338597298,
+   "reconstruct": 0.03782254201360047,
+   "write": 0.00217420794069767
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d56",
+   "raw_bytes": 352288,
+   "hits": 4791,
+   "read": 0.0007402090122923255,
+   "reconstruct": 0.04239554097875953,
+   "write": 0.0023020419757813215
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d61",
+   "raw_bytes": 319760,
+   "hits": 4360,
+   "read": 0.0009913749527186155,
+   "reconstruct": 0.03853408305440098,
+   "write": 0.002194124972447753
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d66",
+   "raw_bytes": 333392,
+   "hits": 4582,
+   "read": 0.000710583059117198,
+   "reconstruct": 0.04148829192854464,
+   "write": 0.0023932079784572124
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d71",
+   "raw_bytes": 356992,
+   "hits": 4805,
+   "read": 0.0009140829788520932,
+   "reconstruct": 0.049188208067789674,
+   "write": 0.002427041996270418
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d76",
+   "raw_bytes": 345216,
+   "hits": 4792,
+   "read": 0.0007399169262498617,
+   "reconstruct": 0.04168941709212959,
+   "write": 0.0023662910098209977
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d81",
+   "raw_bytes": 323392,
+   "hits": 4526,
+   "read": 0.0007302080048248172,
+   "reconstruct": 0.04382254194933921,
+   "write": 0.0022016250295564532
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d86",
+   "raw_bytes": 341520,
+   "hits": 4771,
+   "read": 0.0007283750455826521,
+   "reconstruct": 0.04141708300448954,
+   "write": 0.002262250054627657
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d91",
+   "raw_bytes": 349008,
+   "hits": 4894,
+   "read": 0.0007408750243484974,
+   "reconstruct": 0.042920334031805396,
+   "write": 0.002481624949723482
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d96",
+   "raw_bytes": 350480,
+   "hits": 4767,
+   "read": 0.0007446670206263661,
+   "reconstruct": 0.04236362501978874,
+   "write": 0.0024917080299928784
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d101",
+   "raw_bytes": 303888,
+   "hits": 4334,
+   "read": 0.0006962500046938658,
+   "reconstruct": 0.037060583010315895,
+   "write": 0.00229654205031693
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d106",
+   "raw_bytes": 387552,
+   "hits": 5521,
+   "read": 0.0008562089642509818,
+   "reconstruct": 0.04725279100239277,
+   "write": 0.002634375006891787
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d111",
+   "raw_bytes": 312192,
+   "hits": 4319,
+   "read": 0.0006828330224379897,
+   "reconstruct": 0.03805737500078976,
+   "write": 0.0021674169693142176
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d116",
+   "raw_bytes": 85728,
+   "hits": 1208,
+   "read": 0.0003690830199047923,
+   "reconstruct": 0.010338624939322472,
+   "write": 0.0009687499841675162
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d121",
+   "raw_bytes": 347536,
+   "hits": 4748,
+   "read": 0.0007805830100551248,
+   "reconstruct": 0.042118499986827374,
+   "write": 0.011065167025662959
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d126",
+   "raw_bytes": 341904,
+   "hits": 4860,
+   "read": 0.000818041036836803,
+   "reconstruct": 0.042024416965432465,
+   "write": 0.0026177919935435057
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d131",
+   "raw_bytes": 326896,
+   "hits": 4579,
+   "read": 0.0007417920278385282,
+   "reconstruct": 0.04293699993286282,
+   "write": 0.0022342080483213067
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d136",
+   "raw_bytes": 324064,
+   "hits": 4550,
+   "read": 0.0006767499726265669,
+   "reconstruct": 0.03959308308549225,
+   "write": 0.0022411668905988336
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d141",
+   "raw_bytes": 316656,
+   "hits": 4407,
+   "read": 0.0006930420640856028,
+   "reconstruct": 0.04522270802408457,
+   "write": 0.0023132089991122484
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d146",
+   "raw_bytes": 308896,
+   "hits": 4310,
+   "read": 0.0007065420504659414,
+   "reconstruct": 0.03772737493272871,
+   "write": 0.002148292027413845
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d151",
+   "raw_bytes": 326928,
+   "hits": 4456,
+   "read": 0.0007200409891083837,
+   "reconstruct": 0.03990716696716845,
+   "write": 0.0021384169813245535
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d156",
+   "raw_bytes": 319296,
+   "hits": 4345,
+   "read": 0.0006834999658167362,
+   "reconstruct": 0.03846745798364282,
+   "write": 0.0026442919624969363
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d161",
+   "raw_bytes": 292192,
+   "hits": 3937,
+   "read": 0.0006730409804731607,
+   "reconstruct": 0.03493079205509275,
+   "write": 0.0022267079912126064
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d166",
+   "raw_bytes": 330432,
+   "hits": 4486,
+   "read": 0.000756374909542501,
+   "reconstruct": 0.03980175009928644,
+   "write": 0.0020917910151183605
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d171",
+   "raw_bytes": 302208,
+   "hits": 4163,
+   "read": 0.000663458020426333,
+   "reconstruct": 0.03669454203918576,
+   "write": 0.0021304580150172114
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d176",
+   "raw_bytes": 316336,
+   "hits": 4331,
+   "read": 0.0006845000898465514,
+   "reconstruct": 0.038687291904352605,
+   "write": 0.0021600000327453017
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d181",
+   "raw_bytes": 313392,
+   "hits": 4456,
+   "read": 0.0015866670291870832,
+   "reconstruct": 0.04640183295123279,
+   "write": 0.002144834026694298
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d186",
+   "raw_bytes": 305024,
+   "hits": 4207,
+   "read": 0.0009417500114068389,
+   "reconstruct": 0.03726470796391368,
+   "write": 0.0021237500477582216
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d191",
+   "raw_bytes": 296752,
+   "hits": 4059,
+   "read": 0.0006571250269189477,
+   "reconstruct": 0.03604758402798325,
+   "write": 0.0020565829472616315
+  },
+  {
+   "label": "2022-07-old-plates-he3he4/d196",
+   "raw_bytes": 277488,
+   "hits": 3923,
+   "read": 0.0006327920127660036,
+   "reconstruct": 0.034199667046777904,
+   "write": 0.0020324999932199717
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1",
+   "raw_bytes": 410447,
+   "hits": 4806,
+   "read": 0.0007835420547053218,
+   "reconstruct": 0.04290254204533994,
+   "write": 0.002325457986444235
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d40",
+   "raw_bytes": 324640,
+   "hits": 4575,
+   "read": 0.0007312910165637732,
+   "reconstruct": 0.039307374972850084,
+   "write": 0.0023136669769883156
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d79",
+   "raw_bytes": 127648,
+   "hits": 1812,
+   "read": 0.0004194580251350999,
+   "reconstruct": 0.015433999942615628,
+   "write": 0.0012827080208808184
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d118",
+   "raw_bytes": 320,
+   "hits": 1,
+   "read": 0.00017012492753565311,
+   "reconstruct": 3.15000070258975e-05,
+   "write": 0.0003386250464245677
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d157",
+   "raw_bytes": 344224,
+   "hits": 4918,
+   "read": 0.0006786250742152333,
+   "reconstruct": 0.042343624983914196,
+   "write": 0.002467083977535367
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d196",
+   "raw_bytes": 545360,
+   "hits": 7891,
+   "read": 0.0010484170634299517,
+   "reconstruct": 0.06873437494505197,
+   "write": 0.003623416996560991
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d235",
+   "raw_bytes": 567168,
+   "hits": 8195,
+   "read": 0.0011417919304221869,
+   "reconstruct": 0.07352020801045,
+   "write": 0.0037476670695468783
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d274",
+   "raw_bytes": 187424,
+   "hits": 2656,
+   "read": 0.0004920839564874768,
+   "reconstruct": 0.02295358304399997,
+   "write": 0.0014694579876959324
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d313",
+   "raw_bytes": 214928,
+   "hits": 2974,
+   "read": 0.0005460840184241533,
+   "reconstruct": 0.02596199989784509,
+   "write": 0.001651583006605506
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d352",
+   "raw_bytes": 336,
+   "hits": 1,
+   "read": 0.00015520805027335882,
+   "reconstruct": 2.8791953809559345e-05,
+   "write": 0.0002947910688817501
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d391",
+   "raw_bytes": 807904,
+   "hits": 11615,
+   "read": 0.0014363749651238322,
+   "reconstruct": 0.10174804204143584,
+   "write": 0.00517191702965647
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d430",
+   "raw_bytes": 962208,
+   "hits": 13813,
+   "read": 0.0017528339521959424,
+   "reconstruct": 0.12493933294899762,
+   "write": 0.005891667096875608
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d469",
+   "raw_bytes": 844368,
+   "hits": 12036,
+   "read": 0.0016311249928548932,
+   "reconstruct": 0.10993491695262492,
+   "write": 0.005323875113390386
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d508",
+   "raw_bytes": 468736,
+   "hits": 6771,
+   "read": 0.0009404579177498817,
+   "reconstruct": 0.05838775006122887,
+   "write": 0.003114582970738411
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d547",
+   "raw_bytes": 336,
+   "hits": 1,
+   "read": 0.00027125002816319466,
+   "reconstruct": 3.699993249028921e-05,
+   "write": 0.00033320800866931677
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d586",
+   "raw_bytes": 509328,
+   "hits": 7369,
+   "read": 0.0009420829592272639,
+   "reconstruct": 0.06457270798273385,
+   "write": 0.010675375000573695
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d625",
+   "raw_bytes": 975744,
+   "hits": 13907,
+   "read": 0.0018119169399142265,
+   "reconstruct": 0.12407529097981751,
+   "write": 0.00612875004298985
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d664",
+   "raw_bytes": 672528,
+   "hits": 9787,
+   "read": 0.0012654159218072891,
+   "reconstruct": 0.10231191699858755,
+   "write": 0.004312583012506366
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d703",
+   "raw_bytes": 384,
+   "hits": 2,
+   "read": 0.00019154197070747614,
+   "reconstruct": 4.341697786003351e-05,
+   "write": 0.00034962501376867294
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d742",
+   "raw_bytes": 426320,
+   "hits": 6100,
+   "read": 0.0008539579575881362,
+   "reconstruct": 0.05330124997999519,
+   "write": 0.002839582972228527
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d781",
+   "raw_bytes": 491056,
+   "hits": 6999,
+   "read": 0.0009803749853745103,
+   "reconstruct": 0.060850540990941226,
+   "write": 0.0031788749620318413
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d820",
+   "raw_bytes": 1313936,
+   "hits": 17740,
+   "read": 0.002244125003926456,
+   "reconstruct": 0.17034512502141297,
+   "write": 0.007289875065907836
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d859",
+   "raw_bytes": 1852752,
+   "hits": 23022,
+   "read": 0.003218459081836045,
+   "reconstruct": 0.22764549998100847,
+   "write": 0.009756083018146455
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d898",
+   "raw_bytes": 1136638,
+   "hits": 15128,
+   "read": 0.001985208014957607,
+   "reconstruct": 0.13879383297171444,
+   "write": 0.006466416991315782
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d937",
+   "raw_bytes": 1524272,
+   "hits": 16468,
+   "read": 0.002688166918233037,
+   "reconstruct": 0.1852457500062883,
+   "write": 0.006861458066850901
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d976",
+   "raw_bytes": 2004928,
+   "hits": 19457,
+   "read": 0.0034646670101210475,
+   "reconstruct": 0.23413716594222933,
+   "write": 0.008128624991513789
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1015",
+   "raw_bytes": 2123632,
+   "hits": 20335,
+   "read": 0.0035726670175790787,
+   "reconstruct": 0.2439057920128107,
+   "write": 0.008418040932156146
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1017",
+   "raw_bytes": 2345184,
+   "hits": 26892,
+   "read": 0.0041592089692130685,
+   "reconstruct": 0.2893976659979671,
+   "write": 0.011163625051267445
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1025",
+   "raw_bytes": 2236960,
+   "hits": 23852,
+   "read": 0.007515750010497868,
+   "reconstruct": 0.2754203750519082,
+   "write": 0.009827540954574943
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1028",
+   "raw_bytes": 2210256,
+   "hits": 22205,
+   "read": 0.003768333001062274,
+   "reconstruct": 0.25732662493828684,
+   "write": 0.009146334021352232
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1054",
+   "raw_bytes": 1396800,
+   "hits": 17004,
+   "read": 0.0024478749837726355,
+   "reconstruct": 0.17418545798864216,
+   "write": 0.0071972080040723085
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1093",
+   "raw_bytes": 1868464,
+   "hits": 17856,
+   "read": 0.0031491669360548258,
+   "reconstruct": 0.21295258298050612,
+   "write": 0.007328292005695403
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1132",
+   "raw_bytes": 74544,
+   "hits": 1032,
+   "read": 0.0003129589604213834,
+   "reconstruct": 0.008887041010893881,
+   "write": 0.0008257500594481826
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1171",
+   "raw_bytes": 76224,
+   "hits": 1042,
+   "read": 0.00027433293871581554,
+   "reconstruct": 0.009005542029626667,
+   "write": 0.0008845420088618994
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1210",
+   "raw_bytes": 70336,
+   "hits": 969,
+   "read": 0.00031575001776218414,
+   "reconstruct": 0.008814999950118363,
+   "write": 0.0010587080614641309
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1249",
+   "raw_bytes": 75600,
+   "hits": 1036,
+   "read": 0.001243540900759399,
+   "reconstruct": 0.00893270899541676,
+   "write": 0.001012125052511692
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1288",
+   "raw_bytes": 75872,
+   "hits": 1028,
+   "read": 0.000873332959599793,
+   "reconstruct": 0.014347624965012074,
+   "write": 0.0010201249970123172
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1327",
+   "raw_bytes": 83632,
+   "hits": 1152,
+   "read": 0.00031637505162507296,
+   "reconstruct": 0.027120167040266097,
+   "write": 0.000975125003606081
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1366",
+   "raw_bytes": 86048,
+   "hits": 1198,
+   "read": 0.0003333749482408166,
+   "reconstruct": 0.010679583065211773,
+   "write": 0.0010107919806614518
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1405",
+   "raw_bytes": 77088,
+   "hits": 1067,
+   "read": 0.0003176670288667083,
+   "reconstruct": 0.021608041948638856,
+   "write": 0.0014792080037295818
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1444",
+   "raw_bytes": 86368,
+   "hits": 1198,
+   "read": 0.00030633294954895973,
+   "reconstruct": 0.022258209064602852,
+   "write": 0.0010187498992308974
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1483",
+   "raw_bytes": 83936,
+   "hits": 1148,
+   "read": 0.00034904200583696365,
+   "reconstruct": 0.010784416925162077,
+   "write": 0.0009354579960927367
+  },
+  {
+   "label": "2022-07-old-plates-large-he3/d1522",
+   "raw_bytes": 87088,
+   "hits": 1211,
+   "read": 0.0012584999203681946,
+   "reconstruct": 0.01179208408575505,
+   "write": 0.0010204999707639217
+  },
+  {
+   "label": "2022-11-ghost-counts-mcp/d1",
+   "raw_bytes": 1492149,
+   "hits": 12152,
+   "read": 0.002635749988257885,
+   "reconstruct": 0.13812383404001594,
+   "write": 0.005252499948255718
+  },
+  {
+   "label": "2022-11-ghost-counts-mcp/d2",
+   "raw_bytes": 1009808,
+   "hits": 8131,
+   "read": 0.0017925839638337493,
+   "reconstruct": 0.08943441603332758,
+   "write": 0.003666084026917815
+  },
+  {
+   "label": "2022-11-ghost-counts-mcp/d3",
+   "raw_bytes": 1228416,
+   "hits": 9884,
+   "read": 0.0021808750461786985,
+   "reconstruct": 0.1110230420017615,
+   "write": 0.004422958008944988
+  },
+  {
+   "label": "2022-11-ghost-counts-mcp/d4",
+   "raw_bytes": 863680,
+   "hits": 6788,
+   "read": 0.0015961671015247703,
+   "reconstruct": 0.07482266693841666,
+   "write": 0.0031167910201475024
+  },
+  {
+   "label": "2022-11-ghost-counts-mcp/d5",
+   "raw_bytes": 256,
+   "hits": 0,
+   "read": 0.00018483400344848633,
+   "reconstruct": 2.3165950551629066e-05,
+   "write": 5.84055669605732e-07
+  },
+  {
+   "label": "2022-11-ghost-counts-mcp/d6",
+   "raw_bytes": 665744,
+   "hits": 5123,
+   "read": 0.0011713330168277025,
+   "reconstruct": 0.058716958039440215,
+   "write": 0.0025937919272109866
+  },
+  {
+   "label": "2022-11-ghost-counts-mcp/d7",
+   "raw_bytes": 811472,
+   "hits": 6186,
+   "read": 0.0014667080249637365,
+   "reconstruct": 0.07046237494796515,
+   "write": 0.002926749992184341
+  },
+  {
+   "label": "2022-11-ghost-counts-mcp/d8",
+   "raw_bytes": 876048,
+   "hits": 6673,
+   "read": 0.0016223329585045576,
+   "reconstruct": 0.07792179193347692,
+   "write": 0.0031551250722259283
+  },
+  {
+   "label": "2022-11-ghost-counts-mcp/d9",
+   "raw_bytes": 911040,
+   "hits": 7007,
+   "read": 0.001667250064201653,
+   "reconstruct": 0.07872616697568446,
+   "write": 0.003296540933661163
+  },
+  {
+   "label": "2022-11-ghost-counts-mcp/d10",
+   "raw_bytes": 1091584,
+   "hits": 8517,
+   "read": 0.0019962919177487493,
+   "reconstruct": 0.09545579203404486,
+   "write": 0.003853708039969206
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d1",
+   "raw_bytes": 531073,
+   "hits": 6228,
+   "read": 0.0010481249773874879,
+   "reconstruct": 0.0704933749511838,
+   "write": 0.0030237080063670874
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d6",
+   "raw_bytes": 3254727,
+   "hits": 41524,
+   "read": 0.006702209007926285,
+   "reconstruct": 0.4592508749337867,
+   "write": 0.016881000017747283
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d32",
+   "raw_bytes": 448752,
+   "hits": 5293,
+   "read": 0.0009665420511737466,
+   "reconstruct": 0.06055129203014076,
+   "write": 0.002619332983158529
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d63",
+   "raw_bytes": 263648,
+   "hits": 2766,
+   "read": 0.000621040933765471,
+   "reconstruct": 0.03673958405852318,
+   "write": 0.0015945830382406712
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d94",
+   "raw_bytes": 540896,
+   "hits": 6311,
+   "read": 0.0010363339679315686,
+   "reconstruct": 0.07276895805262029,
+   "write": 0.003038457944057882
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d125",
+   "raw_bytes": 450224,
+   "hits": 5284,
+   "read": 0.0009300829842686653,
+   "reconstruct": 0.05881433398462832,
+   "write": 0.002963125007227063
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d156",
+   "raw_bytes": 564304,
+   "hits": 6596,
+   "read": 0.0011329579865559936,
+   "reconstruct": 0.07635362504515797,
+   "write": 0.0031801669392734766
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d187",
+   "raw_bytes": 240,
+   "hits": 0,
+   "read": 0.00020554102957248688,
+   "reconstruct": 2.9916991479694843e-05,
+   "write": 2.919696271419525e-07
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d218",
+   "raw_bytes": 281760,
+   "hits": 3245,
+   "read": 0.0005832079332321882,
+   "reconstruct": 0.03707525006029755,
+   "write": 0.0018398750107735395
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d249",
+   "raw_bytes": 490608,
+   "hits": 5767,
+   "read": 0.0017720418982207775,
+   "reconstruct": 0.06420212506782264,
+   "write": 0.00289424997754395
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d280",
+   "raw_bytes": 409440,
+   "hits": 4782,
+   "read": 0.0008612909587100148,
+   "reconstruct": 0.05364945903420448,
+   "write": 0.002484083059243858
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d311",
+   "raw_bytes": 526912,
+   "hits": 6087,
+   "read": 0.0010857089655473828,
+   "reconstruct": 0.07144504110328853,
+   "write": 0.0030642919009551406
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d342",
+   "raw_bytes": 157680,
+   "hits": 1804,
+   "read": 0.00048212497495114803,
+   "reconstruct": 0.02115762501489371,
+   "write": 0.0012796249939128757
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d373",
+   "raw_bytes": 332640,
+   "hits": 3611,
+   "read": 0.0007656250381842256,
+   "reconstruct": 0.045305083971470594,
+   "write": 0.0020703329937532544
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d404",
+   "raw_bytes": 192464,
+   "hits": 2222,
+   "read": 0.0005545000312849879,
+   "reconstruct": 0.02542012499179691,
+   "write": 0.0014520420227199793
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d435",
+   "raw_bytes": 798000,
+   "hits": 9265,
+   "read": 0.0014662499306723475,
+   "reconstruct": 0.1070642500417307,
+   "write": 0.011348500032909214
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d440",
+   "raw_bytes": 912224,
+   "hits": 10443,
+   "read": 0.0016608330188319087,
+   "reconstruct": 0.12018016702495515,
+   "write": 0.0046992499846965075
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d442",
+   "raw_bytes": 822944,
+   "hits": 9528,
+   "read": 0.0027283329982310534,
+   "reconstruct": 0.10594887495972216,
+   "write": 0.004294833051972091
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d466",
+   "raw_bytes": 528576,
+   "hits": 6182,
+   "read": 0.0011749999830499291,
+   "reconstruct": 0.07375658408273011,
+   "write": 0.0030329579021781683
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d497",
+   "raw_bytes": 271984,
+   "hits": 3181,
+   "read": 0.0006301249377429485,
+   "reconstruct": 0.0360906251007691,
+   "write": 0.001828499953262508
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d528",
+   "raw_bytes": 88000,
+   "hits": 928,
+   "read": 0.0003343750722706318,
+   "reconstruct": 0.011577749974094331,
+   "write": 0.0008964999578893185
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d559",
+   "raw_bytes": 26832,
+   "hits": 201,
+   "read": 0.0002605409827083349,
+   "reconstruct": 0.003528167027980089,
+   "write": 0.0005317919421941042
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d590",
+   "raw_bytes": 27152,
+   "hits": 186,
+   "read": 0.00021824997384101152,
+   "reconstruct": 0.0048922920832410455,
+   "write": 0.0005284579237923026
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d621",
+   "raw_bytes": 26704,
+   "hits": 189,
+   "read": 0.00018891599029302597,
+   "reconstruct": 0.0035475000040605664,
+   "write": 0.0005995840765535831
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d652",
+   "raw_bytes": 30416,
+   "hits": 211,
+   "read": 0.00024212501011788845,
+   "reconstruct": 0.003999583073891699,
+   "write": 0.0005589169450104237
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d683",
+   "raw_bytes": 30864,
+   "hits": 221,
+   "read": 0.00022654200438410044,
+   "reconstruct": 0.004015082959085703,
+   "write": 0.0006852920632809401
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d714",
+   "raw_bytes": 29182,
+   "hits": 193,
+   "read": 0.0005177500424906611,
+   "reconstruct": 0.004974166979081929,
+   "write": 0.000643625040538609
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d745",
+   "raw_bytes": 30512,
+   "hits": 213,
+   "read": 0.0002340830396860838,
+   "reconstruct": 0.004050874966196716,
+   "write": 0.0006248749559745193
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d776",
+   "raw_bytes": 29216,
+   "hits": 198,
+   "read": 0.0002612500684335828,
+   "reconstruct": 0.003922750009223819,
+   "write": 0.0006190829444676638
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d807",
+   "raw_bytes": 29232,
+   "hits": 198,
+   "read": 0.0002294160658493638,
+   "reconstruct": 0.003811958944424987,
+   "write": 0.000505375093780458
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d838",
+   "raw_bytes": 27120,
+   "hits": 193,
+   "read": 0.00020574999507516623,
+   "reconstruct": 0.0036452499916777015,
+   "write": 0.0005987909389659762
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d869",
+   "raw_bytes": 29613,
+   "hits": 215,
+   "read": 0.00023508304730057716,
+   "reconstruct": 0.00390270899515599,
+   "write": 0.0005338749615475535
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d900",
+   "raw_bytes": 29392,
+   "hits": 207,
+   "read": 0.00021370791364461184,
+   "reconstruct": 0.003855584072880447,
+   "write": 0.0004887079121544957
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d931",
+   "raw_bytes": 28480,
+   "hits": 198,
+   "read": 0.0002149590291082859,
+   "reconstruct": 0.0037522499915212393,
+   "write": 0.0005792500451207161
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d962",
+   "raw_bytes": 30032,
+   "hits": 222,
+   "read": 0.00022962503135204315,
+   "reconstruct": 0.003973125014454126,
+   "write": 0.0005561669822782278
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d993",
+   "raw_bytes": 26784,
+   "hits": 173,
+   "read": 0.00021058297716081142,
+   "reconstruct": 0.0035355829168111086,
+   "write": 0.0006169170374050736
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d1024",
+   "raw_bytes": 28944,
+   "hits": 200,
+   "read": 0.0002637089928612113,
+   "reconstruct": 0.003829541034065187,
+   "write": 0.0006330839823931456
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d1055",
+   "raw_bytes": 29392,
+   "hits": 210,
+   "read": 0.000230959034524858,
+   "reconstruct": 0.0038880830397829413,
+   "write": 0.0006096250144764781
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d1086",
+   "raw_bytes": 25472,
+   "hits": 170,
+   "read": 0.0002257500309497118,
+   "reconstruct": 0.003330125007778406,
+   "write": 0.0007455419981852174
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d1117",
+   "raw_bytes": 28640,
+   "hits": 201,
+   "read": 0.00020987505558878183,
+   "reconstruct": 0.0037791249342262745,
+   "write": 0.0005994579987600446
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d1148",
+   "raw_bytes": 30384,
+   "hits": 218,
+   "read": 0.00024912506341934204,
+   "reconstruct": 0.004224541946314275,
+   "write": 0.0005819170037284493
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d1179",
+   "raw_bytes": 27808,
+   "hits": 190,
+   "read": 0.0002217079745605588,
+   "reconstruct": 0.003626250079832971,
+   "write": 0.00046729191672056913
+  },
+  {
+   "label": "2023-02-new-plates-he3he4/d1210",
+   "raw_bytes": 23744,
+   "hits": 168,
+   "read": 0.00018879200797528028,
+   "reconstruct": 0.003124958020634949,
+   "write": 0.0005890829488635063
+  },
+  {
+   "label": "2023-03-momentum-bells/d1",
+   "raw_bytes": 320355,
+   "hits": 3979,
+   "read": 0.0007069580024108291,
+   "reconstruct": 0.04093687504064292,
+   "write": 0.0021205840166658163
+  },
+  {
+   "label": "2023-03-momentum-bells/d52",
+   "raw_bytes": 388241,
+   "hits": 4576,
+   "read": 0.0008294160943478346,
+   "reconstruct": 0.04692820901982486,
+   "write": 0.002325290930457413
+  },
+  {
+   "label": "2023-03-momentum-bells/d103",
+   "raw_bytes": 226492,
+   "hits": 2714,
+   "read": 0.000528833013959229,
+   "reconstruct": 0.027428666944615543,
+   "write": 0.0016878750175237656
+  },
+  {
+   "label": "2023-03-momentum-bells/d154",
+   "raw_bytes": 396899,
+   "hits": 4704,
+   "read": 0.0008797500049695373,
+   "reconstruct": 0.04836799995973706,
+   "write": 0.002396582975052297
+  },
+  {
+   "label": "2023-03-momentum-bells/d205",
+   "raw_bytes": 367523,
+   "hits": 4277,
+   "read": 0.0007611250039190054,
+   "reconstruct": 0.04435345809906721,
+   "write": 0.002253374899737537
+  },
+  {
+   "label": "2023-03-momentum-bells/d256",
+   "raw_bytes": 339731,
+   "hits": 4003,
+   "read": 0.0007709579076617956,
+   "reconstruct": 0.040817500092089176,
+   "write": 0.002143291989341378
+  },
+  {
+   "label": "2023-03-momentum-bells/d307",
+   "raw_bytes": 225646,
+   "hits": 2606,
+   "read": 0.0005437909858301282,
+   "reconstruct": 0.027683999971486628,
+   "write": 0.0015650000423192978
+  },
+  {
+   "label": "2023-03-momentum-bells/d358",
+   "raw_bytes": 334481,
+   "hits": 3837,
+   "read": 0.0007397920126095414,
+   "reconstruct": 0.04023058293387294,
+   "write": 0.0020048340084031224
+  },
+  {
+   "label": "2023-03-momentum-bells/d409",
+   "raw_bytes": 395313,
+   "hits": 4707,
+   "read": 0.0007984578842297196,
+   "reconstruct": 0.047940708114765584,
+   "write": 0.002520416979677975
+  },
+  {
+   "label": "2023-03-momentum-bells/d460",
+   "raw_bytes": 310879,
+   "hits": 3639,
+   "read": 0.0006959160091355443,
+   "reconstruct": 0.04124720906838775,
+   "write": 0.001921165967360139
+  },
+  {
+   "label": "2023-03-momentum-bells/d511",
+   "raw_bytes": 446931,
+   "hits": 5158,
+   "read": 0.00156979204621166,
+   "reconstruct": 0.05618837499059737,
+   "write": 0.0024773749755695462
+  },
+  {
+   "label": "2023-03-momentum-bells/d562",
+   "raw_bytes": 264371,
+   "hits": 3090,
+   "read": 0.0006321249529719353,
+   "reconstruct": 0.033396458020433784,
+   "write": 0.001752167008817196
+  },
+  {
+   "label": "2023-03-momentum-bells/d613",
+   "raw_bytes": 345341,
+   "hits": 4047,
+   "read": 0.0007393748965114355,
+   "reconstruct": 0.04158408404327929,
+   "write": 0.0021024580346420407
+  },
+  {
+   "label": "2023-03-momentum-bells/d664",
+   "raw_bytes": 320793,
+   "hits": 3748,
+   "read": 0.0007029999978840351,
+   "reconstruct": 0.03890150005463511,
+   "write": 0.0019771249499171972
+  },
+  {
+   "label": "2023-03-momentum-bells/d715",
+   "raw_bytes": 449378,
+   "hits": 5222,
+   "read": 0.0009231669828295708,
+   "reconstruct": 0.05474629101809114,
+   "write": 0.002636041957885027
+  },
+  {
+   "label": "2023-03-momentum-bells/d766",
+   "raw_bytes": 208636,
+   "hits": 2419,
+   "read": 0.0005240410100668669,
+   "reconstruct": 0.025083750020712614,
+   "write": 0.0014976250240579247
+  },
+  {
+   "label": "2023-03-momentum-bells/d817",
+   "raw_bytes": 289058,
+   "hits": 3541,
+   "read": 0.0006722500547766685,
+   "reconstruct": 0.03618737496435642,
+   "write": 0.0020029579754918814
+  },
+  {
+   "label": "2023-03-momentum-bells/d868",
+   "raw_bytes": 204884,
+   "hits": 2444,
+   "read": 0.0005470410687848926,
+   "reconstruct": 0.024874166934750974,
+   "write": 0.001550958026200533
+  },
+  {
+   "label": "2023-03-momentum-bells/d919",
+   "raw_bytes": 412679,
+   "hits": 4741,
+   "read": 0.0015910000074654818,
+   "reconstruct": 0.04948991700075567,
+   "write": 0.0024084580363705754
+  },
+  {
+   "label": "2023-03-momentum-bells/d970",
+   "raw_bytes": 329698,
+   "hits": 3929,
+   "read": 0.0010012920247390866,
+   "reconstruct": 0.04223129095043987,
+   "write": 0.00712970900349319
+  },
+  {
+   "label": "2023-03-momentum-bells/d1021",
+   "raw_bytes": 413491,
+   "hits": 4850,
+   "read": 0.000869459006935358,
+   "reconstruct": 0.049996124929748476,
+   "write": 0.0024913750821724534
+  },
+  {
+   "label": "2023-03-momentum-bells/d1072",
+   "raw_bytes": 160123,
+   "hits": 1848,
+   "read": 0.0004628748865798116,
+   "reconstruct": 0.019195750006474555,
+   "write": 0.0012685840483754873
+  },
+  {
+   "label": "2023-03-momentum-bells/d1123",
+   "raw_bytes": 379614,
+   "hits": 4440,
+   "read": 0.0008049999596551061,
+   "reconstruct": 0.046590125071816146,
+   "write": 0.002349124988541007
+  },
+  {
+   "label": "2023-03-momentum-bells/d1174",
+   "raw_bytes": 403801,
+   "hits": 4703,
+   "read": 0.0008612920064479113,
+   "reconstruct": 0.05091241595800966,
+   "write": 0.0023955419892445207
+  },
+  {
+   "label": "2023-03-momentum-bells/d1225",
+   "raw_bytes": 265047,
+   "hits": 3084,
+   "read": 0.0006387080065906048,
+   "reconstruct": 0.032399874995462596,
+   "write": 0.0017552919453009963
+  },
+  {
+   "label": "2023-03-momentum-bells/d1276",
+   "raw_bytes": 252705,
+   "hits": 3080,
+   "read": 0.0006317499792203307,
+   "reconstruct": 0.03101354104001075,
+   "write": 0.002059374935925007
+  },
+  {
+   "label": "2023-03-momentum-bells/d1327",
+   "raw_bytes": 332588,
+   "hits": 3852,
+   "read": 0.0007331250235438347,
+   "reconstruct": 0.04622916702646762,
+   "write": 0.0020213749958202243
+  },
+  {
+   "label": "2023-03-momentum-bells/d1378",
+   "raw_bytes": 132545,
+   "hits": 1579,
+   "read": 0.00041566602885723114,
+   "reconstruct": 0.016201458987779915,
+   "write": 0.0011218750150874257
+  },
+  {
+   "label": "2023-03-momentum-bells/d1429",
+   "raw_bytes": 276968,
+   "hits": 3224,
+   "read": 0.0010231250198557973,
+   "reconstruct": 0.03364020795561373,
+   "write": 0.0019048750400543213
+  },
+  {
+   "label": "2023-03-momentum-bells/d1480",
+   "raw_bytes": 277616,
+   "hits": 3239,
+   "read": 0.0006336669903248549,
+   "reconstruct": 0.03369487507734448,
+   "write": 0.0018976249266415834
+  },
+  {
+   "label": "2023-03-momentum-bells/d1531",
+   "raw_bytes": 378764,
+   "hits": 4357,
+   "read": 0.000816499930806458,
+   "reconstruct": 0.04590366699267179,
+   "write": 0.002253500046208501
+  },
+  {
+   "label": "2023-03-momentum-bells/d1582",
+   "raw_bytes": 751668,
+   "hits": 8762,
+   "read": 0.0013665830483660102,
+   "reconstruct": 0.09225795790553093,
+   "write": 0.004025208996608853
+  },
+  {
+   "label": "2023-03-momentum-bells/d1633",
+   "raw_bytes": 136879,
+   "hits": 1625,
+   "read": 0.000489958911202848,
+   "reconstruct": 0.017091708024963737,
+   "write": 0.001150042051449418
+  },
+  {
+   "label": "2023-03-momentum-bells/d1675",
+   "raw_bytes": 791690,
+   "hits": 9216,
+   "read": 0.0014046250144019723,
+   "reconstruct": 0.09561325004324317,
+   "write": 0.004031832912005484
+  },
+  {
+   "label": "2023-03-momentum-bells/d1684",
+   "raw_bytes": 327984,
+   "hits": 3823,
+   "read": 0.0006787918973714113,
+   "reconstruct": 0.03939375001937151,
+   "write": 0.0020192500669509172
+  },
+  {
+   "label": "2023-03-momentum-bells/d1735",
+   "raw_bytes": 580006,
+   "hits": 6832,
+   "read": 0.001116708037443459,
+   "reconstruct": 0.07247770903632045,
+   "write": 0.0032624579034745693
+  },
+  {
+   "label": "2023-03-momentum-bells/d1786",
+   "raw_bytes": 539142,
+   "hits": 6345,
+   "read": 0.0010564170079305768,
+   "reconstruct": 0.06946687505114824,
+   "write": 0.003089082892984152
+  },
+  {
+   "label": "2023-03-momentum-bells/d1837",
+   "raw_bytes": 624967,
+   "hits": 7335,
+   "read": 0.0011687499936670065,
+   "reconstruct": 0.07731745904311538,
+   "write": 0.006343540968373418
+  },
+  {
+   "label": "2023-03-momentum-bells/d1888",
+   "raw_bytes": 703881,
+   "hits": 8248,
+   "read": 0.001575708040036261,
+   "reconstruct": 0.08690291701350361,
+   "write": 0.00370620796456933
+  },
+  {
+   "label": "2023-03-momentum-bells/d1939",
+   "raw_bytes": 506056,
+   "hits": 5949,
+   "read": 0.000978416996076703,
+   "reconstruct": 0.060032624984160066,
+   "write": 0.0028957909671589732
+  },
+  {
+   "label": "2023-03-momentum-bells/d1990",
+   "raw_bytes": 683179,
+   "hits": 7995,
+   "read": 0.001238917000591755,
+   "reconstruct": 0.08229395793750882,
+   "write": 0.0037690839963033795
+  },
+  {
+   "label": "2023-03-momentum-bells/d2047",
+   "raw_bytes": 912055,
+   "hits": 10602,
+   "read": 0.001599916024133563,
+   "reconstruct": 0.1126009589061141,
+   "write": 0.004649500013329089
+  },
+  {
+   "label": "2023-03-momentum-bells/d2049",
+   "raw_bytes": 898303,
+   "hits": 10432,
+   "read": 0.0015833750367164612,
+   "reconstruct": 0.10972216597292572,
+   "write": 0.004653459065593779
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d1111",
+   "raw_bytes": 51493,
+   "hits": 588,
+   "read": 0.0002673330018296838,
+   "reconstruct": 0.006093750009313226,
+   "write": 0.0007333329413086176
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d1384",
+   "raw_bytes": 74622,
+   "hits": 898,
+   "read": 0.00028737494722008705,
+   "reconstruct": 0.009275541990064085,
+   "write": 0.0007843750063329935
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d1656",
+   "raw_bytes": 77663,
+   "hits": 962,
+   "read": 0.0003052500542253256,
+   "reconstruct": 0.00971974991261959,
+   "write": 0.0008446250576525927
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d12063",
+   "raw_bytes": 80689,
+   "hits": 989,
+   "read": 0.0002912919735535979,
+   "reconstruct": 0.010074125020764768,
+   "write": 0.000775375054217875
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d12336",
+   "raw_bytes": 87089,
+   "hits": 1052,
+   "read": 0.0003357089590281248,
+   "reconstruct": 0.011078790994361043,
+   "write": 0.0010119590442627668
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d12609",
+   "raw_bytes": 82857,
+   "hits": 1004,
+   "read": 0.0003260420635342598,
+   "reconstruct": 0.010291290935128927,
+   "write": 0.0008492500055581331
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d12881",
+   "raw_bytes": 84196,
+   "hits": 1010,
+   "read": 0.0002923749852925539,
+   "reconstruct": 0.010461124940775335,
+   "write": 0.0010039170738309622
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d13183",
+   "raw_bytes": 52345,
+   "hits": 629,
+   "read": 0.000273333047516644,
+   "reconstruct": 0.006432084017433226,
+   "write": 0.0006388330366462469
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d13455",
+   "raw_bytes": 66989,
+   "hits": 798,
+   "read": 0.00025566702242940664,
+   "reconstruct": 0.008287167060188949,
+   "write": 0.0008947909809648991
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d13727",
+   "raw_bytes": 74348,
+   "hits": 889,
+   "read": 0.0003219590289518237,
+   "reconstruct": 0.009120000060647726,
+   "write": 0.0008733749855309725
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d13999",
+   "raw_bytes": 58812,
+   "hits": 708,
+   "read": 0.0002760840579867363,
+   "reconstruct": 0.007212915923446417,
+   "write": 0.0006702920654788613
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d14271",
+   "raw_bytes": 63984,
+   "hits": 778,
+   "read": 0.0002460830146446824,
+   "reconstruct": 0.007921250071376562,
+   "write": 0.0007440419867634773
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d14654",
+   "raw_bytes": 61046,
+   "hits": 748,
+   "read": 0.00027466705068945885,
+   "reconstruct": 0.007554249954409897,
+   "write": 0.0008570420322939754
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d14927",
+   "raw_bytes": 58091,
+   "hits": 714,
+   "read": 0.0002680000616237521,
+   "reconstruct": 0.0071327920304611325,
+   "write": 0.0006640409119427204
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d15199",
+   "raw_bytes": 60783,
+   "hits": 728,
+   "read": 0.0002382500097155571,
+   "reconstruct": 0.0074309579795226455,
+   "write": 0.0007297080010175705
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d15471",
+   "raw_bytes": 56098,
+   "hits": 674,
+   "read": 0.00028725003357976675,
+   "reconstruct": 0.00690158293582499,
+   "write": 0.00069650006480515
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d15743",
+   "raw_bytes": 56346,
+   "hits": 685,
+   "read": 0.0002456660149618983,
+   "reconstruct": 0.0071076670428738,
+   "write": 0.0007424169452860951
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d16015",
+   "raw_bytes": 65481,
+   "hits": 788,
+   "read": 0.0003023330355063081,
+   "reconstruct": 0.008195749949663877,
+   "write": 0.0007953339954838157
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d16287",
+   "raw_bytes": 62024,
+   "hits": 782,
+   "read": 0.00030925008468329906,
+   "reconstruct": 0.007745915907435119,
+   "write": 0.0008533750660717487
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d16559",
+   "raw_bytes": 53788,
+   "hits": 638,
+   "read": 0.00029620795976370573,
+   "reconstruct": 0.006807208992540836,
+   "write": 0.0006938750157132745
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d16831",
+   "raw_bytes": 60052,
+   "hits": 725,
+   "read": 0.0002734169829636812,
+   "reconstruct": 0.007364665973000228,
+   "write": 0.0006694589974358678
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d17103",
+   "raw_bytes": 55946,
+   "hits": 660,
+   "read": 0.00023812497965991497,
+   "reconstruct": 0.006964582949876785,
+   "write": 0.0007417920278385282
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d17375",
+   "raw_bytes": 59765,
+   "hits": 736,
+   "read": 0.0002732089487835765,
+   "reconstruct": 0.007452875026501715,
+   "write": 0.000743541051633656
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d17647",
+   "raw_bytes": 43733,
+   "hits": 529,
+   "read": 0.000259542022831738,
+   "reconstruct": 0.005464916932396591,
+   "write": 0.0006293330807238817
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d17919",
+   "raw_bytes": 58300,
+   "hits": 703,
+   "read": 0.0002702920464798808,
+   "reconstruct": 0.008267957950010896,
+   "write": 0.0007939580827951431
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d18191",
+   "raw_bytes": 56560,
+   "hits": 683,
+   "read": 0.0002542909933254123,
+   "reconstruct": 0.007262874976731837,
+   "write": 0.0007157090585678816
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d18463",
+   "raw_bytes": 59121,
+   "hits": 703,
+   "read": 0.0002847079886123538,
+   "reconstruct": 0.007646874990314245,
+   "write": 0.0007389170350506902
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d18735",
+   "raw_bytes": 53957,
+   "hits": 658,
+   "read": 0.00025349995121359825,
+   "reconstruct": 0.00664645794313401,
+   "write": 0.0007512921001762152
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d19007",
+   "raw_bytes": 45035,
+   "hits": 548,
+   "read": 0.0002579999854788184,
+   "reconstruct": 0.005553875002078712,
+   "write": 0.0006534999702125788
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d19279",
+   "raw_bytes": 51434,
+   "hits": 623,
+   "read": 0.00023487501312047243,
+   "reconstruct": 0.00628800003323704,
+   "write": 0.0006211659638211131
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d19551",
+   "raw_bytes": 49951,
+   "hits": 608,
+   "read": 0.000212125014513731,
+   "reconstruct": 0.006153166992589831,
+   "write": 0.0005787080153822899
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d19823",
+   "raw_bytes": 43011,
+   "hits": 532,
+   "read": 0.0001990830060094595,
+   "reconstruct": 0.00528200005646795,
+   "write": 0.0005487499292939901
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d20101",
+   "raw_bytes": 63168,
+   "hits": 779,
+   "read": 0.00023383297957479954,
+   "reconstruct": 0.007812374969944358,
+   "write": 0.0006713330512866378
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d20373",
+   "raw_bytes": 61377,
+   "hits": 743,
+   "read": 0.0002287500537931919,
+   "reconstruct": 0.007496999925933778,
+   "write": 0.0006835419917479157
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d25874",
+   "raw_bytes": 71130,
+   "hits": 877,
+   "read": 0.00026400003116577864,
+   "reconstruct": 0.008858417044393718,
+   "write": 0.0007193749770522118
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d26146",
+   "raw_bytes": 7669,
+   "hits": 85,
+   "read": 0.00015270907897502184,
+   "reconstruct": 0.0009352909401059151,
+   "write": 0.0002923340070992708
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d26418",
+   "raw_bytes": 54880,
+   "hits": 656,
+   "read": 0.00018708303105086088,
+   "reconstruct": 0.006743374979123473,
+   "write": 0.0006279170047491789
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d26690",
+   "raw_bytes": 8448,
+   "hits": 87,
+   "read": 0.00015058298595249653,
+   "reconstruct": 0.001025000005029142,
+   "write": 0.00029137509409338236
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d27786",
+   "raw_bytes": 56206,
+   "hits": 690,
+   "read": 0.00018929108045995235,
+   "reconstruct": 0.007045416976325214,
+   "write": 0.0006936249556019902
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d27975",
+   "raw_bytes": 117253,
+   "hits": 1500,
+   "read": 0.000360458972863853,
+   "reconstruct": 0.015272874967195094,
+   "write": 0.0018195000011473894
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d27978",
+   "raw_bytes": 116411,
+   "hits": 1477,
+   "read": 0.00035383400972932577,
+   "reconstruct": 0.014761082944460213,
+   "write": 0.0009756670333445072
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d28014",
+   "raw_bytes": 116706,
+   "hits": 1444,
+   "read": 0.0003411660436540842,
+   "reconstruct": 0.014867209014482796,
+   "write": 0.001095375046133995
+  },
+  {
+   "label": "2024-11-rt-low-occupancy/d28068",
+   "raw_bytes": 92679,
+   "hits": 1162,
+   "read": 0.0006052079843357205,
+   "reconstruct": 0.011784875066950917,
+   "write": 0.0009589999681338668
+  }
+ ]
+}

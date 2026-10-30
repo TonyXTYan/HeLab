@@ -62,13 +62,14 @@ def test_flags_are_saved_per_folder_newest_choice_wins_and_survive_clears_and_pu
         assert prefs["/a"].value == {"no_cache": True, "no_auto_load": False, "set_at": 10.0}
         assert prefs["/b"].value is not None and prefs["/b"].value["no_auto_load"]
         assert prefs["/a/sub"].status == "missing" and prefs["/"].status == "missing"  # Never inherited.
-        assert store.inventory()["prefs"] == {"no_cache": 1, "no_auto_load": 1}
+        assert store.inventory()["prefs"] == {"no_cache": 1, "no_auto_load": 1, "write_beside": 0}
         # Turned off, a flag keeps its time, so an older choice arriving late can't bring it back.
         store.set_prefs("/b", False, False, 12.0)
         assert store.read_prefs(["/b"])["/b"].value == {"no_cache": False, "no_auto_load": False, "set_at": 12.0}
         assert store.set_prefs("/b", False, True, 11.5)["no_auto_load"] is False
         # The Cache tab's Clear turns them all off, as a choice made now.
-        assert store.clear_prefs(20.0) == ["/a"] and store.inventory()["prefs"] == {"no_cache": 0, "no_auto_load": 0}
+        assert store.clear_prefs(20.0) == ["/a"] and store.inventory()["prefs"] == {
+            "no_cache": 0, "no_auto_load": 0, "write_beside": 0}
         assert store.set_prefs("/a", True, False, 15.0)["no_cache"] is False
         # Also for a folder with no flags saved before the Clear.
         assert store.set_prefs("/new", True, False, 15.0)["no_cache"] is False
@@ -465,7 +466,7 @@ def test_the_cache_tab_lists_and_clears_folder_preferences_apart_from_clear_all(
         service.pending.clear()
         tab._job = ""
         tab.clear_prefs()
-        assert "2 folders not cached and 1 folder not auto-loaded" in asked[-1]
+        assert "2 folders not cached, 1 folder not auto-loaded and 0 folders with HeLab's TXY written beside" in asked[-1]
         assert admin(service, "clear_prefs").payload["params"] == {}
         tab.detach()
         with CacheStore(store_options()["directory"]) as store:

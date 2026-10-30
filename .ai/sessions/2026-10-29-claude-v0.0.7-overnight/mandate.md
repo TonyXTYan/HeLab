@@ -1,0 +1,305 @@
+# v0.0.7 overnight build: mandate (2026-10-29)
+
+Tony, in Chat (orange), 2026-10-29 ~01:20: "check everything in the plans, can you supervise CoCo
+to build all v0.0.7 without my input? I need to sleep." Side (the Assistant) supervises; CoCo
+(the Coordinator) runs the floors. The plan is [roadmaps/txy-converter.md](../../../roadmaps/txy-converter.md);
+its decisions are Q6.x, Q8.x and Q9.x in [DECISIONS_TODO](../../DECISIONS_TODO.md).
+
+## Scope
+
+v0.0.7 ships with stages 1, 2 and 4 and the smoke pass (Q9.9). Tonight: stages 1, 2 and 4.
+Not tonight: stage 3 (calibration) and stage 5 (replacing MATLAB), the smoke pass (needs Tony),
+the version bump and PR.
+
+## What Side approves on Tony's behalf, tonight only
+
+- CoCo creates floors (`agent/<task>` from the current `dev/v0.0.7`) and recruits Workers and
+  Reviewers, on the presets' default models (no Fable).
+- A floor lands into `dev/v0.0.7` when: the Reviewer has no open findings; the full suite
+  (`pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=…`) and mypy --strict (helab, tests) and
+  pyright pass; every RERUN is explained or filed in known-issues. CoCo applies the handoff's
+  doc changes when landing, as usual, and tells Side before and after each landing.
+- Pushes only at checkpoints (a landing, or a CI run worth having).
+- Gaps the plan doesn't cover: CoCo asks Side (`maestri ask "Side" …`); Side decides from the
+  proposals already written and logs each below as "decided by Side overnight, for Tony to
+  confirm". Only reversible choices.
+
+## Never tonight (stop that piece and leave it for Tony)
+
+- A PR to `main`, a version bump, a release or tag; touching a published release.
+- Deleting branches (`maestri floor delete` only with `--keep-branch`; never `floor land
+  --delete-branch`), user data, caches or settings.
+- Writing to the X share (`/Volumes/192.168.137.1-4`) or `~/HeLab-samples` (read-only copies;
+  floors read only those). MATLAB runs only on local copies under the floor's `.ai/temp`.
+- Machine-wide installs (Rust is already installed via Homebrew); packages go only into a
+  floor's own venv (`uv pip install --python venv/bin/python …`, after checking `sys.prefix`).
+- Answering any agent's permission prompt on Tony's behalf.
+- A test that keeps failing after a cause hunt: file it and stop that piece.
+
+## Stage split (defaults for the floors)
+
+- **Stage 1, `agent/txy-reference`:** one floor, a builder Worker and a cross-checker Worker (the
+  cross-checker never edits the port; it writes and commits only its own session folder and
+  scratch under `.ai/temp`), then a Reviewer. Done-when as in the plan.
+- **Stage 2:** one floor per backend from stage 1's landed commit: `agent/txy-numpy`,
+  `agent/txy-numba`, `agent/txy-cython` (Cython or C), `agent/txy-rust` (PyO3 + maturin),
+  `agent/txy-mlx`. The stage 1 cross-checker is connected to all. Each passes stage 1's checker
+  byte for byte and measures the three parallelism levels. Final timings: one agent, serially,
+  machine otherwise idle (Tony's HeLab is quit), after the backend floors are done. Results
+  table and recommendation in a session note, checked by a Reviewer.
+- **Stage 4**, after stage 2's recommendation, in this order:
+  - `agent/txy-helab-core` first: the helper operation (settle checks for raw files: unchanged
+    5 s, size stable between checks, newline at the end, trigger channel first), new event
+    kinds, the `d_txy_helab_<N>.txy` file kind, the output-location setting (temp / cache,
+    default cache per Q9.3, and beside the raw files as a per-folder option per Q9.7, with the
+    AGENTS.md write rule), provenance, `helab convert --watch <folder>`, and
+    `.ai/architecture/converter.md`.
+  - then in parallel: `agent/txy-live` (Live's auto-convert toggle shown once Live is on, folders
+    that start Live and auto-convert at launch, low-count alerts through the existing system
+    notification path); `agent/txy-ui` (the TXY source choice in plot settings, Q6.6; the
+    detector-profile manager: built-ins read-only, user profiles as JSON with import, export,
+    duplicate and edit, `plates-2025` marked uncalibrated); `agent/txy-packaging` (every
+    backend in the build per Q9.2: lazy imports so NumPy alone always works, platform markers,
+    compiled extensions built in CI on all three OSes, `HeLab.spec`; A9.1 note to remove unused
+    ones later).
+
+## Decisions log (decided by Side overnight, for Tony to confirm)
+
+Each entry: time, question, decision, why, how to reverse.
+
+- ~01:30, stage 1 started (CoCo): floor "TXY Reference" on `agent/txy-reference` from `29e7e19`;
+  Forge (builder) and Lens (cross-checker), Claude Code, Opus 5.5 high, Worker role. Builder
+  develops on even sample positions, Lens checks odd ones first.
+- ~01:30, **decided:** the final Reviewer is the Codex preset (another model than the author);
+  if Codex stalls on approval prompts on the floor (untrusted project), CoCo replaces it in place
+  with a Claude Code Reviewer rather than anyone answering its prompts. Why: the rule asks for a
+  different model, and nobody answers prompts for Tony. Reverse: re-review with Codex later.
+- ~01:35, stage 1: Forge's port (`2b49629`) is byte-identical on all 39 synthetic cases × 2
+  variants and on 154 of 157 held-in `matlab-2019` shots. The other 3 are faults in the reference
+  files, each proven: 2019 halos d3667 (MATLAB converted a half-written raw, its TXY a prefix of
+  ours); 2022-07 He3/He4 d3 (re-converted 2023-02-08 by a third MATLAB variant: `matlab-2019` plus
+  a 2 µs x1 dead time, reproduced byte for byte); 2022-11 d5 (trigger-only raw, 0 hits; the 2023
+  wrapper wrote a 0-byte TXY, the 2019 wrapper writes none).
+- ~01:35, **decided:** the checker keeps known reference exceptions in one list keyed by set, shot
+  and the reference's SHA-256, each with an automatic proof; any other mismatch, or a proof that
+  stops holding, fails. Lens verifies the proofs independently. The third variant stays a
+  dev-script finding (Q~ for Tony: make it a built-in profile?). For stage 4: a 0-hit conversion
+  still writes an empty HeLab TXY ("converted, empty" ≠ "not converted"); case 1 is the evidence
+  for the settle checks. Why: the bar "every sample shot" can't hold against faulty references.
+  Reverse: drop the list and re-pick samples.
+- ~01:45, stage 1: port and harness done at `d14f0cb` (not pushed). `matlab-2019` on all 309
+  sample shots: 303 identical, 6 proven exceptions (cut d3667; variant 2022-07 He3/He4 d2, d3;
+  empty 2020 halos d400, 2022-11 d5, 2023-02 d187); `matlab-2023-lab-edit` 32/32 identical to
+  MATLAB's own output; 39 synthetic cases × 2 variants and `tests_sample_data` 17/17 identical.
+  Full suite 4653 passed, 2 skipped, no RERUN; types clean. Reference ~10.7 MB/s serial (busy
+  machine). Lens's findings round and the Codex Reviewer (Kestrel) run in parallel.
+- ~01:50, stage 1: the Codex Reviewer (Kestrel) stalled on its first approval prompt (it needed
+  approval just to run `maestri list` / `maestri floor status`). Nobody answered it; CoCo
+  replaced it in place with a Claude Code Reviewer, Heron (Opus 5.5 high), reviewing `d14f0cb`.
+  **For Tony:** Codex in "Ask for approval" mode can't work unattended on floors; it needs Codex
+  trust/approval settings for the floors folder (the setup guide's open "(check)").
+- 01:52, heartbeat: CI for `1afaf35` passed (the Windows 30-min limit works; `1ab4ec0`'s run was
+  cancelled by the newer push). CoCo's status line shows "5h:99%" (earlier 95 %, then 82 %,
+  so probably the share left in the 5-hour window, not used); if the account's limit is hit,
+  agents stall until it resets.
+- ~02:00, stage 1 reviews: Lens's cross-check round 1 is byte-identical everywhere MATLAB has
+  spoken (its own MATLAB 2023 run on the 152 odd shots: 152/152; a 10,000-file fuzz against its
+  oracle: 0 differences; all 6 exceptions confirmed with MATLAB); 5 low findings (mixed line
+  endings vs textscan, TXY written 0600, the x2-retry gain overstated: ~0.1–0.7 % not ~15 %, two
+  wordings). Heron: no findings on faithfulness; 1 blocker (`tests_sample_data` TXY lack
+  `-text`, so Windows autocrlf breaks 17 tests; reproduced), 1 medium (profile hash and schema
+  not extensible), 5 minor. Forge fixes all 12, then pushes `agent/txy-reference` for a Windows
+  CI run.
+- ~02:00, CoCo's call (technical, reversible): the profile schema is extensible now; fields at
+  their neutral default stay out of the content hash, `from_dict` fills missing fields through a
+  per-schema migration, and `matlab-2019`'s hash is pinned in a test. Side added: any field that
+  can change the TXY must be in the hash (MCP channel counts once MCP matching is on), checked
+  by a test.
+- 02:04, stage 1: `agent/txy-reference` pushed at `785f6dc` (first push; all 12 findings fixed,
+  including the hash caveat: fields leave the hash only at their neutral default, the MCP and
+  trigger channels are listed as not used by the output, and a perturbation test covers every
+  field). Forge: 5155 passed, 4 skipped, no RERUN; types clean; samples 303 + 6 proven; 2023
+  32/32. CI run 40712192572; Lens and Heron re-checking.
+- 02:14, stage 1 CI (run 40712192572, `785f6dc`): macOS and Ubuntu build and tests green;
+  both Windows jobs failed at checkout on a Windows-reserved file name (a textscan probe named
+  `nul.txt`; Heron caught it). Fixed in `dd6b314` with a guard test over `git ls-files`. Round 2:
+  Heron one minor (umask read at import isn't thread-safe; use `os.open` with `O_EXCL`, 0o666),
+  Lens one low (textscan's line-ending rule for files that start with line endings; fix checked
+  on 1,367 MATLAB-judged inputs). Forge applies both, then one push.
+- 02:32, stage 1 CI (run 40713926667, `09a0711`): all six jobs green; Windows ran the
+  converter tests for the first time. One RERUN, Windows Tests:
+  `tests/test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such`
+  (pytestqt waitUntil timed out after 30 s at line 82), passed on rerun; outside the converter,
+  filed in known-issues at landing (cause not hunted tonight). Lens round 3: no open findings;
+  Heron round 3 pending.
+- 02:37, **stage 1 landed:** `agent/txy-reference` merged into `dev/v0.0.7` as `d26e196`
+  (floor kept for Lens); docs `372f2ac` (`.ai/architecture/converter.md`, AGENTS.md code-map row
+  and the rule "every converter backend gives the reference's output byte for byte", testing.md,
+  plan stage 1 done with the bar "identical or a proven reference fault", the known-issues RERUN
+  line, block 10: Q10.1 third-variant profile, Q10.2 raw files with no rows, Q10.3 empty TXY for
+  no hits, A10.1–A10.5, M10.1). Ground suite after the merge: 6079 passed, 4 skipped, no RERUN;
+  types clean. Pushed `dev/v0.0.7` (to `372f2ac`) and `agent/txy-reference`; CI 40717706061.
+- 02:37, stage 2 started: five floors from `372f2ac` (numpy, numba, cython, rust, mlx), one
+  Claude Code Worker each. CoCo's split (reversible): the NumPy floor also owns the shared fast
+  text I/O and the within-shot split; the other four own only their backend and `native/` folder
+  and measure serial, processes and threads; within-shot is measured for all in the final serial
+  timing run.
+- 02:39, stage 2 floors running (hooks checked on all five): numpy (Abacus; also the shared
+  text I/O and within-shot split), numba (Ember), cython (Anvil), rust (Ferrous), mlx (Prism;
+  Metal has no float64, so match in int64 and compute T/X/Y on the CPU, and stop with numbers if
+  the GPU loses). Packages only in each floor's venv; no pyproject or HeLab.spec edits (stage 4).
+  Tonight's timings are indicative (five floors share the machine); final ones in a serial run.
+- 03:00, CI on `dev/v0.0.7` `372f2ac` (run 40717706061): all six jobs green, no RERUN (macOS
+  6079 passed, Ubuntu 6077, Windows 6051). Windows Tests took 20:44 of its 30-min limit (the
+  branch run took ~15 min): watch it as stage 2 adds tests; slow converter tests may need a
+  marker or a smaller fuzz count on CI.
+- 03:02, stage 2, Cython (Anvil) done: `agent/txy-cython` `2ba2a54` pushed. Byte-identical (303
+  + 6 proven); 3,090 conversions against the reference (309 shots × 2 profiles × 1–64 threads),
+  0 differ. Reconstruction 801 MB/s per core (59× the reference); end to end 46 MB/s per core,
+  since the shared Python reader and writer are now 94 % of the time (the NumPy floor owns
+  them); 12 processes 359 MB/s. Suite 6232 passed, no RERUN; types clean; its tests skip
+  without the built extension (CI has no build step yet: stage 4 packaging). Lessons shared with
+  the other floors: a lazy-loader thread race; `-ffp-contract=off` (no FMA) for exact bits.
+  Reviewer Wren (Claude Code) reviewing, with an independent fuzz.
+- 03:08, stage 2, Numba (Ember) done: `agent/txy-numba` `7ef5935` pushed. Byte-identical (303 +
+  6 proven; 0 differences whole and in 2–64 pieces). Reconstruction 746 MB/s per core (63×),
+  without the GIL; end to end bound by the shared reader/writer (43.5 MB/s serial, 187 with 12
+  processes). Cost: +145 MB on disk, +52 MB zipped (llvmlite), 1.5 s first compile per machine.
+  In a PyInstaller build numba ignores NUMBA_CACHE_DIR; a read-only cache now falls back to an
+  uncached compile (tested). Suite 6284 passed, no RERUN. Reviewer Kite.
+- 03:08, **decided:** Numba ships as an optional backend (already Q9.2: every backend for
+  now; the default comes from stage 2's recommendation). Its compile cache goes in HeLab's cache
+  folder (`cache_dir()`, so it moves with the cache). Reverse: drop it under A9.1; move the cache.
+- 03:08, stage 2, MLX (Prism) done: `agent/txy-mlx` `848abf0` pushed. A hybrid: the GPU finds
+  each x1's first choices, the CPU resolves contested rows in order (~2 % of rows), T/X/Y in
+  float64 on the CPU. Byte-identical (303 + 6 proven; 309/309 against the reference, both
+  profiles). Reconstruction 106 MB/s serial (8× the reference, well below Cython 801 and Numba
+  746), ~2.5 ms fixed per shot; +240 MB, +80 MB gzipped (`mlx.metallib`). Prism's verdict: only
+  the search benefits from the GPU. Reviewer Osprey. Numba's cache: a cache-folder seam in
+  `helab/convert` (pure), wired to `cache_dir()` in stage 4. A lock in `reconstruct._load` goes to
+  stage 4's core floor.
+- 03:08, stage 2, Rust (Ferrous) done: `agent/txy-rust` `a44ec77` pushed. Byte-identical (303 + 6
+  proven; 309 × both built-ins × whole and split identical to the reference). Reconstruction
+  969 MB/s serial (1.6 GB/s on large shots, ~75× the reference), the fastest; GIL released;
+  within-shot split with a written proof; +0.44 MB (abi3); no JIT. End to end ~47 MB/s per core,
+  bound by the shared Python I/O; Ferrous's report-only Rust I/O parses 1,910 MB/s and formats
+  596 MB/s (Python: 69 / 184), so one core could reach ~320 MB/s with fast I/O. Provisional: Rust
+  as an optional fast backend; M~ smoke-test a CI-built wheel on a lab PC (no
+  `target-cpu=native`: the Sandy Bridge PC). Suite 6276 passed, no RERUN; cargo test and clippy
+  clean. Reviewer Shrike.
+- 03:24, stage 2, NumPy (Abacus) done: `agent/txy-numpy` `c1c2172` pushed. Byte-identical
+  (618/618 against the reference for both profiles, 303 + 6 proven, split 618/618, a 7,000-file
+  fuzz 0 differences). Reconstruction 258 MB/s serial; **end to end 109 MB/s on one core, 558 MB/s
+  on 8 processes**, no extra build size. Its shared fast I/O lifts every backend: parsing 72 → 608
+  MB/s (without the GIL), formatting 179 → 374 MB/s. Within-shot split cross-checked against
+  Rust's proof. Reviewer Merlin. Reviews: Cython (Wren) and Rust (Shrike) no blocker, minor
+  fixes; MLX (Osprey) one blocker: pyright fails where mlx isn't installed (CI and Tony's
+  checkout, since test_typing runs pyright in the suite), being fixed, and every floor must show
+  pyright passing in a venv without its package; Numba (Kite) pending. Every floor adds its own
+  PURE line and treats any load error as "backend unavailable". Landing one at a time, NumPy
+  first (it carries the shared I/O), each later worker merging `dev/v0.0.7` first.
+- Note for the recommendation: NumPy alone already meets the ~100 MB/s bulk target on one core
+  and needs no build; the compiled backends matter mainly for many processes or slow PCs.
+- 03:33, **Cython landed:** `agent/txy-cython` merged into `dev/v0.0.7` as `d522691` (floor kept).
+  Ground suite: 6089 passed, 153 skipped (the Cython tests skip on Ground: extension not built,
+  by design), no RERUN; types clean. Not pushed (end of stage 2). Next: MLX (cleared by Osprey),
+  then Numba, Rust and NumPy as their reviews clear.
+- 03:41, **MLX landed:** `agent/txy-mlx` merged into `dev/v0.0.7` as `32158c2` (floor kept). Ground
+  suite: 6198 passed, 262 skipped (Cython and the MLX GPU tests skip on Ground: not built or
+  not installed, by design), no RERUN; types clean. Backends now: reference, cython, mlx. Numba
+  and Rust cleared, merging `dev/v0.0.7`; NumPy fixing Merlin's minor items (CoCo's call: the
+  shared TXY formatter refuses non-float64 hits with ValueError, since its fast path reinterprets
+  bits).
+- 03:46, **Rust landed:** `dev/v0.0.7` fast-forwarded to `7031bea` (the branch already contained
+  Ground; floor kept). Ground suite: 6205 passed, 458 skipped (Cython, MLX GPU and Rust tests skip
+  on Ground: not built or installed), no RERUN reported; mypy strict and pyright clean. Left:
+  Numba (cleared, merging) and NumPy (Merlin's minor items, then a re-check).
+- 03:51, Numba landing: `agent/txy-numba` `aecbe68` (contains `e2cc289`); Kite round 2 no open findings; merged-tree suite 6418 passed, 462 skipped, no RERUN; types clean incl. pyright without numba.
+- 03:52, heartbeat: Numba landed (`dev/v0.0.7` at `aecbe68`); NumPy pushed `c7b642a` with Merlin's fixes, awaiting re-check. Ground status line (CoCo) and the Cython/MLX floor statuses are stale but harmless.
+- 03:55, **Numba landed:** `dev/v0.0.7` fast-forwarded to `aecbe68` (floor kept). Ground suite 6211 passed, 669 skipped (unbuilt backends), no RERUN; types clean; no numba cache files in the tree. NumPy cleared by Merlin round 2, landing next. Stage 2 close: a 'TXY bench' floor builds all backends, runs the full suite and the sample checker for every backend with everything built (first time together with the shared fast I/O), then serial timings on an idle machine, then a recommendation with a Reviewer.
+- 03:56, NumPy landing: `agent/txy-numpy` `ed35099` (contains `aecbe68`); Merlin round 2 no open findings; merged-tree suite 7985 passed (+~1,770 tests), 669 skipped, no RERUN; types clean. Last stage 2 backend.
+- 04:00, **NumPy landed** (last stage 2 backend): `dev/v0.0.7` fast-forwarded to `ed35099`. Ground suite 7985 passed, 669 skipped, no RERUN; types clean. CI time: the 3,503 converter tests take 13 s at -n 4 locally; the NumPy branch's Windows CI ran 7,820 tests in 20:31 (vs 20:44 for 6,051), so no marking needed. **Pushed `dev/v0.0.7`** (372f2ac..ed35099), CI run 40731339010; all five agent branches match origin. Bench floor 'TXY bench' (`agent/txy-bench` from `ed35099`), Worker Tally: correctness with everything built first, then serial timing on an idle machine. Stage 4 briefs being written.
+- 04:11, bench correctness with every backend built on the landed code: full suite 8646 passed, 8 skipped (none a backend), no RERUN; every backend 303 + 6 proven on all 309 shots; 2023 profile 32/32 each; backend vs reference identical whole and split (MLX split still running).
+- ~04:18, timing run started on 'TXY bench' (Tally): all 13 other agents idle, no pytest or HeLab processes, load 4.4 and falling; Tally waits for load < 2 (up to 15 min) and records it; ~30–40 min serially. Correctness with every backend built is fully clean (`a206197`): suite 8646 passed, 8 skipped, no RERUN; all six backends 303 + 6 proven; 2023 32/32; identical to the reference on 309 shots × 2 profiles, whole and split.
+- 04:22, heartbeat: CI on `dev/v0.0.7` `ed35099` (run 40731339010) green, 22m26s. Tally waiting for idle load, then timing.
+- 04:33–04:43, **stage 2 timings** (Tally, `agent/txy-bench` `aad0487`, session folder only): serial, 3 repeats; load stayed 4–5 (a Safari tab at ~90 % of a core plus WindowServer, not agents), recorded per run, repeats within a few %. End to end per core (MB/s): numpy 119, numba 171, cython 170, rust 178, mlx 72, reference 13; reconstruction alone 279 / 869 / 915 / 1056 / 111 / 14; 12 warm processes: numpy 1049, rust 1466. Text I/O is 80–83 % of a compiled backend's time. **Recommendation:** NumPy the default everywhere (meets both targets on one core, ~31 kB); one optional fast backend, Rust (0.47 MB abi3 wheel) or Cython (within 15 %); drop Numba (+145 MB, ~175 ms start per process) and MLX (slower than NumPy, +240 MB, Apple only). Open for Tony: whether any compiled backend is worth shipping, Rust vs Cython, lab PCs untimed. Q9.2 (ship everything for now) stands; this feeds A9.1. Reviewer Ibis. **Stage 4 started:** 'TXY helab-core' (`agent/txy-helab-core` from `ed35099`), Worker Keel, NumPy default.
+- 04:59, **stage 2 closed:** the bench landed (`dev/v0.0.7` fast-forwarded to `3bd791c`); CoCo's stage 2 docs (converter.md backends, AGENTS.md code map, roadmap stage 2 done, block 11: Q11.1 numba cache, Q11.2 which backends ship (NumPy default + Rust proposed), Q11.3 keep the reference; A11.1–A11.4; M11.1–M11.3; 4 RERUN entries in known-issues). Ground suite 7985 passed, 669 skipped, no RERUN.
+- 04:59, stage 2 docs and the log committed as `b08627a`; pushed `dev/v0.0.7` (ed35099..b08627a) and `agent/txy-bench`; CI run 40740875291. Stage 4: helab-core (Keel) building from `ed35099`; the Live, UI and packaging briefs wait for its landed commit.
+- 05:20, stage 4 core done (Keel, `agent/txy-helab-core` `c40b4fb` pushed, base `ed35099`): helper op
+  `convert` (source I/O, pausable, refused offline, held by cache moves); settle checks (5 s age,
+  same size and mtime at two checks and while read, final newline, trigger first; no rows → an
+  "unconvertible" event); per-shot provenance JSON in HeLab's folders; outputs: cache (root-keyed
+  under `cache_dir()/converted-txy/`), temp (no data root), beside (only with the new per-folder
+  `write_beside` flag, or the CLI); 0-byte TXY for 0 hits; file kind `helab_txy` (counted, not
+  loaded); setting `converted_txy_output=cache`; `helab convert --watch FOLDER [--once …]` before
+  Qt; a lock in `reconstruct._load`; numba cache at `<cache>/numba`; a write-audit test (only
+  `d_txy_helab_<N>.txy` and its temp name reach a source folder). Suite 8022 passed, no RERUN;
+  types clean; samples 95/96 (the 1 is the known d3667 fault). Reviewer Gannet.
+- 05:20, **decided (5, as proposed, reversible):** (1) a folder with no data root asked for
+  "cache" converts to temp ("no root, no disk cache"); (2) provenance is never written beside the
+  raw files (AGENTS.md allows only the TXY there) until a second HeLab needs it; (3) converted TXY
+  in the cache folder are outside the 8 GB budget and no housekeeping removes them; Settings ›
+  Cache shows their size with a Clear that asks first (Tony to confirm whether they should join
+  the budget, which would add them to AGENTS.md's housekeeping list); (4) `helab convert --output
+  beside` writes beside for that run only, saving no flag (AGENTS.md's write rule to say "or asks
+  for it on the command line"); (5) a settled raw file that never gets a final newline or starts
+  off the trigger channel waits, re-checked when it changes, and Live shows it as waiting with the
+  reason (a manual "Convert anyway" is a later idea for Tony).
+- 05:26, CI on `dev/v0.0.7` `b08627a` (run 40740875291) green. One RERUN, macOS:
+  `test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such` (in known-issues;
+  its 4th CI occurrence tonight, macOS and Windows). Windows Tests 24:02 (20:14 on `ed35099` with
+  the same tests: runner variance; 6 min from the 30-min limit); CoCo raises a Q for Tony if a
+  run passes ~27 min rather than touching CI.
+- 05:26, **decided:** a Quick Fixer floor now, from `b08627a`, for the three CI-flaky tests in
+  known-issues (preset_folder_live waitUntil, folder_summary scandir fd, io_trace event order) and
+  the helabMainWindow I/O leak. Why: v0.0.7's PR needs clean CI, and these are small, mostly
+  test-side, and touch no converter paths. Conditions: cause first (no timeout bumps without a
+  stated cause), app code only where the cause is and kept small, normal review and landing.
+  Reverse: revert the landing.
+- 05:29, Gannet's review of helab-core `c40b4fb`: no blocker; byte-identical beside writes checked
+  by hand; 2 medium, 4 low, all to Keel (M2: the "two checks" settle rule needs the caller's
+  'seen' list, so Live always sends one, `--watch`'s first pass only records, plus a clock-skew
+  event; L1 kept shots flip waiting/kept; L2 provenance before the beside TXY; L3 "Clear folder
+  preferences" must say it clears write_beside; L4 heartbeats capped so a hung backend's
+  no-progress timeout can fire).
+- 05:29, **decided (M1, AGENTS.md housekeeping, Tony to confirm):** a helper killed mid-write when
+  writing beside the raw files leaves a hidden `.d_txy_helab_<N>.txy.<random>.partial` in the source
+  folder. A beside conversion removes its own leftovers of exactly that pattern, older than 1 h
+  by mtime, only in a folder it writes beside (flag on, or the CLI's `--output beside`), never
+  following links, logging each removal; AGENTS.md's housekeeping list gains the line marked
+  "(to confirm)". Why: they are HeLab's own temp files, the pattern is exact, and the age rule
+  never touches a running write. Reverse: drop the line and the sweep; leftovers stay.
+- 05:52, helab-core landing: `agent/txy-helab-core` `775fb1d` (contains `b08627a`); Gannet 3 rounds, final no open findings (tried to break M1 and M2, incl. a source clock 10 min behind: converted whole, byte-identical); suite 8036 passed, 669 skipped, no RERUN; Gannet's targeted 3748 passed, no RERUN; types clean. Docs next (converter.md stage 4, io-and-browsing, cache-store, AGENTS.md: code map, the store-opening rule naming `helab convert`, the write rule with the command line, the housekeeping line marked to confirm), block 12, then the Live, UI and packaging floors.
+- 05:55, **helab-core landed:** `dev/v0.0.7` fast-forwarded to `775fb1d` (floor kept). Ground suite 8036 passed, 669 skipped, no RERUN; types clean. Docs and block 12 (Q12.1–Q12.7, the overnight decisions marked to confirm; A12.1–A12.3; M12.1) committed with this log.
+- 05:58, `01776d6` committed (core docs + log), pushed `dev/v0.0.7` (b08627a..01776d6), CI run 40749710447. Stage 4's last three floors from `01776d6`: 'TXY live' (Lantern), 'TXY ui' (Facet), 'TXY packaging' (Crate). Quick Fixes 4 (Mender) done, pushed `995743f`: four causes found, one small app fix in presets.py (the offline C-29 notice), the rest test-only; Reviewer Plover.
+- 05:59, CoCo's call (reversible): converted shots can't reach plots until loads read HeLab's TXY (they sit in `<cache>/converted-txy/`, outside the source listing; the file kind is count-only). That is Q6.6, so the UI floor (Facet) owns making loads and Live checks read HeLab's TXY per the source choice (`io_ops/loading.py`, `live.py`); the Live floor (Lantern) does auto-convert, status, start-at-launch and alerts, and requests the next Live check after a conversion. An integration check (a converted shot reaches the dataset through Live) before stage 4 closes.
+- 06:12, Quick Fixes 4 landing: `agent/quick-fixes-4` `995743f` (from `b08627a`), Plover no blocker (reproduced 3 of the 4 causes on the base code, job 3 by reading); suite 7986 passed, no RERUN inside and outside the checkout; CI 40748840534 green on 3 OSes; one small app change (presets.py: the offline C-29 notice instead of waiting forever). Docs next: the four move to Fixed in known-issues; testing.md the two traps; block 13 (A~1 startup resolve can move the tab after an early open_to_path; A~2 start helpers with an explicit cwd).
+- 06:18, **Quick Fixes 4 landed** (merge `e9c5bfa`, Mender's notes `6d6f2cf`, docs `e4a63b5`: the four move to Fixed; new open entries: the chdir trap → A13.1, and the startup resolve moving a tab after an early open_to_path, a user-visible bug; testing.md the two traps; block 13). Pushed `dev/v0.0.7` (01776d6..e4a63b5) and `agent/quick-fixes-4`. **RERUN not identified:** the first Ground suite after the merge had 1 RERUN whose name and reason CoCo's output filter dropped; a second full run was clean (8037 passed, no RERUN); CoCo now keeps the full output. Tony: one RERUN on Ground at `e9c5bfa` is unaccounted for.
+- 06:20, **problem (CoCo's miss):** CI on `dev/v0.0.7` `01776d6` failed on Windows (macOS and Ubuntu green). helab-core's code fails there: Windows-only typing errors in `io_ops/convert.py` (PipeConnection vs Connection; ProcessPoolExecutor initializer/initargs), so mypy and pyright fail inside the suite; and 3 converter tests (the source-guard refusal, the killed-helper test after 4 reruns, the CLI `--once` output line). helab-core's own branch CI runs (`c40b4fb`, `775fb1d`) had failed, and it was landed without checking them. **Decided:** no revert (small fix, no PR tonight); Keel fixes on `agent/txy-helab-core` (merge dev, reproduce with `mypy --platform win32`, push, watch Windows CI) and CoCo lands it once Windows is green; the stage 4 floors pick it up when they merge dev. New landing condition from now: the branch's latest CI green on all three OSes. `e4a63b5`'s CI will fail on Windows the same way.
+- 06:52, helab-core fix round landing: `agent/txy-helab-core` `6cbe446` (contains `e4a63b5`); branch CI 40754538456 green on macOS, Windows and Ubuntu (checked by ID; one macOS RERUN of the known cache_saved test); Gannet no blocker (also mypy --platform win32 and pyright --pythonplatform Windows). Fixes: Windows typing; the guard test path; the killed-helper test (cause: TerminateProcess can land inside write_atomic, and fsync dominates on Windows); ASCII CLI text; and an app bug Lantern found: IOService overwrote payload['output'], so every app-submitted conversion failed; the field is now 'destination', with an end-to-end IOService test. Docs: AGENTS.md's housekeeping line widened to 'and in HeLab's own converted-txy folder' (still to confirm), an A item for harmless JSON .partial leftovers there, the cache_saved occurrence in known-issues.
+- 06:52, heartbeat: CoCo is landing the helab-core fix round (checks in progress); `e4a63b5`'s CI failed on Windows as expected. Live (Lantern), UI (Facet) and packaging (Crate) all pushed, each waiting for its branch CI. CoCo's context is at 60 %.
+- 07:01, **helab-core fix round landed:** `dev/v0.0.7` fast-forwarded to `6cbe446` (branch CI 40754538456 green on 3 OSes, checked by ID); docs `e064a53` (the destination field in converter.md; AGENTS.md housekeeping line also covers HeLab's own converted-txy leftovers, still to confirm; A12.4; known-issues: 2 more macOS cache_saved reruns). Ground 8039 passed, no RERUN; mypy (incl. --platform win32) and pyright clean. Pushed; CI 40758706117. Live, UI and packaging merging dev.
+- 07:17, CI on `dev/v0.0.7` `e064a53` (run 40758706117) green on all three OSes; Windows green again (8010 passed, 18:26). One macOS RERUN: `test_folder_summary.py::test_disk_cache_summary_tracks_shared_save_completion[cache_saved]` (in known-issues; its 3rd macOS CI rerun tonight: e4a63b5, 6cbe446, e064a53; likely a timing race: the second tab's row has no folder modified time yet when the save completes). **Decided:** Mender takes it as one more Quick Fixer job on a new branch `agent/quick-fixes-5` from `e064a53` (same conditions as Quick Fixes 4), so the PR's CI is clean.
+- 07:22, stage 4 Live floor done (Lantern, `agent/txy-live` `96af286`, dev `e064a53` merged; branch CI 40759521398 green on 3 OSes, no RERUN, checked by ID): an Auto-convert button on the Live line once Live is on; conversions one per folder, spaced by live_interval; errors stop auto-convert, not Live; Write beside asked first; start at launch (settings row live_launch_folders; offline: nothing starts, said); low-count alerts via events.notify (convert_low_hits default 100). Real-app run on synthetic folders: converted once written; a half-written shot waited, then converted. One strict xfail waits for the UI floor's loading. Reviewer Heron2. Q~ for Tony: the launch list as a settings row; low-count default 100 hits; Live line wording until Q6.6.
+- 07:27, stage 4 packaging done (Crate, `agent/txy-packaging` `5c462a0`, dev `e064a53` merged; CI 40759532405 at `a6a5de4` green on 3 OSes, no RERUN, checked by ID; `5c462a0` adds only the handoff). numba/llvmlite, mlx (darwin arm64 marker), Cython and maturin in the lock (no --upgrade; NumPy stays 2.5.4); `native/build.py` builds Cython and Rust; `native/check_build.py` checks every backend against the reference, also in the packaged app; CI builds them on 3 OSes and `HELAB_REQUIRE_BACKENDS` fails any skip of a required backend; HeLab.spec hidden imports and an mlx hook; GitHub's macOS runner has Metal, so MLX's GPU tests run there. Every backend identical in the venv and the packaged app on all three OSes. Sizes (macOS app): mlx +234 MB, numba+llvmlite +127, rust +0.48, cython +0.27. Windows test job now 23:24 of 30 min (the backend build adds ~1:14). Reviewer Puffin.
+- 07:28, launch folders: Live can't run in several tabs at once today (`HelabMainWindow.on_current_tab_changed`, Tony's L1 decision of 2026-10-19: switching tabs turns Live off). So start at launch keeps Live and auto-convert in the first launch folder; each other launch folder opens in its tab and says so on its Live line and tooltip. Q~ for Tony: (a) as built; (b) let Live run in several tabs at once (changes L1), then every launch folder starts; (c) one launch folder only. Lantern `8f01f07` pushed.
+- 07:40, stage 4 UI floor done (Facet, `agent/txy-ui` `ff2a971`, dev `e064a53` merged; CI 40760983511 at `86f5914` green on 3 OSes, 2 macOS RERUNs of the known cache_saved test). Built: the Q6.6 source choice (loads, Live checks and Live saves read HeLab's current TXY; default 'matlab' = MATLAB's plus HeLab filling gaps; per plot also 'helab', and (c) as 'matlab-only' / 'helab-only' RAM-only datasets); the source and per-shot origins in the identity and result keys (MATLAB-only keeps its old identity and saved results); Settings › TXY converter (profile, backend, output, and the profile manager: built-ins read-only, plates-2025 uncalibrated, duplicate, edit, import, export, delete asked first); plate built-ins as JSON (A10.3); the plate suggestion shown, not applied; Settings › Cache converted-TXY size with a Clear asked first. Reviewer Egret. Q~ for Tony: how (c) shows; the source saved with presets and reopen; other profiles' TXY; folder status counting HeLab's TXY; non-default sources RAM-only. Landing order: packaging, UI, Live, then one integration check.
+- 07:49, Egret's review of the UI floor (`ff2a971`): **one blocker, reproduced:** held HeLab TXY feed the folder-mismatch rule (a write-once rule for MATLAB's TXY), so clearing HeLab's converted TXY, a reconversion (profile change, auto-convert) or a folder without a known root makes Live or a load report shots missing, drop the folder's datasets and open the Missing shots window. Three medium: the profile filter is bypassed for held or cached shots (one folder gives different data held vs cold); Live's signature leaves out MATLAB TXY arriving for HeLab-filled shots (status flips, tab reloads); every listing reads every provenance JSON (slow with auto-convert). Lows: a released non-default-source plot can't reload; cache_saved marks other sources' RAM datasets; deleting the profile in use; profile names by hash; wording. All to Facet; order stays packaging, UI (after Egret's re-check), Live, integration check.
+- 08:23, status after a nudge (nothing had landed since ~06:55): Live cleared by Heron2 round 2 (lands after UI); packaging: Crate split the backend build into its own job (`0e163d1`, CI green, Windows tests 22 min, down from 23:24) and applied Puffin's round 1 (`e2f3e14`, CI running); Puffin's re-check had not been sent, now sent; UI: Facet's fixes for Egret's blocker (`e4d6358`, CI running); Quick Fixes 5: Tinker running checks.
+- 08:27, packaging CI (run 40765484151, `e2f3e14`): attempt 1 green except the macOS test job, cancelled at its 20-min limit on a slow runner (suite at 99 % after 16 min vs 4.5–11 usually; matplotlib's font cache build hung 100 s); Windows tests 25:11 (22:06 the run before). Crate re-ran only the macOS job; packaging lands once it's green. Puffin round 2: no findings. **CI time limits are now the main risk for the PR** (Windows 25 of 30 min, macOS hit its 20-min limit once): Q~ for Tony (Crate's proposal: Windows 40, others 30, or shard the test job); no limit change tonight.
+- 08:33, packaging not landable yet: the macOS test job hit its 20-min limit on both attempts (run 40765484151). Systematic: with all four backends installed and required, macOS tests take 17+ min (9 before), running out during mypy. Crate restructures: the main test job as before (no compiled backends; their tests skip; mypy unchanged); the backends job installs them and runs only the converter and backend tests with `HELAB_REQUIRE_BACKENDS`, so a missing backend still fails CI. No limit changed. UI: Egret round 2 no blocker, two medium signature issues (Facet round 3). **Decided:** UI may land before packaging if it's ready first (they're independent).
+- 09:17, UI landing: `agent/txy-ui` `475c6a6` (contains `e064a53`); Egret round 3 no blocker (all 11 repros right); branch CI 40774902856 green on 3 OSes, no RERUN (checked by ID). To file: under load 28–30, `test_convert_helab.py::test_watch_converts_new_shots_and_stops_on_ctrl_c` failed all 6 attempts (the CLI didn't exit within 20 s of SIGINT; suspected an unread stderr pipe; passes alone and in CI); a low UI item (a pending Reload's flag not cleared when the source changes). Packaging: the restructure is green (`d115552`), but against UI's run at the same time its main test job is genuinely slower (Windows 25:30 vs 21:03); Crate investigating. Quick Fixes 5 (cache_saved, cause proven, test-only) in review.
+- 09:22, **UI landed:** `dev/v0.0.7` fast-forwarded to `475c6a6`; Lantern merging it into Live; Tinker on QF5 job 2 (the --watch Ctrl-C test under load).
+- 09:23, UI pushed: `dev/v0.0.7` at `475c6a6` (CI run 40779568331). Ground suite 8121 passed, 669 skipped, no RERUN; types clean. Live merging (its xfail becomes a normal test). Morning report sent to Tony in Chat at ~09:25.
+- 09:52, CI on `dev/v0.0.7` `475c6a6` (run 40779568331) green, 24m35s. Live merged UI, CI on `6454b4a` running.
+- 09:58, Live landing: `agent/txy-live` `6454b4a` (contains `475c6a6`); Heron2 final no blocker; branch CI 40780439624 green on 3 OSes (checked by ID; 1 macOS RERUN of helab-core's heartbeat test, now QF5 job 3). The seam test (a converted shot reaches Live's data) passes as a normal test.
+- 10:01, **Live landed:** `dev/v0.0.7` fast-forwarded to `6454b4a` and pushed. Ground 8138 passed, 669 skipped, no RERUN; types clean. Stage 4 has core, UI and Live; a converted shot reaches Live's data end to end. Left: packaging (Crate finding why its main test job is slower; must merge `6454b4a`) and QF5 (cache_saved cleared by Sandpiper; Tinker on the --watch Ctrl-C job and the heartbeat tests); then the stage 4 docs commit.
+- 10:07, UI and Live docs committed as `18a93d9` and pushed (converter.md 'TXY sources' and 'Profiles in the app', live.md auto-convert, settings/cache/io/plots lines, AGENTS.md code map; Q14.1–Q14.5 and Q15.1–Q15.3 for Tony, A14/A15, M14/M15; A10.3 done; 4 known-issues entries). The packaging docs commit (stage 4's last) will carry this log.
+- 10:41, QF5 jobs 2 and 3 done (`8b96fe4`, CI 40786300323 green): (2) the --watch Ctrl-C failure was SIGINT being ignored, not a hang: a pytest started as a background job (as agents' tools do) ignores SIGINT and the convert child inherits it; from a terminal Ctrl-C works; test-only fix. (3) the heartbeat tests used 0.1 s real-time budgets a late-woken ticker missed; the ticker is fine (1 s interval, ≥ 60 s budget); test-only fix with a test clock. New (Ubuntu CI rerun): a kill during a provenance or folder.json write leaves a JSON .partial in HeLab's converted-txy that cleanup never removes (A12.4), now QF5 job 4 (small, convert.py, the same exact-pattern rules). Packaging: Puffin round 3 no blocker; lands once CI 40787996233 is green.
+- 10:55, packaging landing: `agent/txy-packaging` `7cb168e` (contains `18a93d9`); Puffin round 3 no blocker; branch CI 40787996233 green on 3 OSes, no RERUN (checked by ID): main Tests job Windows 20:06, macOS 11:05, Ubuntu 5:59; the backends job (every compiled backend required, kernel vs reference) green on 3 OSes. Then the last stage 4 docs commit with this log, and a push.
+- 10:57, **packaging landed; stage 4 complete** (core, UI, Live, packaging): `dev/v0.0.7` fast-forwarded to `7cb168e`. Ground suite 8148 passed, 669 skipped, no RERUN; mypy and pyright clean. Packaging docs and block 16 (Q16.1 setup.py extra, proposed no; Q16.2 CI time limits, proposed Windows 40 / others 30; A16.1–A16.3; M16.1–M16.2; A9.1 sizes) committed with this log. Quick Fixes 5 (4 jobs, all reviewed) lands after its CI run 40790509712.
+- 11:18, Quick Fixes 5 landing: `agent/quick-fixes-5` `3d10ab2` (from `e064a53`, merged into `02cda86`); Sandpiper cleared all four jobs; CI 40790509712 green on 3 OSes, no RERUN (checked by ID). Docs next: known-issues closes cache_saved, the watch test, the heartbeat tests and the Ubuntu killed-helper rerun; AGENTS.md's housekeeping line gains the record and folder.json temporaries; converter.md names own_partial(); A12.4 done.
+- 11:21, **Quick Fixes 5 landed** (merge `931f9f8`, docs `4132e36`), pushed. Ground 8149 passed, 669 skipped, no RERUN; typing (incl. win32) clean. Fixed: cache_saved (the test waited for the dataset, not the row's date); the --watch Ctrl-C test (a background job's SIGINT ignore, inherited; CLI unchanged); the heartbeat tests (real-time budgets → a test clock); the Ubuntu killed-helper rerun (A12.4, own_partial()). New known issue: a test_root_gui worker crash, once on macOS. **All overnight work is landed:** `dev/v0.0.7` at `4132e36` = origin, stages 1, 2 and 4 complete; every agent branch on GitHub; floors kept. CI on `4132e36`: run 40793460604.
+- 11:29, CI on `dev/v0.0.7` `02cda86` (run 40790912863): all green except Windows Tests, cancelled at its 30-min limit (30:13) at 99 %, while the six test_typing tests (mypy and pyright, ~1–3 min each) ran last on one worker. Q16.2 is now a real failure; `4132e36`'s run may hit it too. **Decided:** a Quick Fixes 6 floor with one job: make the slow typing tests start first and spread across workers (a collection hook ordering test_typing first, without changing the distribution mode for the rest), test-only, CI-verified on 3 OSes, landed today; no limit change; Q16.2 stays for Tony.
+- 11:46, CI on `dev/v0.0.7` `4132e36` (run 40793460604, the final overnight head): green on all three OSes, no RERUN (Tests: Windows 8120 passed in 22:14, job 24:04; macOS 3:50; Ubuntu 9:29; converter backends green). Quick Fixes 6 (Rivet: typing tests first) underway to widen the Windows margin.
+- 12:03, Tony's answers (Chat): NumPy default, Cython the optional backend (Numba, MLX, Rust leave the build; code kept); Q10.1 no profile; Q10.2 OK; Q10.3 OK plus a GUI warning for no-hit raw files (A17.1); Q11.3 keep all backend code; Q16.1 no; Q16.2 split pytest into two groups per OS (A17.2).

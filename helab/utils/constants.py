@@ -2,7 +2,7 @@ import os
 import sys
 import tempfile
 import logging
-from typing import List
+from typing import TYPE_CHECKING, List
 from helab._version import __version__
 from helab.build_info import get_build_info
 
@@ -10,10 +10,14 @@ from typing import Optional
 
 from PyQt6.QtCore import QSettings, QDir
 from helab.utils.settings_store import app_settings
+from helab.utils.number_format import byte_unit
 # Settings' keys (re-exported: they were defined here) and defaults: helab/utils/settings_defaults.py.
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING as AUTO_SCAN_VISIBLE_SETTING,
     CHECK_LEVEL_SETTING as CHECK_LEVEL_SETTING,
+    CONVERT_BACKEND_SETTING as CONVERT_BACKEND_SETTING,
+    CONVERT_OUTPUT_SETTING as CONVERT_OUTPUT_SETTING,
+    CONVERT_PROFILE_SETTING as CONVERT_PROFILE_SETTING,
     DIR_CACHES_SETTING as DIR_CACHES_SETTING,
     DIR_TEMPS_SETTING as DIR_TEMPS_SETTING,
     DISK_BUDGET_SETTING as DISK_BUDGET_SETTING,
@@ -23,7 +27,10 @@ from helab.utils.settings_defaults import (
     PLOT_AUTO_RELOAD_SETTING as PLOT_AUTO_RELOAD_SETTING,
     RAM_BUDGET_SETTING as RAM_BUDGET_SETTING,
     SIMULTANEOUS_IO_SETTING as SIMULTANEOUS_IO_SETTING,
-    LOG_KEEP_SETTING, read_setting, setting_default)
+    TXY_SOURCE_SETTING as TXY_SOURCE_SETTING,
+    CONVERT_OUTPUTS, LOG_KEEP_SETTING, read_setting, setting_default)
+if TYPE_CHECKING:
+    from helab.convert.profile import DetectorProfile
 # from PyQt6.QtGui import QFontDatabase, QFont
 
 # try:
@@ -110,7 +117,8 @@ MAX_SIMULTANEOUS_IO = 32
 
 # The disk cache budget in bytes (Settings → Cache from S7). It counts live data only.
 DEFAULT_DISK_BUDGET: int = setting_default(DISK_BUDGET_SETTING)
-MIN_DISK_BUDGET = 10**9  # 1 GB: budgets are SI, as every size HeLab shows (Tony, 2026-10-26)
+# 1 GB on macOS and Linux, 1 GiB on Windows: disk units follow the OS (Q26.1).
+MIN_DISK_BUDGET = byte_unit(3, "disk")[0]
 
 
 def read_disk_budget(settings: QSettings) -> int:
@@ -127,7 +135,7 @@ def read_disk_budget(settings: QSettings) -> int:
 RAM_STEPS = 128
 DEFAULT_RAM_STEPS: int = setting_default(RAM_BUDGET_SETTING)
 MAX_RAM_STEPS = 64
-MIN_RAM_BUDGET = 10**9  # 1 GB (SI, as the disk budget)
+MIN_RAM_BUDGET = byte_unit(3, "ram")[0]  # 1 GiB: RAM is in powers of 1024 on every OS (Q26.1)
 
 
 def total_ram() -> int:
@@ -140,7 +148,7 @@ def ram_step_bytes(total: int | None = None) -> int:
 
 
 def ram_step_range(total: int | None = None) -> tuple[int, int]:
-    """The allowed steps: at least max(1 GB, 1 step), at most half of RAM."""
+    """The allowed steps: at least max(1 GiB, 1 step), at most half of RAM."""
     step = ram_step_bytes(total)
     return min(MAX_RAM_STEPS, max(1, -(-MIN_RAM_BUDGET // step))), MAX_RAM_STEPS
 
@@ -210,6 +218,49 @@ def read_log_keep(settings: QSettings) -> int:
     except (TypeError, ValueError, OverflowError):
         return DEFAULT_LOG_KEEP
     return max(1, min(MAX_LOG_KEEP, value))
+
+
+def read_convert_output(settings: QSettings) -> str:
+    """Where HeLab's own TXY go (Q9.3): ``cache`` (the default) or ``temp``; anything else saved
+    reads as the default."""
+    value = read_setting(settings, CONVERT_OUTPUT_SETTING, typed=True)
+    return value if value in CONVERT_OUTPUTS else str(setting_default(CONVERT_OUTPUT_SETTING))
+
+
+def read_txy_source(settings: QSettings) -> str:
+    """Which TXY tabs and Live load (Q18.2, ``helab.utils.txy_sources``): the setting when it names a
+    source (an old name too), else ``helab-priority``."""
+    from helab.utils.txy_sources import DEFAULT_SOURCE, normal_source
+    return normal_source(read_setting(settings, TXY_SOURCE_SETTING, typed=True)) or DEFAULT_SOURCE
+
+
+def profiles_folder() -> str:
+    """The user's detector profiles (``helab.convert.user_profiles``): a folder of the app folder."""
+    from helab.convert.user_profiles import FOLDER_NAME
+    return os.path.join(app_folder(), FOLDER_NAME)
+
+
+def read_convert_profile(settings: QSettings) -> "DetectorProfile":
+    """The detector profile HeLab's conversions use (Q6.11): the setting's built-in or user profile;
+    one that no longer exists or can't be read gives the default, ``matlab-2019`` (logged)."""
+    from helab.convert.profile import DEFAULT_PROFILE, builtin_profile
+    from helab.convert.user_profiles import ProfileLibrary
+    name = str(read_setting(settings, CONVERT_PROFILE_SETTING, typed=True) or "")
+    found = ProfileLibrary(profiles_folder()).find(name) if name else None
+    if found is None:
+        if name and name != DEFAULT_PROFILE:
+            logging.warning("Detector profile %r not found: conversions use %s", name, DEFAULT_PROFILE)
+        return builtin_profile()
+    return found
+
+
+def read_convert_backend(settings: QSettings) -> str:
+    """The converter backend HeLab's conversions use: the setting when it names a known backend
+    (whether it can run here is the helper's to say), else ``numpy``."""
+    from helab.convert.pipeline import APP_BACKEND
+    from helab.convert.reconstruct import _MODULES
+    value = str(read_setting(settings, CONVERT_BACKEND_SETTING, typed=True) or "")
+    return value if value in _MODULES else APP_BACKEND
 
 
 def read_live_autosave(settings: QSettings) -> int:
@@ -462,19 +513,11 @@ def app_folder() -> str:
 
 DEV_POTENTIAL_DATA_PATHS = [
     '/Volumes/dld_output',
-    '/Volumes/tonyNVME Gold/dld output',
-    '/Users/tonyyan/.cache/2024_Momentum_Bells_V2 - 20241200',
-    # '/Users/tonyyan/Library/CloudStorage/OneDrive-AustralianNationalUniversity/SharePoint - Testing MS Teams/2024_Momentum_Bells_V2 - 20241200',
-    # Don't use OneDrive it's shit (cause file system hangs)
     os.path.join(OS_WORKING_DIRECTORY,'tests_sample_data'),
     str(QDir_WORKING_DIRECTORY.filePath("tests_sample_data")),
     str(QDir_WORKING_DIRECTORY),
     OS_WORKING_DIRECTORY,
-    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab',
-    'C:\\Users\\XinTong\\Documents',
     'O:\\',
-    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/good',
-    '/Users/tonyyan/Documents/_ANU/_He_BEC_Group/HeLab/tests_sample_data/bad',
 ]
 
 # This is a display hint; availability is resolved by an isolated I/O helper

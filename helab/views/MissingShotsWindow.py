@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from helab.utils.accessible import identify
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache
 
 INTRO = ("TXY files are written once and never deleted, so shots missing from a folder HeLab cached mean "
@@ -83,11 +84,11 @@ class MissingShotsWindow(QDialog):
         self.banner.setStyleSheet("QLabel { background: #fff3cd; color: #5c4400; padding: 6px; }")
         layout.addWidget(self.banner)
         banner_buttons = QHBoxLayout()
-        self.resume_button = QPushButton("Resume")
+        self.resume_button = identify(QPushButton("Resume"), "mismatch_resume")
         self.resume_button.setToolTip(RESUME_TIP)
-        self.cancel_button = QPushButton("Cancel all loads and scans")
+        self.cancel_button = identify(QPushButton("Cancel all loads and scans"), "mismatch_cancel_all")
         self.cancel_button.setToolTip(CANCEL_TIP)
-        self.skip_all_button = QPushButton("Skip mismatched folders and keep going")
+        self.skip_all_button = identify(QPushButton("Skip mismatched folders and keep going"), "mismatch_skip_all")
         self.skip_all_button.setToolTip(SKIP_ALL_TIP)
         for button in (self.resume_button, self.cancel_button, self.skip_all_button):
             banner_buttons.addWidget(button)
@@ -96,18 +97,19 @@ class MissingShotsWindow(QDialog):
         self.intro = QLabel(INTRO)
         self.intro.setWordWrap(True)
         layout.addWidget(self.intro)
-        self.tree = QTreeWidget()
+        self.tree = identify(QTreeWidget(), "mismatched_folders_list", "Mismatched folders",
+                             "The folders whose cached data doesn't match them")
         self.tree.setHeaderLabels(list(self.COLUMNS))
         self.tree.setRootIsDecorated(False)
         self.tree.setUniformRowHeights(True)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         layout.addWidget(self.tree, 1)
         buttons = QHBoxLayout()
-        self.load_button = QPushButton("Load as it is now")
+        self.load_button = identify(QPushButton("Load as it is now"), "mismatch_load")
         self.load_button.setToolTip(LOAD_TIP)
-        self.skip_button = QPushButton("Don't load")
+        self.skip_button = identify(QPushButton("Don't load"), "mismatch_skip")
         self.skip_button.setToolTip(SKIP_TIP)
-        self.close_button = QPushButton("Close")
+        self.close_button = identify(QPushButton("Close"), "mismatch_close")
         buttons.addWidget(self.load_button)
         buttons.addWidget(self.skip_button)
         buttons.addStretch(1)

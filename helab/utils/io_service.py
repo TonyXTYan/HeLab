@@ -59,6 +59,9 @@ class IORequest:
     # The I/O trace's recording folder and whom the helper works for, sent only while the trace is
     # on (``IOService.trace_dir``).
     trace: dict[str, Any] | None = None
+    # The settle time this attempt's helper uses (``IOService.settle_seconds`` as it started; None: the
+    # helper's default).
+    settle: float | None = None
     # Arrays the helper needs from this process (Live's save: the data in RAM), by shot: written to
     # its private folder before it starts (``held_dir``), off the GUI thread.
     arrays: dict[int, Any] | None = None
@@ -161,7 +164,7 @@ class IOService(QObject):
     CACHE_OPERATIONS = ("cached", "saved_list", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
                         "volumes_verify", "result_find", "result_save")
     LOCAL_CAP = 2
-    PAUSABLE = ("load", "list", "details", "scan", "icons", "roots_verify")
+    PAUSABLE = ("load", "list", "details", "scan", "icons", "roots_verify", "convert")
     # Held while cached data doesn't match several folders (``mismatch_hold``): loads and scans.
     # Browsing, cached reads, cache writes and icons go on.
     MISMATCH_HELD = ("load", "details", "scan")
@@ -181,7 +184,8 @@ class IOService(QObject):
               "volumes_verify": "Verify volumes", "root_create": "Enable disk cache",
               "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root",
               "marker_save": "Save .helab-root to folder", "trace_check": "Check I/O trace folder",
-              "result_find": "Read cached analysis", "result_save": "Save analysis to disk cache"}
+              "result_find": "Read cached analysis", "result_save": "Save analysis to disk cache",
+              "convert": "Convert raw files to TXY"}
     NOUNS = {"load": "load", "cached": "cached data read", "saved_list": "saved listing read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
@@ -190,7 +194,8 @@ class IOService(QObject):
              "volumes_verify": "volume verification", "root_create": "disk cache enabling",
              "root_reassign": "data-root reassignment", "root_remove": ".helab-root removal",
              "marker_save": ".helab-root save", "trace_check": "I/O trace folder check",
-             "result_find": "cached analysis read", "result_save": "analysis save"}
+             "result_find": "cached analysis read", "result_save": "analysis save",
+             "convert": "TXY conversion"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -222,6 +227,10 @@ class IOService(QObject):
         self.before_start: Callable[[IORequest], None] | None = None
         # The I/O trace's recording folder while it's on (``start_io_trace``), sent with each request.
         self.trace_dir: str | None = None
+        # Set by the main window: the settle time (Settings → General, Q33.7), sent with every request as
+        # ``settle_seconds``, which the helper applies first (``fingerprints.configure_settle``). None: not
+        # sent, so the helper keeps its default.
+        self.settle_seconds: float | None = None
         self._foreground_busy_at = -math.inf
         self._listing_busy_at = -math.inf
         self.timer = QTimer(self)
@@ -498,6 +507,7 @@ class IOService(QObject):
         request.trace = None if self.trace_dir is None else {
             "dir": self.trace_dir, "owner": request.owner, "tabs": self.owners_of(request), "lane": lane,
             "attempt": request.attempt}
+        request.settle = self.settle_seconds
         self.active.append(request)
         self.resultReady.emit(request, {"kind": "started", "attempt": request.attempt})
         threading.Thread(target=self._run, args=(request,), daemon=True,
@@ -791,6 +801,8 @@ class IOService(QObject):
             payload = {**request.payload, "operation": request.operation, "path": request.path}
             if request.trace is not None:
                 payload["trace"] = request.trace
+            if request.settle is not None:
+                payload["settle_seconds"] = request.settle
             # Every helper gets a private folder: load artifacts, the frozen app's
             # request/response files, and the pause flag.
             with request.control:

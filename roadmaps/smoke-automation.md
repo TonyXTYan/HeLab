@@ -5,7 +5,7 @@ Added 2026-10-28. Tony approved these in Chat the same day (Q5.2), after the fir
 [results](../.ai/sessions/2026-10-28-claude-smoke-mac/results.md) and
 [computer-use notes](../.ai/sessions/2026-10-28-claude-smoke-mac/computer-use-notes.md).
 
-**Goal:** a model drives the whole release smoke pass (M1.1–M1.8) in the background, without
+**Goal:** a model drives the whole release smoke pass (M1.1–M1.10) in the background, without
 taking the user's cursor or full-screen control, and saves its own screenshots.
 
 ## Approved (Tony, 2026-10-28)
@@ -30,6 +30,15 @@ taking the user's cursor or full-screen control, and saves its own screenshots.
 6. **The rest, as they come:** a bundle ID for source runs on macOS; a quit that confirms the
    process exited; a fixed window geometry option; a small fixture tree with a `.helab-root`
    so M1.2–M1.6 run in seconds; a note command that appends to `results.md`.
+
+## Status (2026-10-30)
+
+Items 1, 2 and 4 are done (`agent/smoke-ready`, landed `4ad8ac5`): names, descriptions and stable IDs
+on every control (test-enforced), the runner's items in the existing Debug menu (item 5, answered by
+Q5.2.5), Save Window Screenshot (to a picked file or, without a dialog, to the temp folder). Of item 6
+and the Mac pass's extras (Q31.2): stable IDs, Dump State, Quit that confirms (with the quit window
+listing every pending operation), `--geometry` and the two plot bugs are done there; milestone log lines and the dev `.app` stub (`dev/dev_app.py`) landed from `agent/runner-tools` (`0316bae`); test data is Q31.4. Item 3 (`--smoke`)
+waits for v0.0.8. The runbook's routes: [runbook](../.ai/sessions/2026-10-28-claude-smoke-automation/plan.md#runner-routes-v007).
 
 ## Order (proposed)
 

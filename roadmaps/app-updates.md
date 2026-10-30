@@ -274,7 +274,6 @@ our own for frozen builds when lab PCs start using them.
   release as the asset, so it proves the download is intact, not who made it.
   GitHub artifact attestations (bound to the repo and workflow) or a signing
   key whose public half ships in HeLab. Needed before stage 2's frozen path.
-- **Release repos:** confirm the [proposal](#release-repos-proposed-2026-10-13-tony-to-confirm).
 - **Frozen updater:** Velopack, tufup or our own (see the table above).
 - **Source and frozen on one PC, and local builds** (separate issue). They
   share QSettings and the cache folder (see

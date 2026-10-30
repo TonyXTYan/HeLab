@@ -19,11 +19,20 @@ class FileKind:
     loaded: bool
     # Its total size is measured (one stat per file). Unmeasured kinds save no ``bytes``.
     sized: bool
+    # A folder summary names it with no files too ({"count": 0}); otherwise only when it has some
+    # (a kind added later, so summaries saved before it keep their shape).
+    counted_empty: bool = True
 
 
 RAW = FileKind("raw", re.compile(r"^d(\d+)\.txt$"), loaded=False, sized=False)
 TXY = FileKind("txy", re.compile(r"^d_txy_forc(\d+)\.txt$"), loaded=True, sized=True)
-FILE_KINDS: tuple[FileKind, ...] = (RAW, TXY)
+# HeLab's own conversions (``helab.convert``), ``d_txy_helab_<tag>_<N>.txt``, where the user writes them
+# beside the raw files (Q9.7, Q18.4). Not loaded as MATLAB's are: which TXY a dataset is made of
+# (``txy_sources``) and of which profile (the tag) is ``io_ops.helab_txy``'s choice. (The pattern is
+# ``provenance.TXY_PATTERN``'s, the tag not a group: ``profile.NAME_TAG``, up to 33 characters, Q23.6.)
+HELAB_TXY = FileKind("helab_txy", re.compile(r"^d_txy_helab_(?:[a-z][a-z0-9]{1,32})_(0|[1-9][0-9]*)\.txt$", re.ASCII),
+                     loaded=False, sized=False, counted_empty=False)
+FILE_KINDS: tuple[FileKind, ...] = (RAW, TXY, HELAB_TXY)
 
 
 def match(name: str) -> tuple[FileKind, int] | None:
@@ -39,6 +48,8 @@ def files_summary(shots: dict[str, set[int]], sizes: dict[str, int]) -> dict[str
     summary: dict[str, dict[str, int]] = {}
     for kind in FILE_KINDS:
         entry = {"count": len(shots.get(kind.name, ()))}
+        if not entry["count"] and not kind.counted_empty:
+            continue
         if kind.sized and kind.name in sizes:
             entry["bytes"] = sizes[kind.name]
         summary[kind.name] = entry

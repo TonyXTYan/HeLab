@@ -7,7 +7,9 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QChe
     QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem, QDoubleSpinBox
 from PyQt6.QtCore import QSettings, QUrl
 
-from helab.utils import folder_cache
+from helab.utils import app_log, folder_cache
+from helab.utils.settle_time import DEFAULT_SETTLE_SECONDS, MAX_SETTLE_SECONDS, MIN_SETTLE_SECONDS, settle_seconds
+from helab.utils.accessible import identify
 from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import fnum
 from helab.utils.constants import (
@@ -18,14 +20,26 @@ from helab.utils.constants import (
 )
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING, CHECK_LEVEL_SETTING, DIR_CACHES_SETTING, DIR_TEMPS_SETTING, LIVE_INTERVAL_SETTING,
-    LOAD_MODE_SETTING, LOG_KEEP_SETTING, REOPEN_PLOTS_SETTING, RETIRED, SIMULTANEOUS_IO_SETTING, read_setting)
+    LOAD_MODE_SETTING, LOG_KEEP_SETTING, REOPEN_PLOTS_SETTING, RETIRED, SETTLE_SECONDS_SETTING, SIMULTANEOUS_IO_SETTING,
+    read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
-from helab.views.CacheTab import GB, CacheTab, read_result_reuse
+from helab.views.CacheTab import CacheTab, read_result_reuse
+from helab.views.ConverterTab import ConverterTab
 from helab.views.LabParametersTab import LabParametersTab
 
 
+def read_settle_seconds(settings: QSettings) -> float:
+    """The settle time (Q33.7, ``settle_seconds``), 2 to 60 s (out of range: the nearest), the default for
+    a saved value that isn't a number. The app sends it with every request (``IOService.settle_seconds``)."""
+    value = settle_seconds(read_setting(settings, SETTLE_SECONDS_SETTING))
+    return DEFAULT_SETTLE_SECONDS if value is None else value
+
+
 class SettingsDialog(QDialog):
+    # Its tabs' titles, in order (Debug › Settings Tab lists them; a test checks they match).
+    TAB_TITLES = ("General", "Lab parameters", "TXY converter", "Scripts", "Cache", "Data roots")
+
     def __init__(self, parent: Optional[QWidget] = None, *, settings: QSettings | None = None,
                  cache: FolderCache | None = None) -> None:
         super().__init__(parent)
@@ -44,7 +58,7 @@ class SettingsDialog(QDialog):
         self.tabs.setMovable(False)
         self.tabs.setStyleSheet("""
             QTabBar::tab {
-                width: 150px;
+                width: 125px;
             }""")
 
         # tab_bar = self.tabs.tabBar()
@@ -89,6 +103,16 @@ class SettingsDialog(QDialog):
             "While Live watches a folder, its next check starts this long after the previous one ended, so "
             "checks never overlap or queue up on a slow drive. A check of an unchanged folder is one folder stat.")
         folder_io_form.addRow("Live: check again after", self.live_interval_spin)
+        self.settle_spin = QDoubleSpinBox()
+        self.settle_spin.setRange(MIN_SETTLE_SECONDS, MAX_SETTLE_SECONDS)
+        self.settle_spin.setDecimals(1)
+        self.settle_spin.setSingleStep(0.5)
+        self.settle_spin.setSuffix(" s")
+        self.settle_spin.setToolTip(
+            "A file modified more recently than this may still be being written, so HeLab leaves it for a later "
+            "read. It applies to every read: browsing, loads, Live, checks of cached data and conversions. Below "
+            "2 s HeLab can't tell a file still being written. Default 5 s.")
+        folder_io_form.addRow("Read files unmodified for", self.settle_spin)
         self.general_layout.addLayout(folder_io_form)
         self.auto_scan_visible_checkbox = QCheckBox("Automatically check folder status in view")
         self.auto_scan_visible_checkbox.setToolTip(
@@ -104,7 +128,7 @@ class SettingsDialog(QDialog):
         self.log_keep_spin = QSpinBox()
         self.log_keep_spin.setRange(1, MAX_LOG_KEEP)
         self.log_keep_spin.setToolTip(
-            "Each HeLab writes its own log file, renamed and started again every 1 MB. At startup HeLab "
+            f"Each HeLab writes its own log file, renamed and started again every 1 {app_log.MB_UNIT}. At startup HeLab "
             "deletes the oldest log files beyond this number, every session's counted, never a running "
             "HeLab's. Help › Show log folder shows them.")
         log_form.addRow("Log files to keep:", self.log_keep_spin)
@@ -149,7 +173,8 @@ class SettingsDialog(QDialog):
 
 
 
-        self.dir_scroll_layout.addWidget(QLabel("DIR_TEMPS:"))
+        # (Read once at start, constants.DIR_TEMPS; worded like the cache folder's row: A33.3.)
+        self.dir_scroll_layout.addWidget(QLabel("Temp folder (a change applies at the next start):"))
         self.dir_scroll_layout.addWidget(self.dir_temps_edit)
         dir_temps_btn_layout = QHBoxLayout()
         dir_temps_btn_layout.addWidget(self.dir_temps_browse_btn)
@@ -178,6 +203,10 @@ class SettingsDialog(QDialog):
         # Lab parameters: the constants every folder and plot starts from (F0b).
         self.lab_tab = LabParametersTab(self.settings)
         self.tabs.addTab(self.lab_tab, "Lab parameters")
+
+        # The TXY converter: the profile, backend and output conversions use, and the profile manager (Q6.11).
+        self.converter_tab = ConverterTab(self.cache, self.settings)
+        self.tabs.addTab(self.converter_tab, "TXY converter")
 
         # TODO: default load folder
 
@@ -220,9 +249,31 @@ class SettingsDialog(QDialog):
         self.reset_button.clicked.connect(self.reset_settings)
 
         self.load_settings()
+        self._identify()
 
         # self.main_layout.setStretch(0, 1)
         # self.main_layout.setStretch(1, 0)
+
+    def _identify(self) -> None:
+        """The General tab's and the dialog's controls' IDs and names (helab/utils/accessible.py);
+        each other tab names its own."""
+        if (bar := self.tabs.tabBar()) is not None:
+            identify(bar, "settings_tabs", "Settings tabs")
+        for widget, ident, name in (
+                (self.load_mode_combo, "load_mode", "When selecting another folder"),
+                (self.simultaneous_io_spin, "simultaneous_io", ""), (self.check_level_combo, "check_level", ""),
+                (self.live_interval_spin, "live_interval", ""), (self.settle_spin, "settle_seconds", "Settle time"),
+                (self.auto_scan_visible_checkbox, "auto_scan_visible", ""),
+                (self.reopen_plots_checkbox, "reopen_plots", ""), (self.log_keep_spin, "log_keep", ""),
+                (self.dir_temps_edit, "temp_folder", "Temp folder"), (self.dir_caches_edit, "cache_folder", "Cache folder"),
+                (self.dir_temps_browse_btn, "temp_folder_browse", "Browse for temp folder…"),
+                (self.dir_temps_open_btn, "temp_folder_open", "Open temp folder"),
+                (self.dir_temps_reset_btn, "temp_folder_reset", "Reset temp folder to default"),
+                (self.dir_caches_browse_btn, "cache_folder_change", "Change cache folder…"),
+                (self.dir_caches_open_btn, "cache_folder_open", "Open cache folder"),
+                (self.save_button, "settings_save", ""), (self.cancel_button, "settings_cancel", ""),
+                (self.reset_button, "settings_reset", "")):
+            identify(widget, ident, name)
 
     def _make_tab_cache(self) -> None:
         # The GUI never opens the store: the tab asks a helper (FolderCache.cache_admin).
@@ -230,6 +281,12 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self.cache_tab, "Cache")
         self.roots_tab = DataRootsTab(self.cache)
         self.tabs.addTab(self.roots_tab, "Data roots")
+
+    def show_tab(self, title: str) -> None:
+        """Open at the tab titled ``title`` (as clicking it does)."""
+        for index in range(self.tabs.count()):
+            if self.tabs.tabText(index) == title:
+                self.tabs.setCurrentIndex(index)
 
     def show_purge(self) -> None:
         """Open at the Cache tab's Remove old entries (from the disk cache's 80% warning)."""
@@ -254,7 +311,7 @@ class SettingsDialog(QDialog):
         super().done(a0)
 
     def browse_dir_temps(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Select DIR_TEMPS Folder")
+        folder = QFileDialog.getExistingDirectory(self, "Choose the temp folder")
         if folder:
             self.dir_temps_edit.setText(folder)
 
@@ -294,6 +351,7 @@ class SettingsDialog(QDialog):
         self.simultaneous_io_spin.setValue(read_io_concurrency(settings))
         self.check_level_combo.setCurrentIndex(self.check_level_combo.findData(read_check_level(settings)))
         self.live_interval_spin.setValue(read_live_interval(settings))
+        self.settle_spin.setValue(read_settle_seconds(settings))
         self.log_keep_spin.setValue(read_log_keep(settings))
         self.auto_scan_visible_checkbox.setChecked(read_setting(settings, AUTO_SCAN_VISIBLE_SETTING, typed=True))
         self.reopen_plots_checkbox.setChecked(read_setting(settings, REOPEN_PLOTS_SETTING, typed=True))
@@ -326,6 +384,7 @@ class SettingsDialog(QDialog):
         settings.setValue(SIMULTANEOUS_IO_SETTING, self.simultaneous_io_spin.value())
         settings.setValue(CHECK_LEVEL_SETTING, self.check_level_combo.currentData())
         settings.setValue(LIVE_INTERVAL_SETTING, self.live_interval_spin.value())
+        settings.setValue(SETTLE_SECONDS_SETTING, self.settle_spin.value())
         settings.setValue(LOG_KEEP_SETTING, self.log_keep_spin.value())
         for key in RETIRED:
             settings.remove(key)
@@ -333,6 +392,7 @@ class SettingsDialog(QDialog):
         settings.setValue(REOPEN_PLOTS_SETTING, self.reopen_plots_checkbox.isChecked())
         self.cache_tab.save(settings)
         self.lab_tab.save(settings)
+        self.converter_tab.save(settings)
         self.accept()
         logging.debug("Settings saved")
 
@@ -360,7 +420,7 @@ class SettingsDialog(QDialog):
             settings.setValue(DIR_CACHES_SETTING, caches)
         self.load_settings()
         self.lab_tab.load(settings)
-        self.cache_tab.disk_budget.setValue(read_disk_budget(settings) / GB)
+        self.cache_tab.show_disk_budget(read_disk_budget(settings))
         self.cache_tab.ram_budget.setValue(read_ram_budget_steps(settings, self.cache_tab.ram_budget.total))
         self.cache_tab.live_autosave.setValue(read_live_autosave(settings))
         self.cache_tab.plot_auto_reload.setChecked(read_plot_auto_reload(settings))

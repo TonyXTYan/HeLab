@@ -1,0 +1,132 @@
+{
+ "2025 plates Jun 2026 (0625 Ramsey)": {
+  "x1": {
+   "reflection_peak_ns": 173.7,
+   "reflection_excess_per_pulse": 0.1462,
+   "shortest_ns_p0.1": 100.3,
+   "frac_below_100ns": 0.001
+  },
+  "x2": {
+   "reflection_peak_ns": 195.4,
+   "reflection_excess_per_pulse": 0.1422,
+   "shortest_ns_p0.1": 124.3,
+   "frac_below_100ns": 0.0002
+  },
+  "y1": {
+   "reflection_peak_ns": 169.9,
+   "reflection_excess_per_pulse": 0.1136,
+   "shortest_ns_p0.1": 116.8,
+   "frac_below_100ns": 0.0002
+  },
+  "y2": {
+   "reflection_peak_ns": 189.8,
+   "reflection_excess_per_pulse": 0.1022,
+   "shortest_ns_p0.1": 115.3,
+   "frac_below_100ns": 0.0002
+  }
+ },
+ "2025 plates Jul 2026 (tight trap)": {
+  "x1": {
+   "reflection_peak_ns": 196.6,
+   "reflection_excess_per_pulse": 0.0846,
+   "shortest_ns_p0.1": 125.9,
+   "frac_below_100ns": 0.0002
+  },
+  "x2": {
+   "reflection_peak_ns": 174.3,
+   "reflection_excess_per_pulse": 0.1044,
+   "shortest_ns_p0.1": 108.1,
+   "frac_below_100ns": 0.0002
+  },
+  "y1": {
+   "reflection_peak_ns": 187.3,
+   "reflection_excess_per_pulse": 0.1002,
+   "shortest_ns_p0.1": 121.2,
+   "frac_below_100ns": 0.0001
+  },
+  "y2": {
+   "reflection_peak_ns": 171.1,
+   "reflection_excess_per_pulse": 0.0389,
+   "shortest_ns_p0.1": 120.0,
+   "frac_below_100ns": 0.0001
+  }
+ },
+ "2022 plates 2023-03": {
+  "x1": {
+   "reflection_peak_ns": 176.0,
+   "reflection_excess_per_pulse": 0.1326,
+   "shortest_ns_p0.1": 110.8,
+   "frac_below_100ns": 0.0002
+  },
+  "x2": {
+   "reflection_peak_ns": 195.5,
+   "reflection_excess_per_pulse": 0.0885,
+   "shortest_ns_p0.1": 131.0,
+   "frac_below_100ns": 0.0001
+  },
+  "y1": {
+   "reflection_peak_ns": 170.9,
+   "reflection_excess_per_pulse": 0.047,
+   "shortest_ns_p0.1": 124.7,
+   "frac_below_100ns": 0.0
+  },
+  "y2": {
+   "reflection_peak_ns": 190.3,
+   "reflection_excess_per_pulse": 0.0375,
+   "shortest_ns_p0.1": 127.1,
+   "frac_below_100ns": 0.0
+  }
+ },
+ "2022 plates 2024-11": {
+  "x1": {
+   "reflection_peak_ns": 174.9,
+   "reflection_excess_per_pulse": 0.0367,
+   "shortest_ns_p0.1": 108.0,
+   "frac_below_100ns": 0.0002
+  },
+  "x2": {
+   "reflection_peak_ns": 196.4,
+   "reflection_excess_per_pulse": 0.045,
+   "shortest_ns_p0.1": 129.0,
+   "frac_below_100ns": 0.0001
+  },
+  "y1": {
+   "reflection_peak_ns": 171.4,
+   "reflection_excess_per_pulse": 0.0169,
+   "shortest_ns_p0.1": 120.9,
+   "frac_below_100ns": 0.0
+  },
+  "y2": {
+   "reflection_peak_ns": 190.2,
+   "reflection_excess_per_pulse": 0.0266,
+   "shortest_ns_p0.1": 124.8,
+   "frac_below_100ns": 0.0
+  }
+ },
+ "2017 plates 2022-07": {
+  "x1": {
+   "reflection_peak_ns": 169.1,
+   "reflection_excess_per_pulse": 0.0089,
+   "shortest_ns_p0.1": 15.5,
+   "frac_below_100ns": 0.1162
+  },
+  "x2": {
+   "reflection_peak_ns": 186.3,
+   "reflection_excess_per_pulse": 0.0066,
+   "shortest_ns_p0.1": 17.0,
+   "frac_below_100ns": 0.1024
+  },
+  "y1": {
+   "reflection_peak_ns": 144.8,
+   "reflection_excess_per_pulse": 0.0111,
+   "shortest_ns_p0.1": 15.3,
+   "frac_below_100ns": 0.1148
+  },
+  "y2": {
+   "reflection_peak_ns": 151.5,
+   "reflection_excess_per_pulse": 0.0104,
+   "shortest_ns_p0.1": 15.6,
+   "frac_below_100ns": 0.1131
+  }
+ }
+}

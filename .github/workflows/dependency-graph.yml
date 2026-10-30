@@ -1,0 +1,31 @@
+name: Dependency graph
+
+# Sends requirements.lock's exact versions to GitHub's dependency graph (helab/dependency_snapshot.py),
+# so Dependabot alerts cover what HeLab installs: Dependabot itself reads only requirements.txt (Q6.4).
+
+on:
+  push:
+    branches: [main]
+    paths: [requirements.lock, helab/dependency_snapshot.py, .github/workflows/dependency-graph.yml]
+  schedule:
+    - cron: "17 3 * * 1"  # Weekly, so new advisories are matched against main's lock.
+  workflow_dispatch:
+
+permissions:
+  contents: write  # The dependency submission API needs it.
+
+jobs:
+  submit:
+    name: Submit requirements.lock
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          submodules: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.13'
+      - name: Submit the snapshot
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python -m helab.dependency_snapshot --submit

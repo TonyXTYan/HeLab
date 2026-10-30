@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
 )
 
 from helab.analysis.budget_core import RELEASE_SHARE
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.cache_store import KINDS, purge_estimate, results_purge_estimate, trim_estimate
 from helab.utils.constants import (
     DISK_BUDGET_SETTING, LIVE_AUTOSAVE_SETTING, PLOT_AUTO_RELOAD_SETTING, MAX_LIVE_AUTOSAVE, MIN_DISK_BUDGET, RAM_BUDGET_SETTING, RAM_STEPS,
@@ -28,11 +29,10 @@ from helab.utils.constants import (
 )
 from helab.utils import folder_cache
 from helab.utils.folder_cache import FolderCache
-from helab.utils.number_format import byte_size
+from helab.utils.number_format import byte_size, byte_unit
 from helab.utils.settings_defaults import RESULT_REUSE_SETTING, read_setting
 from helab.utils.time_format import relative_age
 
-GB = 10**9  # SI, as every size HeLab shows: budgets typed and shown in GB (Tony, 2026-10-26)
 DAY = 86400.0
 DEFAULT_PURGE_DAYS = 90
 # The rows of the disk cache, by record kind: label and button.
@@ -51,6 +51,18 @@ CLEAR_TEXT = {
 RESULTS_LABEL = "Cached analysis"
 RESULTS_TEXT = ("Plots shown now stay as they are; the next run of each plot computes again. Cached data, "
                 "folder records and exported files are kept.")
+# HeLab's converted TXY (Q27.5): where they are, and what each folder holds (the row's tooltip).
+CONVERTED_TIP = ("TXY files HeLab converted from raw files, in the cache and temp folders' converted-txy folders, "
+                 "with HeLab's index of what made them. They don't count toward the budget, and nothing removes "
+                 "them but this Clear, which keeps the index (counted here; a Clear gives back the space of the "
+                 "rows it removes) and the records of TXY written beside the raw files (those TXY aren't here).")
+CONVERTED_BASES = {"cache": "Cache folder", "temp": "Temp folder"}
+
+
+def converted_used(usage: dict[str, Any]) -> str:
+    """`` · last used 2h ago`` once a conversion or load has used one of the folders, else ""."""
+    last_used = usage.get("last_used")
+    return f" · last used {relative_age(time.time() - float(last_used))}" if last_used else ""
 
 
 def read_result_reuse(settings: QSettings) -> bool:
@@ -62,8 +74,8 @@ def plural(count: int, noun: str) -> str:
 
 
 class RamBudgetSpinBox(QSpinBox):
-    """The RAM budget in steps of 1/128 of RAM, shown as e.g. "16.0 GB (1/8 of 128 GB)".
-    A typed size in GB snaps to the nearest step."""
+    """The RAM budget in steps of 1/128 of RAM, shown as e.g. "16.0 GiB (1/8 of 128 GiB)".
+    A typed size in GiB snaps to the nearest step."""
 
     def __init__(self, total: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -73,13 +85,13 @@ class RamBudgetSpinBox(QSpinBox):
 
     def textFromValue(self, v: int) -> str:
         share = Fraction(v, RAM_STEPS)
-        return f"{byte_size(v * self.step)} ({share.numerator}/{share.denominator} of {byte_size(self.total)})"
+        return f"{byte_size(v * self.step, 'ram')} ({share.numerator}/{share.denominator} of {byte_size(self.total, 'ram')})"
 
     def valueFromText(self, text: str | None) -> int:
         match = re.match(r"\s*(\d*\.?\d+)", text or "")
         if match is None:
             return self.value()
-        return max(self.minimum(), min(self.maximum(), round(float(match.group(1)) * GB / self.step)))
+        return max(self.minimum(), min(self.maximum(), round(float(match.group(1)) * byte_unit(3, "ram")[0] / self.step)))
 
     def validate(self, input: str | None, pos: int) -> tuple[QValidator.State, str, int]:
         text = input or ""
@@ -144,12 +156,16 @@ class CacheTab(QWidget):
         self.usage_bar.setMaximumHeight(self.usage_label.fontMetrics().height())
         usage.addWidget(self.usage_bar, 1)
         usage.addWidget(QLabel("Budget"))
+        # In the OS's disk units, GB or GiB on Windows (Q26.1), typed in steps of half a unit.
+        self.disk_unit, unit = byte_unit(3, "disk")
+        self._shown_budget = (-1.0, 0)  # (``show_disk_budget``)
         self.disk_budget = QDoubleSpinBox()
-        self.disk_budget.setRange(MIN_DISK_BUDGET / GB, 1 << 20)
+        self.disk_budget.setRange(MIN_DISK_BUDGET / self.disk_unit, 1 << 20)
         self.disk_budget.setDecimals(1)
         self.disk_budget.setSingleStep(0.5)
-        self.disk_budget.setSuffix(" GB")
-        self.disk_budget.setValue(read_disk_budget(settings) / GB)
+        self.disk_budget.setSuffix(f" {unit}")
+        self.show_disk_budget(read_disk_budget(settings))
+        self.disk_budget.valueChanged.connect(self._snap_disk_budget)
         self.disk_budget.setToolTip(
             "Counts live data: cached datasets, cached analysis and the records database. Removed files waiting out their "
             "10-minute grace period don't count. Nothing is removed to make room without asking. At 80%, "
@@ -208,13 +224,26 @@ class CacheTab(QWidget):
         prefs = QHBoxLayout()
         prefs.addWidget(QLabel("Folder preferences"))
         self.prefs_label = QLabel("Checking…")
-        self.prefs_label.setToolTip("Folders you chose not to cache or not to auto-load (right-click a folder). "
-                                    "Clear all and purges keep them.")
+        self.prefs_label.setToolTip("Folders you chose not to cache, not to auto-load, or to have HeLab's converted "
+                                    "TXY written beside their raw files (right-click a folder). Clear all and purges "
+                                    "keep them.")
         prefs.addWidget(self.prefs_label, 1)
         self.prefs_button = QPushButton("Clear…")
         self.prefs_button.clicked.connect(self.clear_prefs)
         prefs.addWidget(self.prefs_button)
         layout.addLayout(prefs)
+
+        # HeLab's own TXY under the cache and temp folders (converted-txy/, Q27.5): not in the store, outside
+        # the budget, removed only by this Clear (Q12.3), through a helper and each folder's index.
+        converted = QHBoxLayout()
+        converted.addWidget(QLabel("HeLab's converted TXY"))
+        self.converted_label = QLabel("Checking…")
+        self.converted_label.setToolTip(CONVERTED_TIP)
+        converted.addWidget(self.converted_label, 1)
+        self.converted_button = QPushButton("Clear…")
+        self.converted_button.clicked.connect(self.clear_converted)
+        converted.addWidget(self.converted_button)
+        layout.addLayout(converted)
 
         # Presets (helab/views/PresetsInspector.py): the user's too, kept by Clear all and purges.
         presets = QHBoxLayout()
@@ -302,6 +331,7 @@ class CacheTab(QWidget):
         layout.addWidget(self.plot_auto_reload)
         layout.addStretch(1)
 
+        self._identify()
         if cache is not None:
             cache.cacheAdminResult.connect(self._on_result)
             cache.cacheAdminDone.connect(self._on_done)
@@ -316,6 +346,30 @@ class CacheTab(QWidget):
         font.setBold(True)
         label.setFont(font)
         return label
+
+    def _identify(self) -> None:
+        """The tab's controls' IDs and names (helab/utils/accessible.py)."""
+        identify(self.open_button, "cache_open", "Open cache folder")
+        identify(self.disk_budget, "disk_budget", "Disk budget")
+        for kind, button in self.kind_buttons.items():
+            identify(button, f"cache_clear_{kind}", f"{button.text().rstrip('…')} {KIND_ROWS[kind][0].lower()}…")
+        identify(self.results_button, "cache_clear_results", f"Clear {RESULTS_LABEL.lower()}…")
+        identify(self.result_reuse, "result_reuse")
+        identify(self.refresh_button, "cache_refresh", "Refresh cache sizes")
+        identify(self.clear_all_button, "cache_clear_all")
+        identify(self.prefs_button, "cache_clear_preferences", "Clear folder preferences…")
+        identify(self.converted_button, "cache_clear_converted", "Clear HeLab's converted TXY…")
+        identify(self.presets_button, "cache_presets")
+        identify(self.live_autosave, "live_autosave", "Live: save to the disk cache every")
+        for kind, what, days, button in (
+                ("datasets", "cached data", self.dataset_days, self.purge_datasets_button),
+                ("records", "folder records", self.record_days, self.purge_records_button),
+                ("results", "cached analysis", self.result_days, self.purge_results_button)):
+            identify(days, f"purge_{kind}_days", f"Remove {what} older than")
+            identify(button, f"purge_{kind}", f"Remove old {what}…")
+        identify(self.include_failures, "purge_include_failures")
+        identify(self.ram_budget, "ram_budget_setting", "RAM budget")
+        identify(self.plot_auto_reload, "plot_auto_reload")
 
     def _days(self) -> QSpinBox:
         days = QSpinBox()
@@ -346,6 +400,7 @@ class CacheTab(QWidget):
         box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=self)
         accept = box.addButton(verb, QMessageBox.ButtonRole.AcceptRole)
         box.addButton(QMessageBox.StandardButton.Cancel)
+        identify_buttons(box, "cache_confirm")
         box.exec()
         return box.clickedButton() is accept
 
@@ -431,11 +486,31 @@ class CacheTab(QWidget):
             return
         prefs = inventory.get("prefs") or {}
         if not self.confirm("Clear folder preferences?",
-                            f"Forgets your choices: {plural(int(prefs.get('no_cache', 0)), 'folder')} not cached and "
-                            f"{plural(int(prefs.get('no_auto_load', 0)), 'folder')} not auto-loaded. Those folders "
-                            "are cached and auto-loaded again. Cached data is kept.", "Clear"):
+                            f"Forgets your choices: {plural(int(prefs.get('no_cache', 0)), 'folder')} not cached, "
+                            f"{plural(int(prefs.get('no_auto_load', 0)), 'folder')} not auto-loaded and "
+                            f"{plural(int(prefs.get('write_beside', 0)), 'folder')} with HeLab's TXY written beside "
+                            "their raw files. Those folders are cached and auto-loaded again, and HeLab's TXY of them "
+                            "go to the cache or temp folder. Cached data, and TXY already written, are kept.", "Clear"):
             return
         self._run("Clear folder preferences", "clear_prefs")
+
+    def clear_converted(self) -> None:
+        """Clear HeLab's converted TXY under the cache and temp folders (asks first)."""
+        inventory = self.inventory
+        if inventory is None or self.busy:
+            return
+        converted = inventory.get("converted_txy") or {"files": 0, "bytes": 0}
+        files, size = int(converted["files"]), byte_size(int(converted.get("clearable_bytes") or 0), "disk")
+        # (No TXY left, only old builds' records or a damaged index set aside: say those.)
+        what = (f"{plural(files, 'TXY file')} HeLab converted, with their records ({size})" if files
+                else f"what is left of HeLab's converted TXY: old records and damaged indexes ({size})")
+        if not self.confirm("Clear HeLab's converted TXY?",
+                            f"Removes {what}, from the cache and temp folders; HeLab's index of what made them "
+                            "stays. Raw files, MATLAB's TXY and HeLab's TXY written beside raw files are kept. Data "
+                            "loaded stays open; plots on HeLab's TXY keep what they show, and shots are converted "
+                            "again when converting is on.", "Clear"):
+            return
+        self._run("Clear HeLab's converted TXY", "clear_converted_txy")
 
     def clear(self, kinds: list[str]) -> None:
         inventory = self.inventory
@@ -444,7 +519,7 @@ class CacheTab(QWidget):
         if set(kinds) == set(KINDS):
             title = "Clear the disk cache?"
             text = (f"Removes everything in the disk cache: cached data for "
-                    f"{plural(inventory['datasets']['count'], 'folder')} ({byte_size(inventory['datasets']['bytes'])}),"
+                    f"{plural(inventory['datasets']['count'], 'folder')} ({byte_size(inventory['datasets']['bytes'], 'disk')}),"
                     " folder summaries, scan failures, subfolder status and folder listings.\n\n"
                     "Loaded data stays open. Automatic checks will try failed folders again. Cached analysis "
                     "stays (its own Clear).")
@@ -454,7 +529,7 @@ class CacheTab(QWidget):
             name = KIND_ROWS[kind][0]
             count = (inventory["histories"]["blocked"] if kind == "histories"
                      else (inventory.get(kind) or {"count": 0})["count"])
-            size = f" ({byte_size(inventory['datasets']['bytes'])})" if kind == "datasets" else ""
+            size = f" ({byte_size(inventory['datasets']['bytes'], 'disk')})" if kind == "datasets" else ""
             verb = "Forget" if kind == "histories" else "Clear"
             title = f"{verb} {name.lower()}?"
             text = f"{verb}s {name.lower()} for {plural(count, 'folder')}{size}.\n\n{CLEAR_TEXT[kind]}"
@@ -469,7 +544,7 @@ class CacheTab(QWidget):
             return
         results = inventory.get("results") or {"count": 0, "bytes": 0}
         if self.confirm("Clear cached analysis?",
-                        f"Removes {plural(int(results['count']), 'saved result')} ({byte_size(int(results['bytes']))})"
+                        f"Removes {plural(int(results['count']), 'saved result')} ({byte_size(int(results['bytes']), 'disk')})"
                         f".\n\n{RESULTS_TEXT}", "Clear"):
             self._run("Clear cached analysis", "clear_results")
 
@@ -480,7 +555,7 @@ class CacheTab(QWidget):
         cutoff = time.time() - days * DAY
         estimate = results_purge_estimate(self.inventory, cutoff)
         if self.confirm("Remove old cached analysis?",
-                        f"Removes {plural(estimate['results'], 'saved result')} ({byte_size(estimate['bytes'])}) "
+                        f"Removes {plural(estimate['results'], 'saved result')} ({byte_size(estimate['bytes'], 'disk')}) "
                         f"not shown in the last {plural(days, 'day')}.\n\n{RESULTS_TEXT}", "Remove"):
             self._run("Remove old cached analysis", "purge", what="results", cutoff=cutoff)
 
@@ -492,7 +567,7 @@ class CacheTab(QWidget):
         estimate = purge_estimate(self.inventory, cutoff, datasets=True)
         if self.confirm("Remove old cached data?",
                         f"Removes cached data for {plural(estimate['datasets'], 'folder')} "
-                        f"({byte_size(estimate['bytes'])}) not used in the last {plural(days, 'day')}.\n\n"
+                        f"({byte_size(estimate['bytes'], 'disk')}) not used in the last {plural(days, 'day')}.\n\n"
                         f"{CLEAR_TEXT['datasets']} TXY files are never touched.", "Remove"):
             self._run("Remove old cached data", "purge", what="datasets", cutoff=cutoff)
 
@@ -518,9 +593,9 @@ class CacheTab(QWidget):
             return
         count, total, shown = self.cache.memory_usage()
         plots = self.cache.plot_bytes()
-        self.memory_label.setText(f"In use: {plural(count, 'folder')} · {byte_size(total)} "
-                                  f"({byte_size(shown)} shown in tabs)"
-                                  + (f" · plots {byte_size(plots)} more" if plots else ""))
+        self.memory_label.setText(f"In use: {plural(count, 'folder')} · {byte_size(total, 'ram')} "
+                                  f"({byte_size(shown, 'ram')} shown in tabs)"
+                                  + (f" · plots {byte_size(plots, 'ram')} more" if plots else ""))
 
     def _show_estimates(self) -> None:
         inventory = self.inventory
@@ -533,7 +608,7 @@ class CacheTab(QWidget):
             return
         now = time.time()
         datasets = purge_estimate(inventory, now - self.dataset_days.value() * DAY, datasets=True)
-        self.dataset_estimate.setText(f"— frees ~{byte_size(datasets['bytes'])} "
+        self.dataset_estimate.setText(f"— frees ~{byte_size(datasets['bytes'], 'disk')} "
                                       f"({plural(datasets['datasets'], 'folder')})")
         records = purge_estimate(inventory, now - self.record_days.value() * DAY, datasets=False,
                                  include_failures=self.include_failures.isChecked())
@@ -543,7 +618,7 @@ class CacheTab(QWidget):
                                         f"{plural(records['listings'], 'folder listing')} · "
                                         f"{plural(records['histories'], 'scan history')}")
         results = results_purge_estimate(inventory, now - self.result_days.value() * DAY)
-        self.result_estimate.setText(f"— frees ~{byte_size(results['bytes'])} "
+        self.result_estimate.setText(f"— frees ~{byte_size(results['bytes'], 'disk')} "
                                      f"({plural(results['results'], 'result')})")
         writable = not inventory.get("read_only") and not self.busy
         self.purge_datasets_button.setEnabled(writable and datasets["datasets"] > 0)
@@ -556,6 +631,7 @@ class CacheTab(QWidget):
         for button in (*self.kind_buttons.values(), self.clear_all_button):
             button.setEnabled(writable)
         self.prefs_button.setEnabled(False)
+        self.converted_button.setEnabled(False)
         self.results_button.setEnabled(False)
         self.refresh_button.setEnabled(self.enabled and not self.busy and not self._inventory_owner)
         self.disk_budget.setEnabled(not self.applying)
@@ -563,7 +639,7 @@ class CacheTab(QWidget):
                   "Changing the disk budget…" if self._budget_job else f"{self._job_label}…" if self.busy else "Checking…" if self._inventory_owner and inventory is None
                   else "")
         if inventory is None:
-            for label in (*self.kind_labels.values(), self.prefs_label, self.results_label):
+            for label in (*self.kind_labels.values(), self.prefs_label, self.results_label, self.converted_label):
                 label.setText(status or "Not checked")
             self.usage_label.setText(status or "Not checked")
             self.checked_label.setText(self.message or status)
@@ -573,23 +649,23 @@ class CacheTab(QWidget):
         usage = int(inventory["usage"])
         extras = []
         if inventory["retired"]["bytes"]:
-            extras.append(f"freeing {byte_size(inventory['retired']['bytes'])}")
+            extras.append(f"freeing {byte_size(inventory['retired']['bytes'], 'disk')}")
         if inventory["pending"]:
             extras.append(f"{plural(len(inventory['pending']), 'save')} waiting for your answer")
         if inventory.get("read_only"):
             extras.append("read only: written by a newer HeLab")
-        self.usage_label.setText(" · ".join([f"{byte_size(usage)} of {byte_size(budget)} budget", *extras]))
+        self.usage_label.setText(" · ".join([f"{byte_size(usage, 'disk')} of {byte_size(budget, 'disk')} budget", *extras]))
         self.usage_label.setToolTip("Freeing: removed cached data waiting out its 10-minute grace period; it "
                                     "doesn't count toward the budget." if inventory["retired"]["bytes"] else "")
         self.usage_bar.setValue(min(1000, round(1000 * usage / budget)) if budget else 0)
         datasets = inventory["datasets"]
-        text = f"{plural(datasets['count'], 'folder')} · {byte_size(datasets['bytes'])}"
+        text = f"{plural(datasets['count'], 'folder')} · {byte_size(datasets['bytes'], 'disk')}"
         last_used = datasets.get("last_used")
         if isinstance(last_used, (int, float)):
             text += f" · last used {relative_age(time.time() - last_used)}"
             self.kind_labels["datasets"].setToolTip(
                 f"Last used: {datetime.fromtimestamp(last_used):%Y-%m-%d %H:%M}\n"
-                f"About {byte_size(datasets.get('ram_bytes', 0))} in RAM when loaded")
+                f"About {byte_size(datasets.get('ram_bytes', 0), 'ram')} in RAM when loaded")
         self.kind_labels["datasets"].setText(text)
         self.kind_labels["summaries"].setText(plural(inventory["summaries"]["count"], "folder"))
         histories = inventory["histories"]
@@ -598,15 +674,29 @@ class CacheTab(QWidget):
         self.kind_labels["subtrees"].setText(plural(inventory["subtrees"]["count"], "folder"))
         self.kind_labels["listings"].setText(plural((inventory.get("listings") or {"count": 0})["count"], "folder"))
         results = inventory.get("results") or {"count": 0, "bytes": 0, "last_used": None}
-        text = f"{plural(int(results['count']), 'result')} · {byte_size(int(results['bytes']))}"
+        text = f"{plural(int(results['count']), 'result')} · {byte_size(int(results['bytes']), 'disk')}"
         if isinstance(results.get("last_used"), (int, float)):
             text += f" · last shown {relative_age(time.time() - results['last_used'])}"
         self.results_label.setText(text)
         self.results_button.setEnabled(writable and bool(results["count"]))
-        prefs = inventory.get("prefs") or {"no_cache": 0, "no_auto_load": 0}
+        prefs = {"no_cache": 0, "no_auto_load": 0, "write_beside": 0, **(inventory.get("prefs") or {})}
         self.prefs_label.setText(f"{plural(prefs['no_cache'], 'folder')} not cached · "
-                                 f"{plural(prefs['no_auto_load'], 'folder')} not auto-loaded")
-        self.prefs_button.setEnabled(writable and bool(prefs["no_cache"] or prefs["no_auto_load"]))
+                                 f"{plural(prefs['no_auto_load'], 'folder')} not auto-loaded" + (
+                                     f" · {plural(prefs['write_beside'], 'folder')} with HeLab's TXY beside"
+                                     if prefs["write_beside"] else ""))
+        self.prefs_button.setEnabled(writable and bool(prefs["no_cache"] or prefs["no_auto_load"]
+                                                       or prefs["write_beside"]))
+        converted: dict[str, Any] = inventory.get("converted_txy") or {"files": 0, "bytes": 0}
+        self.converted_label.setText(f"{plural(int(converted['files']), 'file')} · "
+                                     f"{byte_size(int(converted['bytes']), 'disk')}" + converted_used(converted))
+        self.converted_label.setToolTip("\n".join((CONVERTED_TIP, "", *(
+            f"{CONVERTED_BASES.get(name, name)}: {plural(int(base['files']), 'file')} in "
+            f"{plural(int(base['folders']), 'folder')} · {byte_size(int(base['bytes']), 'disk')}{converted_used(base)}"
+            + (f" · a newer HeLab's index, {byte_size(int(base['newer']), 'disk')}, which Clear leaves"
+               if base.get("newer") else "")
+            for name, base in (converted.get("bases") or {}).items()))))
+        # (Only when Clear would remove something: never the index itself, which the bytes include.)
+        self.converted_button.setEnabled(writable and bool(converted.get("clearable")))
         checked = f"Checked {datetime.fromtimestamp(inventory['checked_at']):%H:%M}"
         self.checked_label.setText(" · ".join(filter(None, (status or checked, self.message))))
         self._show_estimates()
@@ -616,8 +706,24 @@ class CacheTab(QWidget):
         self.dataset_days.setFocus()
         self.dataset_days.selectAll()
 
+    def show_disk_budget(self, budget: int) -> None:
+        """Shows ``budget`` bytes. Left as shown, it stays those bytes: a budget saved in the other
+        units (8 GB on Windows shows 7.5 GiB) isn't rewritten."""
+        self._shown_budget = (-1.0, budget)  # (No snap: it shows the stored bytes.)
+        self.disk_budget.setValue(budget / self.disk_unit)
+        self._shown_budget = (self.disk_budget.value(), budget)
+
+    def _snap_disk_budget(self, value: float) -> None:
+        """Moved off a stored budget that isn't on the half-unit grid (most GB budgets on Windows),
+        the box goes to the grid at once, so the value shown is the value saved."""
+        if self._shown_budget[0] >= 0 and value != self._shown_budget[0] and value * 2 != round(value * 2):
+            self.disk_budget.setValue(round(value * 2) / 2)
+
     def disk_budget_bytes(self) -> int:
-        return max(MIN_DISK_BUDGET, round(self.disk_budget.value() * 2) * GB // 2)
+        shown, budget = self._shown_budget
+        if self.disk_budget.value() == shown:
+            return budget
+        return max(MIN_DISK_BUDGET, round(self.disk_budget.value() * 2) * self.disk_unit // 2)
 
     def apply_budget(self) -> bool | None:
         """Before Settings writes anything, the store records a changed disk budget: from then
@@ -648,12 +754,12 @@ class CacheTab(QWidget):
         if inventory is not None:
             estimate = trim_estimate(inventory, budget)
             removes = (f"Removes cached data for up to {plural(estimate['datasets'], 'folder')} "
-                       f"({byte_size(estimate['bytes'])}), least recently used first.")
+                       f"({byte_size(estimate['bytes'], 'disk')}), least recently used first.")
         else:
             removes = "Removes the least recently used cached data until the rest fits."
-        uses = f"now uses {byte_size(usage)}, more than" if usage is not None else "uses more than"
+        uses = f"now uses {byte_size(usage, 'disk')}, more than" if usage is not None else "uses more than"
         return self.confirm("Lower the disk cache budget?",
-                            f"The disk cache {uses} {byte_size(budget)}. {removes}\n\n{CLEAR_TEXT['datasets']}",
+                            f"The disk cache {uses} {byte_size(budget, 'disk')}. {removes}\n\n{CLEAR_TEXT['datasets']}",
                             "Lower budget")
 
     def _send_budget(self, action: str, budget: int, *, fit: bool = False) -> None:

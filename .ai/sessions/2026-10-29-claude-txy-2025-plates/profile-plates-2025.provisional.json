@@ -1,0 +1,488 @@
+{
+ "provisional": true,
+ "calibrated": false,
+ "plate": "plates-2025 (MCP plates fitted 2025-06-18)",
+ "made": "2026-10-29, Claude, session .ai/sessions/2026-10-29-claude-txy-2025-plates/ (investigation.md)",
+ "approval": "None. Tony approves calibrations; nothing here is applied to HeLab's built-in profiles.",
+ "data": {
+  "raw": [
+   "~/HeLab-samples/txy-2026 (172 shots, 4 runs 2026-06-19..27)",
+   "~/HeLab-samples/calib-2026/20260625_Ramsey_weak_trap (all 519 raw)",
+   "~/HeLab-samples/calib-2026/20260722-tight-trap-freq-meas (24 raw + TXY)"
+  ],
+  "txy_only": [
+   "calib-2026/20261010-411trapcollisions44 (866)",
+   "calib-2026/20260727-RingBEC (100 of 1007)",
+   "calib-2026/20260812_Quantum_efficiency (45 of 498)"
+  ],
+  "comparison": [
+   "~/HeLab-samples/txy-v1 (2017 and 2022 plates)",
+   "~/HeLab-samples/calib-v1 (2017- and 2022-plate halos)"
+  ]
+ },
+ "measurements": {
+  "channel_map": {
+   "matlab_2019": {
+    "x1": 0,
+    "x2": 1,
+    "y1": 2,
+    "y2": 3,
+    "mcp": 4,
+    "trigger": 5
+   },
+   "measured": "June 2026: as matlab-2019. From ~2026-07-21 (tight-trap raw) to at least 2026-10-09 (collisions TXY): x1<->x2 and y1<->y2 swapped relative to June (image rotated 180 degrees).",
+   "evidence": {
+    "reflection_peak_ns_jun_x1_x2_y1_y2": [
+     173.7,
+     195.4,
+     169.9,
+     189.8
+    ],
+    "reflection_peak_ns_jul_x1_x2_y1_y2": [
+     196.6,
+     174.3,
+     187.3,
+     171.1
+    ],
+    "reflection_peak_ns_2022_plates_2023_03": [
+     176.0,
+     195.5,
+     170.9,
+     190.3
+    ],
+    "background_image_corr_with_june": {
+     "2026-07-27 RingBEC as is": -0.032,
+     "2026-07-27 RingBEC rotated 180": 0.797,
+     "2026-07-27 RingBEC mirror X only": -0.016,
+     "2026-07-27 RingBEC mirror Y only": 0.008,
+     "2026-10-10 collisions as is": -0.024,
+     "2026-10-10 collisions rotated 180": 0.984,
+     "2026-10-10 collisions mirror X only": 0.01,
+     "2026-10-10 collisions mirror Y only": 0.034
+    }
+   },
+   "confidence": "high",
+   "channel_7": "new since the 2025 swap (none in any 2017-2025-01 sample); ignored by the converter (output byte-identical without it).",
+   "channel_4_mcp": "no pulses in any post-swap raw file"
+  },
+  "xy_time_sum_difference_bins": {
+   "matlab_2019_assumes": 0,
+   "tolerance_matlab_2019": 400.0,
+   "jun_2026_median": 121.0,
+   "jun_2026_median_sd": 0.47,
+   "jun_2026_iqr": 62.0,
+   "jun_2026_plane_fit": {
+    "c0": 120.63,
+    "per_kbin_X": 17.38,
+    "per_kbin_Y": -24.93,
+    "X2": 2.95,
+    "Y2": -4.47,
+    "XY": -0.2
+   },
+   "jun_2026_map_p5_p95": [
+    7.100000000000001,
+    185.94999999999993
+   ],
+   "jul_2026_median": 103.0,
+   "jul_2026_iqr": 26.0,
+   "jul_2026_plane_fit": {
+    "c0": 101.51,
+    "per_kbin_X": -16.41,
+    "per_kbin_Y": 23.65,
+    "X2": 6.04,
+    "Y2": -6.3,
+    "XY": 3.48
+   },
+   "plates_2022_median": 106.0,
+   "plates_2017_median": 112.0,
+   "method": "median of (x1+x2)-(y1+y2) over matched hits; plane fit in kbins of x1-x2 and y1-y2; bootstrap over shots",
+   "confidence": "high for the value, medium for the map (cloud positions differ per run)"
+  },
+  "absolute_time_sums_bins": {
+   "matlab_2019": [
+    3200.0,
+    3200.0
+   ],
+   "plates_2025": "not measurable (no MCP pulses)",
+   "plates_2022_from_mcp_2022_11": [
+    3362.0,
+    3293.0
+   ],
+   "plates_2022_position_fit": [
+    {
+     "c0": 3342.6,
+     "per_kbin_X": 39.3,
+     "per_kbin_Y": 6.7,
+     "X2": -3.9,
+     "Y2": -7.8
+    },
+    {
+     "c0": 3284.2,
+     "per_kbin_X": 11.7,
+     "per_kbin_Y": 30.6,
+     "X2": -5.7,
+     "Y2": -5.7
+    }
+   ]
+  },
+  "match_window_bins": {
+   "matlab_2019": 3200.0,
+   "proposed": 3200.0,
+   "wide_4000_adds_pct_jun": 0.406,
+   "share_of_wide_extras_with_consistent_sum": 0.25,
+   "normal_hits_consistent": 0.74,
+   "random_expectation": 0.15,
+   "reading": "~80 % of the extra hits are random pulse combinations in dense clouds; real clipped atoms <~0.1 %: keep 3200",
+   "confidence": "medium-high"
+  },
+  "pulse_spacing": {
+   "shortest_interval_ns_p0.1": {
+    "x1": 100.3,
+    "x2": 124.3,
+    "y1": 116.8,
+    "y2": 115.3
+   },
+   "reflection_excess_per_pulse": {
+    "x1": 0.1462,
+    "x2": 0.1422,
+    "y1": 0.1136,
+    "y2": 0.1022
+   },
+   "pulses_per_hit_jun": {
+    "x1": 2.214,
+    "x2": 1.808,
+    "y1": 1.676,
+    "y2": 1.665
+   },
+   "dead_time_proposed_s": 0.0,
+   "reading": "electronics dead time ~100-125 ns per channel (as on the 2022 plates); delay-line reflections 170-196 ns after a pulse; a converter dead time would drop real atoms (0.25 us on all corners: -17.6 % hits, nearly all atoms)"
+  },
+  "geometry": {
+   "edge_ellipse_jun_2026": {
+    "centre_mm": [
+     0.6,
+     -1.25
+    ],
+    "semi_axes_mm": [
+     41.2,
+     38.24
+    ],
+    "axis_ratio": 1.0773,
+    "tilt_deg_of_first_axis": 166.5,
+    "mean_radius_mm": 39.55,
+    "radius_sd_mm": 2.15,
+    "sectors": 24
+   },
+   "edge_ellipse_2026_10_10_collisions_in_its_frame": {
+    "centre_mm": [
+     -1.02,
+     0.53
+    ],
+    "semi_axes_mm": [
+     41.31,
+     38.81
+    ],
+    "axis_ratio": 1.0643,
+    "tilt_deg_of_first_axis": 170.7,
+    "mean_radius_mm": 40.05,
+    "radius_sd_mm": 0.99,
+    "sectors": 24
+   },
+   "edge_halves_collisions": [
+    {
+     "centre_mm": [
+      -0.81,
+      1.33
+     ],
+     "semi_axes_mm": [
+      41.46,
+      37.99
+     ],
+     "axis_ratio": 1.0913,
+     "tilt_deg_of_first_axis": 167.9,
+     "mean_radius_mm": 39.9,
+     "radius_sd_mm": 2.92,
+     "sectors": 14
+    },
+    {
+     "centre_mm": [
+      -0.92,
+      0.37
+     ],
+     "semi_axes_mm": [
+      41.32,
+      38.3
+     ],
+     "axis_ratio": 1.0787,
+     "tilt_deg_of_first_axis": 173.2,
+     "mean_radius_mm": 40.34,
+     "radius_sd_mm": 1.01,
+     "sectors": 14
+    }
+   ],
+   "axis_ratio_estimate": "1.07 +- 0.02 (X wider; long axis within ~10-14 deg of X)",
+   "mean_edge_radius_mm_at_matlab_2019_scale": "40.0 +- 0.5 (half-density of dark counts)",
+   "centre_mm_june_frame": "(+0.6, -1.3) June; (+1.0, -0.5) from collisions rotated: ~(0.8, -0.9) +- 0.8",
+   "rotation_rad": "not measurable from these data (halo is not round; BB correlation is blind to rotation); front panel uses 0.61 rad and the halo's long axis lies at ~35 deg, consistent",
+   "v_perp_matlab_2019": [
+    526320.0,
+    526320.0
+   ],
+   "v_perp_provisional": [
+    508812.7,
+    544429.6
+   ],
+   "confidence": "medium (assumes the visible active area is round; 2017 plates show the same 1.09 ratio, so it may be the anode)"
+  },
+  "hot_spots_june_frame_mm": [
+   {
+    "x": 15.9,
+    "y": 1.4,
+    "r": 2.5,
+    "rate_hz_jun": 3.3,
+    "rate_hz_oct": 4.4,
+    "seen": "Jun, Jul tight trap, RingBEC, Oct (all rotated)"
+   },
+   {
+    "x": 32.3,
+    "y": 1.2,
+    "r": 1.4,
+    "rate_hz_jun": 1.8,
+    "rate_hz_oct": 0.44,
+    "seen": "Jun, RingBEC, Oct"
+   },
+   {
+    "x": 8.8,
+    "y": -1.0,
+    "r": 1.5,
+    "rate_hz_jun": 0.1,
+    "rate_hz_oct": 0.13,
+    "seen": "Jun, Oct"
+   },
+   {
+    "x": 1.2,
+    "y": -0.2,
+    "r": 1.1,
+    "rate_hz_jun": 0.08,
+    "seen": "Jun only"
+   },
+   {
+    "x": -27.6,
+    "y": -7.7,
+    "r": 3.8,
+    "rate_hz_oct": 0.14,
+    "seen": "Oct only"
+   },
+   {
+    "x": 7.1,
+    "y": -3.1,
+    "r": 1.6,
+    "rate_hz_oct": 0.06,
+    "seen": "Oct only"
+   },
+   {
+    "x": -29.0,
+    "y": -18.3,
+    "r": 1.6,
+    "rate_hz_jun": 0.04,
+    "seen": "Jun only (weak)"
+   },
+   {
+    "x": -21.6,
+    "y": -19.4,
+    "r": 1.0,
+    "rate_hz_jun": 0.04,
+    "seen": "Jun only (weak)"
+   }
+  ],
+  "hot_spot_method": "helab.analysis.hotspots.find_hot_spots (alpha 0.01, 0.5 mm bins, 1 mm background) on background-window hits; rates = excess / background time (Jun 2194 s, Oct 3389 s)",
+  "flat_field_proxy": {
+   "bins": 211,
+   "corr_jun_vs_collisions_rotated": 0.729,
+   "sd_jun": 0.238,
+   "sd_collisions": 0.249,
+   "sd_of_difference": 0.18,
+   "p5_p95_mean_map": [
+    0.609,
+    1.342
+   ],
+   "radial_profile_mean_map": {
+    "0-6 mm": 0.964,
+    "6-12 mm": 0.96,
+    "12-18 mm": 0.901,
+    "18-24 mm": 0.85,
+    "24-30 mm": 0.782,
+    "30-36 mm": 0.785
+   }
+  },
+  "matching_parameter_effects_jun_2026": {
+   "baseline (matlab-2019 = plates-2025 today)": {
+    "hits": 529523,
+    "change_pct": 0.0,
+    "change_in_windows": 0,
+    "change_outside": 0
+   },
+   "match_tolerance 100 (x and y)": {
+    "hits": 529449,
+    "change_pct": -0.014,
+    "change_in_windows": -74,
+    "change_outside": 0
+   },
+   "match_tolerance 300": {
+    "hits": 529570,
+    "change_pct": 0.009,
+    "change_in_windows": 47,
+    "change_outside": 0
+   },
+   "xy_sum_tolerance 200": {
+    "hits": 478167,
+    "change_pct": -9.699,
+    "change_in_windows": -48680,
+    "change_outside": -2676
+   },
+   "xy_sum_tolerance 300": {
+    "hits": 518424,
+    "change_pct": -2.096,
+    "change_in_windows": -10078,
+    "change_outside": -1021
+   },
+   "xy_sum_tolerance 600": {
+    "hits": 547538,
+    "change_pct": 3.402,
+    "change_in_windows": 15459,
+    "change_outside": 2556
+   },
+   "window 3600 (search 3600, |x1-x2| < 3800)": {
+    "hits": 530387,
+    "change_pct": 0.163,
+    "change_in_windows": 835,
+    "change_outside": 29
+   },
+   "window 4000 (search 4000, |x1-x2| < 4200)": {
+    "hits": 531698,
+    "change_pct": 0.411,
+    "change_in_windows": 2023,
+    "change_outside": 152
+   },
+   "search_depth 18": {
+    "hits": 529523,
+    "change_pct": 0.0,
+    "change_in_windows": 0,
+    "change_outside": 0
+   },
+   "search_depth 72": {
+    "hits": 529523,
+    "change_pct": 0.0,
+    "change_in_windows": 0,
+    "change_outside": 0
+   },
+   "dead time 0.25 us all corners": {
+    "hits": 436296,
+    "change_pct": -17.606,
+    "change_in_windows": -90523,
+    "change_outside": -2704
+   },
+   "dead time x1 0.5 us (2023 edit)": {
+    "hits": 376335,
+    "change_pct": -28.929,
+    "change_in_windows": -149730,
+    "change_outside": -3458
+   },
+   "time sums in T 3367/3294 (T shift only)": {
+    "hits": 529523,
+    "change_pct": 0.0,
+    "change_in_windows": 0,
+    "change_outside": 0
+   },
+   "x2 retry (probe_match; MATLAB keeps the first x2)": {
+    "hits": 529561,
+    "change_pct": 0.007,
+    "change_in_windows": 26,
+    "change_outside": 12
+   }
+  }
+ },
+ "candidate_profiles": {
+  "wired_as_june_2026": {
+   "schema": 1,
+   "name": "plates-2025-provisional-jun2026",
+   "version": 1,
+   "calibrated": false,
+   "notes": "PROVISIONAL, not calibrated (session 2026-10-29-claude-txy-2025-plates). Same matching as matlab-2019; v_perp_y/v_perp_x = 1.07 from the active-area edge (assumes a round MCP), geometric mean kept (absolute scale unknown). Uncalibrated: time sums (no MCP pulses), non-linearity, hot spots, efficiency. Wiring as in June 2026 and all earlier data.",
+   "tag": "",
+   "bin_time": 2.5e-11,
+   "channel_x1": 0,
+   "channel_x2": 1,
+   "channel_y1": 2,
+   "channel_y2": 3,
+   "channel_mcp": 4,
+   "channel_trigger": 5,
+   "subtract_time_zero": true,
+   "skip_first_sorted_row": true,
+   "dead_time_x1": 0.0,
+   "dead_time_x2": 0.0,
+   "dead_time_y1": 0.0,
+   "dead_time_y2": 0.0,
+   "search_depth": 36,
+   "search_window": 3200.0,
+   "match_time_sum_x": 3200.0,
+   "match_tolerance_x": 200.0,
+   "match_time_sum_y": 3200.0,
+   "match_tolerance_y": 200.0,
+   "xy_sum_tolerance": 400.0,
+   "x2_handling": "matlab",
+   "y_handling": "matlab",
+   "time_sum_t_x": 3200.0,
+   "time_sum_t_y": 3200.0,
+   "v_perp_x": 508812.7,
+   "v_perp_y": 544429.6,
+   "position_formula": "centred",
+   "matlab_overflow_row": true,
+   "write_empty_txy": false
+  },
+  "wired_as_from_july_2026": {
+   "schema": 1,
+   "name": "plates-2025-provisional-swapped",
+   "version": 1,
+   "calibrated": false,
+   "notes": "PROVISIONAL, not calibrated (session 2026-10-29-claude-txy-2025-plates). Same matching as matlab-2019; v_perp_y/v_perp_x = 1.07 from the active-area edge (assumes a round MCP), geometric mean kept (absolute scale unknown). Uncalibrated: time sums (no MCP pulses), non-linearity, hot spots, efficiency. Corner channels as wired from ~July 2026 (x1<->x2, y1<->y2 found swapped): this map restores the June/historical orientation (X -> -X, Y -> -Y).",
+   "tag": "",
+   "bin_time": 2.5e-11,
+   "channel_x1": 1,
+   "channel_x2": 0,
+   "channel_y1": 3,
+   "channel_y2": 2,
+   "channel_mcp": 4,
+   "channel_trigger": 5,
+   "subtract_time_zero": true,
+   "skip_first_sorted_row": true,
+   "dead_time_x1": 0.0,
+   "dead_time_x2": 0.0,
+   "dead_time_y1": 0.0,
+   "dead_time_y2": 0.0,
+   "search_depth": 36,
+   "search_window": 3200.0,
+   "match_time_sum_x": 3200.0,
+   "match_tolerance_x": 200.0,
+   "match_time_sum_y": 3200.0,
+   "match_tolerance_y": 200.0,
+   "xy_sum_tolerance": 400.0,
+   "x2_handling": "matlab",
+   "y_handling": "matlab",
+   "time_sum_t_x": 3200.0,
+   "time_sum_t_y": 3200.0,
+   "v_perp_x": 508812.7,
+   "v_perp_y": 544429.6,
+   "position_formula": "centred",
+   "matlab_overflow_row": true,
+   "write_empty_txy": false
+  }
+ },
+ "not_changed_and_why": {
+  "time_sum_t_x/y": "absolute sums need MCP pulses (record channel 4 in a calibration run); T shift is ~1.5 ns, negligible",
+  "xy_sum_tolerance": "keep 400: the check is centred on 0 while the 2025 sum difference is +121 (map 7..186); a tighter check needs an offset field (not in schema 1): 200 would drop 9.7 % of hits",
+  "search_window/match sums": "keep 3200 (see match_window_bins)",
+  "dead times": "keep 0 (see pulse_spacing)",
+  "x2_handling": "keep matlab: a retry adds 0.007 %"
+ }
+}

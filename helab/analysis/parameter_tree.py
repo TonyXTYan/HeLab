@@ -5,12 +5,14 @@ import re
 from decimal import Decimal
 from typing import Any, Sequence, cast
 
-from PyQt6.QtCore import QSize, Qt, pyqtSignal
-from PyQt6.QtGui import QFocusEvent, QKeyEvent
-from PyQt6.QtWidgets import QApplication, QTabWidget, QTextEdit, QWidget
+from PyQt6.QtCore import QEvent, QObject, QSize, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QFocusEvent, QKeyEvent, QResizeEvent, QShowEvent
+from PyQt6.QtWidgets import (QApplication, QHeaderView, QTabWidget, QTextEdit, QTreeWidgetItemIterator,
+                             QWidget)
 import pyqtgraph.functions as fn
 from pyqtgraph.parametertree import Parameter, ParameterTree, registerParameterType
 from pyqtgraph.parametertree.parameterTypes.basetypes import SimpleParameter, WidgetParameterItem
+from pyqtgraph.parametertree.parameterTypes.list import ListParameter, ListParameterItem
 from pyqtgraph.parametertree.parameterTypes.numeric import NumericParameterItem
 from pyqtgraph.widgets.SpinBox import SpinBox
 
@@ -168,7 +170,44 @@ class UnitSpinBox(SpinBox):  # type: ignore[misc]
         return shown[1] if shown is not None else ""
 
 
-class UnitNumberItem(NumericParameterItem):  # type: ignore[misc]
+class EndsEditOnReturn:
+    """A tree row's editor that Return or Enter closes once the box has taken the value (the box's
+    own Return commits it; an invalid entry gives the value back), and Escape closes with the value
+    put back, uncommitted. Tab and Shift+Tab take the value and close it as Return does, rather than
+    opening the next row's editor (pyqtgraph's way, an empty wide box until the next click: A33.1).
+    Closing deselects the row, so it shows its value and a click opens the editor again. Before,
+    Return committed but left the editor open, which looked as if nothing had been taken
+    (known-issues, the computer-use smoke pass)."""
+
+    def widgetEventFilter(self, obj: QObject, ev: QEvent) -> bool:
+        if isinstance(ev, QKeyEvent) and ev.type() == QEvent.Type.KeyPress and getattr(self, "hideWidget", False):
+            if ev.key() in (Qt.Key.Key_Return, Qt.Key.Key_Enter):
+                QTimer.singleShot(0, self._close_editor)  # After the box's own Return, which commits.
+            elif ev.key() in (Qt.Key.Key_Tab, Qt.Key.Key_Backtab):
+                widget = getattr(self, "widget")
+                if isinstance(widget, SpinBox):
+                    widget.editingFinishedEvent()  # Takes a valid entry, as the box's Return does,
+                    widget.setValue(getattr(self, "param").value())  # and gives the value back otherwise.
+                    widget.updateText()
+                QTimer.singleShot(0, self._close_editor)
+                return True  # (Not pyqtgraph's: it opens the next row's editor.)
+            elif ev.key() == Qt.Key.Key_Escape:
+                widget = getattr(self, "widget")
+                widget.setValue(getattr(self, "param").value())
+                if isinstance(widget, SpinBox):
+                    widget.updateText()  # (setValue keeps the typed text when the value is the same.)
+                QTimer.singleShot(0, self._close_editor)
+                return True
+        return bool(super().widgetEventFilter(obj, ev))  # type: ignore[misc]
+
+    def _close_editor(self) -> None:
+        tree = cast(Any, self).treeWidget()
+        if tree is not None and tree.currentItem() is self:
+            tree.clearSelection()  # (pyqtgraph hides a deselected row's editor.)
+            tree.setFocus(Qt.FocusReason.OtherFocusReason)
+
+
+class UnitNumberItem(EndsEditOnReturn, NumericParameterItem):  # type: ignore[misc]
     def makeWidget(self) -> UnitSpinBox:
         """``NumericParameterItem.makeWidget`` with a ``UnitSpinBox``."""
         opts = self.param.opts
@@ -264,7 +303,21 @@ class CommitTextParameter(Parameter):  # type: ignore[misc]
 
 TEXT_TYPE = "helab_text"
 registerParameterType(TEXT_TYPE, CommitTextParameter, override=True)
-TREE_TYPES = {**NUMBER_TYPES, "text": TEXT_TYPE}
+
+
+class ChoiceItem(EndsEditOnReturn, ListParameterItem):  # type: ignore[misc]
+    """pyqtgraph's drop-down row, which Return and Escape close (``EndsEditOnReturn``)."""
+
+
+class ChoiceParameter(ListParameter):  # type: ignore[misc]
+    @property
+    def itemClass(self) -> type:
+        return ChoiceItem
+
+
+CHOICE_TYPE = "helab_list"
+registerParameterType(CHOICE_TYPE, ChoiceParameter, override=True)
+TREE_TYPES = {**NUMBER_TYPES, "text": TEXT_TYPE, "list": CHOICE_TYPE}
 
 
 def _with_number_types(children: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -299,6 +352,54 @@ def apply_visibility(root: Parameter, specs: Sequence[ParameterSpec]) -> None:
             parameter_of(root, spec).setOpts(visible=spec.applies(values))
 
 
+NAME_SHARE = 0.5  # a settings tree's name column takes at most this share of its width
+
+
+class SettingsTree(ParameterTree):  # type: ignore[misc]
+    """pyqtgraph's tree with its name column at most ``NAME_SHARE`` of the tree's width and the
+    values filling the rest. pyqtgraph sizes both columns to their contents, so in a narrow panel
+    a long name pushed the values off the right edge (smoke pass 2026-10-30). A name cut short
+    shows in full in its tooltip; the column can still be dragged wider until the tree resizes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        header = self.header()
+        if header is not None:
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.itemExpanded.connect(self.fit_names)
+        self.itemCollapsed.connect(self.fit_names)
+
+    def fit_names(self, *_: object) -> None:
+        """The name column as wide as its names, up to ``NAME_SHARE`` of the tree; each name in
+        its row's tooltip."""
+        found = QTreeWidgetItemIterator(self)
+        while (item := found.value()) is not None:
+            found += 1
+            param = getattr(item, "param", None)
+            if isinstance(param, Parameter):
+                item.setToolTip(0, str(param.title()))
+        viewport = self.viewport()
+        width = viewport.width() if viewport is not None else self.width()
+        self.setColumnWidth(0, min(self.sizeHintForColumn(0), int(width * NAME_SHARE)))
+
+    def setParameters(self, *args: Any, **kwargs: Any) -> None:
+        super().setParameters(*args, **kwargs)
+        self.fit_names()
+
+    def addParameters(self, *args: Any, **kwargs: Any) -> None:
+        super().addParameters(*args, **kwargs)
+        self.fit_names()
+
+    def resizeEvent(self, e: QResizeEvent | None) -> None:
+        super().resizeEvent(e)
+        self.fit_names()
+
+    def showEvent(self, a0: QShowEvent | None) -> None:
+        super().showEvent(a0)
+        self.fit_names()
+
+
 def settings_widget(root: Parameter, specs: Sequence[ParameterSpec]) -> QWidget:
     """The tree of ``root``; when the parameters name more than one ``page``, a tab per page
     (in declaration order) holding its parameters and groups, all still under ``root``."""
@@ -310,13 +411,13 @@ def settings_widget(root: Parameter, specs: Sequence[ParameterSpec]) -> QWidget:
             placed.add(top)
             pages.setdefault(spec.page, []).append(root.child(top))
     if len(pages) <= 1:
-        tree = ParameterTree()
+        tree = SettingsTree()
         tree.setParameters(root, showTop=False)
         return cast(QWidget, tree)
     tabs = QTabWidget()
     tabs.setDocumentMode(True)
     for page, parameters in pages.items():
-        tree = ParameterTree()
+        tree = SettingsTree()
         for parameter in parameters:
             tree.addParameters(parameter, showTop=True)
         tabs.addTab(tree, page or "Settings")

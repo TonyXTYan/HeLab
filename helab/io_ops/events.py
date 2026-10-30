@@ -68,6 +68,7 @@ class UnverifiedField(TypedDict, total=False):
 
 class LiveState(TypedDict):
     """What the next Live check compares with (``live.live_check``'s ``state``)."""
+    live_helab: NotRequired[dict[str, Any]]  # HeLab's folders' state, the profile hash and root key asked for
     live_since: int | None
     live_listed: bool
     live_seconds: float
@@ -107,6 +108,10 @@ class AdminResultFields(TypedDict, total=False):
     result_id: str  # an adopted result's saved row (R2)
     folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
     store: str  # the store an adoption answered from (its ``store_id``)
+    # HeLab's TXY under the cache and temp folders after a Clear (``helab_txy.converted_summary``).
+    converted_txy: ConvertedSummaryField
+    # ``mark_used``'s marks ([root, folder, at]) a busy or failing index left unwritten (A30.4).
+    unwritten: list[list[Any]]
 
 
 # Process and progress
@@ -382,6 +387,19 @@ class TooLargeEvent(TypedDict):
     refused: bool
 
 
+class TxyRecord(TypedDict):
+    """Which TXY a dataset is made of (Q6.6, ``helab_txy.record``): the source asked for
+    (``txy_sources.SOURCES``), HeLab's shots' origins (``{shot: "helab:<profile hash>"}``), those
+    profiles' name/version/calibrated by hash, the profile hash and tag asked for ("" any) and HeLab's
+    folders' ``[[folder, mtime_ns]]`` as the listing found them."""
+    source: str
+    origins: dict[str, str]
+    profiles: dict[str, dict[str, Any]]
+    profile_hash: str
+    profile_tag: NotRequired[str]  # (Q18.4; absent in data saved before it.)
+    folders: list[list[Any]]
+
+
 class _LoadedBase(TypedDict):
     kind: Literal["loaded"]
     rows: int
@@ -399,7 +417,8 @@ class _LoadedBase(TypedDict):
     cache_reason: str
     fingerprint: list[Any]
     memory_shots: list[int]
-    signature: str
+    signature: str  # The folder's, as a scan computes it: its settled MATLAB TXY (``helab_txy.matlab_signature``).
+    txy: NotRequired[TxyRecord | dict[str, Any]]
 
 
 class CachedLoadedEvent(_LoadedBase):
@@ -534,6 +553,28 @@ class RemovedEvent(TypedDict):
     # Saved results Make room removed for a waiting one, [folder, lookup, result_id] each: not a clear
     # (no epoch moved; a newer copy of one of those keys has another result_id).
     evicted: NotRequired[list[list[str]]]
+
+
+class ConvertedUsageField(TypedDict):
+    """HeLab's converted TXY under one base's ``converted-txy`` (``helab_txy.converted_usage``): the TXY
+    files, their bytes (the index and old builds' records included), the folders holding them, and when
+    a conversion or load last used one (None: never, or no index says); ``newer``: the bytes of a newer
+    HeLab's index there (live or set aside), not counted in ``bytes`` and never cleared;
+    ``clearable``/``clearable_bytes``: the files Settings › Cache's Clear would remove (never the index
+    itself), what enables its Clear."""
+    files: int
+    bytes: int
+    folders: int
+    last_used: float | None
+    newer: int
+    clearable: int
+    clearable_bytes: int
+
+
+class ConvertedSummaryField(ConvertedUsageField):
+    """Both bases' (Q27.5, ``helab_txy.converted_summary``): the totals, and each base's by name
+    (``cache``; ``temp`` when the app sent its temp folder)."""
+    bases: dict[str, ConvertedUsageField]
 
 
 class ResultCountField(TypedDict):
@@ -810,6 +851,17 @@ class ClockSkewEvent(TypedDict):
     location: str  # its share or volume (the mount's source), else the folder
 
 
+class TxyUnmarkedEvent(TypedDict):
+    """A load took a TXY from HeLab's folder ``folder`` (its 24-hex name) under ``root`` (a base's
+    ``converted-txy``) at ``at``, but didn't write that last use (``helab_txy.LAST_USED_STEP``, or the
+    index busy): the app writes it in the background about every 10 minutes (A30.4) and as it quits
+    (``cache_admin`` ``mark_used``, Q30.3)."""
+    kind: Literal["txy_unmarked"]
+    root: str
+    folder: str
+    at: float
+
+
 class MarkerSaveEvent(TypedDict):
     """The manual marker dialog's copy (``marker_save``): written, or a file already there (not replaced)."""
     kind: Literal["marker_saved", "marker_save_exists"]
@@ -835,6 +887,166 @@ class RootsVerifiedEvent(TypedDict):
     mounts: list[list[str]]
 
 
+class ConvertPrefsEvent(TypedDict):
+    """A folder's converter flags as the store now has them (``cache_admin convert_prefs``):
+    ``prefs`` is ``{"write_beside": bool, "set_at": float}``."""
+    kind: Literal["convert_prefs"]
+    path: str
+    prefs: dict[str, Any]
+
+
+# The converter (``io_ops.convert``, TXY converter stage 4). Every event names the source folder
+# (``path``); a shot's events name its raw file and that file's (size, mtime) as this conversion saw
+# them, so the app can tell a later change apart.
+
+
+class ConvertProfile(TypedDict):
+    """The detector profile a conversion used: provenance (``helab.convert.profile``)."""
+    name: str
+    version: int
+    hash: str  # ``DetectorProfile.content_hash()``: equal hashes convert every file alike
+    tag: str  # ``profile.file_tag``: the tag in the TXY's names (Q18.4)
+    calibrated: bool
+
+
+class ConvertSeconds(TypedDict):
+    read: float  # the raw file's bytes, from the source folder
+    parse: float
+    reconstruct: float
+    format: float
+    write: float  # the TXY and its provenance row
+
+
+class ConvertPlanEvent(TypedDict):
+    """Sent once, after the folder is listed: where this conversion writes and what it found.
+    ``output`` is where the TXY go (``beside``, ``cache`` or ``temp``): the one asked for, or
+    ``temp`` with ``fallback`` saying why (no data root, the disk cache off or unreadable; Q9.3), or
+    the setting's output when ``beside`` was asked for a folder whose flag is off.
+    ``folder`` is HeLab's own folder for this source folder (the TXY unless beside; every provenance
+    row is in its base's ``converted-txy/index.sqlite``); ``txy_folder`` where the TXY go; ``key`` the data-root key ("" without)."""
+    kind: Literal["convert_plan"]
+    path: str
+    output: str
+    fallback: str
+    folder: str
+    txy_folder: str
+    key: str
+    profile: ConvertProfile
+    backend: str
+    workers: int
+    raw: int  # raw files the folder lists (of the shots asked for)
+    todo: int  # of those, to convert now
+
+
+class ShotConvertedEvent(TypedDict):
+    """A shot converted: its TXY (``txy``, 0 bytes when ``hits`` is 0: "converted, empty", Q10.3) and
+    provenance row written first in the base's index (``provenance``: that index's path). A low-count shot is the app's to judge
+    from ``hits``."""
+    kind: Literal["shot_converted"]
+    path: str
+    shot: int
+    raw_name: str
+    raw_size: int
+    raw_mtime_ns: int
+    raw_sha256: str
+    output: str
+    txy: str
+    txy_size: int
+    provenance: str
+    hits: int
+    replaced: str  # why an older HeLab TXY of the shot was replaced ("" if there was none)
+    profile: ConvertProfile
+    backend: str
+    seconds: ConvertSeconds
+
+
+class ShotWaitingEvent(TypedDict):
+    """A raw file not converted yet: it may still be being written (``reason``: ``settling``,
+    ``changed``, ``no_final_newline``, ``not_trigger_first``, ``no_rows``; damaged once unmodified for
+    20 s), is dated ahead of this computer's
+    clock (``future``, with ``clock_skew`` for the folder) or couldn't be read now
+    (``read_failed``). Nothing was written; it is looked at again by a later conversion."""
+    kind: Literal["shot_waiting"]
+    path: str
+    shot: int
+    raw_name: str
+    raw_size: int
+    raw_mtime_ns: int
+    reason: str
+    message: str
+
+
+class ShotUnconvertibleEvent(TypedDict):
+    """A settled raw file that can't be converted (``reason``: ``damaged``, Q18.5: unmodified for
+    ``io_ops.convert.DAMAGED_SECONDS``, by its mtime and since first seen so, and still failing the
+    format checks, ``problem`` naming which: ``no_final_newline``, ``not_trigger_first``, ``no_rows``;
+    or ``failed``): no TXY. A later conversion skips it while its (size, mtime) stay the same and the
+    app sends them back in ``skip``."""
+    kind: Literal["shot_unconvertible"]
+    path: str
+    shot: int
+    raw_name: str
+    raw_size: int
+    raw_mtime_ns: int
+    reason: str
+    message: str
+    problem: NotRequired[str]
+
+
+class ShotKeptEvent(TypedDict):
+    """A HeLab TXY already beside the raw file that this conversion doesn't stand behind (no local
+    provenance record, or a stale one): kept as it is, since a TXY in a source folder is never
+    replaced (``reason`` says which)."""
+    kind: Literal["shot_kept"]
+    path: str
+    shot: int
+    txy: str
+    reason: str
+
+
+class ConvertProgressEvent(TypedDict):
+    """After each shot handled (at most a few per second): counts so far of the ``todo`` shots."""
+    kind: Literal["convert_progress"]
+    path: str
+    done: int
+    todo: int
+    converted: int
+    raw_bytes: int  # read so far
+
+
+class ConvertSummaryEvent(TypedDict):
+    """The conversion's end (before ``done``). Shot lists are the raw files' ``[name, size,
+    mtime_ns]``: ``current`` (a current HeLab TXY: converted now or before), ``waiting`` (with its
+    reason, message and when this computer first saw it with that size and mtime after them), ``unconvertible`` and ``kept`` (beside: a TXY there this
+    conversion doesn't stand behind); the next conversion of the folder (Live, ``helab convert
+    --watch``) sends them back as ``done``, ``seen``, ``skip`` and ``kept``, so it neither checks
+    done or kept shots again, nor takes a file whose size or mtime changed between two checks as
+    finished, nor reads an unfinished one again while it is unchanged."""
+    kind: Literal["convert_summary"]
+    path: str
+    output: str
+    folder: str
+    txy_folder: str
+    converted: int
+    current: list[list[Any]]
+    waiting: list[list[Any]]
+    unconvertible: list[list[Any]]
+    kept: list[list[Any]]
+    seconds: float
+
+
+class PartialRemovedEvent(TypedDict):
+    """A conversion of the source folder ``path`` removed a leftover temporary TXY of its own
+    (``.d_txy_helab_<tag>_<N>.txt.<16 hex>.partial``, a regular file over ``io_ops.convert.PARTIAL_MAX_AGE``
+    old: a write a killed helper left) from ``folder``: ``path`` itself (beside) or HeLab's folder."""
+    kind: Literal["partial_removed"]
+    path: str
+    folder: str
+    file: str
+    size: int
+    age: float  # seconds since it was last modified
+
+
 HelperEvent = Union[
     DoneEvent, ErrorEvent, PausedEvent, ResumedEvent, HeartbeatEvent, DrivesEvent, ResolvedEvent,
     CacheWarningEvent, CacheSkippedEvent,
@@ -851,8 +1063,10 @@ HelperEvent = Union[
     MoveRecoveredEvent, TraceFolderEvent,
     RootFoundEvent, RootChangedEvent, RootDuplicateEvent, RootRekeyedEvent, RootConfirmedEvent, RootCreatedEvent,
     RootManualEvent, RootReassignedEvent, RootRemovedEvent, RootRemoveRefusedEvent, ClockSkewEvent, MarkerSaveEvent,
-    MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
+    TxyUnmarkedEvent, MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
     ResultFoundEvent, ResultMissingEvent, ResultSavedEvent, ResultNotSavedEvent, ResultPendingEvent,
+    ConvertPrefsEvent, ConvertPlanEvent, ShotConvertedEvent, ShotWaitingEvent, ShotUnconvertibleEvent, ShotKeptEvent,
+    ConvertProgressEvent, ConvertSummaryEvent, PartialRemovedEvent,
 ]
 
 # Every kind a helper sends.
@@ -869,7 +1083,9 @@ KINDS = frozenset({
     "trace_folder",
     "root_found", "root_changed", "root_duplicate", "root_rekeyed", "root_confirmed", "root_created",
     "root_adopted", "root_manual", "root_reassigned", "root_removed", "root_remove_refused",
-    "clock_skew", "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified",
+    "txy_unmarked", "clock_skew", "marker_saved", "marker_save_exists", "marker_save_refused", "volumes_verified",
     "roots_verified", "result_found", "result_missing", "result_saved", "result_not_saved",
     "result_pending",
+    "convert_prefs", "convert_plan", "shot_converted", "shot_waiting", "shot_unconvertible", "shot_kept",
+    "convert_progress", "convert_summary", "partial_removed",
 })

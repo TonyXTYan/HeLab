@@ -11,9 +11,10 @@ import json
 import sys
 import time
 
-from helab.io_ops import stores
+from helab.io_ops import fingerprints, stores
 from helab.io_ops.admin import cache_admin, cache_move_job
 from helab.io_ops.browse import list_folder
+from helab.io_ops.convert import convert_folder
 from helab.io_ops.events import UnverifiedField
 from helab.io_ops.fingerprints import DEFAULT_CHECK_LEVEL
 from helab.io_ops.icons import folder_icons
@@ -39,7 +40,7 @@ CACHE_ONLY = ("cached", "saved_list", "invalidate", "subtree_save", "scan_histor
 # Requests acting on the source folder they name (``path``, or an icon batch's ``paths``), which
 # ``_guard`` checks first under tests; the others name a folder only as a cache key.
 SOURCE_OPERATIONS = frozenset({"list", "icons", "scan", "details", "load", "root_create", "root_reassign",
-                               "root_remove", "marker_save"})
+                               "root_remove", "marker_save", "convert"})
 
 
 # Work Offline (cache-only browsing): requests whose cache options say ``offline`` never run these;
@@ -53,6 +54,7 @@ def main() -> None:
         request = json.loads(sys.stdin.readline())
         operation = request["operation"]
         Pause.configure(request.get("control"))
+        fingerprints.configure_settle(request.get("settle_seconds"))  # (The app's setting, Q33.7; first.)
         _start_trace(request)
         if operation in CACHE_ONLY and not request.get("cache"):
             raise ValueError("The disk cache is off for this session")
@@ -101,13 +103,16 @@ def main() -> None:
                        identity=str(request.get("identity") or ""), seen=request.get("seen"),
                        check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
                        listed_mtime=request.get("listed_mtime"), seen_names=request.get("seen_names"),
-                       identity_root=request.get("identity_root"), recent=request.get("recent"))
+                       identity_root=request.get("identity_root"), recent=request.get("recent"),
+                       txy=request.get("txy"), memory_origins=request.get("memory_origins"),
+                       helab_since=request.get("helab_since"))
         elif operation == "load" and request.get("save_memory") and request.get("held_dir"):
             save_held(request["path"], emit, request.get("cache"), request.get("held") or [],
                       request.get("held_problematic") or [], request["held_dir"],
                       identity=str(request.get("identity") or ""), identity_root=request.get("identity_root"),
                       no_cache=bool(request.get("no_cache")), recent=request.get("recent"),
-                      output=request.get("output"), raw_times=request.get("held_raw_times"))
+                      output=request.get("output"), raw_times=request.get("held_raw_times"),
+                      txy=request.get("txy"), held_txy=request.get("held_txy"))
         elif operation == "load":
             load(request["path"], request["output"], cache_options=request.get("cache"),
                  memory=request.get("memory"), base_signature=request.get("base_signature", ""),
@@ -116,7 +121,10 @@ def main() -> None:
                  full_check=bool(request.get("full_check")), cache_base=bool(request.get("cache_base")),
                  check_level=str(request.get("check_level") or DEFAULT_CHECK_LEVEL),
                  allow_missing=bool(request.get("allow_missing")), memory_check=request.get("memory_check"),
-                 memory_raw_times=request.get("memory_raw_times"))
+                 memory_raw_times=request.get("memory_raw_times"), txy=request.get("txy"),
+                 memory_origins=request.get("memory_origins"))
+        elif operation == "convert":
+            convert_folder(request["path"], request)
         elif operation == "cached":
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")),

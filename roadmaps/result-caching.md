@@ -43,6 +43,9 @@ rules. The TXY **dataset** cache is a different store with its own rules: see
    ([QC](quality-control-and-repair.md)). An outdated result may show at once
    with an indicator while a permitted rerun runs
    ([analysis workflow](analysis-workflow.md#folder-following-analysis-behaviour-decided-2026-10-14)).
+   Until store-v4's versioning (Q27.2), reuse is off by default (`reuse_saved_results`, Q27.1,
+   2026-10-29): HeLab's version alone covers the shared numerics in `helab/analysis`, and a dev
+   branch keeps the last release's version.
 6. **Bounded RAM and disk.** RAM results are bounded and evicted least recently
    used, except those a view shows. Saved results count toward the disk cache's
    budget (Tony, 2026-10-22).

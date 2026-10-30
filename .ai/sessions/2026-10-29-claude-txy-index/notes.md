@@ -1,0 +1,133 @@
+# Notes: TXY Index floor (Ledger)
+
+## Checks (2026-10-29, macOS, on the merged state: `origin/dev/v0.0.7` 9f0b21f merged as a016792)
+
+First full run (`pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`, before 35b50d0):
+`1 failed, 8194 passed, 669 skipped, 2 warnings, 5 rerun`. The failure and all five reruns were
+`tests/test_cache_switch.py::test_folder_cache_submits_the_cleanup_once`, deterministic: it pinned
+the inventory payload's `params == {}`, and `FolderCache.cache_admin` now adds `temps` (Q27.5).
+Fixed in 35b50d0 (the expectation), not a flake: nothing for known-issues.
+
+Final runs (after 35b50d0):
+
+- Inside the floor basetemp: `8195 passed, 669 skipped, 2 warnings in 130.56s`, no RERUN.
+- Outside it (no `--basetemp`): `8195 passed, 669 skipped, 2 warnings in 131.23s`, no RERUN.
+- The 2 warnings are pyqtgraph's NumPy 2.5 `arr.shape` deprecation in `tests/test_t_spectrum.py`
+  (not this floor's).
+- `mypy helab/ --strict`: Success, 191 files. `mypy tests --strict`: Success, 159 files.
+  `pyright helab tests`: 0 errors. `mypy helab/ --strict --platform win32`: Success.
+  `pyright --pythonplatform Windows helab tests`: 0 errors.
+
+## New tests
+
+- `tests/test_convert_helab.py`: `test_provenance_rows_round_trip_and_say_what_is_stale`,
+  `test_write_atomic_calls_before_rename_with_the_files_stat`,
+  `test_a_write_killed_after_its_row_is_converted_again[True|False]`,
+  `test_a_failed_write_removes_its_row_only_if_still_its_own`,
+  `test_the_own_folder_pattern_is_the_txys_temporary_names_alone`,
+  `test_a_missing_or_damaged_index_only_means_shots_convert_again[missing|not a database|malformed|newer]`,
+  `test_an_index_that_cant_be_written_fails_the_conversion_to_be_tried_again`,
+  `test_two_writers_side_by_side_lose_nothing` (two processes),
+  `test_a_dont_cache_folder_converts_to_the_temp_folder`,
+  `test_a_dont_cache_flag_that_cant_be_read_converts_to_the_temp_folder`,
+  `test_the_index_moves_with_the_cache_folder_and_its_shots_stay_current[rename|copy]`;
+  rewritten for the index: the temp-folder, better-profile, beside, lost-race and leftovers tests.
+- `tests/test_converter_tab.py`: measure and clear through the index (old builds' files, an unindexed
+  TXY, a set-aside index, links), `test_a_clear_keeps_the_row_of_a_txy_written_again_meanwhile`, the
+  Cache tab over both bases (label, per-base tooltip, Clear text, `temps` in both requests).
+- `tests/test_txy_sources.py`: `test_a_dont_cache_folders_txy_are_found_in_the_temp_folder`; the
+  read-count test counts index rows.
+- `tests/test_helper_events.py`: `test_the_converted_txy_summary_is_the_declared_shape`.
+- `tests/test_cache_switch.py`: the inventory payload carries `temps`.
+
+## Review round 1 checks (after Tern's review; macOS, same merged base)
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
+  `8197 passed, 669 skipped, 2 warnings in 126.87s`, no RERUN (2 more tests than before: the
+  set-aside-blocked and the newer-index Clear tests).
+- `mypy helab/ --strict`: Success (191). `mypy tests --strict`: Success (159). `pyright helab tests`:
+  0 errors. `mypy helab/ --strict --platform win32`: Success. `pyright --pythonplatform Windows helab
+  tests`: 0 errors.
+- CI run 40863356565 (head 1e7329c) had failed on Windows only, on `[newer]` (High-1), plus one
+  unrelated RERUN in `test_io_service_run.py` (quoted in the handoff for known-issues).
+
+## Review round 2 checks (Nit-4)
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
+  `8197 passed, 669 skipped, 2 warnings in 143.18s`, no RERUN.
+- The five type checks: clean (mypy strict helab 191 / tests 159, win32; pyright, Windows).
+- CI run 40866574094 (9691873): attempt 1 crashed one macOS worker (known-issue proposal in the
+  handoff); attempt 2 green on every job, no RERUN.
+- CI run 40874212130 (c546394): green, two RERUNs (handoff, last section); the one in this
+  branch's two-writer test is fixed in the next commit (busy retried, `provenance._patient`).
+- After that fix: full suite `8198 passed, 669 skipped, 2 warnings in 139.30s`, no RERUN; the five
+  type checks clean.
+
+## Review round 3 checks (WAL)
+
+- CI 40879735789 (0e79897, diagnostics): busy starvation (SQLITE_BUSY after 10.65-13.41 s) in the
+  two-writer test on Windows; quoted in the handoff's last section.
+- After WAL: full suite `8199 passed, 669 skipped, 2 warnings in 142.08s`, no RERUN; the five type
+  checks clean; local stress six writers x 300 rows, three trials, no error.
+
+## Review round 4 checks
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
+  `8205 passed, 669 skipped, 2 warnings in 143.12s`, no RERUN.
+- The five type checks clean (mypy strict helab 191 / tests 159, win32; pyright, Windows).
+- The touch-timeout test fails without the 200 ms limit (`assert 10.971249207970686 < 5.0`) and passes
+  with it.
+
+## Review round 5 checks
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
+  `8206 passed, 669 skipped, 2 warnings in 117.25s`, no RERUN.
+- The five type checks clean. The Low-7 test fails with the old reopen (no journal passed).
+
+## Q~2 (cache-forced) and Q~3 (last uses at quit), 2026-10-30
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` (macOS):
+  `8222 passed, 669 skipped, 2 warnings in 146.18s`, no RERUN.
+- `mypy helab/ --strict` (191), `mypy tests --strict` (160), `mypy helab/ --strict --platform win32`
+  (191): no issues. `pyright helab tests`, `pyright --pythonplatform Windows helab tests`: 0 errors.
+- Probes: with `cache_confirmed` ignored in `_places`, the three cache cases of the Q~2 test fail;
+  with `MARK_FLUSH_GRACE = 0`, the real-flush quit test fails.
+
+## Q~3 as a quit save (Tony's second answer), 2026-10-30
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` (macOS):
+  `8222 passed, 669 skipped, 2 warnings in 143.96s`, no RERUN.
+- The five type checks clean (mypy strict helab 191, tests 160, win32 191; pyright macOS and Windows 0 errors).
+- `tests/test_txy_last_used_quit.py` 3 runs in a row: 8 passed each. The no-progress test holds the
+  index's write lock (the helper answers in ~60 ms otherwise, too fast for a timeout to be sure).
+
+## Paced two-writer test, Tern's round 6, 2026-10-30
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` (macOS):
+  `8225 passed, 669 skipped, 2 warnings in 132.29s`, no RERUN. The five type checks clean.
+- Probes: one row dropped by a writer fails the two-writer test (`149 == 150`); the old `_on_terminal`
+  fails the two stdin tests.
+
+## A30.4 (after landing c492242)
+
+- Full suite `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: 8230 passed, 669 skipped, 2 warnings in 189.88s; no rerun.
+- mypy helab/tests strict, mypy win32: no issues (191, 160, 191 files); pyright and pyright Windows: 0 errors.
+
+## Q23.7 (c) and Nit-11
+
+- First full run, with the `--once` limit `ONCE_SETTLE_SECONDS` alone: 1 failed, 8257 passed, 5 reruns.
+  All 5 reruns were the same deterministic failure, `test_files_that_may_still_be_written_wait` (shots 2
+  and 3 became damaged rather than waiting), a real failure caused by the change, not a flake. Fixed
+  with `max(ONCE_SETTLE_SECONDS, DAMAGED_SECONDS)` (handoff).
+- Full suite after the fix: 8258 passed, 669 skipped, 2 warnings in 126.48s; no rerun.
+- mypy strict helab (191) / tests (160) / win32 (191): no issues; pyright and pyright Windows: 0 errors.
+
+## Merge of origin/dev/v0.0.7 (cb05f27)
+
+- First targeted run (test_quit_confirms, test_txy_last_used_quit, test_live, test_convert_helab, -n 4):
+  1 failed, 134 passed, 5 reruns. All 5 were the same deterministic failure,
+  `test_the_background_write_waits_while_offline_cache_off_or_the_foreground_works`: no QApplication
+  for the `frozen` fixture's QTimer. Fixed by having the fixture request `qapp` (handoff).
+- Those files after the fix: 50 passed (quit_confirms, txy_last_used_quit, live).
+- Full suite: 8361 passed, 669 skipped, 2 warnings in 169.36s; no rerun.
+- mypy strict helab (194) / tests (167) / win32 (194): no issues; pyright and pyright Windows: 0 errors.

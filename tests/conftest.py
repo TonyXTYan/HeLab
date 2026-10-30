@@ -6,9 +6,10 @@ import json
 import re
 import traceback
 import uuid
+import zlib
 from pathlib import Path
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Iterator
+from typing import TYPE_CHECKING, Any, Generator, Iterator
 
 # Run Qt headless (offscreen) by default so tests don't pop up windows.
 # Set HELAB_SHOW_GUI=1 to force a real, visible display (e.g. when a test
@@ -55,6 +56,10 @@ START_FOLDER = tempfile.mkdtemp(prefix=f"helab_test_start_{_worker_id}_")
 # Tests write TXY files and load them at once; helpers would otherwise treat
 # them as still being written. Settling has its own tests.
 os.environ["HELAB_SETTLE_SECONDS"] = "0"
+# Sizes on disk show in SI on macOS and Linux, in KiB… on Windows (Q26.1): every OS runs the tests
+# with macOS's units, so labels compare the same everywhere; tests of Windows' units pass
+# ``platform`` or patch ``number_format.PLATFORM`` (test_number_format.py).
+os.environ["HELAB_UNITS_PLATFORM_OVERRIDE"] = "darwin"
 
 
 import pytest  # noqa: E402  (after the environment above is set)
@@ -65,6 +70,7 @@ if TYPE_CHECKING:
 
 def pytest_configure(config: pytest.Config) -> None:
     config.addinivalue_line("markers", "no_auto_data_root: test the RAM-only or explicit marker path")
+    group_option(config.getoption("test_group"))  # (a bad --test-group stops the run before collecting)
     # The folders HeLab resolved must be this process's private ones, never the real app's.
     from helab.utils import constants
     expected = (os.environ["HELAB_DIR_CACHES_OVERRIDE"], os.environ["HELAB_DIR_TEMPS_OVERRIDE"],
@@ -72,6 +78,57 @@ def pytest_configure(config: pytest.Config) -> None:
     if (constants.cache_dir(), constants.DIR_TEMPS, constants.app_folder()) != expected:
         raise pytest.UsageError(f"Tests would use HeLab's real folders ({constants.cache_dir()}, "
                                 f"{constants.DIR_TEMPS}, {constants.app_folder()}), not {expected}")
+    if REQUIRED_BACKENDS:
+        problems = required_backend_problems(REQUIRED_BACKENDS)
+        if problems:
+            raise pytest.UsageError("HELAB_REQUIRE_BACKENDS names converter backends that can't run here:\n  "
+                                    + "\n  ".join(problems))
+        # A skip turned into a failure (below) isn't flaky: pytest-rerunfailures' --rerun-except
+        # makes it final instead of running it again (its wrapper sees the failure: ours is inner).
+        if hasattr(config.option, "rerun_except"):
+            names = "|".join(re.escape(name) for name in REQUIRED_BACKENDS)
+            config.option.rerun_except = [*(config.option.rerun_except or []), rf"(?i)^Skipped: .*\b({names})\b"]
+
+
+# The converter backends this run must have (CI, after native/build.py: e.g.
+# HELAB_REQUIRE_BACKENDS=cython,rust,numba). Each must load, or the run stops before collecting,
+# and a test that skips naming one of them fails instead: a broken build can't pass as skips.
+REQUIRED_BACKENDS = tuple(name.strip() for name in os.environ.get("HELAB_REQUIRE_BACKENDS", "").split(",")
+                          if name.strip())
+
+
+def required_backend_problems(names: tuple[str, ...]) -> list[str]:
+    """Why each of these backends can't run here (none: all can)."""
+    from helab.convert.reconstruct import _MODULES, get_backend
+    problems = []
+    for name in names:
+        if name not in _MODULES:
+            problems.append(f"{name}: no such backend (the backends: {', '.join(_MODULES)})")
+        elif (why := get_backend(name).unavailable(None)) is not None:
+            problems.append(f"{name}: {why}")
+    return problems
+
+
+def required_backend_named(reason: str, names: tuple[str, ...]) -> str | None:
+    """The first of these backends a skip's reason names, as a word (the backend tests' skips say
+    which backend is missing)."""
+    for name in names:
+        if re.search(rf"\b{re.escape(name)}\b", reason, re.IGNORECASE):
+            return name
+    return None
+
+
+@pytest.hookimpl(wrapper=True, trylast=True)  # inside pytest-rerunfailures' wrapper
+def pytest_runtest_makereport(item: pytest.Item,
+                               call: pytest.CallInfo[None]) -> Generator[None, pytest.TestReport, pytest.TestReport]:
+    report = yield
+    if REQUIRED_BACKENDS and report.skipped and not hasattr(report, "wasxfail") and isinstance(report.longrepr, tuple):
+        reason = str(report.longrepr[2])
+        name = required_backend_named(reason, REQUIRED_BACKENDS)
+        if name is not None:
+            report.outcome = "failed"
+            report.longrepr = f"{item.nodeid} skipped, but HELAB_REQUIRE_BACKENDS requires {name}: {reason}"
+    return report
 
 
 _reruns: list[tuple[str, str]] = []  # (test, why it reran), in this process (the controller under xdist)
@@ -91,6 +148,87 @@ def pytest_terminal_summary(terminalreporter: Any) -> None:
         terminalreporter.section("rerun reasons")
         for test, why in _reruns:
             terminalreporter.write_line(f"{test}\n{why}")
+
+
+# The slowest tests: test_typing.py runs mypy and pyright, 10 s to 1 min each by machine. Collected
+# last, they ran one after another on the xdist worker that got them, minutes after the others had
+# finished (CI's Windows test job reached its 30-min limit in that tail). They run first instead,
+# each on its own worker where there are enough, beside the rest of the suite.
+SLOW_FIRST_MODULES = frozenset({"test_typing.py"})
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    parser.addoption("--test-group", metavar="N/M", default=None,
+                     help="run only group N of M (each test is in exactly one; CI runs two per OS)")
+
+
+# CI runs the suite in two groups per OS, each a job of its own (Q16.2), so neither job nears its
+# time limit. A test's group is a hash of its node ID: the same on every OS, xdist worker and run,
+# with nothing to record or keep up to date, and each module's tests split about evenly, so the
+# groups' times stay close as the suite grows. The slow-first tests are dealt out in turn instead,
+# so each group gets its share of them (and still runs them first, below).
+ALL_TESTS = pytest.StashKey[list[str]]()  # every test collected, before the group's selection
+
+
+def group_option(text: str | None) -> tuple[int, int] | None:
+    """``--test-group N/M`` as ``(N, M)``, or None without it."""
+    if text is None:
+        return None
+    match = re.fullmatch(r"\s*(\d+)\s*/\s*(\d+)\s*", text)
+    if match is None or not 1 <= int(match.group(1)) <= int(match.group(2)):
+        raise pytest.UsageError(f"--test-group takes N/M with 1 <= N <= M (e.g. 1/2), not {text!r}")
+    return int(match.group(1)), int(match.group(2))
+
+
+def group_numbers(nodeids: list[str], groups: int) -> list[int]:
+    """Each test's group, 1 to ``groups``."""
+    numbers = []
+    dealt = 0
+    for nodeid in nodeids:
+        if nodeid.split("::")[0].rsplit("/", 1)[-1] in SLOW_FIRST_MODULES:
+            numbers.append(dealt % groups + 1)
+            dealt += 1
+        else:
+            numbers.append(zlib.crc32(nodeid.encode("utf-8")) % groups + 1)
+    return numbers
+
+
+def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item]) -> None:
+    config.stash[ALL_TESTS] = [item.nodeid for item in items]
+    group = group_option(config.getoption("test_group"))
+    if group is not None:
+        number, groups = group
+        numbers = group_numbers(config.stash[ALL_TESTS], groups)
+        others = [item for item, of in zip(items, numbers) if of != number]
+        items[:] = [item for item, of in zip(items, numbers) if of == number]
+        if others:
+            config.hook.pytest_deselected(items=others)
+    slow = [item for item in items if item.path.name in SLOW_FIRST_MODULES]
+    if not slow:
+        return
+    # A worker collects; it reads the command line's --dist, "no" with -n alone (which the
+    # controller runs as "load").
+    workers = int(getattr(config, "workerinput", {}).get("workercount", 1))
+    spread = config.getoption("dist", "no") in ("no", "load")
+    positions = slow_first_positions(len(items), len(slow), workers if spread else 1,
+                                     config.getoption("maxschedchunk", None))
+    rest = iter(item for item in items if item.path.name not in SLOW_FIRST_MODULES)
+    at = dict(zip(positions, slow))
+    items[:] = [at[i] if i in at else next(rest) for i in range(len(items))]
+
+
+def slow_first_positions(total: int, count: int, workers: int, max_chunk: int | None) -> list[int]:
+    """Where ``count`` slow tests go among ``total`` so that xdist's ``load`` scheduling starts them
+    on different workers at once. It sends each worker a batch of consecutive tests first (a quarter
+    of its share, at least 2, at most ``--maxschedchunk``; one each, in turn, under 2 per worker:
+    ``LoadScheduling.schedule``), so slow test ``j`` goes at the start of worker ``j % workers``'s
+    batch. Simply first when that layout doesn't fit (one worker, more slow tests than batch room)."""
+    if workers <= 1 or total < 2 * workers:
+        return list(range(count))
+    batch = max(min(total // workers // 4, max_chunk or total), 2)
+    if count > workers * batch:
+        return list(range(count))
+    return [(j % workers) * batch + j // workers for j in range(count)]
 
 
 @pytest.hookimpl(wrapper=True)

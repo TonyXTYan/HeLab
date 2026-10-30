@@ -39,7 +39,7 @@ HANDLERS = ("list_folder", "folder_icons", "scan", "save_scan_history", "save_su
             "save_held", "load", "read_cached", "cache_move_job", "cache_admin", "result_find", "result_save",
             "verify_known_roots",
             "verify_volumes", "trace_check", "create_root", "reassign_root", "remove_root", "save_marker_copy",
-            "saved_list_folder", "newest_root_folder")
+            "saved_list_folder", "newest_root_folder", "convert_folder")
 
 
 @pytest.fixture(autouse=True)
@@ -92,15 +92,22 @@ def refused_notes() -> list[str]:
     return refused
 
 
+TXY = {"source": "helab", "profile_hash": "h", "cache_base": "/c", "temps": "/t"}
 LIVE = {"memory": [["d_1.txt", 10, 5]], "known": {"d_1.txt": 1}, "live_since": 12.5, "identity": "root://u/run",
         "seen": {"d_2.txt": [3, 4]}, "check_level": "full", "listed_mtime": 99, "seen_names": ["d_1.txt"],
-        "identity_root": {"uuid": "u"}, "recent": {"d_1.txt": 1.0}}
+        "identity_root": {"uuid": "u"}, "recent": {"d_1.txt": 1.0}, "txy": TXY, "memory_origins": {"1": "helab:h"},
+        "helab_since": [["/c/f", 7]]}
 HELD = {"held": [["d_1.txt", 10, 5]], "held_problematic": ["d_3.txt"], "identity": "root://u/run",
         "identity_root": {"uuid": "u"}, "no_cache": 1, "recent": {"d_1.txt": 2.0},
-        "held_raw_times": [[1, 123]]}
+        "held_raw_times": [[1, 123]], "txy": TXY, "held_txy": {"origins": {"1": "helab:h"}}}
 LOAD = {"memory": [["d_1.txt", 10, 5]], "base_signature": "base", "signature": "sig", "limits": {"ram": 9},
         "allow_large": 1, "no_cache": 1, "full_check": 1, "cache_base": 1, "check_level": "high",
-        "allow_missing": 1, "memory_check": {"quick": True}, "memory_raw_times": [[1, 2]]}
+        "allow_missing": 1, "memory_check": {"quick": True}, "memory_raw_times": [[1, 2]], "txy": TXY,
+        "memory_origins": {"1": "helab:h"}}
+
+# The converter's request goes to its handler whole (``io_ops.convert.ConvertRequest``).
+CONVERT = {"operation": "convert", "path": PATH, "profile": {"name": "p"}, "temps": FOLDER, "cache": CACHE,
+           "destination": "cache", "beside": True, "seen": [["d1.txt", 1, 2]], "workers": 3}
 
 # (request, handler, positional arguments, keyword arguments)
 ROUTES: list[tuple[dict[str, Any], str, tuple[Any, ...], dict[str, Any]]] = [
@@ -120,35 +127,38 @@ ROUTES: list[tuple[dict[str, Any], str, tuple[Any, ...], dict[str, Any]]] = [
     ({"operation": "load", "live": True, "path": PATH, "output": OUTPUT, **LIVE}, "live_check", (PATH, OUTPUT),
      {"memory": LIVE["memory"], "known": LIVE["known"], "since": 12.5, "identity": "root://u/run",
       "seen": LIVE["seen"], "check_level": "full", "listed_mtime": 99, "seen_names": ["d_1.txt"],
-      "identity_root": {"uuid": "u"}, "recent": LIVE["recent"]}),
+      "identity_root": {"uuid": "u"}, "recent": LIVE["recent"], "txy": TXY, "memory_origins": {"1": "helab:h"},
+      "helab_since": [["/c/f", 7]]}),
     ({"operation": "load", "live": True, "path": PATH, "output": OUTPUT}, "live_check", (PATH, OUTPUT),
      {"memory": None, "known": None, "since": None, "identity": "", "seen": None,
       "check_level": DEFAULT_CHECK_LEVEL, "listed_mtime": None, "seen_names": None, "identity_root": None,
-      "recent": None}),
+      "recent": None, "txy": None, "memory_origins": None, "helab_since": None}),
     ({"operation": "load", "save_memory": True, "held_dir": OTHER, "path": PATH, "cache": CACHE,
       "output": OUTPUT, **HELD}, "save_held",
      (PATH, infra.emit, CACHE, HELD["held"], ["d_3.txt"], OTHER),
      {"identity": "root://u/run", "identity_root": {"uuid": "u"}, "no_cache": True, "recent": HELD["recent"],
-      "output": OUTPUT, "raw_times": [[1, 123]]}),
+      "output": OUTPUT, "raw_times": [[1, 123]], "txy": TXY, "held_txy": {"origins": {"1": "helab:h"}}}),
     ({"operation": "load", "save_memory": True, "held_dir": OTHER, "path": PATH}, "save_held",
      (PATH, infra.emit, None, [], [], OTHER),
      {"identity": "", "identity_root": None, "no_cache": False, "recent": None, "output": None,
-      "raw_times": None}),
+      "raw_times": None, "txy": None, "held_txy": None}),
     ({"operation": "load", "path": PATH, "output": OUTPUT, "cache": CACHE, **LOAD}, "load", (PATH, OUTPUT),
      {"cache_options": CACHE, "memory": LOAD["memory"], "base_signature": "base", "expected": "sig",
       "limits": {"ram": 9}, "allow_large": True, "no_cache": True, "full_check": True, "cache_base": True,
       "check_level": "high", "allow_missing": True, "memory_check": {"quick": True},
-      "memory_raw_times": [[1, 2]]}),
+      "memory_raw_times": [[1, 2]], "txy": TXY, "memory_origins": {"1": "helab:h"}}),
     # A save without its held folder is a plain load.
     ({"operation": "load", "save_memory": True, "held_dir": "", "path": PATH, "output": OUTPUT}, "load",
      (PATH, OUTPUT),
      {"cache_options": None, "memory": None, "base_signature": "", "expected": "", "limits": None,
       "allow_large": False, "no_cache": False, "full_check": False, "cache_base": False,
-      "check_level": DEFAULT_CHECK_LEVEL, "allow_missing": False, "memory_check": None, "memory_raw_times": None}),
+      "check_level": DEFAULT_CHECK_LEVEL, "allow_missing": False, "memory_check": None, "memory_raw_times": None,
+      "txy": None, "memory_origins": None}),
     ({"operation": "cached", "path": PATH, "output": OUTPUT, "cache": CACHE, "limits": {"ram": 9},
       "allow_large": 1, "verified_volumes": [["/v", "dev"]]}, "read_cached", (PATH, OUTPUT),
      {"cache_options": CACHE, "limits": {"ram": 9}, "allow_large": True, "verified_volumes": [["/v", "dev"]]}),
     ({"operation": "cache_move", "move": {"to": OTHER}}, "cache_move_job", ({"to": OTHER},), {}),
+    (CONVERT, "convert_folder", (PATH, CONVERT), {}),
     # Work Offline's listing and start folder (cache-only browsing): the disk cache only.
     ({"operation": "saved_list", "path": PATH, "cache": CACHE, "verified_volumes": [["/v", "dev"]]},
      "saved_list_folder", (PATH,), {"cache_options": CACHE, "verified_volumes": [["/v", "dev"]]}),

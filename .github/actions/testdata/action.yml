@@ -1,0 +1,51 @@
+name: HeLab test data
+description: >
+  Downloads HeLab's test data (the private Hugging Face dataset TonyXTYan/HeLab-TestData, at the tag
+  tests/test_convert_testdata.py's TESTDATA_TAG names), cached per OS, and sets HELAB_TESTDATA and
+  HELAB_REQUIRE_TESTDATA=1 for the steps after it. Without a token (a fork's pull request, the lab's
+  copy of the repository) it only leaves a notice, and the tests that need the data skip.
+
+inputs:
+  token:
+    description: A Hugging Face token that can read the dataset (the HF_TOKEN secret)
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Check for a token
+      id: token
+      shell: bash
+      env:
+        HF_TOKEN: ${{ inputs.token }}
+      run: |
+        if [ -n "$HF_TOKEN" ]; then
+          echo "present=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "::notice title=No test data::No HF_TOKEN here, so the tests that need HeLab's test data skip."
+        fi
+
+    - name: Restore the test data
+      id: cache
+      if: steps.token.outputs.present == 'true'
+      uses: actions/cache@v6
+      with:
+        path: ${{ runner.temp }}/helab-testdata
+        key: helab-testdata-v1-${{ runner.os }}
+
+    - name: Download the test data
+      if: steps.token.outputs.present == 'true' && steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        HF_TOKEN: ${{ inputs.token }}
+      run: |
+        python -m pip install --quiet "huggingface_hub==2.4.0"
+        hf download TonyXTYan/HeLab-TestData --type dataset --revision v1 --local-dir "$RUNNER_TEMP/helab-testdata"
+
+    - name: Use the test data
+      if: steps.token.outputs.present == 'true'
+      shell: bash
+      run: |
+        echo "HELAB_TESTDATA=$RUNNER_TEMP/helab-testdata" >> "$GITHUB_ENV"
+        echo "HELAB_REQUIRE_TESTDATA=1" >> "$GITHUB_ENV"

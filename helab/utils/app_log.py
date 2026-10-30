@@ -7,6 +7,7 @@ console, so the log file in the app folder is where such an error leaves its tra
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import logging
 from logging.handlers import RotatingFileHandler
 import math
@@ -19,6 +20,7 @@ from types import TracebackType
 from typing import Callable
 
 from helab.utils.cache_locks import other_instances
+from helab.utils.number_format import byte_unit
 
 
 # Each HeLab writes its own file, helab-<process ID>.log (Tony, 2026-10-22): two at once never share
@@ -26,7 +28,7 @@ from helab.utils.cache_locks import other_instances
 # helab-<pid>.log.1 (and so on, LOG_BACKUPS of them). Old sessions' files go at startup: the oldest
 # beyond Settings → General → Log files to keep, and past ASK_BYTES the user is asked
 # (``helab.views.OldLogs``; Tony, 2026-10-22).
-MB = 1000 * 1000  # SI, as every size HeLab shows (Tony, 2026-10-26)
+MB, MB_UNIT = byte_unit(2, "disk")  # 1 MB, or 1 MiB on Windows: disk units follow the OS (Q26.1)
 LOG_NAME = "helab-{pid}.log"
 LOG_FILE = re.compile(r"helab-(\d+)\.log(\.\d+)?")  # Rotated copies too; the group is the pid.
 LOG_BYTES = 1 * MB
@@ -41,6 +43,27 @@ LOG_FORMAT = "%(asctime)s %(levelname)s [%(process)d %(threadName)s] %(name)s: %
 # The same unhandled exception (its type and where it was raised) is logged once in this time, and
 # the repeats are counted in the next one logged: a model's ``data()`` may raise on every repaint.
 REPEAT_SECONDS = 60.0
+# Milestones: one INFO line when a long step ends (a folder loaded, a plot computed, a conversion
+# finished), for a runner (a smoke pass, computer use) to wait on in the log file:
+#     ... INFO [4242 MainThread] helab.milestone: MILESTONE load_done folder="/a b/c" shots=3 seconds=1.250
+# ``milestone`` writes every one and ``parse_milestone`` reads them back, so the form can't drift.
+MILESTONE = "MILESTONE"
+MILESTONE_LOGGER = "helab.milestone"
+_BARE = re.compile(r"[A-Za-z0-9_.:/+-]+")
+_INT = re.compile(r"-?\d+")
+_FLOAT = re.compile(r"-?\d+\.\d+")
+_LITERALS: dict[str, bool | None] = {"true": True, "false": False, "null": None}
+_VALUE = r'"(?:[^"\\]|\\.)*"|[^\s"]+'
+_FIELD = re.compile(rf"([a-z][a-z0-9_]*)=({_VALUE})")
+# The message alone, or a log line whose logger is ``helab.milestone``: never another line that
+# happens to hold the word (a folder named ".../MILESTONE load_done"). Every field, nothing between.
+_MILESTONE_LINE = re.compile(rf"(?:^|\s{re.escape(MILESTONE_LOGGER)}: ){MILESTONE} ([a-z][a-z0-9_]*)"
+                             rf"((?: [a-z][a-z0-9_]*=(?:{_VALUE}))*)$")
+# What ``str.splitlines`` breaks a line at beyond what JSON escapes: escaped too, so a value never
+# splits the log line.
+_LINE_BREAKS = {0x85: "\\u0085", 0x2028: "\\u2028", 0x2029: "\\u2029"}
+
+MilestoneValue = str | int | float | bool | None
 
 _notice: Callable[[str], None] | None = None
 _seen: dict[tuple[str, str, int], tuple[float, int]] = {}  # (When last logged, repeats since.)
@@ -67,6 +90,51 @@ def start_log_file(folder: str, level: int = logging.INFO) -> RotatingFileHandle
     logging.getLogger().addHandler(handler)
     logging.info(f"Logging to {path}")
     return handler
+
+
+def milestone(event: str, **fields: MilestoneValue) -> str:
+    """Log the milestone ``event`` (``load_done``…) with ``fields`` in the order given, one INFO line
+    on ``helab.milestone``: ``MILESTONE <event> key=value…``. Integers as they are, floats to 3
+    decimals, ``true``/``false``/``null``; a string bare when it is plain (``_BARE``) and can't be
+    read as another type, JSON-quoted otherwise. Memory only, from any thread. The line's message."""
+    message = " ".join([MILESTONE, event, *(f"{key}={_milestone_value(value)}" for key, value in fields.items())])
+    logging.getLogger(MILESTONE_LOGGER).info("%s", message)
+    return message
+
+
+def _milestone_value(value: MilestoneValue) -> str:
+    if value is None or isinstance(value, bool):
+        return {None: "null", True: "true", False: "false"}[value]
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return f"{value:.3f}" if math.isfinite(value) else "null"
+    if _BARE.fullmatch(value) and value not in _LITERALS and not _FLOAT.fullmatch(value) and not _INT.fullmatch(value):
+        return value
+    return json.dumps(value, ensure_ascii=False).translate(_LINE_BREAKS)
+
+
+def parse_milestone(line: str) -> tuple[str, dict[str, MilestoneValue]] | None:
+    """A milestone (``milestone``'s message, or its line in the log file) as its event and fields,
+    typed back; None for any other line, or one not wholly in that form."""
+    match = _MILESTONE_LINE.search(line.rstrip("\r\n"))
+    if match is None:
+        return None
+    fields: dict[str, MilestoneValue] = {}
+    for key, text in _FIELD.findall(match.group(2)):
+        value: MilestoneValue
+        if text.startswith('"'):
+            value = str(json.loads(text))
+        elif text in _LITERALS:
+            value = _LITERALS[text]
+        elif _INT.fullmatch(text):
+            value = int(text)
+        elif _FLOAT.fullmatch(text):
+            value = float(text)
+        else:
+            value = text
+        fields[key] = value
+    return match.group(1), fields
 
 
 @dataclass(frozen=True)
@@ -120,7 +188,7 @@ def delete_logs(files: list[LogFile]) -> list[LogFile]:
         else:
             deleted.append(file)
     if deleted:
-        logging.info(f"Deleted {len(deleted)} old log file(s), {sum(file.size for file in deleted) / MB:.1f} MB")
+        logging.info(f"Deleted {len(deleted)} old log file(s), {sum(file.size for file in deleted) / MB:.1f} {MB_UNIT}")
     return deleted
 
 

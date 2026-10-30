@@ -1,0 +1,305 @@
+# Quick Fixes 7: handoff (Rivet → CoCo)
+
+Codex's review 5714055695 of PR #10: three findings fixed on Ground, `dev/v0.0.7`, from `2960680`, one
+commit each. Detail (cause, evidence, what the user sees) in `notes.md`.
+
+| Finding | Commit | Files |
+|---|---|---|
+| P1 4424923871, `txy._rename_new` replaced a file written meanwhile | `c194f37` | `helab/convert/txy.py`, `tests/test_convert_helab.py` |
+| P2 4424923880, `save_held` KeyError for a held HeLab shot whose TXY went | `4222b3f` | `helab/io_ops/save_held.py`, `tests/test_txy_sources.py` |
+| P2 4424923889, `save_held` didn't pass its signature to `_write_dataset` | `a7dac90` | `helab/io_ops/save_held.py`, `tests/test_txy_sources.py` |
+
+## What changed
+
+1. **No-replace rename.** After a failed `os.link`: Windows `os.rename` (refuses an existing name);
+   macOS `renamex_np(RENAME_EXCL)`, Linux `renameat2(AT_FDCWD, …, RENAME_NOREPLACE)` via ctypes
+   (`txy._exclusive_rename(platform)`, cached; `txy.PLATFORM` the seam). EEXIST → `FileExistsError` (as
+   before, `shot_kept`). No call in the C library, or EINVAL/ENOSYS/ENOTSUP/EOPNOTSUPP → **refused**:
+   `OSError(ENOTSUP, "Not written: this folder's file system can't add a file without risking replacing
+   one already there (no hard links, and <reason>)")`, nothing left behind. Other errnos raised as they
+   are. Byte output unchanged.
+   *What the user sees on refusal:* the conversion run fails with that message (it isn't
+   FileExistsError or a path too long, so `convert_folder` raises): auto-convert stops with the amber
+   line and Retry, Live goes on; `helab convert` prints it; nothing is written to the source folder.
+   *Lost beside conversion where it worked before?* Not on macOS FAT: on a scratch FAT32 image here
+   `os.link` is ENOTSUP and `renamex_np(RENAME_EXCL)` refuses an existing name and renames onto a new one.
+   Not on Linux's local file systems (ext4, btrfs, xfs, tmpfs, vfat support NOREPLACE; glibc 2.28+).
+   **Unknown for the lab's SMB share** (M~1).
+2. **Held HeLab shot with no TXY now.** It keeps the name its TXY would have beside the raw file
+   (`provenance.txy_name(profile_tag, shot)`); the save goes on and the shot counts as unsettled (as the
+   `helab_off` comment intended), so the next quick check is a full one.
+3. **Signature.** `_write_dataset(..., signature=signature)`, as `loading.py` does.
+
+## Tests (each fails on `2960680`, passes now)
+
+- `test_convert_helab.py`: `test_without_links_a_file_written_meanwhile_is_never_replaced` (old code: `DID NOT RAISE
+  FileExistsError`, the other writer's file replaced); `test_the_refusing_rename_is_the_oss_own` (real call;
+  skipped on Windows); `test_without_links_or_a_refusing_rename_nothing_is_written` (×5: no call, EINVAL,
+  ENOSYS, ENOTSUP, EOPNOTSUPP); `test_the_refusing_renames_other_answers` (EEXIST, EACCES);
+  `test_on_windows_without_links_its_rename_refuses`; `test_a_beside_conversion_that_cant_add_a_file_safely_fails_with_why`.
+  The seam tests fail on the old code with AttributeError (no `PLATFORM` / `_exclusive_rename`); the race
+  test is the behavioural one.
+- `test_txy_sources.py`: `test_a_live_save_whose_held_helab_txy_went_saves_the_rest` (old: `KeyError: 3`);
+  `test_a_live_saves_dataset_has_the_signature_it_sent` (old: stored `89490808…` ≠ sent `7ea4d6ce…`).
+
+## Checks (on the tree at `a7dac90`)
+
+- `pytest -n 12 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-qf7`: **8503 passed, 672 skipped,
+  2 warnings in 79.84s; no RERUN.** (Warnings: pyqtgraph's NumPy 2.5 `arr.shape` DeprecationWarning in
+  `test_t_spectrum.py`, unrelated.) Log: `.ai/temp/qf7-suite.log`.
+- `mypy helab/ --strict`: no issues in 195 files; `mypy tests --strict`: no issues in 175;
+  `mypy helab/ --strict --platform win32`: no issues in 195; `pyright helab tests` and
+  `pyright --pythonplatform Windows helab tests`: 0 errors, 0 warnings.
+
+## Pushed
+
+`dev/v0.0.7` pushed with the fixes (`c194f37`..`a7dac90`) and this session's commit on top (its hash and
+the CI run ID are in the report to CoCo: this file is committed before the push, so they can't be in it).
+
+## Doc proposals (for CoCo)
+
+- `converter.md`, "In HeLab (stage 4)" sentence "`txy.write_atomic(replace=False)` never replaces an
+  existing file (HeLab's writes beside raw files)" → append: "a hard link, else the OS's no-replace rename
+  (macOS `renamex_np(RENAME_EXCL)`, Linux `renameat2(RENAME_NOREPLACE)`, through ctypes; Windows' `os.rename`
+  refuses an existing name itself), never a check then a rename; where neither works (no such call, or
+  EINVAL/ENOSYS/ENOTSUP/EOPNOTSUPP) the write is refused (`OSError` ENOTSUP, 'Not written: this folder's
+  file system can't add a file without risking replacing one already there …') and the conversion fails
+  with that reason (`txy.PLATFORM` is the seam; Codex on PR #10)."
+- `live.md`: no rule change; optionally, after "a background save writes the folder from RAM (…)": "a held
+  HeLab shot whose TXY has gone is saved as held and counts as unsettled (named as its beside TXY would
+  be); the saved dataset carries the signature `loaded` sent (`folder_print`'s)."
+- `known-issues.md`: nothing new unless Q~1 keeps the refusal, then: "Beside conversion fails on a file
+  system with neither hard links nor a no-replace rename (Q~1; M~1 for the lab share)".
+
+## Provisional items
+
+- **Q~1** (Tony): beside conversion where the file system can't add a file without risking a
+  replacement. (a) **Proposed:** keep the refusal as built: the run fails with the reason, auto-convert
+  stops (amber, Retry). (b) Make it per shot: `shot_unconvertible` with the reason, not tried again while
+  the raw file is unchanged, as for a path too long (needs `io_ops/convert.py`). (c) Fall back to HeLab's
+  cache/temp folder for that run, saying so in the plan (as `convert_plan`'s `fallback` does when the
+  folder's flag is off). (b) or (c) only if M~1 shows the lab share needs it.
+- **M~1** (Tony, on the Mac with the lab share mounted): in a scratch folder on the share (not a data
+  folder), run the probe in `notes.md` §1 (`python3 -I probe.py <scratch folder>`): it reports whether
+  `os.link` works and whether `renamex_np(RENAME_EXCL)` refuses an existing name and renames onto a new
+  one, then leaves files `a`, `b`, `c` to delete. If neither works there, beside conversion on the share
+  from macOS now fails with the reason (Q~1). Windows PCs are unaffected (`os.rename` refuses itself).
+- **A~1** (optional): Codex's three findings had no test because `save_held`'s HeLab-TXY paths had none for
+  "TXY gone" and "shadowed MATLAB TXY settled"; a short audit of `live.py`'s matching paths (same
+  `file_names`/signature shapes) could look for the same two gaps.
+
+# Round 2 (Codex's re-review 5714477187 on `e56d3d2`)
+
+Detail in `notes.md` (Round 2). Round 1's CI run **41078799066 passed on every job** (macOS, Windows,
+Ubuntu: Tests 1/2 and 2/2, Build, Converter backends).
+
+| Finding | Commit | Files |
+|---|---|---|
+| P2 4425255644, done/kept shots current without their TXY (cache/temp) | `b069c1f` | `helab/io_ops/convert.py`, `tests/test_convert_helab.py` |
+| P2 4425255663, `skip` sent whatever the profile | `d5da485` | `helab/utils/folder_cache.py`, `tests/test_live_convert.py` |
+
+4. When done or kept shots are sent back and the output is the cache or temp folder, one local listing of
+   HeLab's folder for the output (`_txy_shots`) says which have this tag's TXY; one without goes through the
+   ordinary check and converts again. That covers TXY cleared from Settings › Cache, deleted by hand, and a
+   change of destination. Beside is unchanged.
+5. `skip` only with the same profile, as `done`/`kept`. No unconvertible reason is profile-independent
+   except an empty raw file (cheap to read again), so nothing is kept apart. User-visible: under a new
+   profile the file waits one tick, then is read; still damaged, it is listed as damaged again on the Live
+   line and in Folder details, with **no second notification** (keyed by path, name, size, mtime).
+
+**Tests (fail on `51cd8c4`, pass now):** `test_done_shots_whose_txy_went_convert_again` (`[] == [1, 2]`);
+`test_a_file_unconvertible_under_one_profile_is_tried_under_another` (`[] == [4]`);
+`test_the_lists_of_the_last_conversion_are_sent_back` updated (it asserted `skip` under another profile).
+
+**Checks:** full suite -n 12: 8505 passed, 672 skipped, no RERUN; five type checks clean.
+
+**Pushed:** `dev/v0.0.7` with `b069c1f`, `d5da485` and this session commit on top (hash and CI run in the
+report to CoCo).
+
+**Doc proposals:**
+- `converter.md` table row `done`, `kept`, `skip` → "the previous summary's `current`, `kept`,
+  `unconvertible`, sent back (`FolderCache.convert`, all three only for the same profile): not checked again
+  while unchanged; a done or kept shot only while its TXY is there (beside: the source listing; cache or
+  temp: one listing of HeLab's folder for the output)".
+- `live.md` Auto-convert: "(`seen`/`done`/`kept`/`skip`; `done`/`kept` only for the same profile)" →
+  "(`seen`/`done`/`kept`/`skip`; `done`/`kept`/`skip` only for the same profile: a file unconvertible under
+  one is read again under another, its damaged notification not repeated)".
+
+No new Q~/M~/A~ items.
+
+# Round 3 (Codex's third review 5714741098 on `c7859b8`)
+
+Detail in `notes.md` (Round 3). Round 2's CI run **41081757658 passed** (every 3.13 job on the three OSes).
+
+| Finding | Commit | Files |
+|---|---|---|
+| P2 4425456506, a MATLAB-held shot switched to HeLab's TXY and tripped `shots_missing(changed)` | `fefe6ab` | `helab/io_ops/live.py`, `helab/io_ops/save_held.py`, `tests/test_txy_sources.py` |
+
+6. `live_check` and `save_held` pass `compose()` every held shot's kind (`""` for MATLAB's), so the held-kind
+   rule keeps a MATLAB-held shot while its MATLAB TXY is there. `held_origins` is unchanged (`held_helab`,
+   `trusted`, `could_take`, `kept_origins` keep reading it as HeLab's only); `helab_txy.py` untouched.
+   **When the user gets HeLab's TXY for it:** at the folder's next load (Refresh, reopening, restart, or a
+   load from the saved dataset, which reads that one shot anew): loads compose without held kinds. Not by
+   Live off/on alone, nor by Live's saves.
+
+**Test (fails on `8d40dca`, on each of the two files alone):**
+`test_a_shot_held_from_matlabs_keeps_it_when_helabs_is_converted` (`shots_missing` changed `[1]`).
+
+**Checks:** full suite -n 12: 8506 passed, 672 skipped, no RERUN; five type checks clean.
+
+**Pushed:** `dev/v0.0.7` with `fefe6ab` and this session commit on top (hash and CI run in the report).
+
+**Doc proposals:** `live.md`, the held-shot sentence about Q6.6 / held kinds (where it says a held shot keeps
+its kind while that TXY is there) → add "held from MATLAB's too (its kind `""`), so under HeLab priority a
+HeLab TXY converted during Live replaces it only at the folder's next load". `converter.md`'s TXY source rules,
+if they state the held rule for HeLab shots only, the same.
+
+**Q~2** (Tony, optional): under HeLab priority, should Live itself switch a MATLAB-held shot to a newly
+converted HeLab TXY (read it again as a changed shot, like a HeLab-held shot converted again), rather than at
+the next load? Proposed: no, keep it as now (no mismatch, no surprise rereads during a run; the next load
+takes HeLab's).
+
+# Round 4 (Codex's fourth review 5714936123 on `fb40034`)
+
+Detail in `notes.md` (Round 4). Round 3's CI run **41084197666 passed**.
+
+| Finding | Commit | Files |
+|---|---|---|
+| P2 4425610377, `seen` carried a profile's waiting reasons across a profile change | `d9a154d` | `helab/utils/folder_cache.py`, `tests/test_live_convert.py` |
+
+7. Under another profile, `seen` keeps each waiting file's name, size, mtime and first-seen time and drops its
+   reason and message (the brief's "keep only the fingerprint"). Same profile: unchanged.
+   - **Two-looks rule:** kept across the change: a file seen unchanged at the previous check is read at the first
+     conversion under the new profile (dropping `seen` entirely would cost every waiting file one more tick).
+   - **Damaged clock:** goes on from when this computer first saw the file unchanged (the file's, not the profile's).
+   - Only `not_trigger_first` depends on the profile; all reasons are dropped (one more read at most).
+
+**Other remembered fields (none left profile-blind):** `convert_lists`' `current`/`kept`/`unconvertible` are the
+profile's only, `waiting` is now stripped of its reasons, `profile` is the comparison; the backend needn't be
+compared (identical bytes); destination/beside are covered by round 2's "TXY still there"; `convert_reasons` is
+display text, replaced by the next run's; the index rows carry the profile hash. Damaged and low-count
+notifications are once per raw file by design (Q18.5), not per profile.
+
+**A~2 (display only, `explorer_live.py`):** `AutoConvert.damaged` keeps a file counted "damaged" while it stays
+unconvertible, even when a later profile fails it for another reason; on a new summary it could keep only names
+whose current message starts with `DAMAGED_TEXT`.
+
+**Tests (fail on `dd540cd`, pass now):** `test_a_file_waiting_off_one_profiles_trigger_converts_under_another`
+(`[] == [4]`); `test_the_lists_of_the_last_conversion_are_sent_back` (asserts the stripped entry).
+
+**Checks:** full suite -n 12: 8507 passed, 672 skipped, no RERUN; five type checks clean.
+
+**Pushed:** `dev/v0.0.7` with `d9a154d` and this session commit on top (hash and CI run in the report).
+
+**CI reruns (correction, CoCo 2026-10-31).** I reported this round's run and round 3's as passing from the
+jobs' conclusions without reading their logs; the logs of every Tests and Converter backends job of the four
+runs, read since, show three RERUNs, all on Windows, each passing on rerun:
+
+- **New, round 4's run 41086378298** (`9de3e19`), windows + py3.13 Tests (1/2), job 124168617741, gw0:
+  `tests/test_accessible_names.py::test_every_script_and_each_library`: "Controls without an accessible name:
+  Basic plots v1 › Plot T, X, Y histograms: QTabBar < QMainWindow < QSplitter < HelabMainWindow: no ID". Not a
+  worker crash: a Qt-made tab bar (the plot area's dock tabs) walked before it got its ID, it seems. Not in
+  known-issues; CoCo files it at the tidy-up. Proposed line: "`test_accessible_names.py::test_every_script_and_each_library`:
+  'QTabBar < QMainWindow < QSplitter < HelabMainWindow: no ID' (Basic plots v1 › Plot T, X, Y histograms),
+  Windows CI 41086378298 (job 124168617741, gw0, `dev/v0.0.7` `9de3e19`); passed on rerun. Likely a dock tab
+  bar Qt makes when docks tabify, walked before `identify` names it."
+- **Known, round 3's run 41084197666** (`dd540cd`), windows + py3.13 Tests (2/2), job 124161029996:
+  `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]` ("worker 'gw3'
+  crashed", the QtWebEngine worker-crash entry) and `test_io_service_run.py::test_writing_held_data_out_counts_as_progress`
+  (`assert (2 == 1)`, two progress marks 0.96 ms and 1.5 ms, at line 40). Both already in known-issues: add this
+  run as another occurrence.
+- Rounds 1 and 2 (41078799066, 41081757658): no RERUN in any job's log.
+
+None touches the files this brief changed.
+
+**Doc proposals:** `live.md` Auto-convert parenthesis (extending round 2's): "(`seen`/`done`/`kept`/`skip`;
+`done`/`kept`/`skip` only for the same profile, and under another `seen` without its reasons: a file waiting or
+unconvertible under one profile is read again under the next)". `converter.md`'s `seen` row, if it names the
+reasons, the same.
+
+# Round 5 (Codex's fifth review 5715183970 on `b836b56`)
+
+Detail in `notes.md` (Round 5). Round 4's CI and its RERUN: above (Round 4, CI reruns).
+
+| Finding | Commit | Files |
+|---|---|---|
+| P1 4425801677, cached quick check reused RAM of another kind | `8e11ffe` | `helab/io_ops/loading.py`, `tests/test_txy_sources.py` |
+| P2 4425801688, HeLab only: MATLAB-origin cached shots "missing" | `924109a` | `helab/io_ops/loading.py`, `tests/test_txy_sources.py` |
+
+8. **Verified first: it can happen.** Two HeLab instances on one computer share the store (no single-instance
+   guard), and the signature is the folder's MATLAB TXY, so B saving shot 3 from HeLab's TXY leaves it as it was.
+   Reproduced: "Folder not modified since cached", `memory_shots` [1, 2, 3] with origins {3: helab}. **Fix:** the
+   quick check applies only while every shot held and cached has the same (size, mtime) and kind in both; else
+   the load compares each file (RAM reused only for matching shots).
+9. `listed` also has the shots whose MATLAB TXY are listed, so a shot HeLab only leaves out isn't missing. **The
+   user sees** the HeLab subset (shots and total HeLab's, the source line HeLab only, the folder's status still its
+   MATLAB TXY count) and, in Folder details' load line, "N files removed" for the shots left out (Q~3).
+
+**Tests (fail on `3a30bbd`, pass now):** `test_the_quick_check_never_reuses_ram_of_another_kind` (3 in
+`memory_shots`); `test_helab_only_leaves_out_matlabs_shots_without_a_mismatch` (`shots_missing` [1, 2]).
+
+**Checks:** full suite -n 12: 8509 passed, 672 skipped, no RERUN; five type checks clean.
+
+**Pushed:** `dev/v0.0.7` with `8e11ffe`, `924109a` and this session commit (with `3a30bbd` before them); hash, CI
+run and its job logs' RERUNs in the report.
+
+**Doc proposals:** `cache-store.md` or `io-and-browsing.md`, the cached quick check: "the held dataset is the
+cached one only while its signature matches **and** every shot both have has the same (size, mtime) and kind
+(another HeLab on this computer may have saved the folder with a shot from another TXY)". `converter.md`'s TXY
+sources: "HeLab only leaves out shots that have only MATLAB's TXY: not missing (no mismatch), removed from the
+data shown".
+
+**Q~3** (Tony, wording): after switching to HeLab only, Folder details' load line counts the shots left out as
+"N files removed". Proposed: say "N left out (TXY source)" for them, apart from files really gone (needs a
+`load_counts` key and `FolderExplorer.load_count_details`).
+
+**Memory note:** my Claude memory folder links to the repo's `.ai/memory/`, so a memory I saved in round 4
+(`feedback_ci_reruns_in_logs.md` and its `MEMORY.md` line) landed there, uncommitted. Per CoCo, left as is, not
+staged; CoCo folds it in at the tidy-up.
+
+# Round 6 (CI: PR run 41095142656 on `release/v0.0.7a1` `8ccc0be`; no Codex comment)
+
+| Job | Commit | Files |
+|---|---|---|
+| macOS Tests (1/2) job 124198926348: `test_app_log.py::test_the_log_file_keeps_tracebacks_and_rotates` failed all 6 tries in gw3 | `01ce35f` | `tests/test_app_log.py` |
+
+**Cause (test isolation, not QF7's code).** The test raised the root logger's level with
+`monkeypatch.setattr(root, "level", logging.INFO)`. Setting the attribute skips `Logger.setLevel`'s cache clear,
+so if any earlier test in the worker logged an INFO line while the root was at WARNING (which caches
+`root._cache[INFO] = False`), the cache held: `logging.exception` (ERROR) reached the file, but the 600
+`logging.info` lines were dropped and the log never rotated ("[helab-1986.log] == [helab-1986.log, .log.1 …
+.log.10]"). Every rerun ran in the same worker with the same cache, so all six failed. `15c907c` (Runner Tools)
+fixed the sibling `test_each_helab_writes_its_own_log_file` the same way and missed this one. There is no single
+"leaking test": any INFO line logged at WARNING before it in a worker sets the cache, so it depends on xdist's
+distribution.
+
+**Evidence.**
+- Mechanism, plain Python: `logging.info("x")` at WARNING → `root._cache == {20: False}`; `root.level = INFO` →
+  `isEnabledFor(INFO)` still False; `root.setLevel(INFO)` → True.
+- The gw3 order from the CI log (2034 tests up to the failure, `[gw3] … PASSED|RERUN …` lines), replayed in one
+  process (`pytest.main` with `-p no:randomly -p no:xdist`): before the fix, the rotation test failed as on CI;
+  after it, it passes. (The replay also fails `test_test_groups.py::test_the_whole_collection_splits_into_two_groups_of_about_half`
+  both times, as expected: that test checks the whole collection and the replay runs a subset.)
+- gw3's three preceding `test_analysis.py` tests alone don't reproduce it: the cache comes from earlier in the worker.
+
+**Fix.** `root.setLevel(logging.INFO)` and `root.setLevel(level)` in the `finally`, as the sibling test does. A
+search of `tests/` and `helab/` finds no other logger level set as an attribute.
+
+**Test (fails before, passes now).** `test_app_log.py::test_the_rotation_test_holds_after_an_info_line_at_warning`:
+the root at WARNING, one INFO line, then the rotation test. Before the fix: `['helab-<pid>.log'] == [… .log.1 …]`,
+the CI's assertion. (A sibling of `test_milestones.py`'s regression test from `15c907c`, kept in this file, which
+this job allows.)
+
+**Checks.** Full suite -n 12: 8510 passed, 672 skipped, 2 warnings in 227.95 s, **1 RERUN**:
+`tests/test_folder_summary.py::test_visible_scans_follow_scrolling_without_prefetching_offscreen_folders`,
+`AssertionError` at line 868 (`assert ([IORequest(...)] and False)`, `all(...)` False over the requests), passed on
+rerun; not in known-issues and unrelated to this change (log: `.ai/temp/qf7-suite-r6.log`). Proposed known-issues line:
+"`test_folder_summary.py::test_visible_scans_follow_scrolling_without_prefetching_offscreen_folders`: `all(...)` False at
+line 868 over the pending scan requests, once in a local `-n 12` full run (2026-10-31, Ground `dev/v0.0.7` `01ce35f`,
+QF7 round 6); passed on rerun." The five type checks clean.
+
+**Proposed known-issues line for this job:** none (fixed); optionally under the Runner Tools entry for `15c907c`:
+"Again in `test_the_log_file_keeps_tracebacks_and_rotates` (macOS PR CI 41095142656, job 124198926348, gw3, all 6
+tries): fixed in QF7 round 6 (`01ce35f`)."
+
+**Pushed:** `dev/v0.0.7` with `01ce35f` and this session commit; hash, CI run and its job logs' RERUNs in the report.

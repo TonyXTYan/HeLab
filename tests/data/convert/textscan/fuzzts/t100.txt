@@ -1,0 +1,5 @@
+0x10+1d21.5
+
+abcnan+4	NaN 2E-2nan
+
+11e400	

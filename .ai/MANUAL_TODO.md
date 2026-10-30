@@ -12,7 +12,7 @@ The v0.0.5a checks below were added on 2026-10-08 and remain pending.
 
 Decisions only Tony can make are in [DECISIONS_TODO](DECISIONS_TODO.md), and work agents
 may do without asking in [AI_TODO](AI_TODO.md). Items here have `M` IDs ([ID_BLOCKS](ID_BLOCKS.md)): the
-smoke pass is M1.1–M1.8, and older items get IDs as they're touched. Items below the smoke pass that it doesn't
+smoke pass is M1.1–M1.10 (M1.9 added 2026-10-29, Q24.3; M1.10 the same day, block 27), and older items get IDs as they're touched. Items below the smoke pass that it doesn't
 cover are lab validation, and don't gate a release (Tony, 2026-10-28: Q1.1).
 
 ## Release smoke pass
@@ -22,7 +22,18 @@ cover are lab validation, and don't gate a release (Tony, 2026-10-28: Q1.1).
 no run acquiring) and M1.7's plots, which need Tony's look. Tony released on it and on his own
 use (Q6.1). The lab PC pass and M1.3 Live are the first checks of v0.0.7.
 
-These checks gate a release (Tony, 2026-10-28: Q1.1, [DECISIONS_TODO](DECISIONS_TODO.md#recently-decided)). Run the pass once
+**v0.0.7:** the converter step is M1.9 (Q24.3, "live convert and plot update"); M1.10 checks two
+versions on one Mac (block 27).
+
+**v0.0.7, Mac, partial (2026-10-30, on 6dec236):** run by computer use with the
+[runbook](sessions/2026-10-30-claude-smoke-handoff/runbook.md)
+([results](sessions/2026-10-30-claude-smoke-final-mac/results.md)). M1.1, M1.2 (cached), M1.6 (offline) and
+M1.7 (all 13 DLD plots) pass; M1.4-1 partly. Its one bug, the plot settings table's Value column off the right
+edge in a narrow panel, is fixed on Ground. Still to run: M1.4-2 to 4, M1.5, M1.6-3, M1.8, M1.9, M36.1–M36.4,
+and by hand: the plot/settings splitter drags, and two newly floated plots open offset (Q33.3). Skipped: M1.3
+(nothing acquiring), M1.10. Then the lab PC pass.
+
+These checks gate a release (Tony, 2026-10-28: Q1.1; amended for v0.0.6a1 by Q6.1, above). Run the pass once
 on a Mac and once on a lab PC (Windows), on the release candidate. Steps marked **Lab PC**
 matter most there. Each machine takes about 45 min, and step 3 needs a run acquiring.
 
@@ -34,7 +45,10 @@ Afterwards, an agent ticks the items below that the pass covered
 (A1.8, [AI_TODO](AI_TODO.md)).
 
 A small model can drive most of it through computer use, with Tony reviewing the screenshots:
-see the [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) (A5.1, Q5.1).
+see the [runbook](sessions/2026-10-30-claude-smoke-handoff/runbook.md) (Q5.1; the first one,
+[plan](sessions/2026-10-28-claude-smoke-automation/plan.md)). Its dry run on the
+Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
+[results](sessions/2026-10-28-claude-smoke-mac/results.md).
 
 **Setup:**
 - A checkout of the release candidate, with its venv: `source venv/bin/activate` (Windows
@@ -44,8 +58,8 @@ see the [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) (A5.1, Q5
   can summarise the share traffic afterwards.
 
 ### M1.1 Start-up
-- **Do:** Help › About HeLab.
-- **Expect:** version 0.0.5a1 (until the bump), the commit you checked out, the branch.
+- **Do:** About HeLab (the HeLab menu on macOS, Help on Windows).
+- **Expect:** the release's version (`helab/_version.py`), the commit you checked out, the branch.
   Settings → Cache shows the inventory. A first start on this machine starts an empty `store-v3`.
 
 ### M1.2 Browse and cache first
@@ -86,7 +100,8 @@ see the [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) (A5.1, Q5
   running at once if it's cached). The startup tab's own selection is unchanged.
 
 ### M1.5 Saved analysis results
-- **Do:** on a folder below a `.helab-root`, open a DLD port Correlations plot (radial), or
+- **Do:** turn on Settings → Cache › Reuse saved analysis results (off by default since Q27.1); on a
+  folder below a `.helab-root`, open a DLD port Correlations plot (radial), or
   Release time. Wait for it to draw, and look at the source line's tooltip.
 - **Expect:** the record ends "saved in the disk cache". The folder's row gets the grey
   REPORT badge, and Folder details says "Cached analysis: 1 result, <size>".
@@ -128,6 +143,173 @@ see the [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) (A5.1, Q5
 - **Lab PC:** the 3D scatter's first open: does the main window close and reopen
   (Q1.7, [DECISIONS_TODO](DECISIONS_TODO.md#q17-windows-3d-scatter-window-flicker))? If the pane is black, Open in
   browser works.
+
+### M1.9 Live convert and plot update (Q24.3, Tony 2026-10-29)
+- **Do:** make a scratch folder with a data root (Place .helab-root here…), copy three raw
+  `d<N>.txt` from `~/HeLab-samples/txy-v1/2024-11-rt-low-occupancy/` into it (raw files only, no
+  TXY), open it, start Live, turn on Auto-convert, and open Shot trends and a density image. Then
+  copy three more raw files in, one every ~10 s.
+- **Expect:** each shot converts once written (the Live line counts them; no damaged or no-hit
+  warning for these shots), the plots update with every new shot, and the data's source reads
+  HeLab (`m19v1`). Turning Live on collapses the left panel. Nothing is written into the folder
+  unless Write beside is on.
+
+### M1.10 Two versions on one Mac (Tony 2026-10-29, block 27)
+- **Do:** with the released 0.0.6a1 build and a source build of v0.0.7 on one Mac (one settings
+  store, one cache folder), open a cached folder in v0.0.7, quit, open it in 0.0.6a1, quit, and
+  open it in v0.0.7 again; change a setting in each.
+- **Expect:** neither version loses or rewrites the other's cache (both use store-v3's layout 3,
+  so 0.0.6a1 opens it writable: check it leaves v0.0.7's `convert_prefs` rows and HeLab's
+  `converted-txy/` alone; only a higher layout opens read-only), settings each version doesn't know are left alone, and nothing
+  asks to clear the cache or replace a `.helab-root`.
+
+## Live timing, in the lab (added 2026-10-30, block 33)
+
+- [ ] **M33.1** Once the lab acquires again: on a Live run with auto-convert, measure the delay from
+  each shot's last write (its mtime) to its TXY and the plot update (the log's `MILESTONE
+  convert_done` / `plot_done` once Runner Tools lands), for a few dozen shots; then choose the Live
+  interval and settle time defaults (Q33.7; now 3 and 5 s, so ~5–8 s).
+- [ ] **M36.4 The settle time setting on a live run** (block 36; with M33.1): Settings › General, set
+  "Read files unmodified for" to 10 s and watch Live on a run being written: shots appear ~10 s after
+  their file stops changing.
+
+## UI polish (added 2026-10-30, block 36)
+
+- [ ] **M36.1 The main split on a real screen** (Mac and a lab PC): open two plots: folders 380, settings
+  ~330, plots the rest; drag the splitters, quit, relaunch: the widths come back; Live on still collapses
+  the folder panel. On the lab PC (Segoe UI 9 pt) nothing in the settings panel is cut at 320 px; drag it to
+  its least (250 px) and note what is cut (Q36.3); at a large display scale the Scripts row's button may be.
+- [ ] **M36.2 Floating plots** (Mac): float two plots from their title's float button: they open 800×600 a
+  step apart; a double-click on a title does the same; the Dock button docks each. With one floating and
+  the main window active, the panel names the docked plot and its title's Float floats that one. Pick the
+  floating plot from the Settings panel's chooser and check the panel ends on it (the popup's close gives
+  focus back to the main window first; offscreen tests can't show which wins).
+- [ ] **M36.3 A path too long on Windows** (a lab PC without long paths): a user profile converting beside
+  raw files in a deep folder shows "Path too long for Windows …" in the Live line's tooltip; or check
+  `LongPathsEnabled` there and note it.
+
+## Post-2025 plates, in the lab (added 2026-10-29, block 25)
+
+- [x] **M25.1 Corner cabling** (Tony, 2026-10-29: it was the cable swap; handled as a 180° detector
+  orientation from July 2026, Q25.1). Was: what changed between 2026-06-27 and 2026-07-21 in the
+  anode/amplifier/CFD/TDC chain? x1↔x2 and y1↔y2 are swapped since then (Q25.1).
+- [ ] **M25.2 TDC input 7:** what is connected, is it enabled, at what threshold, and did anything
+  move there in 2025 (Q25.2)?
+- [x] **M25.3 The second converter** (Tony: not an issue at the moment). Was: which program on the TDC PC writes `d_txy_forc` besides
+  AutoConvert (the front panel?) (Q25.3).
+- [ ] **M25.5 The bursts (Q25.5):** a scope on input 7 and the x1-end amplifier together; a ~10 min
+  run with the MCP HV off (bursts gone: the detector or its HV; still there: outside pickup), then
+  a few HV settings; inspect the x1 end's feedthrough, cable and amplifier.
+- [ ] **M25.4 A calibration run for the 2025 plates:** a free-space halo with ≥100 halo atoms per
+  shot, raw files kept, ideally with the MCP pick-off on channel 4 (absolute time sums).
+
+## Maestri floor hooks (added 2026-10-28)
+
+- [x] **M8.1 Update the floor setup hooks in the Maestri app** to match
+  [maestri-setup.md §4](maestri-setup.md#4-floor-setup-hook) (the hooks live only in the app, so the guide is
+  their record): hook 1 now refuses a `venv` that resolves outside the floor; hook 5b is new
+  (`HELAB_TEST_SETTINGS_FILE`, Q2.5); hook 7 initialises only `legacy/tdc_autoconverter`, without
+  `--recursive`. Then create a test floor and check `.ai/local/floor-env.sh` has four lines. Done
+  2026-10-29: the third test floor got all hooks (own venv, four `floor-env.sh` lines, HeLab
+  opening the floor's settings file, no stale bytecode, the submodule), and teardown removed its
+  folders.
+
+## TXY converter (added 2026-10-29)
+
+- [ ] **M10.1 Count MATLAB's half-written reads on X** (Tony or the Assistant: a listing pass on
+  X). Converter stage 1 found one (2019-halos d3667: its TXY is 0.25 s younger than its raw file
+  and lacks the shot's end). Others would show as a TXY modified within a few seconds of its raw
+  file. Worth knowing before stage 5 compares HeLab with MATLAB on every shot.
+
+- [ ] **M11.1 Time the converter on the lab PCs** (Tony, at each PC, not over SSH: an elevated SSH
+  session has poisoned HeLab's cache settings on the Main PC before): numpy and cython, the two
+  shipped backends (Q11.2; cython from the CI build), with
+  `sessions/2026-10-29-claude-txy-bench/bench.py --mode serial` and `processes-warm` at x2 and x4 on
+  a copy of the sample set. Shows whether one core there keeps up with gigabit (Q6.9). Optional:
+  repeat the Mac's x12/x16 rows with Safari closed.
+- [x] **M11.2 A CI-built rust (or cython) wheel on a lab PC**: superseded by M16.1 (cython only, since
+  rust no longer ships).
+- [x] **M11.3 Keep the MATLAB 2023 reference outputs**: the 32 raw/TXY pairs from the TXY Reference
+  floor's `.ai/temp/txy/matlab-2023/` are in the test data's `reference/matlab-2023/` (Q31.4, tag
+  `v1`, 2026-10-30; raw files checked against the sample set), and CI converts them byte for byte
+  (`tests/test_convert_testdata.py`). The floor can go.
+
+- [ ] **M12.1 The converter on the lab share** (Tony, at the acquisition PC): run `helab convert
+  --watch <a copy of a run folder> --output temp` while files arrive (or copy them in one by one),
+  and check that no shot is read early (mtime granularity; Windows file sharing: a raw file open for
+  writing may fail to read, `read_failed`, retried next check). Also check the source's clock against
+  this PC's: the partial cleanup and `--once` trust the source's mtimes (a clock over an hour behind
+  could make another computer's beside write look old).
+
+- [ ] **M14.1 TXY sources in a plot** (synthetic or a lab copy): open a folder converted by HeLab,
+  open a T histogram, switch its TXY between the four choices, check the source line and that Live
+  keeps each plot on its own source.
+- [ ] **M14.2 A user profile end to end**: Settings → TXY converter, duplicate plates-2022, edit a time
+  sum, set it as the conversion profile, Save; convert a folder; check the provenance names it and the
+  plots load those TXY (not the old ones).
+- [ ] **M15.1 Live auto-convert at the acquisition PC**: Live + Auto-convert on a copy of a run folder
+  while raw files arrive: each shot converts once written, the Live line counts them, a truncated file
+  waits with its reason, a near-empty shot notifies once; start-at-launch with the folder listed and
+  with it unplugged (one notification).
+- [ ] **M15.2 The Auto-convert button on Windows and macOS** (its menu arrow, the checked look, the
+  menu's texts).
+
+- [ ] **M16.1 The compiled backend on the Sandy Bridge lab PC**: the CI Windows build's `HeLab.exe
+  convert --watch <copy of a run> --once --backend cython` loads and converts (no AVX2: cython builds
+  with `/O2 /fp:precise`). Supersedes M11.2. (Rust no longer ships, Q11.2.)
+- [ ] **M16.2 macOS signing and Gatekeeper** accept the cython `_kernel` extension in a release
+  `HeLab.app` (the only compiled converter file that ships since `134e2ec`; rust, mlx and llvmlite
+  don't).
+
+- [ ] **M23.1 TXY sources and profiles in the app**: Settings → TXY converter shows "Tabs and Live
+  read"; a plot's TXY row has the source and profile combos; HeLab only + plates-2022 loads its own
+  data and the source line says `TXY: HeLab only (p22v1)`.
+- [ ] **M23.2 The launch folder**: set one, restart: only its tab opens, Live and auto-convert start,
+  the left panel collapses; Live off brings it back. In a real HeLab session (also M18.1).
+- [x] **M18.1 Start-at-launch in the running app** (Q15.1): merged into M23.2 (one launch folder
+  since Q18.3).
+- [ ] **M23.3 Damaged raw files on the acquisition PC**: a deliberately truncated raw file is reported
+  damaged after ~20 s with one notification; later shots convert.
+
+- [ ] **M35.1 HeLab-dev's window in a computer-use screenshot** (block 35): `python dev/dev_app.py
+  --env-file .ai/local/floor-env.sh`, `open .ai/local/HeLab-dev.app`, then a computer-use screenshot
+  targeting `au.edu.anu.he-bec-lab.dev` shows the main window; also the menu bar's app name (Qt may
+  say "Python" or "HeLab").
+- [ ] **M34.1 Accessibility on Windows** (block 34; a lab PC): Accessibility Insights or `inspect.exe`
+  on HeLab: the toolbar's Live shows AutomationId `live` and Name "Live", a script's Plot button
+  `run_helab.counts_per_shot_Plot` / "Plot Counts per shot", a plot tab's close button
+  `close_plot_tab_1`; Debug › Run Plot runs a plot.
+- [ ] **M34.2 Screenshots on a lab PC**: Debug › Save Window Screenshot… with a PyQtGraph plot and a 3D
+  scatter open: what each pane looks like in the PNG.
+- [ ] **M34.3 The runner's view on the Mac** (the built `.app`): `app_ax_find` finds "Folder path" and
+  `run_…` by AXIdentifier; the Group combo's AXTitle is its current group (expected) and its
+  AXIdentifier `script_group`; `app_menu` reaches Debug › Run Plot › … with its items filled (an item
+  pressed without the menu opening may be stale and then does nothing); whether a menu item's
+  objectName reaches accessibility.
+- [ ] **M34.4 `--geometry` and Dump State on the Mac**: `helab --geometry 1600x928+0+39` opens the
+  window there (content 1600×928, the frame's top-left at 0,39); Debug › Dump State… writes a JSON
+  naming the open folder and plot tabs.
+- [ ] **M32.1 Byte units on Windows** (Q26.1, block 32; a lab PC or a CI build): Settings → Cache
+  shows "8.0 GiB" for a fresh setting, and an existing 8 GB setting shows "7.5 GiB" and stays
+  8 000 000 000 after Save; Folder details' rate reads MiB/s; the status bar's RAM reads GiB.
+
+- [ ] **M30.1 The converted-TXY index in Settings › Cache** (block 30): on a machine with old-build
+  `d_txy_helab_*.json` / `folder.json` in `converted-txy/`, open Settings › Cache: the row counts
+  them, its tooltip has Cache folder and Temp folder lines, Clear removes them; then convert a folder
+  with Live on and see "last used just now".
+- [ ] **M30.2 Don't cache and the command line** (Q30.2): mark a folder Don't cache and convert it
+  (Live auto-convert or Settings › TXY converter): its TXY go under the temp folder's
+  `converted-txy/` and still load as HeLab's. Then `helab convert --watch <it> --once --output cache`:
+  the warning and `[y/N]`; Enter → temp, `y` → cache; piped (`< /dev/null`) → temp;
+  `--output cache-forced` → cache, no question.
+- [ ] **M30.3 Last uses written at quit** (Q30.3): load a converted folder's TXY twice within the hour,
+  quit with nothing else saving: the quit window shows briefly and closes by itself; at the next start
+  Settings › Cache shows the second load's time. Work more than 10 minutes after the second load,
+  then quit: no quit window (the background write already recorded it). Wording, Tony's to change: header "Recording when
+  converted TXY were last used before HeLab quits:" (with other saves: "Saving 1 folder to the disk
+  cache and recording when converted TXY were last used before HeLab quits:"); entry "Converted TXY
+  last used — recording when HeLab's converted TXY were last used". The window shows on quits within 10
+  minutes of a load that skipped its mark.
 
 ## Data roots (v0.0.5a1, added 2026-10-18)
 
@@ -239,7 +421,8 @@ real experiment data without deciding where its top should be.
 - [ ] Opening the first 3D scatter no longer closes and reopens the main window on
   the Mac (hidden QQuickWidget, `HelabMainWindow._start_with_rhi_surface`). On the
   lab PCs (Windows), check whether it happens there and whether the same fix is
-  safe on GPUs that can't paint QtWebEngine before enabling it.
+  safe on GPUs that can't paint QtWebEngine before enabling it (M1.8; the question is
+  [Q1.7](DECISIONS_TODO.md#q17-windows-3d-scatter-window-flicker)).
 - [ ] Transfer fractions on real data: order 0 and the spacing match the T
   histogram's peaks (the windows shaded below); manual mode starts from them and
   edits apply on Rerun; the XY box keeps the hot spot out; compare with
@@ -308,12 +491,8 @@ real experiment data without deciding where its top should be.
   comparison of saved identities with the mounted folders found hundreds of
   device-only differences; the cache no longer uses those IDs for status
   validity ([investigation](sessions/2026-10-15-codex-status-remount/notes.md)).
-- [ ] Before first launching the account-independent SMB-key build, quit HeLab
-  and move `store-v2` from the active cache directory to the Trash for a fresh
-  store. Alternatively, launch the new build, answer Don't cache to any old
-  pending-save prompts, then use Settings → Cache → Clear all and the separate
-  Folder preferences Clear action. Repeat on each lab PC being upgraded;
-  HeLab does not remove the old cache itself.
+- [x] Moving `store-v2` to the Trash before the account-independent SMB-key build: replaced by
+  the `store-v3` item under [Data roots](#data-roots-v005a1-added-2026-10-18) (Q1.5, A1.1).
 - [ ] Restart the native GUI with `/Volumes/dld_output` mounted: after one
   completed check has saved share-keyed records, saved status icons and
   blocked-scan badges should remain across a remount, changed folder mtimes
@@ -452,8 +631,8 @@ on-screen list; the items below gather them. Record results in `.ai/sessions/`.
   ([d9-d15](sessions/2026-10-20-claude-dld-d9-d15/handoff.md#on-screen-checklist-native-ui)).
 - [ ] Shot trends: panels zoom together, shot-time axis, amber low shots; Notify
   during Live gives one system notification for a low shot (block the beam), none
-  more within a minute, none outside Live; is the tray/menu-bar icon acceptable
-  ([d2](sessions/2026-10-20-claude-dld-d2/handoff.md#on-screen-checklist-tony)).
+  more within a minute, none outside Live; the tray/menu-bar icon is
+  [Q1.8](DECISIONS_TODO.md#q18-the-tray--menu-bar-icon-for-notifications) ([d2](sessions/2026-10-20-claude-dld-d2/handoff.md#on-screen-checklist-tony)).
 - [ ] The ħ glyph ("ħk/m", "2ħk/m") in the native fonts on macOS and Windows: the
   offscreen renders drew "h" ([d8-velocity](sessions/2026-10-20-claude-dld-d8-velocity/notes.md#review-round-coordinator-on-04d69bf)).
 
@@ -558,9 +737,9 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
   correct asset stamps/digests and refusal to change a moved tag/published release.
   Check PR stamps show the source branch and merge ref plus the actual merge SHA.
 
-- [ ] Release repos (added 2026-10-13): confirm the
-  [proposal](../roadmaps/app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm).
-  If confirmed, stop pushing dev branches to `HeBECANU`. For the first lab-ready
+- [ ] Release repos (added 2026-10-13; the
+  [proposal](../roadmaps/app-updates.md#release-repos-proposed-2026-10-13-tony-to-confirm) was
+  confirmed 2026-10-28, Q1.4): stop pushing dev branches to `HeBECANU`. For the first lab-ready
   version, fast-forward `HeBECANU` `main` to the released `TonyXTYan` commit
   (`git push HeBECANU <sha>:main`; no squash or rebase there), check the draft
   appears there with the same tag commit and assets, then publish it.
@@ -583,8 +762,9 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
   `HeLab-macos.zip` is ~300 MB and holds only `HeLab.app`, unzip it in Finder and
   open the app (right-click › Open for the ad-hoc signature)
   ([build size step 1](../roadmaps/build-size.md#steps-cheapest-first)).
-- [ ] Record the required Python 3.13 suite/type-check and build results for the
-  release commit. This is validation evidence, not a new testing feature.
+- [x] Record the required Python 3.13 suite/type-check and build results for the
+  release commit. This is validation evidence, not a new testing feature. Done for v0.0.6a1
+  by A1.5 (dropped from AI_TODO at the v0.0.6a1 tidy-up, `125d4b3`).
 - [ ] Observe hover-menu tests in CI: real timers have approximately 200 ms of
   slack and may flake on slow machines. If a failure is reproducible, add a
-  concrete test-reliability item to `roadmaps/_readme.md` with logs.
+  concrete test-reliability item to `roadmaps/known-issues.md` with logs (A1.6).

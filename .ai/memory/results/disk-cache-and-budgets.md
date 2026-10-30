@@ -2,25 +2,27 @@
 date: 2026-10-11
 status: settled
 name: disk-cache-and-budgets
-description: "The rebuilt disk cache (S1–S11, commits fe5a5b7…eafcf4b): store-v2 (SQLite records + Blosc dataset files, helpers only), nothing removed without asking, disk budget with the 80% pause and its dialogs, RAM budget in 1/128 steps, large-folder warning (unscaled TXY size; 10%/budget warn, 30% refuse), cache-folder move with crash recovery, per-folder Don't cache / Don't auto-load flags; Tony's wording"
+description: "The rebuilt disk cache (S1–S11, commits fe5a5b7…eafcf4b): the store, store-v2 then store-v3 with data roots (SQLite records + Blosc dataset files, helpers only), nothing removed without asking, disk budget with the 80% pause and its dialogs, RAM budget in 1/128 steps, large-folder warning (unscaled TXY size; 10%/budget warn, 30% refuse), cache-folder move with crash recovery, per-folder Don't cache / Don't auto-load flags; Tony's wording"
 metadata:
   node_type: memory
   type: result
 ---
 The disk cache, its budgets and the Settings → Cache tab, as rebuilt in sessions S1–S11 of
 `roadmaps/cache-storage-and-settings.md` (that plan holds the full design and per-session notes;
-AGENTS.md has the code map). Decided with Tony on 2026-10-10, built 2026-10-10…11, each
+AGENTS.md has the code map, `.ai/architecture/cache-store.md` the detail). Decided with Tony on 2026-10-10, built 2026-10-10…11, each
 session reviewed by Codex until clean.
 
 ## What was decided, and why
 
 - **Old cache dropped, not migrated** (early development). Records are plain JSON text in SQLite
-  (`store-v2/records.sqlite`, WAL); datasets stay Blosc-compressed pickles in files (a
-  pickle-free format is an unchosen roadmap idea). **Only helper processes open the store.**
+  (`store-v2/records.sqlite` then, `store-v3/records.sqlite` since data roots; WAL); datasets stay Blosc-compressed pickles in files (a
+  pickle-free format is an unchosen roadmap idea, planned in store-v4, `caching-v2.md`). **Only helper
+  processes open the store** (and, since the converter, `helab convert`, a headless process
+  without the GUI; AGENTS.md).
 - **Nothing is removed without the user asking.** Records are kept forever and never removed
   to make room. Removals go through one store function that bumps generations/epochs, so a
   save already running can't bring removed data back.
-- **Disk budget**, default 8 GB, counts live data only. At **80%** automatic loads of folders
+- **Disk budget**, default 8 GB (8 GiB on Windows, Q26.1), counts live data only. At **80%** automatic loads of folders
   without cached data pause ("Auto-load paused — disk cache 80% full"); the warning comes once
   per crossing (Open purge settings / Ignore this time, which lasts the session until usage
   rises another 10% of the budget). A save that doesn't fit asks **Make room / Don't cache this
@@ -53,7 +55,7 @@ session reviewed by Codex until clean.
 - One that doesn't fit asks **Make room** / **Discard** (not refused). Make room removes only the
   least recently shown other saved results, never datasets, never a newer copy waiting or being
   saved; no extra skip for results used this session or on screen.
-- Settings → Cache › Reuse saved analysis results, on by default; folder-row badge REPORT.
+- Settings → Cache › Reuse saved analysis results, off by default since 2026-10-29 (Q27.1: until the plots are polished and store-v4's versioning; key `reuse_saved_results`); folder-row badge REPORT.
 - Store identity (presets and results, `FolderCache.store_answer`): the cache folder decides which
   store is in use, never a clock or a counter (Tony: refine rather than fail closed). Answers from
   another store wait for one identity probe; writes are held meanwhile and name their store; a

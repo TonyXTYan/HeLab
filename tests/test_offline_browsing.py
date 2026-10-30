@@ -31,7 +31,7 @@ from helab.utils.folder_cache import OFFLINE_TOOLTIP
 from helab.views.FolderExplorer import OFFLINE_NOT_KEPT, FolderExplorer
 from helab.views.explorer_live import OFFLINE_LIVE
 
-from test_result_cache_plots import Costly, close, folder_view, make_window, open_plot, results_saved, saved
+from test_result_cache_plots import Costly, close, folder_view, make_window, open_plot, results_saved, reuse_on, saved  # noqa: F401
 
 SOURCE = frozenset(OFFLINE_REFUSED | {"details"})
 

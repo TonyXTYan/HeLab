@@ -1,0 +1,17 @@
+mixed_eol_noeol
+mixed_eol_eol
+lf_then_crlf
+crlf_then_lf_noeol
+lf_noeol
+commas_end
+commas_mid
+comma_end
+comma5_end
+comma5_mid
+comma_nul
+comma_garbage
+num_garbage
+d_exp
+d_exp2
+E_exp
+after_nan_d

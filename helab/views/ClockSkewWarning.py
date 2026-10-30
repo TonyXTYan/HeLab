@@ -14,6 +14,7 @@ from PyQt6.QtCore import QObject, Qt
 from PyQt6.QtWidgets import QMessageBox, QWidget
 
 from helab.utils import events
+from helab.utils.accessible import identify_buttons
 from helab.utils.folder_cache import FolderCache
 from helab.utils.time_format import span
 
@@ -53,6 +54,7 @@ class ClockSkewWarning(QObject):
         box.finished.connect(lambda _: self._closed(box))
         box.setWindowModality(Qt.WindowModality.NonModal)  # (A warning: work goes on behind it.)
         self.dialog = box
+        identify_buttons(box, "clock_skew")
         box.show()
 
     def _closed(self, box: QMessageBox) -> None:

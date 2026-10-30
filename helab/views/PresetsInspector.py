@@ -29,6 +29,7 @@ from helab.analysis.parameters import ParameterSpec
 from helab.analysis.presets import (Arrangement, PlotCheck, RecordError, SavedPlot, ScriptPreset, ScriptRef,
                                     check_plot, check_value, parse)
 from helab.scripts.base import DatasetAnalysis, ScriptMetadata
+from helab.utils.accessible import identify
 from helab.utils.colours import AMBER
 from helab.utils.folder_cache import QUITTING, FolderCache
 from helab.views.plots.arrangement import folder_name
@@ -120,20 +121,26 @@ def presets_summary(cache: FolderCache) -> str:
 def show_summary(label: QLabel, cache: Optional[FolderCache]) -> FolderCache:
     """Keep Settings → Cache's Presets line (``label``) current; the FolderCache holding them."""
     store = cache if cache is not None else preset_store()
+    held = weakref.ref(label)  # (Not the label itself: its going is what ends the connection.)
 
     def shown() -> None:
-        if not sip.isdeleted(label):
-            label.setText(presets_summary(store))
+        target = held()
+        if target is not None and not sip.isdeleted(target):
+            target.setText(presets_summary(store))
     shown()
     store.presetsChanged.connect(shown)
-
-    def gone() -> None:  # (The store outlives Settings: one connection per Cache tab shown, else.)
-        try:
-            store.presetsChanged.disconnect(shown)
-        except TypeError:
-            pass
-    label.destroyed.connect(gone)
+    # The store outlives Settings: the connection goes with the label (one per Cache tab shown, else).
+    # Once the label's Python object goes, not by a Python callable on ``destroyed`` (which crashed the
+    # process from a plot dock: Smoke ready's follow-up notes).
+    weakref.finalize(label, _disconnect, store, shown)
     return store
+
+
+def _disconnect(store: FolderCache, shown: Callable[[], None]) -> None:
+    try:
+        store.presetsChanged.disconnect(shown)
+    except TypeError:
+        pass
 
 
 def open_inspector(cache: FolderCache, parent: QWidget, current: Optional[QWidget]) -> PresetsInspector:
@@ -164,29 +171,29 @@ class PresetsInspector(QDialog):
         self.note.setWordWrap(True)
         layout.addWidget(self.note)
         splitter = QSplitter(Qt.Orientation.Vertical)
-        self.tree = QTreeWidget()
+        self.tree = identify(QTreeWidget(), "presets_list", "Presets", "The saved presets and arrangements")
         self.tree.setHeaderLabels(["Name", "Saved with", "Installed script", "Saved"])
         self.tree.setColumnWidth(0, 220)
         self.tree.setColumnWidth(1, 150)
         self.tree.setColumnWidth(2, 220)
         self.tree.currentItemChanged.connect(self._selected)
         splitter.addWidget(self.tree)
-        self.details = QPlainTextEdit()
+        self.details = identify(QPlainTextEdit(), "preset_details", "Preset details")
         self.details.setReadOnly(True)
         splitter.addWidget(self.details)
         splitter.setSizes([300, 160])
         layout.addWidget(splitter, 1)
         buttons = QHBoxLayout()
-        self.rename_button = QPushButton("Rename…")
+        self.rename_button = identify(QPushButton("Rename…"), "presets_rename", "Rename preset…")
         self.rename_button.clicked.connect(self.rename)
-        self.duplicate_button = QPushButton("Duplicate…")
+        self.duplicate_button = identify(QPushButton("Duplicate…"), "presets_duplicate", "Duplicate preset…")
         self.duplicate_button.clicked.connect(self.duplicate)
-        self.delete_button = QPushButton("Delete…")
+        self.delete_button = identify(QPushButton("Delete…"), "presets_delete", "Delete preset…")
         self.delete_button.clicked.connect(self.delete)
         for button in (self.rename_button, self.duplicate_button, self.delete_button):
             buttons.addWidget(button)
         buttons.addStretch(1)
-        close = QPushButton("Close")
+        close = identify(QPushButton("Close"), "presets_close")
         close.clicked.connect(self.close)
         buttons.addWidget(close)
         layout.addLayout(buttons)

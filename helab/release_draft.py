@@ -12,6 +12,11 @@ from urllib.parse import quote
 import zipfile
 
 ASSET_NAMES = ("HeLab-macos.zip", "HeLab-windows.zip", "HeLab-ubuntu.zip")
+
+
+def release_name(tag: str) -> str:
+    """The name CI gives a release (how ``get_release`` knows its draft, listed as "untagged-…")."""
+    return f"Automated Release {tag}"
 MARKER = re.compile(r"<!-- helab-release-manifest:(.*?) -->", re.DOTALL)
 
 
@@ -228,8 +233,15 @@ class GitHubReleases:
     def get_release(self, tag: str) -> Draft | None:
         # Listing with push-capable authentication includes drafts; by-tag lookup
         # is documented for published releases and must not be used as an absence test.
-        matches = [item for item in self._pages(f"repos/{self.repository}/releases")
-                   if _object(item).get("tag_name") == tag]
+        # GitHub lists a draft under "untagged-<hash>" rather than its tag (v0.0.5a1 and
+        # v0.0.6a1 stopped right after creating theirs), so a draft also matches by its name.
+        def ours(item: object) -> bool:
+            data = _object(item)
+            if data.get("tag_name") == tag:
+                return True
+            return (data.get("draft") is True and str(data.get("tag_name", "")).startswith("untagged-")
+                    and data.get("name") == release_name(tag))
+        matches = [item for item in self._pages(f"repos/{self.repository}/releases") if ours(item)]
         if len(matches) > 1:
             raise ValueError("Multiple releases use this tag; resolve them manually")
         return self._draft(matches[0]) if matches else None
@@ -251,7 +263,7 @@ class GitHubReleases:
     def create(self, tag: str, commit: str, prerelease: bool, body: str) -> Draft:
         return self._draft(self._request("POST", f"repos/{self.repository}/releases", {
             "tag_name": tag, "target_commitish": commit, "draft": True,
-            "prerelease": prerelease, "name": f"Automated Release {tag}", "body": body,
+            "prerelease": prerelease, "name": release_name(tag), "body": body,
         }))
 
     def save_body(self, release_id: int, body: str, prerelease: bool) -> None:

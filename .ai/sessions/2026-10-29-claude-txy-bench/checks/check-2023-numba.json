@@ -1,0 +1,312 @@
+{
+ "profile": "matlab-2023-lab-edit",
+ "profile_hash": "a228f236d31749608e9853d7f69954d47174cb08d7d2f1adaea40a364739183e",
+ "backend": "numba",
+ "positions": "even",
+ "sets": {
+  "2019-halos-old-plates": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 3322,
+    "reference_hits": 3322,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 189,
+    "identical": true,
+    "ours_hits": 5257,
+    "reference_hits": 5257,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 377,
+    "identical": true,
+    "ours_hits": 4536,
+    "reference_hits": 4536,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 565,
+    "identical": true,
+    "ours_hits": 5413,
+    "reference_hits": 5413,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2020-halos-weak-trap": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 4327,
+    "reference_hits": 4327,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 7,
+    "identical": true,
+    "ours_hits": 4320,
+    "reference_hits": 4320,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 115,
+    "identical": true,
+    "ours_hits": 4227,
+    "reference_hits": 4227,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 229,
+    "identical": true,
+    "ours_hits": 2374,
+    "reference_hits": 2374,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2022-07-old-plates-he3he4": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 15112,
+    "reference_hits": 15112,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 3,
+    "identical": true,
+    "ours_hits": 16016,
+    "reference_hits": 16016,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 11,
+    "identical": true,
+    "ours_hits": 9648,
+    "reference_hits": 9648,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 21,
+    "identical": true,
+    "ours_hits": 7807,
+    "reference_hits": 7807,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2022-07-old-plates-large-he3": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 4032,
+    "reference_hits": 4032,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 79,
+    "identical": true,
+    "ours_hits": 1788,
+    "reference_hits": 1788,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 157,
+    "identical": true,
+    "ours_hits": 4389,
+    "reference_hits": 4389,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 235,
+    "identical": true,
+    "ours_hits": 6489,
+    "reference_hits": 6489,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2022-11-ghost-counts-mcp": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 10678,
+    "reference_hits": 10678,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 3,
+    "identical": true,
+    "ours_hits": 8670,
+    "reference_hits": 8670,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 5,
+    "identical": true,
+    "ours_hits": 0,
+    "reference_hits": 0,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 7,
+    "identical": true,
+    "ours_hits": 5310,
+    "reference_hits": 5310,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2023-02-new-plates-he3he4": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 5178,
+    "reference_hits": 5178,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 32,
+    "identical": true,
+    "ours_hits": 4604,
+    "reference_hits": 4604,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 94,
+    "identical": true,
+    "ours_hits": 5131,
+    "reference_hits": 5131,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 156,
+    "identical": true,
+    "ours_hits": 5657,
+    "reference_hits": 5657,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2023-03-momentum-bells": [
+   {
+    "shot": 1,
+    "identical": true,
+    "ours_hits": 3826,
+    "reference_hits": 3826,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 103,
+    "identical": true,
+    "ours_hits": 2610,
+    "reference_hits": 2610,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 205,
+    "identical": true,
+    "ours_hits": 4038,
+    "reference_hits": 4038,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 307,
+    "identical": true,
+    "ours_hits": 2458,
+    "reference_hits": 2458,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ],
+  "2024-11-rt-low-occupancy": [
+   {
+    "shot": 1111,
+    "identical": true,
+    "ours_hits": 506,
+    "reference_hits": 506,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 1656,
+    "identical": true,
+    "ours_hits": 822,
+    "reference_hits": 822,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 12336,
+    "identical": true,
+    "ours_hits": 925,
+    "reference_hits": 925,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   },
+   {
+    "shot": 12881,
+    "identical": true,
+    "ours_hits": 886,
+    "reference_hits": 886,
+    "line": null,
+    "ours_line": null,
+    "reference_line": null
+   }
+  ]
+ }
+}

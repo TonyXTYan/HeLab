@@ -21,6 +21,7 @@ from PyQt6.QtWidgets import (QAbstractItemView, QButtonGroup, QDialog, QDialogBu
                              QMessageBox, QPushButton, QRadioButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout,
                              QWidget)
 
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache
 from helab.utils.io_service import IORequest
 
@@ -82,9 +83,10 @@ class CopyRootDialog(QDialog):
         self.choices: dict[QRadioButton, str] = {}
         known = (entry.get("others") or [{}])[0]
         mounted = any(other.get("path") for other in entry.get("others") or [])
-        for location, path, enabled in ((str(known.get("location", "")), str(known.get("path", "")), True),
-                                        (str(entry["location"]), str(entry["path"]), mounted)):
-            button = QRadioButton(_where(path, location))
+        for ident, (location, path, enabled) in zip(("keep_known", "keep_new"), (
+                (str(known.get("location", "")), str(known.get("path", "")), True),
+                (str(entry["location"]), str(entry["path"]), mounted))):
+            button = identify(QRadioButton(_where(path, location)), f"copy_{ident}")
             button.setEnabled(enabled and bool(location))
             if not enabled:
                 button.setToolTip("Keeping it here gives the known folder a new .helab-root, but it isn't "
@@ -100,6 +102,7 @@ class CopyRootDialog(QDialog):
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         self.make = make
+        identify_buttons(buttons, "copy")
         layout.addWidget(buttons)
 
     def keep(self) -> str | None:
@@ -121,24 +124,25 @@ class RootDuplicatesWindow(QDialog):
         intro = QLabel(INTRO)
         intro.setWordWrap(True)
         layout.addWidget(intro)
-        self.tree = QTreeWidget()
+        self.tree = identify(QTreeWidget(), "root_duplicates_list", "Data roots to confirm",
+                             "The locations whose .helab-root is also elsewhere")
         self.tree.setHeaderLabels(list(self.COLUMNS))
         self.tree.setRootIsDecorated(False)
         self.tree.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         layout.addWidget(self.tree, 1)
         buttons = QHBoxLayout()
-        self.same_button = QPushButton("Same folder")
+        self.same_button = identify(QPushButton("Same folder"), "root_same")
         self.same_button.setToolTip(SAME_TIP)
-        self.copy_button = QPushButton("It's a copy…")
+        self.copy_button = identify(QPushButton("It's a copy…"), "root_copy")
         self.copy_button.setToolTip(COPY_TIP)
-        self.later_button = QPushButton("Later")
+        self.later_button = identify(QPushButton("Later"), "root_later")
         self.later_button.setToolTip(LATER_TIP)
-        self.snooze_button = QPushButton("Remind me next session")
+        self.snooze_button = identify(QPushButton("Remind me next session"), "root_snooze")
         self.snooze_button.setToolTip(SNOOZE_TIP)
         for button in (self.same_button, self.copy_button, self.later_button, self.snooze_button):
             buttons.addWidget(button)
         buttons.addStretch(1)
-        close = QPushButton("Close")
+        close = identify(QPushButton("Close"), "root_close")
         buttons.addWidget(close)
         layout.addLayout(buttons)
         self.same_button.clicked.connect(self.same)

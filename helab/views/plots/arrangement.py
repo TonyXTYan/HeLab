@@ -23,6 +23,7 @@ from PyQt6.QtWidgets import QDockWidget, QMainWindow, QMessageBox
 
 from helab.analysis.dataset_view import DatasetView, view_of
 from helab.analysis.presets import Arrangement, RecordError, SavedPlot, parse
+from helab.utils.accessible import identify_buttons
 from helab.utils.folder_cache import Dataset, FolderCache, store_options
 from helab.utils.io_service import IORequest
 from helab.utils.settings_defaults import OPEN_PLOTS_SETTING, REOPEN_PLOTS_SETTING, read_setting
@@ -427,6 +428,7 @@ class PlotReopen(QObject):
         box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         box.buttonClicked.connect(lambda button: self.answer(button is keep))
         self._question = box
+        identify_buttons(box, "plots_not_reopened")
         box.show()
 
     def answer(self, keep: bool) -> None:

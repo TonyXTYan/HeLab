@@ -31,3 +31,8 @@ blosc
 lz4
 pyqtgraph
 pyopengl
+# The build tool of the TXY converter's optional compiled backend, cython (python native/build.py;
+# Q11.2: the app ships numpy, cython and the reference). HeLab and the tests work without it. The
+# numba, mlx and rust backends stay in the code but not in the build (A9.1): a developer installs
+# numba, mlx or maturin by hand to try one.
+Cython

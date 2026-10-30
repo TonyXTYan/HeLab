@@ -6,7 +6,7 @@ import os
 import time
 from typing import Any
 
-from helab.io_ops import stores
+from helab.io_ops import helab_txy, stores
 from helab.io_ops.events import AdminResultFields
 from helab.io_ops.infra import Emit, Heartbeat, emit
 from helab.io_ops.markers import _location_path, _root_rows
@@ -20,7 +20,8 @@ from helab.io_ops.stores import (_cache_info, _deadline, _removed_event, _result
 NO_ROOT_CONSTANTS = "no .helab-root found here or above"
 UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 
-ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs", "clear_prefs",
+ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs",
+                 "convert_prefs", "clear_prefs", "clear_converted_txy", "mark_used",
                  "constants", "presets", "forget_root", "root_same", "clear_root", "clear_results",
                  "clear_root_results", "adopt_result", "discard_result", "identity")
 
@@ -38,6 +39,11 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     )
     if action not in ADMIN_ACTIONS:
         raise ValueError(f"Unknown cache action: {action}")
+    if action == "mark_used":
+        # The converted TXY's last uses loads didn't write (Q30.3, A30.4); the index only, not the store.
+        send({"kind": "admin_result", "action": action, "next_deadline": None,
+              "unwritten": helab_txy.mark_used(list(params.get("marks") or []))})
+        return
     root = cache_options["directory"]
     budget = params.get("budget", cache_options.get("budget"))
     # When the app set it: a budget set later (e.g. lowered while this job waited) wins.
@@ -46,10 +52,10 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     old: list[str] = []
     if action == "sweep":
         old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
-    # A constants write trusts only the volume hints this session verified, like the other local
+    # A constants or converter-flag write trusts only the volume hints this session verified, like the other local
     # writes keyed by a source folder (scan history, subfolder status); the other actions name
     # no source folder.
-    verified_volumes = params.get("verified_volumes") if action == "constants" else None
+    verified_volumes = params.get("verified_volumes") if action in ("constants", "convert_prefs") else None
     with stores._cache_store(root, local_lane=True, verified_volumes=verified_volumes,
                              offline=bool(cache_options.get("offline"))) as store:
         if (budget is not None and budget_set_at is not None and not store.read_only
@@ -70,6 +76,9 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                     with contextlib.suppress(SaveRejected, StoreError):
                         entry["room"] = asdict(store.result_room_plan(entry["pending_id"], int(budget)))
             inventory["roots"] = _root_rows(store, send)
+            # HeLab's own TXY under the cache and temp folders: not in the store, outside the budget (Q12.3, Q27.5).
+            inventory["converted_txy"] = helab_txy.converted_summary(
+                helab_txy.converted_roots(root, str(params.get("temps") or "")))
             send({"kind": "inventory", "inventory": inventory})
         elif action == "sweep":
             try:
@@ -139,6 +148,19 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             send({"kind": "folder_prefs", "path": path, "prefs": saved})
             if flag_removal is not None:
                 send(_removed_event(flag_removal))
+        elif action == "convert_prefs":
+            # The converter's flags for one folder (``write_beside``, Q9.7): set when given, newest
+            # choice wins; without it, read. A folder without a data root has none (an error).
+            path = str(params["path"])
+            if params.get("write_beside") is None:
+                read = store.read_convert_prefs([path])[path]
+                if read.status == "error":
+                    raise StoreError(read.error)
+                prefs = read.value or {"write_beside": False, "set_at": 0.0}
+            else:
+                prefs = store.set_convert_prefs(path, bool(params["write_beside"]),
+                                                float(params.get("set_at") or time.time()))
+            send({"kind": "convert_prefs", "path": path, "prefs": prefs})
         elif action == "constants":
             # A folder's own constants (Folder constants…): every value it sets, newest choice wins.
             from helab.utils.cache_paths import UnresolvedRemotePath, _inside, _normal
@@ -171,6 +193,12 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             else:
                 send({"kind": "presets", "saved": written, "rows": stored.value or [],
                       "store": store.store_id})
+        elif action == "clear_converted_txy":
+            # The user asked (Settings → Cache's Clear, confirmed): HeLab's TXY under the cache and temp folders.
+            roots = helab_txy.converted_roots(root, str(params.get("temps") or ""))
+            gone = sum(helab_txy.clear_converted(converted)["bytes"] for converted in roots.values())
+            send({"kind": "removed", "kinds": ["converted_txy"], "paths": None, "datasets": 0, "bytes": gone})
+            result["converted_txy"] = helab_txy.converted_summary(roots)
         elif action == "clear_prefs":
             cleared_at = time.time()
             send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})
