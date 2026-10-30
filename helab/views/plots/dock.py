@@ -175,6 +175,16 @@ class FloatingSettings(QWidget):
             self.page.setVisible(self.is_open)
 
 
+def release_figures(widget: QWidget) -> None:
+    """A plot leaving its dock (replaced, released or closed): each part of ``widget`` (it included) serving
+    a figure elsewhere lets it go now (``release_figure``: a Plotly pane's page on the Dash server), rather
+    than when its Python object is collected, which a closed plot's reference cycles can put off."""
+    for part in [widget, *widget.findChildren(QWidget)]:
+        release = getattr(part, "release_figure", None)
+        if callable(release):
+            release()
+
+
 # The controls a plot's drawing may hold (helab/utils/accessible.py; tests/test_accessible_names.py).
 PLOT_CONTROLS = (QAbstractButton, QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QComboBox, QLineEdit, QTabBar)
 
@@ -302,6 +312,7 @@ class AnalysisDock(QDockWidget):
         if old is not None and old.parentWidget() is self._body_holder:
             self._body_layout.removeWidget(old)
             old.hide()
+            release_figures(old)  # (Not one ``widget`` took in: that one is still shown.)
         self._body = widget
         if widget is not None:
             self._body_layout.addWidget(widget)

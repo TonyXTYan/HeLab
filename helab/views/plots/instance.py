@@ -41,7 +41,7 @@ from helab.utils.number_format import byte_size
 from helab.utils import txy_sources
 from helab.utils.ram_buffers import Buffers, arrays_in, buffers
 from helab.views.plots.cached_results import PENDING_NOTE, VERIFY_NOTE, CachedRuns
-from helab.views.plots.dock import AnalysisDock
+from helab.views.plots.dock import AnalysisDock, release_figures
 from helab.views.plots.pictures import ReleasedPlot, snapshot
 from helab.views.plots.txy_source import TxySourceRow, known_profiles, profile_by_tag
 if TYPE_CHECKING:
@@ -149,6 +149,8 @@ class LinkedAnalysisInstance(QObject):
         if dock is None or sip.isdeleted(dock):
             return  # Deleted with the plot area: the Settings panel drops the page itself.
         plots.middle_mainwindow.removeDockWidget(dock)
+        if (plot := dock.widget()) is not None:
+            release_figures(plot)  # Now, not when this plot's cycles are collected (a figure's page goes).
         dock.deleteLater()
         if self.param_tab is not None:
             plots.panel_right_top_plot_settings.remove_plot(dock)

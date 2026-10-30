@@ -555,11 +555,8 @@ def test_scatter_from_the_panel(window: Window, browser: FolderExplorer, qtbot: 
     assert "Parameters: Shots all, From shot (0 = first) 0, Last N 50, To shot (0 = last) 0, Range auto-crop, " \
            "Auto-crop: keep 99 %, T min 0 s, T max 0 s," in label.toolTip()
     plot_id = pane.plot_id
-    dock = instance.dock_widget
-    del pane, instance  # (The test's own holds: the app drops a closed plot's instance.)
-    dock.close()
-    del dock
-    qtbot.waitUntil(lambda: figure_freed(plot_id))
+    instance.dock_widget.close()
+    qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None)
     QApplication.processEvents()
 
 
@@ -595,11 +592,8 @@ def test_another_library_draws_the_plot_again_without_a_rerun(
     qtbot.waitUntil(lambda: instance.result is not first, timeout=10_000)
     assert instance.dock_widget.findChild(PlotlyPane) is pane  # Updated in place: the page stays.
     plot_id = pane.plot_id
-    dock = instance.dock_widget
-    del pane, instance  # (The test's own holds: the app drops a closed plot's instance.)
-    dock.close()
-    del dock
-    qtbot.waitUntil(lambda: figure_freed(plot_id))
+    instance.dock_widget.close()
+    qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None)
     QApplication.processEvents()
 
 
@@ -788,11 +782,3 @@ def test_closing_the_main_window_ends_its_plots(qtbot: QtBot, monkeypatch: pytes
         running.release.set()
         runner.finished.disconnect(on_finished)
     assert runner.receivers(runner.finished) == connected
-
-
-def figure_freed(plot_id: str) -> bool:
-    """A closed Plotly pane's figure leaves the server once the pane's Python object goes (weakref.finalize,
-    not a Python callable on ``destroyed``: tests/test_destroyed_connections.py): deletes run, then a collection."""
-    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
-    gc.collect()
-    return dash_server.snapshot(plot_id) is None

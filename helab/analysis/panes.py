@@ -28,10 +28,11 @@ class PlotlyPane(QWidget):
         self.plot_id = uuid.uuid4().hex
         server.add_plot(self.plot_id, figure)
         self.url = server.plot_url(self.plot_id)
-        # Free the figure's data on the server once the pane goes (holding neither the pane nor a Qt
+        # Free the figure's data on the server: when the plot leaves its dock (``release_figure``, called
+        # by the dock and the plot's close), else once the pane goes (holding neither the pane nor a Qt
         # connection). Not a Python callable on ``destroyed``: run as the dock's children are deleted,
         # one crashed the process (SIGSEGV in a PyQt slot proxy, Smoke ready's follow-up notes).
-        weakref.finalize(self, server.remove_plot, self.plot_id)
+        self._free = weakref.finalize(self, server.remove_plot, self.plot_id)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -53,6 +54,11 @@ class PlotlyPane(QWidget):
         """A newer figure: the page swaps it in without reloading (``DashServer.update_plot``)."""
         self.server.update_plot(self.plot_id, figure)
         self.note.setText(note)
+
+    def release_figure(self) -> None:
+        """The plot left its dock (closed, released or drawn anew): its figure leaves the server now, so a
+        browser page showing it says so, and its data is freed (once; the pane's going does nothing more)."""
+        self._free()
 
     def open_in_browser(self) -> bool:
         return QDesktopServices.openUrl(QUrl(self.url))
