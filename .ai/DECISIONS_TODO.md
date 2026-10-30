@@ -278,6 +278,10 @@ Tony in Chat, 2026-10-30, on computer use and the smoke pass (blocks 5 and 31,
 - **Q31.3** the quit window lists every pending operation (kind, folder, how long), not only
   folder names.
 - **Q5.1** the smoke pass runs on Sonnet 5.5 (it drove both runs so far); Haiku stays untried.
+- **Q31.4** the test data lives in a private Hugging Face **dataset** (not a bucket: tags pin a
+  version), `TonyXTYan/HeLab-TestData`, tag `v1` (2026-10-30: 212 files, 103 MB, with M11.3's
+  MATLAB 2023 reference set); CI reads it with the `HF_TOKEN` secret, and its tests skip without it
+  ([testing](architecture/testing.md)).
 
 Tony in Chat, 2026-10-30, on the provisional UI pass (block 33,
 [findings](sessions/2026-10-30-claude-ui-provisional-0.0.7/findings.md), "as proposed"), for a "UI
@@ -490,16 +494,6 @@ Finding numbers refer to the
   - Q3.6.1: commit subjects in the log's "Area: summary" style?
   - Q3.6.2: do floors need the two large submodules (Momentum_Bells_test, DLD_front_panel)?
     Proposed: no; only `legacy/tdc_autoconverter`.
-
-## Automating the smoke pass (blocks 5, 31)
-
-- **Q31.4 Where the test data lives** (computer-use extra 6): a set prepared locally in
-  `~/GitHub-Local/HeLab-testdata` (75 MB, 148 files: a few raw + MATLAB TXY shots per detector era,
-  Live, raw-only, TXY-only, nested and damaged folders; `manifest.json`, `tools/build.py`; not a git
-  commit, nothing pushed). Host: (a) a private GitHub repo (beside the code, a deploy key in CI,
-  plain git under ~1 GB) or (b) a private Hugging Face dataset (made for data, no LFS quota, would
-  also take the 2.6 GB sample sets; another account and token). Proposed: (a) for this set, (b) if
-  the full samples go online too. Also: does the lab agree to its shots in a private hosted repo?
 
 ## v0.0.7 scope (block 6)
 

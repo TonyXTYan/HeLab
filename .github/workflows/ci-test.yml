@@ -20,6 +20,8 @@ on:
     secrets:
       CODECOV_TOKEN:
         required: false
+      HF_TOKEN:
+        required: false
 
 permissions:
   contents: read
@@ -66,6 +68,11 @@ jobs:
           python-version: 3.${{ inputs.python-minor }}
           cache: 'pip'
 
+      - name: Get HeLab's test data
+        uses: ./.github/actions/testdata
+        with:
+          token: ${{ secrets.HF_TOKEN }}
+
       - name: Install dependencies
         shell: bash
         run: |
@@ -101,11 +108,11 @@ jobs:
           else
             source venv/bin/activate
           fi
-          # The converter's tests that run a backend (each backend's own, the helper's and the
-          # within-shot split, which go through every available one; the unshipped ones skip); the reader, writer,
+          # The converter's tests that run a backend (each backend's own, the helper's, the
+          # within-shot split and the test data's, which go through every available one; the unshipped ones skip); the reader, writer,
           # profile and reference tests use none and run in the main job.
           pytest tests/test_convert_backend_*.py tests/test_convert_required_backends.py \
-            tests/test_convert_helab.py tests/test_convert_split.py \
+            tests/test_convert_helab.py tests/test_convert_split.py tests/test_convert_testdata.py \
             -n 4 -rR --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
 
   test:
@@ -165,6 +172,11 @@ jobs:
         with:
           python-version: 3.${{ inputs.python-minor }}
           cache: 'pip'
+
+      - name: Get HeLab's test data
+        uses: ./.github/actions/testdata
+        with:
+          token: ${{ secrets.HF_TOKEN }}
 
       - name: Install dependencies
         shell: bash

@@ -34,6 +34,19 @@ for details and a separate intermittent cache-move failure.
 
 `tests_sample_data/` (tracked, 12 MB, 43 files) holds a few shots from the lab: `goodish/` (`d<N>.txt` and `d_txy_forc<N>.txt` pairs 1–10 with the run's two MATLAB logs), `bad/` (pairs with gaps) and `bad_txy/` (shot 256). It is inside the checkout, so the source guard allows it (`tests/test_real_data_guard.py`), and it is one of `constants.DEV_POTENTIAL_DATA_PATHS`. `tests/test_convert_reference.py` reproduces its raw/TXY pairs byte for byte, so the folder has a `.gitattributes` `* -text`, as `tests/data/convert/` (the converter's fixtures, also compared byte for byte) does: Windows CI's autocrlf would otherwise rewrite the LF TXY files (a guard test checks they have no CR). `tests/test_windows_paths.py` fails on any tracked path Windows can't check out (reserved names such as `nul.txt`, `<>:"|?*`, a trailing dot or space): one such file once stopped every Windows CI job at checkout. Two opt-in tests are skipped unless set: `HELAB_TEST_NATIVE_ICONS` (macOS native folder and volume icons, `tests/test_folder_icons.py`) and `HELAB_TEST_REAL_VOLUME=1` (this machine's volume IDs, `tests/test_data_roots.py`).
 
+**HeLab's test data** (Q31.4) is the private Hugging Face dataset `TonyXTYan/HeLab-TestData`, built
+by its `tools/build.py` from the local sample copies (`~/GitHub-Local/HeLab-testdata` on Tony's Mac):
+a few raw/TXY pairs per detector era, Live, raw-only, TXY-only, nested and damaged folders, and
+`reference/matlab-2023` (the only 2023-variant MATLAB output, M11.3), every file in its
+`manifest.json` with its SHA-256. Tests pin a tag (`v1`; a change is a new tag). CI's
+`.github/actions/testdata` downloads it with the `HF_TOKEN` secret (a read-only token), cached per
+OS, and sets `HELAB_TESTDATA` and `HELAB_REQUIRE_TESTDATA=1`; without the token (forks, the lab's copy)
+the tests that need it skip. Locally: `hf download TonyXTYan/HeLab-TestData --type dataset --revision
+v1 --local-dir <folder>`, then `HELAB_TESTDATA=<folder>`. `tests/test_convert_testdata.py` checks the
+manifest and converts every pair byte for byte (`matlab-2019` on the eras, with its listed archive
+faults; `matlab-2023-lab-edit` on the reference), by numpy and, in the Converter backends job,
+cython. Tests only read it; one that writes copies it into its temp folder first.
+
 ## Slow tests first
 
 Slow tests first (Quick Fixes 6, 2026-10-29): `tests/conftest.py`'s `pytest_collection_modifyitems` puts the modules in `SLOW_FIRST_MODULES` (today `tests/test_typing.py`) at the start of each xdist worker's first batch (`slow_first_positions`, which mirrors xdist's `LoadScheduling` first batches), so they overlap the suite instead of forming a serial tail; a new module as slow belongs in that list. Each mypy test there has its own `--cache-dir` (`.mypy_cache/test_typing/<name>`, ignored), because concurrent mypy runs sharing one SQLite cache crash. `--test-group N/M` runs one group of the suite (CI: two per OS, A17.2): a test's group is `zlib.crc32(nodeid) % M + 1`, the `SLOW_FIRST_MODULES` tests dealt out in turn and still first inside their group; `config.stash[ALL_TESTS]` keeps the whole collection, which `tests/test_test_groups.py` checks splits once. Two traps (Quick Fixes 4, 2026-10-29): patch process-wide functions (`os.scandir`, …) only for the test's own thread, since `IOService.release` runs `shutil.rmtree` on a daemon thread (`HeLab-artifact-cleanup`); and don't `chdir` while helpers can start: they inherit the working folder, which the source guard denies outside the temp folder and the checkout (it shows only with `--basetemp` outside the checkout, so run the suite that way now and then). A path with spaces in the temp folder also catches tests that split paths on whitespace.

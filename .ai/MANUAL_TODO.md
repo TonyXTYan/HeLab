@@ -229,10 +229,10 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   repeat the Mac's x12/x16 rows with Safari closed.
 - [x] **M11.2 A CI-built rust (or cython) wheel on a lab PC**: superseded by M16.1 (cython only, since
   rust no longer ships).
-- [ ] **M11.3 Keep the MATLAB 2023 reference outputs**: the 32 files in the TXY Reference floor's
-  `.ai/temp/txy/matlab-2023/` are the only 2023-variant reference set on this Mac. Proposed: copy
-  them beside the sample set (e.g. `~/HeLab-samples/txy-v1-matlab-2023/`, read-only) before that
-  floor is deleted; the floor stays until then.
+- [x] **M11.3 Keep the MATLAB 2023 reference outputs**: the 32 raw/TXY pairs from the TXY Reference
+  floor's `.ai/temp/txy/matlab-2023/` are in the test data's `reference/matlab-2023/` (Q31.4, tag
+  `v1`, 2026-10-30; raw files checked against the sample set), and CI converts them byte for byte
+  (`tests/test_convert_testdata.py`). The floor can go.
 
 - [ ] **M12.1 The converter on the lab share** (Tony, at the acquisition PC): run `helab convert
   --watch <a copy of a run folder> --output temp` while files arrive (or copy them in one by one),
