@@ -155,8 +155,8 @@ SETTINGS: tuple[Setting, ...] = (
             "places: an arrangement record (helab.analysis.presets, JSON). Unset: none."),
     Setting(MAIN_SPLIT_SETTING, str, "380,320",
             "The main window's folder panel and plot settings panel widths in logical pixels, \"<folders>,<settings>\", "
-            "saved as HeLab quits; the plots take the rest of the window. Each from 80 to 4000; otherwise the "
-            "default (Q33.2)."),
+            "saved as HeLab quits; the plots take the rest of the window. Folders 80 to 4000, settings 250 to 4000; "
+            "otherwise the default (Q33.2)."),
 )
 
 # Keys under a prefix: Settings → Lab parameters saves only the lab constants the user set,

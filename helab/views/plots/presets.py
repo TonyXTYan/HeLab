@@ -240,9 +240,9 @@ class PresetBar(QWidget):
         # The row shrinks with the settings panel rather than set its width (Q33.2): the buttons below
         # the style's 80 px least width down to their text, the combo to a few characters.
         self.combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.combo.setMinimumContentsLength(6)
+        self.combo.setMinimumContentsLength(3)
         for button in (self.apply_button, self.save_button, self.delete_button):
-            button.setMinimumWidth(button.fontMetrics().horizontalAdvance(button.text()) + 16)
+            button.setMinimumWidth(button.fontMetrics().horizontalAdvance(button.text()) + 8)
             row.addWidget(button)
         row.addWidget(self.changes_button)
         layout.addLayout(row)

@@ -76,9 +76,9 @@ class TreePanelWidget(QWidget):
         # The row shrinks with the panel, never sets its width (Q33.2; on Windows it held the settings panel at
         # ~548 px): the combo to a few characters, the button to its text.
         self.group_selector.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
-        self.group_selector.setMinimumContentsLength(8)
+        self.group_selector.setMinimumContentsLength(4)
         self.load_dir_button.setMinimumWidth(
-            self.load_dir_button.fontMetrics().horizontalAdvance(self.load_dir_button.text()) + 16)
+            self.load_dir_button.fontMetrics().horizontalAdvance(self.load_dir_button.text()) + 8)
 
         controls_layout.addStretch()
         self.panel_layout_right_bottom.addLayout(controls_layout)

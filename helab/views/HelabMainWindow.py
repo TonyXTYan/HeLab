@@ -1004,7 +1004,7 @@ class HelabMainWindow(QMainWindow):
         # The settings panel's least width is set, not its contents': the splitter keeps the width the user
         # (or the default) gave it, whatever a row's text needs in the system's font (on Windows CI a row
         # held it at ~548 px); a row that doesn't fit is cut until the panel is widened (Q33.2).
-        self.right_panel.setMinimumWidth(self.MIN_PANEL_WIDTH)
+        self.right_panel.setMinimumWidth(self.MIN_SETTINGS_WIDTH)
 
         # A change in the window's width goes to the plots; the panels keep theirs.
         self.splitter.setStretchFactor(0, 0)  # Left panel
@@ -1266,18 +1266,24 @@ class HelabMainWindow(QMainWindow):
 
     # A panel narrower than this isn't a width to restore (the user dragged it nearly shut).
     MIN_PANEL_WIDTH, MAX_PANEL_WIDTH = 80, 4000
+    # The settings panel's least width (review R2-2): the narrowest at which none of its controls is cut at
+    # macOS's default font (Load Scripts… and Delete… start to be at 240), below the 320 px default so the
+    # default split holds where the system's font is wider (Windows), set rather than taken from the contents.
+    MIN_SETTINGS_WIDTH = 250
     _split_shown = True  # (False from ``_setup_central_widgets`` until the first show applies the widths.)
 
     @classmethod
     def read_split(cls, settings: QSettings) -> tuple[int, int]:
         """The folder and settings panels' saved widths (``main_window_split``, "<folders>,<settings>"); the
-        row's default for a value that isn't two widths from MIN_PANEL_WIDTH to MAX_PANEL_WIDTH."""
+        row's default for a value that isn't two widths up to MAX_PANEL_WIDTH, the folders' at least
+        MIN_PANEL_WIDTH and the settings' at least MIN_SETTINGS_WIDTH."""
         def widths(text: object) -> tuple[int, int] | None:
             try:
                 left, right = (int(part) for part in str(text).split(","))
             except ValueError:
                 return None
-            fits = all(cls.MIN_PANEL_WIDTH <= width <= cls.MAX_PANEL_WIDTH for width in (left, right))
+            fits = (cls.MIN_PANEL_WIDTH <= left <= cls.MAX_PANEL_WIDTH
+                    and cls.MIN_SETTINGS_WIDTH <= right <= cls.MAX_PANEL_WIDTH)
             return (left, right) if fits else None
         saved = widths(read_setting(settings, MAIN_SPLIT_SETTING))
         if saved is not None:
@@ -1307,7 +1313,7 @@ class HelabMainWindow(QMainWindow):
         left, _, right = self.splitter.sizes()
         if left >= self.MIN_PANEL_WIDTH:
             self.left_panel_width = min(left, self.MAX_PANEL_WIDTH)
-        if right >= self.MIN_PANEL_WIDTH:
+        if right >= self.MIN_SETTINGS_WIDTH:
             self.right_panel_width = min(right, self.MAX_PANEL_WIDTH)
 
     GEOMETRY = re.compile(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)")

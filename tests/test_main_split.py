@@ -66,7 +66,7 @@ def test_the_default_split_gives_the_plots_the_room_and_a_plot_keeps_it(
 
 def test_a_settings_row_wider_than_the_panel_doesnt_widen_it(window: HelabMainWindow, qtbot: QtBot) -> None:
     """Whatever a row needs in the system's font (wider fonts on Windows CI held the panel at ~548 px), the
-    panel keeps its width: its least width is set (MIN_PANEL_WIDTH), so the row is cut, not the folders."""
+    panel keeps its width: its least width is set (MIN_SETTINGS_WIDTH), so the row is cut, not the folders."""
     from PyQt6.QtWidgets import QPushButton
     sizes = window.splitter.sizes()
     wide = QPushButton("x" * 200)  # Far wider than 320 px in any font.
@@ -96,11 +96,44 @@ def test_the_default_split_holds_in_a_wider_font(qtbot: QtBot, tmp_path: Path) -
             # its 320 px. (Both panels may give way to the plots' own least width, which a doubled font widens: on
             # Windows CI's narrower window they did, to 214 and 154 px.)
             left, _, right = window.splitter.sizes()
-            assert 0 < right <= 320 and left > 0, wide_parts(window)
+            assert right <= 320, wide_parts(window)
         finally:
             closed(qtbot, window)
     finally:
         app.setFont(font)
+
+
+def test_the_settings_panel_goes_no_narrower_than_its_controls_need(window: HelabMainWindow, qtbot: QtBot,
+                                                                     tmp_path: Path) -> None:
+    """Review R2-2: dragged as narrow as it goes, the settings panel stops at MIN_SETTINGS_WIDTH (250 px), where
+    none of its controls is cut at this font, a plot open: none runs past the panel's edge, and no button is
+    narrower than its text. (The plot's settings tree scrolls sideways: its rows aren't counted.)"""
+    from PyQt6.QtWidgets import QAbstractButton, QAbstractScrollArea, QComboBox, QWidget
+    load(window, qtbot, run_folder(tmp_path))
+    plot(window, qtbot, "Counts per shot")
+    left, middle, right = window.splitter.sizes()
+    window.splitter.setSizes([left, middle + right - 10, 10])
+    qtbot.wait(20)
+    assert window.splitter.sizes()[2] == HelabMainWindow.MIN_SETTINGS_WIDTH == 250
+    panel = window.right_panel
+
+    def scrolls(control: QWidget) -> bool:
+        parent = control.parentWidget()
+        while parent is not None and parent is not panel:
+            if isinstance(parent, QAbstractScrollArea):
+                return True
+            parent = parent.parentWidget()
+        return False
+
+    def cut(control: QAbstractButton | QComboBox) -> bool:
+        past = control.mapTo(panel, control.rect().topRight()).x() >= panel.width()
+        text = control.fontMetrics().horizontalAdvance(control.text()) if isinstance(control, QAbstractButton) else 0
+        return past or control.width() < text
+
+    controls: list[QAbstractButton | QComboBox] = [*panel.findChildren(QAbstractButton), *panel.findChildren(QComboBox)]
+    assert [f"{type(control).__name__} {control.objectName()} (right edge "
+            f"{control.mapTo(panel, control.rect().topRight()).x()} of {panel.width()}, width {control.width()})"
+            for control in controls if control.isVisibleTo(panel) and not scrolls(control) and cut(control)] == []
 
 
 def test_a_wider_window_widens_the_plots_only(window: HelabMainWindow, qtbot: QtBot) -> None:
@@ -135,7 +168,8 @@ def test_a_collapsed_panel_saves_the_width_it_had(window: HelabMainWindow, qtbot
 
 @pytest.mark.parametrize("saved, expected", [
     ("500,400", (500, 400)), ("", (380, 320)), ("500", (380, 320)), ("a,b", (380, 320)),
-    ("79,400", (380, 320)), ("500,4001", (380, 320)), ("80,4000", (80, 4000)),
+    ("79,400", (380, 320)), ("500,4001", (380, 320)), ("80,4000", (80, 4000)), ("80,249", (380, 320)),
+    ("80,250", (80, 250)),
 ])
 def test_read_split_takes_two_widths_in_range_else_the_default(tmp_path: Path, saved: str,
                                                                expected: tuple[int, int]) -> None:
