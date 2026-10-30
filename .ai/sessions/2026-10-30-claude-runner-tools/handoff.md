@@ -91,7 +91,11 @@ Branch at `347748e` (`dev/v0.0.7` `c492242`, TXY Index, merged in `0a612d3` with
   - One RERUN not this branch's, passed on its rerun: `tests/test_io_service_run.py::test_writing_held_data_out_counts_as_progress`
     (`assert (2 == 1)`, `where 2 = len([0.0015683999999964726, 0.0016781000000491986])`,
     `tests\test_io_service_run.py:40`), already in known-issues.
-- CI after the fix: the run of its push; its ID and jobs are in the report to CoCo (a docs-only push would run CI again).
+- CI run **40991251447** (`89e1ced`, the fix): green, all 13 jobs on the three OSes, no reruns.
+- After merging `dev/v0.0.7` `b9be661` (Byte Units; `09df6ce`, no conflicts, no `byte_size` call on
+  this branch): `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` **8300 passed,
+  669 skipped, 2 warnings in 150.73 s**, no reruns; the five type checks as above (Success / 0 errors).
+  CI of that push: its ID is in the report to CoCo.
 
 ## Proposed doc changes (for the Coordinator)
 
