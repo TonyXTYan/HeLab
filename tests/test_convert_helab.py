@@ -389,6 +389,27 @@ def test_a_folder_converts_to_the_temp_folder_with_provenance(source: Path, tmp_
     assert len(summary(quiet)["unconvertible"]) == 1
 
 
+def test_done_shots_whose_txy_went_convert_again(source: Path, tmp_path: Path, private_store: str) -> None:
+    """Codex 4425255644: a shot the last conversion did counts as done only while its TXY is still in HeLab's
+    folder: cleared there (Settings › Cache), or under another destination, it converts again."""
+    for shot in (1, 2):
+        write_raw(source, shot, raw_bytes(10_000 * shot))
+
+    def again(previous: list[dict[str, Any]], destination: str) -> list[dict[str, Any]]:
+        return run(source, request_for(source, tmp_path, private_store, destination=destination, seen=[],
+                                       done=summary(previous)["current"], kept=summary(previous)["kept"]))
+    first = run(source, request_for(source, tmp_path, private_store, destination="cache"))
+    assert sorted(event["shot"] for event in of(first, "shot_converted")) == [1, 2]
+    quiet = again(first, "cache")  # (Done and there: not looked at.)
+    assert of(quiet, "shot_converted") == [] and len(summary(quiet)["current"]) == 2
+    helab_txy.clear_converted(os.path.dirname(of(first, "convert_plan")[0]["folder"]))
+    cleared = again(quiet, "cache")
+    assert sorted(event["shot"] for event in of(cleared, "shot_converted")) == [1, 2]
+    elsewhere = again(cleared, "temp")
+    assert sorted(event["shot"] for event in of(elsewhere, "shot_converted")) == [1, 2]
+    assert of(again(elsewhere, "temp"), "shot_converted") == []
+
+
 def test_files_that_may_still_be_written_wait(source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", 5.0)
     whole = raw_bytes(10_000, 20_000)

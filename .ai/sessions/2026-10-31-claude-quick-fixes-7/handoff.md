@@ -87,3 +87,42 @@ the CI run ID are in the report to CoCo: this file is committed before the push,
 - **A~1** (optional): Codex's three findings had no test because `save_held`'s HeLab-TXY paths had none for
   "TXY gone" and "shadowed MATLAB TXY settled"; a short audit of `live.py`'s matching paths (same
   `file_names`/signature shapes) could look for the same two gaps.
+
+# Round 2 (Codex's re-review 5714477187 on `e56d3d2`)
+
+Detail in `notes.md` (Round 2). Round 1's CI run **41078799066 passed on every job** (macOS, Windows,
+Ubuntu: Tests 1/2 and 2/2, Build, Converter backends).
+
+| Finding | Commit | Files |
+|---|---|---|
+| P2 4425255644, done/kept shots current without their TXY (cache/temp) | `b069c1f` | `helab/io_ops/convert.py`, `tests/test_convert_helab.py` |
+| P2 4425255663, `skip` sent whatever the profile | `d5da485` | `helab/utils/folder_cache.py`, `tests/test_live_convert.py` |
+
+4. When done or kept shots are sent back and the output is the cache or temp folder, one local listing of
+   HeLab's folder for the output (`_txy_shots`) says which have this tag's TXY; one without goes through the
+   ordinary check and converts again. That covers TXY cleared from Settings › Cache, deleted by hand, and a
+   change of destination. Beside is unchanged.
+5. `skip` only with the same profile, as `done`/`kept`. No unconvertible reason is profile-independent
+   except an empty raw file (cheap to read again), so nothing is kept apart. User-visible: under a new
+   profile the file waits one tick, then is read; still damaged, it is listed as damaged again on the Live
+   line and in Folder details, with **no second notification** (keyed by path, name, size, mtime).
+
+**Tests (fail on `51cd8c4`, pass now):** `test_done_shots_whose_txy_went_convert_again` (`[] == [1, 2]`);
+`test_a_file_unconvertible_under_one_profile_is_tried_under_another` (`[] == [4]`);
+`test_the_lists_of_the_last_conversion_are_sent_back` updated (it asserted `skip` under another profile).
+
+**Checks:** full suite -n 12: 8505 passed, 672 skipped, no RERUN; five type checks clean.
+
+**Pushed:** `dev/v0.0.7` with `b069c1f`, `d5da485` and this session commit on top (hash and CI run in the
+report to CoCo).
+
+**Doc proposals:**
+- `converter.md` table row `done`, `kept`, `skip` → "the previous summary's `current`, `kept`,
+  `unconvertible`, sent back (`FolderCache.convert`, all three only for the same profile): not checked again
+  while unchanged; a done or kept shot only while its TXY is there (beside: the source listing; cache or
+  temp: one listing of HeLab's folder for the output)".
+- `live.md` Auto-convert: "(`seen`/`done`/`kept`/`skip`; `done`/`kept` only for the same profile)" →
+  "(`seen`/`done`/`kept`/`skip`; `done`/`kept`/`skip` only for the same profile: a file unconvertible under
+  one is read again under another, its damaged notification not repeated)".
+
+No new Q~/M~/A~ items.

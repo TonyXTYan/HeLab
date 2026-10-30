@@ -74,3 +74,28 @@ Each test must fail on today's code (say so in the handoff). Smallest change; no
 
 No version bump, release, tag or PR. Ask CoCo (`maestri ask "CoCo" "…"`) before any file outside
 `helab/convert/txy.py`, `helab/io_ops/save_held.py`, their tests and this folder.
+
+## Round 2: Codex's re-review (review 5714477187, on `e56d3d2`)
+
+Codex accepted round 1 and found two more (both checked by CoCo against the code; both session-only: a
+restart clears them). Same rules as above; also allowed: `helab/io_ops/convert.py`, `helab/utils/folder_cache.py`
+and their tests (still ask before any other file).
+
+4. **P2, `helab/io_ops/convert.py` ~line 568 (comment 4425255644).** For cache/temp output `there` is always true,
+   so a shot in the folder's remembered `done`/`kept` lists (from `FolderCache.convert`'s `convert_lists`) is
+   reported current without checking its TXY still exists. After Settings › Cache clears HeLab's converted TXY
+   (or the destination setting changes), those shots aren't converted again for the rest of the session, even after
+   Live off/on. Fix (your call, smallest that's right): validate that the TXY is still there for cache/temp too (the
+   index/listing the run already reads), or drop `convert_lists` when HeLab's converted TXY are cleared or the
+   output destination changes. Test: clear (or remove) the converted TXY, convert again: the shots convert.
+5. **P2, `helab/utils/folder_cache.py` `convert()` ~line 1241 (comment 4425255663).** `skip` (the unconvertible
+   list) is sent whatever the profile, while `done`/`kept` are only for the same profile. A raw file unconvertible
+   under one profile (e.g. damaged because its trigger channel differs from that profile's) is never retried after
+   the user picks a corrected profile. Fix: reuse unconvertible entries only for the same profile (or keep
+   profile-independent failures, if any, apart: say which in the handoff); mind the "damaged: said once" rule (a
+   retry under a new profile may notify again: say what the user sees). Test: unconvertible under profile A, then
+   profile B: retried.
+
+Commit each on `dev/v0.0.7` (message names the Codex comment ID), full suite + five type checks, push once, add a
+"Round 2" section to `handoff.md` (and any doc proposals), then report back:
+`maestri ask "CoCo" "QF7 round 2 pushed at <hash>, CI <run id>"`.

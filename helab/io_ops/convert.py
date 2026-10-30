@@ -524,6 +524,10 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     root, folder_name = os.path.dirname(places["folder"]), os.path.basename(places["folder"])
     records = {} if beside or not raws else provenance.read_shots(
         root, folder_name, tag=tag, shots=[shot.shot for shot in raws], repair=True)
+    # A done or kept shot counts as such only while its TXY is still there: beside, by the listing; in HeLab's
+    # folder (cache or temp), by one listing of it, so TXY cleared there (Settings › Cache), or another
+    # destination, are looked at again.
+    there = set(beside_txy) if beside else _txy_shots(places["folder"], tag) if done or kept_before else set()
 
     def seen_since(shot: _Shot) -> float:
         """When this computer first saw the file with its size and mtime now (this check, if not before)."""
@@ -563,13 +567,10 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
         if skip.get(shot.name) == stat:
             unconvertible.append(shot.entry)
             continue
-        # Beside, a done or kept shot counts as such only while its TXY is still there: one the user
-        # deleted is looked at again.
-        there = not beside or shot.shot in beside_txy
-        if done.get(shot.name) == stat and redo != "always" and there:
+        if done.get(shot.name) == stat and redo != "always" and shot.shot in there:
             current.append(shot.entry)
             continue
-        if kept_before.get(shot.name) == stat and there:
+        if kept_before.get(shot.name) == stat and shot.shot in there:
             kept.append(shot.entry)
             continue
         # A current TXY needs no read, so it is told apart first (a folder's first conversion
@@ -789,6 +790,17 @@ def _remove_partial(path: str, entry: os.DirEntry[str], send: Emit) -> None:
     _trace("unlink", entry.path, "convert: leftover", age=round(age))
     send({"kind": "partial_removed", "path": path, "folder": path, "file": entry.name, "size": info.st_size,
           "age": age})
+
+
+def _txy_shots(folder: str, tag: str) -> set[int]:
+    """The shots with HeLab's TXY of ``tag`` in HeLab's ``folder`` (none when it can't be listed: they are
+    then checked one by one)."""
+    from helab.convert.provenance import parse_txy_name
+    try:
+        with os.scandir(folder) as entries:
+            return {parsed[1] for entry in entries if (parsed := parse_txy_name(entry.name)) and parsed[0] == tag}
+    except OSError:
+        return set()
 
 
 def _remove_own_partials(path: str, folder: str, send: Emit) -> None:

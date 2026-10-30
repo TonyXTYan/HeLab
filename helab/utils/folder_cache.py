@@ -1238,10 +1238,11 @@ class FolderCache(QObject):
         lists = self.convert_lists.get(path)
         if lists is not None:
             payload["seen"] = lists["waiting"]
-            payload["skip"] = lists["unconvertible"]
             if lists["profile"] == profile:
-                # (Another profile's current shots aren't this one's: checked again.)
+                # (Another profile's current and unconvertible shots aren't this one's: checked again, a
+                # file damaged for one profile's trigger channel too.)
                 payload["done"], payload["kept"] = lists["current"], lists["kept"]
+                payload["skip"] = lists["unconvertible"]
         return self.submit(owner, 0, path, "convert", payload)
 
     def _remember_convert(self, job: SharedJob, event: dict[str, Any]) -> None:
