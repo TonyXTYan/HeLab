@@ -20,7 +20,7 @@ from typing import Any, Callable, Optional
 import psutil
 from PyQt6 import sip
 from PyQt6.QtCore import Qt, QSize, QTimer, QItemSelection, QUrl, QDateTime, QSettings, QRect
-from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplication, QPainter, QPixmap, QKeySequence
+from PyQt6.QtGui import QAction, QActionGroup, QIcon, QCloseEvent, QGuiApplication, QPainter, QPixmap, QKeySequence, QShowEvent
 from PyQt6.QtWidgets import QMainWindow, QStatusBar, QMenuBar, QWidget, QVBoxLayout, QSplitter, \
     QLabel, QToolBar, QSizePolicy, QMenu, QApplication, QInputDialog, QProgressBar, QToolButton, QMessageBox, \
     QDockWidget, QFileDialog, QPushButton
@@ -988,8 +988,10 @@ class HelabMainWindow(QMainWindow):
         self._setup_right_side()
 
 
-        # The folder and settings panels' widths as the user left them (Q33.2), the plots the rest.
+        # The folder and settings panels' widths as the user left them (Q33.2), the plots the rest; applied
+        # again from the splitter's real width when the window first shows (``showEvent``).
         self.left_panel_width, self.right_panel_width = self.read_split(app_settings())
+        self._split_shown = False
         self.splitter.setSizes([
             self.left_panel_width,
             self.DEFAULT_WIDTH-self.left_panel_width-self.right_panel_width,
@@ -999,7 +1001,10 @@ class HelabMainWindow(QMainWindow):
 
         # Make the left and right panels collapsible
         self.left_panel.setMinimumWidth(0)
-        self.right_panel.setMinimumWidth(0)
+        # The settings panel's least width is set, not its contents': the splitter keeps the width the user
+        # (or the default) gave it, whatever a row's text needs in the system's font (on Windows CI a row
+        # held it at ~548 px); a row that doesn't fit is cut until the panel is widened (Q33.2).
+        self.right_panel.setMinimumWidth(self.MIN_PANEL_WIDTH)
 
         # A change in the window's width goes to the plots; the panels keep theirs.
         self.splitter.setStretchFactor(0, 0)  # Left panel
@@ -1261,6 +1266,7 @@ class HelabMainWindow(QMainWindow):
 
     # A panel narrower than this isn't a width to restore (the user dragged it nearly shut).
     MIN_PANEL_WIDTH, MAX_PANEL_WIDTH = 80, 4000
+    _split_shown = True  # (False from ``_setup_central_widgets`` until the first show applies the widths.)
 
     @classmethod
     def read_split(cls, settings: QSettings) -> tuple[int, int]:
@@ -1279,6 +1285,16 @@ class HelabMainWindow(QMainWindow):
         default = widths(setting_default(MAIN_SPLIT_SETTING))
         assert default is not None
         return default
+
+    def showEvent(self, a0: QShowEvent | None) -> None:
+        """The first time it shows: the panels at their widths, the plots taking what the window really has
+        (before, the splitter shared out a width it only guessed, and gave a panel its contents' size hint)."""
+        super().showEvent(a0)
+        if not self._split_shown:
+            self._split_shown = True
+            self.splitter.setSizes([self.left_panel_width,
+                                    max(0, self.splitter.width() - self.left_panel_width - self.right_panel_width),
+                                    self.right_panel_width])
 
     def save_split(self) -> None:
         """Keep the panels' widths for the next start (as HeLab quits). A shown panel's width is its own; a

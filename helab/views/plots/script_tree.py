@@ -73,6 +73,12 @@ class TreePanelWidget(QWidget):
                                         description="Load analysis scripts from a folder")
         self.load_dir_button.clicked.connect(self._on_load_directory)
         controls_layout.addWidget(self.load_dir_button)
+        # The row shrinks with the panel, never sets its width (Q33.2; on Windows it held the settings panel at
+        # ~548 px): the combo to a few characters, the button to its text.
+        self.group_selector.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.group_selector.setMinimumContentsLength(8)
+        self.load_dir_button.setMinimumWidth(
+            self.load_dir_button.fontMetrics().horizontalAdvance(self.load_dir_button.text()) + 16)
 
         controls_layout.addStretch()
         self.panel_layout_right_bottom.addLayout(controls_layout)
