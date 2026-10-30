@@ -26,7 +26,7 @@ change, the CLI's counter lines allowed after TXY Index lands, and the screensho
 
 | Event | Site | Fields |
 |---|---|---|
-| `load_done` | `FolderCache._job_event`, where an accepted `loaded` becomes a `Dataset` | `folder shots events seconds source live`; `source`: `cache` (a cached read), `folder` (a load that read TXY files), `check` (a load that read none: checked against the folder, data from memory or the cache); `seconds` from the job's creation |
+| `load_done` | `FolderCache._job_event`, where an accepted `loaded` becomes a `Dataset` | `folder shots events seconds source live`; `source`: `cache` (a cached read), `folder` (a load that read TXY files), `check` (a load that read none: checked against the folder, data from memory or the cache), `save` (Live's save of its new shots, `live=true`; review L1); `seconds` from the job's creation |
 | `plot_done` | `AnalysisRunner._finished` (every job end) | `script version action plot job seconds state`; `plot` the plot instance (`AnalysisContext.owner`), `state` `ok`/`failed`/`cancelled` |
 | `convert_done` | `explorer_live._convert_event` on `convert_summary` (`by=live`); `convert_cli._Log` (`by=cli`) | `folder by converted no_hit unconvertible waiting kept output seconds` |
 
