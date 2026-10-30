@@ -21,7 +21,7 @@ NO_ROOT_CONSTANTS = "no .helab-root found here or above"
 UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs",
-                 "convert_prefs", "clear_prefs", "clear_converted_txy",
+                 "convert_prefs", "clear_prefs", "clear_converted_txy", "mark_used",
                  "constants", "presets", "forget_root", "root_same", "clear_root", "clear_results",
                  "clear_root_results", "adopt_result", "discard_result", "identity")
 
@@ -39,6 +39,11 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     )
     if action not in ADMIN_ACTIONS:
         raise ValueError(f"Unknown cache action: {action}")
+    if action == "mark_used":
+        # Quitting (Q~3): the converted TXY's last uses loads didn't write; the index only, not the store.
+        helab_txy.mark_used(list(params.get("marks") or []))
+        send({"kind": "admin_result", "action": action, "next_deadline": None})
+        return
     root = cache_options["directory"]
     budget = params.get("budget", cache_options.get("budget"))
     # When the app set it: a budget set later (e.g. lowered while this job waited) wins.
@@ -71,8 +76,9 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                     with contextlib.suppress(SaveRejected, StoreError):
                         entry["room"] = asdict(store.result_room_plan(entry["pending_id"], int(budget)))
             inventory["roots"] = _root_rows(store, send)
-            # HeLab's own TXY under the cache folder: not in the store, outside the budget (Q12.3).
-            inventory["converted_txy"] = helab_txy.converted_usage(helab_txy.converted_root(root))
+            # HeLab's own TXY under the cache and temp folders: not in the store, outside the budget (Q12.3, Q27.5).
+            inventory["converted_txy"] = helab_txy.converted_summary(
+                helab_txy.converted_roots(root, str(params.get("temps") or "")))
             send({"kind": "inventory", "inventory": inventory})
         elif action == "sweep":
             try:
@@ -188,11 +194,11 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 send({"kind": "presets", "saved": written, "rows": stored.value or [],
                       "store": store.store_id})
         elif action == "clear_converted_txy":
-            # The user asked (Settings → Cache's Clear, confirmed): HeLab's TXY under the cache folder.
-            gone = helab_txy.clear_converted(helab_txy.converted_root(root))
-            send({"kind": "removed", "kinds": ["converted_txy"], "paths": None, "datasets": 0,
-                  "bytes": gone["bytes"]})
-            result["converted_txy"] = helab_txy.converted_usage(helab_txy.converted_root(root))
+            # The user asked (Settings → Cache's Clear, confirmed): HeLab's TXY under the cache and temp folders.
+            roots = helab_txy.converted_roots(root, str(params.get("temps") or ""))
+            gone = sum(helab_txy.clear_converted(converted)["bytes"] for converted in roots.values())
+            send({"kind": "removed", "kinds": ["converted_txy"], "paths": None, "datasets": 0, "bytes": gone})
+            result["converted_txy"] = helab_txy.converted_summary(roots)
         elif action == "clear_prefs":
             cleared_at = time.time()
             send({"kind": "prefs_cleared", "paths": store.clear_prefs(cleared_at), "set_at": cleared_at})

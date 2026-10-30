@@ -625,18 +625,62 @@ def test_lives_summary_is_the_folders_when_matlab_arrives_for_a_held_shot(tmp_pa
     assert result["txy"]["origins"]["3"] == f"helab:{PROFILE}"  # (Still held from HeLab's.)
 
 
+def test_a_dont_cache_folders_txy_are_found_in_the_temp_folder(tmp_path: Path, private_store: str) -> None:
+    """Q27.4: converted to the temp folder (by its root key), a load finds them there and marks it used."""
+    from helab.convert import provenance
+    from test_convert_helab import flag_no_cache
+    source = tmp_path / "run"
+    source.mkdir()
+    for shot in (1, 2):
+        write_raw(source, shot, raw_bytes(10_000 * shot))
+    flag_no_cache(private_store, source)
+    [plan] = [event for event in convert(source, tmp_path, private_store) if event["kind"] == "convert_plan"]
+    assert plan["output"] == "temp" and plan["folder"] == folder_for(str(tmp_path / "temps"), plan["key"])
+    root, name = os.path.split(plan["folder"])
+    with provenance.open_index(root, write=False) as index:  # type: ignore[union-attr]
+        index.conn.execute("UPDATE folders SET last_used = 1.0")
+    result = loaded(run_load(source, tmp_path, private_store, options(tmp_path, private_store, txy_sources.HELAB)))
+    assert result["txy"]["origins"] == {"1": f"helab:{PROFILE}", "2": f"helab:{PROFILE}"}
+    with provenance.open_index(root, write=False) as index:  # type: ignore[union-attr]
+        assert index.folders()[0][4] > time.time() - 60
+
+
+def test_a_load_whose_last_used_mark_times_out_still_returns_its_shots(tmp_path: Path, private_store: str) -> None:
+    """A load moves its folder's ``last_used`` on, waiting at most 200 ms for a lock: with a conversion
+    holding the index's write lock, the load still returns HeLab's shots, soon, and ``last_used`` stays."""
+    import contextlib
+    import sqlite3
+    from helab.convert import provenance
+    source = make_run(tmp_path, private_store)
+    [folder] = [path for path in helab_txy.folders(str(source), options(tmp_path, private_store),
+                                                   _key(source, private_store)) if os.path.isdir(path)]
+    root = os.path.dirname(folder)
+    with provenance.open_index(root, write=False) as index:  # type: ignore[union-attr]
+        index.conn.execute("UPDATE folders SET last_used = 1.0")
+    with contextlib.closing(sqlite3.connect(os.path.join(root, provenance.INDEX_NAME), isolation_level=None)) as holder:
+        holder.execute("BEGIN IMMEDIATE")  # (A conversion's write, held.)
+        started = time.monotonic()
+        result = loaded(run_load(source, tmp_path, private_store, options(tmp_path, private_store, txy_sources.HELAB)))
+        took = time.monotonic() - started
+        holder.execute("ROLLBACK")
+    assert result["txy"]["origins"] == {str(shot): f"helab:{PROFILE}" for shot in (1, 2, 3, 4)}
+    assert took < 5.0  # (Not the index's 10 s busy timeout.)
+    with provenance.open_index(root, write=False) as index:  # type: ignore[union-attr]
+        assert index.folders()[0][4] == 1.0
+
+
 def test_records_are_read_only_for_shots_helab_could_give(tmp_path: Path, private_store: str,
                                                           monkeypatch: pytest.MonkeyPatch) -> None:
     from helab.convert import provenance
     source = make_run(tmp_path, private_store)  # MATLAB's TXY for 1 and 2; HeLab's for 1-4.
     read: list[int] = []
-    original = provenance.Provenance.from_json.__func__  # type: ignore[attr-defined]
+    original = provenance.read_shots
 
-    def counting(cls: Any, text: Any) -> Any:
-        record = original(cls, text)
-        read.append(record.shot)
-        return record
-    monkeypatch.setattr(provenance.Provenance, "from_json", classmethod(counting))
+    def counting(root: str, folder: str, **kwargs: Any) -> Any:
+        rows = original(root, folder, **kwargs)
+        read.extend(shot for _, shot in rows)
+        return rows
+    monkeypatch.setattr(provenance, "read_shots", counting)
     run_load(source, tmp_path, None, options(tmp_path, private_store))
     assert sorted(read) == [3, 4]
     read.clear()

@@ -45,9 +45,10 @@ compute is postponed until the converter works well (Q6.2).
   Q12.6, Q14.2, Q14.4, Q15.3, Q23.x, Q25.2, Q25.4 ([plan](txy-converter.md#open-decisions)). [Plan](txy-converter.md)
   (2026-10-29; focus 2026-10-28).
 - [ ] Release v0.0.7 (Q9.9: stages 1, 2 and 4 plus the smoke pass). Left: the smoke pass on a Mac
-  and a lab PC (M1.1–M1.10; the converter step is M1.9, Q24.3); `converted-txy/index.sqlite`
-  replacing the per-shot JSON with Q19.5 and A19.1 (Q26.2, Q27.4, Q27.5: floor TXY Index); byte
-  units by OS (A26.1, a floor); saved results off by default (Q27.1, done); Q23.1 confirmed;
+  and a lab PC (M1.1–M1.10; the converter step is M1.9, Q24.3); byte units by OS (A26.1, floor
+  Byte Units); the runner aids for the smoke pass (floors Smoke ready and Runner Tools, Tony
+  2026-10-30); `converted-txy/index.sqlite` with Q19.5 and A19.1 (Q26.2, Q27.4, Q27.5) done (landed
+  `460360b`, 2026-10-30), its follow-up A30.4; saved results off by default (Q27.1, done); Q23.1 confirmed;
   the version bump on the PR branch to the pre-release **`0.0.7a1`** (Tony, 2026-10-29; then v0.0.8
   development straight away); the PR to `main`; the release tidy-up (Q8.3) (2026-10-29).
 - [ ] Caching v2: the raw d files as the cached source (a raw layer of pulses plus TXY layers per

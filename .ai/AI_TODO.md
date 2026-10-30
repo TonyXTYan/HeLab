@@ -254,8 +254,9 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 **On hold: Tony's go (block 19).** Tony, 2026-10-29: no cache coding until his explicit go, "A19.1
 and A19.2 included"; don't start these without it.
 
-- **A19.1 Settings › Cache shows and clears HeLab's TXY in the temp folder too** (audit I4, I6;
+- [x] **A19.1 Settings › Cache shows and clears HeLab's TXY in the temp folder too** (audit I4, I6;
   in Q26.2's floor, Q27.5, Tony 2026-10-29): `converted_usage` and `clear_converted` over both places.
+  Done on `agent/txy-index` (landed `460360b`).
 - **A19.2 Clear converted TXY vs a running conversion** (audit K4; on hold): `clear_converted` takes
   a fence a conversion checks before each write, or the docs say a running conversion may write
   after it.
@@ -304,6 +305,29 @@ and A19.2 included"; don't start these without it.
   1 GiB, RAM 1 GiB); the ~67 calls sorted into disk and RAM; tests for both platforms; AGENTS.md's
   units rule, `cache-store.md` and `settings.md` updated. Not cache code; a floor now, in v0.0.7
   (Tony, 2026-10-29: "do now").
+
+## Converted-TXY index (block 30)
+
+From the TXY Index floor's [handoff](sessions/2026-10-29-claude-txy-index/handoff.md) (landed `460360b`).
+
+- **A30.1 `events.ShotKeptEvent`'s docstring** still says "no local provenance record": reword to "a
+  beside TXY that isn't current (older than its raw file) or written by another conversion meanwhile".
+- **A30.2 `helab_txy.converted_usage` at scale**: it still lists each hash folder (names only; `stat`
+  only for files the index doesn't know). If `converted-txy/` grows to tens of thousands of TXY,
+  measure by the index alone and list folders only on Clear.
+- **A30.3 One index connection per `helab convert` run** (not urgent; no starvation seen outside the
+  test): `--watch` reopens the index each pass and the app's helper once per request. Keeping
+  `helab convert`'s connection for its whole run (reopening after `IndexUnavailable` or a set-aside)
+  stops the `-wal` being rebuilt between them; it doesn't make SQLite's lock fair. Cost (Tern): on
+  Windows a long-held connection blocks the app helper's set-aside of a damaged index, so the app's
+  conversions fail until `helab convert` reopens.
+- **A30.4 Write skipped `last_used` marks in the background every ~10 min** (Q30.3 (c)): the marks
+  `FolderCache` keeps (`txy_unmarked`) go out in one `cache_admin` `mark_used` request about every
+  10 minutes while any are owed, respecting Work Offline, lane pausing, quit (the quit flush stays)
+  and the cache being off. A short follow-up after `460360b`.
+- **A30.5 Settings refuses a temp folder on a network drive or in a synced folder** (Q30.5): the
+  cache folder's check (`cache_location.cache_location_problem`) and wording for Settings › General's
+  temp folder; an existing such setting kept but warned about once.
 
 ## Not AI work (stays in MANUAL_TODO)
 

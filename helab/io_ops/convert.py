@@ -4,8 +4,8 @@
 asked for) whether it is done, waiting or to convert, converts those with a detector profile and
 backend (``helab.convert``), and writes each ``d_txy_helab_<tag>_<N>.txt`` atomically (``<tag>``: the
 profile's, ``profile.file_tag``, Q18.4)
-(``txy.write_atomic``: a temporary name, fsync, rename) with its provenance record
-(``helab.convert.provenance``) in HeLab's own folder. ``helab convert --watch`` runs this same
+(``txy.write_atomic``: a temporary name, fsync, rename) with its provenance row in HeLab's index
+(``helab.convert.provenance``: ``converted-txy/index.sqlite`` of the base, written before the rename). ``helab convert --watch`` runs this same
 function in its own process (``helab.convert_cli``); the app runs it in a helper.
 
 **Settle checks** (A10.1; 2019-halos d3667 is the evidence: MATLAB converted it 0.25 s after its
@@ -34,17 +34,19 @@ converter fails on is unconvertible too.
 never replaces a file there (a TXY in a source folder is never modified); one of the profile's tag is
 current there while it is newer than its raw file (``provenance.beside_stale``: what any computer can
 tell from the folder alone); nothing else is written to a source folder: the temporary name is
-renamed, and the provenance stays in HeLab's folder (written before the TXY there: a record with no
-TXY beside it stands for nothing). A beside conversion also removes its own leftover temporary files there (a
+renamed, and the provenance row goes to HeLab's index (before the rename, as everywhere: a row
+whose TXY was never renamed into place stands for nothing). A beside conversion also removes its own leftover temporary files there (a
 helper killed mid-write), only those matching exactly the name ``write_atomic`` gives
 (``partial()``), regular files (links aren't followed) unmodified for ``PARTIAL_MAX_AGE`` (1 h), each
 sent as ``partial_removed``.
 ``cache`` writes under the cache folder, keyed by the folder's data root like the store
-(``root://<uuid>/<relative>``); a folder without one, or with the disk cache off, goes to ``temp``
-(HeLab's temp folder) and ``convert_plan`` says why (``fallback``). HeLab's folder for a source
-folder is ``<base>/converted-txy/<hash of its key>/``, with ``folder.json`` naming the key and path.
-A conversion there removes its leftover temporary files the same way, those of its records too
-(``own_partial()``).
+(``root://<uuid>/<relative>``); a folder without one, with the disk cache off, or marked Don't cache
+(Q19.5, Q27.4: the store's flag, read here; unless ``cache_confirmed``, Q~2) goes to ``temp``
+(HeLab's temp folder) and ``convert_plan`` says why (``fallback``). HeLab's folder for a source folder is
+``<base>/converted-txy/<hash of its key>/``; the base's ``converted-txy/index.sqlite`` names the key
+and path (its ``folders`` row, updated when the folder moved) and holds the shots' rows. A
+conversion there removes its leftover temporary TXY the same way, and old builds' JSON
+temporaries (``own_partial()``).
 
 **Processes.** Reads, writes and every source-folder call stay in this process (traced, guarded
 and paused like the other helpers'). With ``workers`` > 1, conversions run across shots in a pool
@@ -60,9 +62,10 @@ stops it.
 from __future__ import annotations
 
 import concurrent.futures
+import contextlib
+import dataclasses
 import functools
 import hashlib
-import json
 import os
 import re
 import sys
@@ -76,6 +79,8 @@ from helab.io_ops.infra import Emit, Heartbeat, Pause, _entry_stat, _guard, _sca
 from helab.utils import file_kinds
 
 if TYPE_CHECKING:
+    from helab.utils.cache_store import CacheStore
+
     # A pipe's end: Windows' Pipe() gives PipeConnection, the others Connection.
     if sys.platform == "win32":
         from multiprocessing.connection import PipeConnection as Connection
@@ -88,7 +93,6 @@ if TYPE_CHECKING:
 
 OUTPUTS = ("cache", "temp")
 FOLDER_NAME = "converted-txy"
-FOLDER_RECORD = "folder.json"
 READ_BLOCK = 8 * 1024 * 1024
 # One shot this large (raw bytes) is cut into pieces for the pool, for Live's latency.
 SPLIT_BYTES = 20 * 10**6
@@ -117,7 +121,9 @@ class ConvertRequest(TypedDict):
     ``profile``: ``DetectorProfile.to_dict()`` (a built-in's or the user's). ``destination``: the
     setting (``cache``, default, or ``temp``). ``beside``: the app believes the folder's
     ``write_beside`` flag is on (checked again in the store here); ``beside_confirmed``: the user
-    asked for beside for this run (the command line only). ``temps``: HeLab's temp folder.
+    asked for beside for this run (the command line only). ``cache_confirmed``: the user typed
+    ``--output cache`` and confirmed it for a Don't cache folder (the command line only, Q~2; anywhere
+    else that folder's flag wins and its TXY go to the temp folder). ``temps``: HeLab's temp folder.
     ``cache``: ``store_options()``. ``shots``: only these (None: every raw file).
     ``seen`` (required): the previous conversion's ``waiting`` list, ``[]`` for a folder's first
     conversion (which then only records: every file waits for a second check); None only from
@@ -134,6 +140,7 @@ class ConvertRequest(TypedDict):
     destination: NotRequired[str]
     beside: NotRequired[bool]
     beside_confirmed: NotRequired[bool]
+    cache_confirmed: NotRequired[bool]
     cache: NotRequired[dict[str, Any]]
     shots: NotRequired[list[int] | None]
     done: NotRequired[list[list[Any]]]
@@ -196,11 +203,21 @@ def partial() -> re.Pattern[str]:
 
 @functools.cache
 def own_partial() -> re.Pattern[str]:
-    """``partial()``, and the temporary names ``write_atomic`` gives the JSON beside the TXY in
-    HeLab's own folder (each shot's provenance record, ``folder.json``), and nothing else."""
+    """``partial()``, and the temporary names ``write_atomic`` gave the JSON of builds before the index
+    (Q26.2) in HeLab's own folder (each shot's ``d_txy_helab_<tag>_<N>.json``, ``folder.json``), and
+    nothing else. (The index's own journal is SQLite's, never housekeeping's.)"""
     from helab.convert.provenance import BARE_NAME
     from helab.convert.txy import partial_pattern
-    return partial_pattern("|".join((BARE_NAME + r"\.(?:txt|json)", re.escape(FOLDER_RECORD))))
+    return partial_pattern("|".join((BARE_NAME + r"\.(?:txt|json)", r"folder\.json")))
+
+
+def journal_for(base: str) -> str:
+    """The journal mode for a new index in ``base`` (the cache or temp folder): WAL where the folder is
+    local, a rollback journal where ``cache_location_problem`` objects (a network drive, a UNC path, a
+    synced folder: the temp folder is the user's to set), since WAL's shared memory needs a local disk."""
+    from helab.convert.provenance import DELETE, WAL
+    from helab.utils import cache_location
+    return DELETE if cache_location.cache_location_problem(base) else WAL
 
 
 def compute_budget(raw_bytes: int) -> float:
@@ -232,6 +249,30 @@ class _Ticker:
         self.thread.join()
 
 
+def _not_cached(store: CacheStore, path: str) -> str:
+    """Why the folder's TXY don't go to the cache folder: its Don't cache flag (Q19.5, Q27.4, as for
+    its datasets), or that flag unread (then not the cache either); "" when they may."""
+    prefs = store.read_prefs([path])[path]
+    if prefs.status == "error":
+        return f"the folder's Don't cache flag couldn't be read ({prefs.error})"
+    if prefs.value and prefs.value.get("no_cache"):
+        return "you chose Don't cache for this folder"
+    return ""
+
+
+def dont_cache(path: str, cache: dict[str, Any]) -> str:
+    """``_not_cached`` before a conversion (``helab convert --output cache`` asks first, Q~2). "" also
+    when the store can't be read or the folder has no data root: those send it to temp anyway."""
+    from helab.utils.cache_paths import UnresolvedRemotePath
+    from helab.utils.cache_store import StoreError
+    try:
+        with stores._cache_store(cache["directory"], [path]) as store:
+            store._path_key(path)
+            return _not_cached(store, path)
+    except (UnresolvedRemotePath, StoreError, OSError):
+        return ""
+
+
 def _places(path: str, request: ConvertRequest) -> _Places:
     """Where this conversion writes (``convert_plan``'s fields)."""
     from helab.utils.cache_paths import UnresolvedRemotePath
@@ -241,11 +282,13 @@ def _places(path: str, request: ConvertRequest) -> _Places:
     if output not in OUTPUTS:
         raise ValueError(f"Unknown converter destination {output!r} (have {', '.join(OUTPUTS)})")
     cache_options = request.get("cache") or {}
-    key, problem, flag, flag_problem = "", "", False, ""
+    key, problem, flag, flag_problem, not_cached = "", "", False, "", ""
     if cache_options:
         try:
             with stores._cache_store(cache_options["directory"], [path]) as store:
                 key = store._path_key(path)
+                if output == "cache" and not request.get("cache_confirmed"):
+                    not_cached = _not_cached(store, path)
                 if request.get("beside") and not request.get("beside_confirmed"):
                     found = store.read_convert_prefs([path])[path]
                     if found.status == "error":
@@ -262,12 +305,13 @@ def _places(path: str, request: ConvertRequest) -> _Places:
     if request.get("beside") and not beside:
         fallback = (flag_problem or "writing beside the raw files is off for this folder" if not problem
                     else f"writing beside the raw files needs the folder's flag, and {problem}")
-    if output == "cache" and not key:
+    if output == "cache" and (not key or not_cached):
         output = "temp"
+        why = not_cached or problem
         if beside:
-            fallback = f"the provenance records go to the temp folder: {problem}"
+            fallback = f"the provenance rows go to the temp folder's index: {why}"
         else:
-            fallback = fallback or problem
+            fallback = fallback or why
     base = os.path.dirname(os.path.abspath(cache_options["directory"])) if output == "cache" else request["temps"]
     folder = folder_for(base, key or "path:" + os.path.abspath(path))
     return {"output": "beside" if beside else output, "fallback": fallback, "folder": folder,
@@ -278,22 +322,6 @@ def _stats(entries: list[list[Any]] | None) -> dict[str, tuple[int, int]]:
     """Raw files' (size, mtime) by name, from a summary's ``[name, size, mtime_ns]`` lists."""
     return {str(entry[0]): (int(entry[1]), int(entry[2])) for entry in entries or []
             if isinstance(entry, (list, tuple)) and len(entry) >= 3}
-
-
-def _write_folder_record(folder: str, path: str, key: str) -> None:
-    """``folder.json``: which source folder HeLab's folder stands for (rewritten when it moved)."""
-    from helab.convert.txy import write_atomic
-    record = os.path.join(folder, FOLDER_RECORD)
-    try:
-        with open(record, "rb") as stream:
-            saved = json.loads(stream.read())
-        if isinstance(saved, dict) and saved.get("source") == path and saved.get("key") == key:
-            return
-    except (OSError, ValueError):
-        pass
-    text = json.dumps({"helab": "converted-txy-folder", "version": 1, "key": key, "source": path,
-                       "updated_at": time.time()}, indent=1) + "\n"
-    write_atomic(record, text.encode("utf-8"))
 
 
 def _read_raw(shot: _Shot, beat: Heartbeat) -> bytes | str:
@@ -320,19 +348,6 @@ def _read_raw(shot: _Shot, beat: Heartbeat) -> bytes | str:
     if (after.st_size, after.st_mtime_ns, len(data)) != (shot.size, shot.mtime_ns, shot.size):
         return CHANGED
     return data
-
-
-def _current(shot: _Shot, places: _Places, tag: str, profile_hash: str, txy_size: int | None) -> str | None:
-    """Why the shot's TXY in HeLab's folder should be made (again), or None if it's current."""
-    from helab.convert import provenance
-    record: provenance.Provenance | None = None
-    try:
-        with open(os.path.join(places["folder"], provenance.provenance_name(tag, shot.shot)), "rb") as stream:
-            record = provenance.Provenance.from_json(stream.read())
-    except (OSError, provenance.ProvenanceError):
-        pass
-    return provenance.stale(record, raw_size=shot.size, raw_mtime_ns=shot.mtime_ns, profile_hash=profile_hash,
-                            txy_size=txy_size)
 
 
 # Worker processes (spawned). Each watches its parent through a pipe and exits when it ends.
@@ -465,6 +480,10 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     if seen is None and settle > 0:
         settle = max(settle, ONCE_SETTLE_SECONDS)  # (One check: the age must stand for the second.)
     skewed = fingerprints._clock_ahead(path, [(shot.shot, shot.size, shot.mtime_ns) for shot in raws], send)
+    # HeLab's index for this folder's TXY of the profile's tag (beside, the TXY's date says it).
+    root, folder_name = os.path.dirname(places["folder"]), os.path.basename(places["folder"])
+    records = {} if beside or not raws else provenance.read_shots(
+        root, folder_name, tag=tag, shots=[shot.shot for shot in raws], repair=True)
 
     def seen_since(shot: _Shot) -> float:
         """When this computer first saw the file with its size and mtime now (this check, if not before)."""
@@ -519,10 +538,12 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
             why = "no TXY" if there_now is None else provenance.beside_stale(shot.mtime_ns, there_now[1])
         else:
             try:
-                txy_size = os.stat(os.path.join(places["folder"], provenance.txy_name(tag, shot.shot))).st_size
+                info = os.stat(os.path.join(places["folder"], provenance.txy_name(tag, shot.shot)))
+                txy_size, txy_now = info.st_size, (info.st_size, info.st_mtime_ns)
             except OSError:
-                txy_size = None
-            why = _current(shot, places, tag, profile_hash, txy_size)
+                txy_size, txy_now = None, None
+            why = provenance.stale(records.get((tag, shot.shot)), raw_size=shot.size, raw_mtime_ns=shot.mtime_ns,
+                                   profile_hash=profile_hash, txy=txy_now)
         if why is None and redo != "always":
             current.append(shot.entry)
             continue
@@ -556,10 +577,13 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     workers = max(1, min(workers, len(todo))) if not single_large else workers
     send({"kind": "convert_plan", "path": path, **places, "profile": profile_info, "backend": backend,
           "workers": workers, "raw": len(raws), "todo": len(todo)})
+    index: provenance.TxyIndex | None = None
     if todo:
-        os.makedirs(places["folder"], exist_ok=True)
-        _write_folder_record(places["folder"], path, places["key"])
+        if not beside:
+            os.makedirs(places["folder"], exist_ok=True)
         _remove_own_partials(path, places["folder"], send)
+        index = provenance.open_index(root, write=True, journal=journal_for(os.path.dirname(root)))
+    index_path = os.path.join(root, provenance.INDEX_NAME)
 
     converted = 0
     handled = 0
@@ -583,48 +607,57 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
         else:
             write_started = time.perf_counter()
             target = os.path.join(places["txy_folder"], provenance.txy_name(tag, shot.shot))
-            record_path = os.path.join(places["folder"], provenance.provenance_name(tag, shot.shot))
             seconds: ConvertSeconds = {"read": read_seconds, "parse": result.parse_seconds,
                                        "reconstruct": result.reconstruct_seconds, "format": result.format_seconds,
                                        "write": 0.0}
             record = provenance.Provenance(
-                shot=shot.shot, source_folder=path, source_key=places["key"], raw_name=shot.name,
+                shot=shot.shot, raw_name=shot.name,
                 raw_size=shot.size, raw_mtime_ns=shot.mtime_ns, raw_sha256=hashlib.sha256(data).hexdigest(),
                 profile_name=profile.name, profile_version=profile.version, profile_hash=profile_hash,
                 profile_tag=tag, profile_calibrated=profile.calibrated, backend=backend, output=places["output"],
-                txy_name=provenance.txy_name(tag, shot.shot), txy_size=len(result.txy),
+                txy_name=provenance.txy_name(tag, shot.shot), txy_size=len(result.txy), txy_mtime_ns=0,
                 txy_sha256=hashlib.sha256(result.txy).hexdigest(), hits=result.hits, converted_at=time.time(),
                 helab_version=__version__, read_seconds=read_seconds, parse_seconds=result.parse_seconds,
                 reconstruct_seconds=result.reconstruct_seconds, format_seconds=result.format_seconds,
                 write_seconds=0.0)
+            assert index is not None
+            written: list[provenance.Provenance] = []
+
+            def pin(info: os.stat_result) -> None:
+                """The row first, naming the very file about to be renamed in (its size and mtime): a
+                quick check that sees the folder changed finds it, and stopped before the rename, the
+                row matches no TXY there, so the shot is converted again."""
+                assert index is not None
+                pinned = dataclasses.replace(record, txy_size=info.st_size, txy_mtime_ns=info.st_mtime_ns)
+                index.record(folder_name, places["key"], path, pinned, time.time())
+                written.append(pinned)
+
             if beside:
-                # The record first: stopped before the TXY, the shot has no TXY and is converted
-                # again (beside, the TXY's date against the raw file's says whether it is current).
-                txy.write_atomic(record_path, record.to_json().encode("utf-8"))
                 _guard(target)
-                try:
-                    txy.write_atomic(target, result.txy, replace=False)
-                except FileExistsError:
-                    # (Another conversion wrote it since the listing; it stays. Its record goes, unless
-                    # another conversion has written its own there since: then that one stands.)
-                    _remove_own_record(record_path, record.txy_sha256)
-                    kept.append(shot.entry)
-                    send({"kind": "shot_kept", "path": path, "shot": shot.shot, "txy": target,
-                          "reason": "written by another conversion meanwhile; a TXY in a source folder is never "
-                                    "replaced"})
-                    progress()
-                    return
+            try:
+                txy.write_atomic(target, result.txy, replace=not beside, before_rename=pin)
+            except BaseException as exc:
+                if written:
+                    # Its row goes, unless another conversion has written its own since: then that one stands.
+                    with contextlib.suppress(OSError):
+                        index.forget(folder_name, written[0])
+                if not (beside and isinstance(exc, FileExistsError)):
+                    raise
+                # (Another conversion wrote it since the listing; it stays.)
+                kept.append(shot.entry)
+                send({"kind": "shot_kept", "path": path, "shot": shot.shot, "txy": target,
+                      "reason": "written by another conversion meanwhile; a TXY in a source folder is never "
+                                "replaced"})
+                progress()
+                return
+            if beside:
                 _trace("write", target, "convert: TXY beside", bytes=len(result.txy))
-            else:
-                # The TXY first: stopped before the record, the old record no longer matches it.
-                txy.write_atomic(target, result.txy)
-                txy.write_atomic(record_path, record.to_json().encode("utf-8"))
             seconds["write"] = time.perf_counter() - write_started
             converted += 1
             current.append(shot.entry)
             send({"kind": "shot_converted", "path": path, "shot": shot.shot, "raw_name": shot.name,
                   "raw_size": shot.size, "raw_mtime_ns": shot.mtime_ns, "raw_sha256": record.raw_sha256,
-                  "output": places["output"], "txy": target, "txy_size": len(result.txy), "provenance": record_path,
+                  "output": places["output"], "txy": target, "txy_size": len(result.txy), "provenance": index_path,
                   "hits": result.hits, "replaced": shot.replaced, "profile": profile_info, "backend": backend,
                   "seconds": seconds})
         progress()
@@ -676,23 +709,12 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     finally:
         if pool is not None:
             pool.close()
+        if index is not None:
+            index.close()
     progress(force=True)
     send({"kind": "convert_summary", "path": path, "output": places["output"], "folder": places["folder"],
           "txy_folder": places["txy_folder"], "converted": converted, "current": current, "waiting": waiting,
           "unconvertible": unconvertible, "kept": kept, "seconds": time.monotonic() - started})
-
-
-def _remove_own_record(record_path: str, txy_sha256: str) -> None:
-    """Remove a provenance record this conversion wrote, if the one on disk is still it (by its
-    TXY's SHA-256): another conversion of the folder may have replaced it with its own."""
-    from helab.convert import provenance
-    try:
-        with open(record_path, "rb") as stream:
-            if provenance.Provenance.from_json(stream.read()).txy_sha256 != txy_sha256:
-                return
-        os.unlink(record_path)
-    except (OSError, provenance.ProvenanceError):
-        pass
 
 
 def _remove_partial(path: str, entry: os.DirEntry[str], send: Emit) -> None:
@@ -719,7 +741,8 @@ def _remove_partial(path: str, entry: os.DirEntry[str], send: Emit) -> None:
 
 def _remove_own_partials(path: str, folder: str, send: Emit) -> None:
     """The same in HeLab's own folder for ``path`` (a helper killed mid-write there leaves one too;
-    on Windows that is likely, the flush to disk taking most of a write), records' too (``own_partial()``)."""
+    on Windows that is likely, the flush to disk taking most of a write), old builds' records' too
+    (``own_partial()``)."""
     import stat
     try:
         entries = [entry for entry in os.scandir(folder) if own_partial().match(entry.name)]

@@ -4,11 +4,13 @@
 from __future__ import annotations
 
 import builtins
+import contextlib
 import io
 import json
 import os
 from pathlib import Path
 import signal
+import sqlite3
 import subprocess
 import sys
 import time
@@ -21,7 +23,7 @@ from pytestqt.qtbot import QtBot
 from helab.convert import provenance, raw, txy
 from helab.convert.pipeline import APP_BACKEND, convert_raw, convert_shot
 from helab.convert.profile import MATLAB_2019, MATLAB_2023_LAB_EDIT
-from helab.io_ops import convert, fingerprints, stores
+from helab.io_ops import convert, fingerprints, helab_txy, stores
 from helab.io_ops.admin import cache_admin
 from helab.io_ops.convert import ConvertRequest, convert_folder, folder_for
 from helab.utils import file_kinds
@@ -138,37 +140,80 @@ def test_convert_shot_matches_the_reference_and_writes_empty_for_no_hits() -> No
 
 def provenance_record(**changes: Any) -> provenance.Provenance:
     values: dict[str, Any] = dict(
-        shot=3, source_folder="/data/run", source_key="root://u/run", raw_name="d3.txt", raw_size=100,
+        shot=3, raw_name="d3.txt", raw_size=100,
         raw_mtime_ns=5, raw_sha256="ab", profile_name="matlab-2019", profile_version=1,
         profile_hash=MATLAB_2019.content_hash(), profile_tag="m19v1", profile_calibrated=False, backend="numpy", output="cache",
-        txy_name="d_txy_helab_m19v1_3.txt", txy_size=40, txy_sha256="cd", hits=2, converted_at=1.5, helab_version="0",
+        txy_name="d_txy_helab_m19v1_3.txt", txy_size=40, txy_mtime_ns=7, txy_sha256="cd", hits=2, converted_at=1.5, helab_version="0",
         read_seconds=0.1, parse_seconds=0.0, reconstruct_seconds=0, format_seconds=0.0, write_seconds=0.0)
     values.update(changes)
     return provenance.Provenance(**values)
 
 
-def test_provenance_round_trips_and_says_what_is_stale() -> None:
+def index_rows(folder: str | Path, tag: str = "") -> dict[tuple[str, int], provenance.Provenance]:
+    """The rows HeLab's index holds for its folder ``folder``."""
+    return provenance.read_shots(os.path.dirname(folder), os.path.basename(folder), tag=tag)
+
+
+def test_provenance_rows_round_trip_and_say_what_is_stale(tmp_path: Path) -> None:
     record = provenance_record()
-    assert provenance.Provenance.from_json(record.to_json()) == record
-    def stale(record: provenance.Provenance | None, raw_mtime_ns: int = 5, txy_size: int | None = 40,
+    root = str(tmp_path / "converted-txy")
+    assert provenance.read_shots(root, "f") == {}  # (No index yet: nothing, and none made by a read.)
+    assert not os.path.exists(root)
+    with provenance.open_index(root, write=True) as index:
+        index.record("f", "root://u/run", "/data/run", record, 10.0)
+        index.record("f", "root://u/run", "/data/run", provenance_record(shot=4, output="beside", txy_size=3), 11.0)
+        assert index.folders() == [("f", "root://u/run", "/data/run", 40, 11.0)]  # (Beside TXY aren't here.)
+        index.record("f", "root://u/moved", "/data/moved", provenance_record(txy_size=50), 12.0)
+        assert index.folders() == [("f", "root://u/moved", "/data/moved", 50, 12.0)]
+        index.record("f", "", "/data/moved", record, 13.0)
+    assert index_rows(Path(root) / "f") == {("m19v1", 3): record, ("m19v1", 4): provenance_record(
+        shot=4, output="beside", txy_size=3)}
+    assert provenance.read_shots(root, "f", tag="m23v1") == {} and provenance.read_shots(root, "g") == {}
+    assert list(provenance.read_shots(root, "f", shots=[4])) == [("m19v1", 4)]
+    # (``closing``: a connection's own ``with`` commits but doesn't close, and Windows renames no open file.)
+    with contextlib.closing(sqlite3.connect(os.path.join(root, provenance.INDEX_NAME))) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == provenance.SCHEMA == 1
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+        conn.execute("UPDATE shots SET hits = 'two' WHERE shot = 4")  # A row of the wrong shape: none.
+        conn.commit()
+    assert list(index_rows(Path(root) / "f")) == [("m19v1", 3)]
+
+    def stale(record: provenance.Provenance | None, raw_mtime_ns: int = 5, txy: tuple[int, int] | None = (40, 7),
               profile_hash: str = MATLAB_2019.content_hash()) -> str:
         return provenance.stale(record, raw_size=100, raw_mtime_ns=raw_mtime_ns, profile_hash=profile_hash,
-                                txy_size=txy_size) or ""
+                                txy=txy) or ""
     assert stale(record) == ""
-    assert stale(record, txy_size=None) == "no TXY"
+    assert stale(record, txy=None) == "no TXY"
     assert stale(None) == "no provenance record"
     assert "raw file changed" in stale(record, raw_mtime_ns=6)
-    assert "TXY changed" in stale(record, txy_size=41)
+    assert "TXY changed" in stale(record, txy=(41, 7))
+    # The row names the very TXY written (its mtime too): an older one of that size isn't it.
+    assert "TXY changed" in stale(record, txy=(40, 6))
     assert "another profile" in stale(record, profile_hash=MATLAB_2023_LAB_EDIT.content_hash())
     # Another backend or profile name with the same hash converts alike: still current.
     assert stale(provenance_record(backend="rust", profile_name="copy")) == ""
-    # (Version 1 is a record of the untagged names before Q18.4: no record of this HeLab's.)
-    versions = [json.dumps({**json.loads(record.to_json()), "version": version}) for version in (1, 3)]
-    assert provenance.VERSION == 2 and record.profile_tag == "m19v1"
-    for broken in ("{", "[]", json.dumps({"helab": "x"}), record.to_json().replace('"hits": 2', '"hits": true'),
-                   *versions):
-        with pytest.raises(provenance.ProvenanceError):
-            provenance.Provenance.from_json(broken)
+
+
+def test_write_atomic_calls_before_rename_with_the_files_stat(tmp_path: Path) -> None:
+    folder = tmp_path / "out"
+    folder.mkdir()
+    target = folder / "d_txy_helab_m19v1_1.txt"
+    seen: list[os.stat_result] = []
+
+    def before(info: os.stat_result) -> None:
+        assert not target.exists()  # (Before the rename.)
+        seen.append(info)
+    txy.write_atomic(target, b"new\n", before_rename=before)
+    after = target.stat()
+    assert target.read_bytes() == b"new\n"
+    # The rename keeps the size and mtime: what the index pins is the file now at the target.
+    assert (seen[0].st_size, seen[0].st_mtime_ns) == (after.st_size, after.st_mtime_ns) == (4, after.st_mtime_ns)
+
+    def refuse(info: os.stat_result) -> None:
+        raise OSError("index busy")
+    with pytest.raises(OSError, match="index busy"):
+        txy.write_atomic(target, b"other\n", before_rename=refuse)
+    assert target.read_bytes() == b"new\n" and [path.name for path in folder.iterdir()] == [target.name]
 
 
 def test_write_atomic_without_replace_never_touches_an_existing_file(tmp_path: Path) -> None:
@@ -209,12 +254,17 @@ def test_a_folder_converts_to_the_temp_folder_with_provenance(source: Path, tmp_
     [refused] = of(events, "shot_unconvertible")
     assert (refused["shot"], refused["reason"], refused["problem"]) == (4, convert.DAMAGED, raw.NO_ROWS)
     assert not (Path(folder) / "d_txy_helab_m19v1_4.txt").exists()
-    record = provenance.Provenance.from_json((Path(folder) / "d_txy_helab_m19v1_2.json").read_text())
+    record = index_rows(folder)[("m19v1", 2)]
     assert (record.raw_name, record.raw_size, record.raw_mtime_ns) == ("d2.txt", len(datas[2]), OLD * 10**9)
     assert (record.profile_name, record.profile_hash, record.backend, record.hits) == (
         "matlab-2019", MATLAB_2019.content_hash(), "numpy", 2)
-    assert record.txy_size == len(Path(converted[2]["txy"]).read_bytes())
-    assert json.loads((Path(folder) / "folder.json").read_text())["source"] == str(source)
+    written = Path(converted[2]["txy"]).stat()
+    assert (record.txy_size, record.txy_mtime_ns) == (written.st_size, written.st_mtime_ns)
+    # No JSON beside the TXY: the index (one per base) holds the rows and which source the folder is.
+    assert sorted(os.listdir(folder)) == [f"d_txy_helab_m19v1_{shot}.txt" for shot in (1, 2, 3)]
+    assert converted[2]["provenance"] == os.path.join(os.path.dirname(folder), provenance.INDEX_NAME)
+    with provenance.open_index(os.path.dirname(folder), write=False) as index:  # type: ignore[union-attr]
+        assert index.folders()[0][:3] == (os.path.basename(folder), "", str(source))
     done = summary(events)
     assert done["converted"] == 3 and sorted(entry[0] for entry in done["current"]) == ["d1.txt", "d2.txt", "d3.txt"]
     assert [entry[0] for entry in done["unconvertible"]] == ["d4.txt"]
@@ -388,7 +438,8 @@ def test_a_better_profile_converts_again_under_its_own_tag(source: Path, tmp_pat
     assert again["replaced"] == "" and again["profile"]["name"] == "matlab-2023-lab-edit"
     assert again["profile"]["tag"] == "m23v1" and Path(again["txy"]).name == "d_txy_helab_m23v1_1.txt"
     assert Path(first["txy"]).name == "d_txy_helab_m19v1_1.txt" and Path(first["txy"]).is_file()
-    assert Path(again["provenance"]).name == "d_txy_helab_m23v1_1.json"
+    folder = os.path.dirname(again["txy"])
+    assert sorted(index_rows(folder)) == [("m19v1", 1), ("m23v1", 1)]  # (One row per tag and shot.)
     assert of(run(source, request_for(source, tmp_path, profile=MATLAB_2023_LAB_EDIT.to_dict())),
               "shot_converted") == []
     forced = run(source, request_for(source, tmp_path, profile=MATLAB_2023_LAB_EDIT.to_dict(), redo="always"))
@@ -531,8 +582,8 @@ def test_beside_writes_only_its_txy_into_the_source_folder(source: Path, tmp_pat
         assert name in ("d_txy_helab_m19v1_1.txt", "d_txy_helab_m19v1_2.txt") or (
             name.startswith((".d_txy_helab_m19v1_1.txt.", ".d_txy_helab_m19v1_2.txt."))
             and name.endswith(".partial")), name
-    # Provenance is in HeLab's own folder.
-    assert Path(plan["folder"], "d_txy_helab_m19v1_1.json").is_file()
+    # Provenance is in HeLab's own index (the base's), and HeLab's folder for it isn't even made.
+    assert index_rows(plan["folder"])[("m19v1", 1)].output == "beside" and not os.path.exists(plan["folder"])
     # The second time: current, nothing written there at all.
     with Writes() as writes:
         again = run(source, request_for(source, tmp_path, private_store, destination="cache", beside=True))
@@ -857,24 +908,62 @@ def test_kept_shots_stay_kept_when_the_summary_is_sent_back(source: Path, tmp_pa
     assert (source / "d_txy_helab_m19v1_2.txt").is_file()
 
 
-def test_a_beside_write_stopped_after_its_record_is_converted_again(source: Path, tmp_path: Path,
-                                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("beside", [True, False])
+def test_a_write_killed_after_its_row_is_converted_again(source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                         beside: bool) -> None:
+    """The row goes in before the rename, naming the very file (size and mtime): killed between them, the
+    row stays (nothing cleans up after a kill) but matches no TXY there, so the shot is converted again:
+    beside, where no TXY is there yet; in HeLab's folder, even over an older TXY of the same size."""
     write_raw(source, 1, raw_bytes(10_000))
-    request = request_for(source, tmp_path, beside=True, beside_confirmed=True)
+    request = request_for(source, tmp_path, beside=beside, beside_confirmed=beside)
+    folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
+    if not beside:
+        [first] = of(run(source, request_for(source, tmp_path)), "shot_converted")
+        age(Path(first["txy"]), 600)  # (An older TXY of the same size: a stopped redo leaves it.)
+        request = request_for(source, tmp_path, redo="always")
     original = txy.write_atomic
 
-    def stopped(path: Any, data: bytes, *, replace: bool = True) -> None:
-        if Path(path).parent == source:
-            raise KeyboardInterrupt  # (Killed between the record and the TXY.)
-        original(path, data, replace=replace)
-    monkeypatch.setattr(txy, "write_atomic", stopped)
+    def killed(path: Any, data: bytes, *, replace: bool = True, before_rename: Any = None) -> None:
+        def then_killed(info: os.stat_result) -> None:
+            before_rename(info)
+            raise KeyboardInterrupt  # (Killed between the row and the rename.)
+        original(path, data, replace=replace, before_rename=then_killed)
+    monkeypatch.setattr(txy, "write_atomic", killed)
+    monkeypatch.setattr(provenance.TxyIndex, "forget", lambda *args: False)  # (A kill runs no clean-up.)
     with pytest.raises(KeyboardInterrupt):
         run(source, request)
-    monkeypatch.setattr(txy, "write_atomic", original)
-    folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
-    assert (folder / "d_txy_helab_m19v1_1.json").is_file() and not (source / "d_txy_helab_m19v1_1.txt").exists()
-    events = run(source, request)
+    monkeypatch.undo()
+    [row] = index_rows(folder).values()
+    there = (source if beside else folder) / "d_txy_helab_m19v1_1.txt"
+    assert there.exists() is not beside
+    if not beside:
+        assert there.stat().st_size == row.txy_size and there.stat().st_mtime_ns != row.txy_mtime_ns
+    events = run(source, request_for(source, tmp_path, beside=beside, beside_confirmed=beside))
     assert [event["shot"] for event in of(events, "shot_converted")] == [1] and of(events, "shot_kept") == []
+    assert of(run(source, request_for(source, tmp_path, beside=beside, beside_confirmed=beside)), "shot_converted") == []
+
+
+def test_a_failed_write_removes_its_row_only_if_still_its_own(source: Path, tmp_path: Path,
+                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    write_raw(source, 1, raw_bytes(10_000))
+    folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
+    original = txy.write_atomic
+    theirs = provenance_record(shot=1, txy_name="d_txy_helab_m19v1_1.txt", txy_sha256="theirs")
+
+    def failing(path: Any, data: bytes, *, replace: bool = True, before_rename: Any = None) -> None:
+        def then_fail(info: os.stat_result) -> None:
+            before_rename(info)
+            if overtaken:  # Another conversion writes its own row meanwhile: it stands.
+                with provenance.open_index(str(folder.parent), write=True) as index:
+                    index.record(folder.name, "", str(source), theirs, 1.0)
+            raise OSError(28, "No space left on device")
+        original(path, data, replace=replace, before_rename=then_fail)
+    monkeypatch.setattr(txy, "write_atomic", failing)
+    for overtaken in (False, True):
+        with pytest.raises(OSError, match="No space"):
+            run(source, request_for(source, tmp_path))
+        assert index_rows(folder) == ({("m19v1", 1): theirs} if overtaken else {})
+        assert not (folder / "d_txy_helab_m19v1_1.txt").exists()
 
 
 PARTIAL_NAME = ".d_txy_helab_m19v1_1.txt.0123456789abcdef.partial"
@@ -914,7 +1003,10 @@ RECORD_PARTIAL = ".d_txy_helab_m19v1_1.json.0123456789abcdef.partial"
 FOLDER_PARTIAL = ".folder.json.0123456789abcdef.partial"
 
 
-def test_the_own_folder_pattern_adds_exactly_the_records_temporary_names(tmp_path: Path) -> None:
+def test_the_own_folder_pattern_adds_exactly_old_builds_records_temporary_names(tmp_path: Path) -> None:
+    """HeLab's folder holds TXY alone since the index (Q26.2); housekeeping there also removes the
+    temporaries old builds gave their JSON (each shot's record, ``folder.json``), and nothing else: the
+    index's journal is SQLite's, a set-aside index the user's to clear."""
     pattern = convert.own_partial()
     made: list[str] = []
     real_open = os.open
@@ -924,12 +1016,12 @@ def test_the_own_folder_pattern_adds_exactly_the_records_temporary_names(tmp_pat
         return real_open(path, *args, **kwargs)
     with pytest.MonkeyPatch.context() as patches:
         patches.setattr(os, "open", spy)
-        for name in ("d_txy_helab_m19v1_12.txt", provenance.provenance_name("m19v1", 12), convert.FOLDER_RECORD):
+        for name in ("d_txy_helab_m19v1_12.txt", "d_txy_helab_m19v1_12.json", "folder.json"):
             txy.write_atomic(tmp_path / name, b"")
     assert sum(bool(pattern.match(name)) for name in made) == 3
     for name in (PARTIAL_NAME, RECORD_PARTIAL, FOLDER_PARTIAL, ".d_txy_helab_m19v1_0.json.fedcba9876543210.partial"):
         assert pattern.match(name), name
-    # Source folders keep the TXY's names only: no JSON is written there.
+    # Source folders keep the TXY's names only: no JSON was ever written there.
     assert not convert.partial().match(RECORD_PARTIAL) and not convert.partial().match(FOLDER_PARTIAL)
     for name in (".d_txy_helab_m19v1_1.json.0123456789abcdeg.partial", ".d_txy_helab_m19v1_1.json.0123456789abcde.partial",
                  ".d_txy_helab_m19v1_1.json.0123456789ABCDEF.partial", ".d_txy_helab_m19v1_07.json.0123456789abcdef.partial",
@@ -938,7 +1030,8 @@ def test_the_own_folder_pattern_adds_exactly_the_records_temporary_names(tmp_pat
                  FOLDER_PARTIAL + ".bak", FOLDER_PARTIAL[1:], ".xfolder.json.0123456789abcdef.partial",
                  ".Folder.json.0123456789abcdef.partial", ".folder.jsonl.0123456789abcdef.partial",
                  ".folderxjson.0123456789abcdef.partial", ".notes.json.0123456789abcdef.partial",
-                 ".d_txy_helab_1.json.0123456789abcdef.partial"):
+                 ".d_txy_helab_1.json.0123456789abcdef.partial", provenance.INDEX_NAME, provenance.INDEX_NAME + "-journal",
+                 ".index.sqlite.0123456789abcdef.partial", "index-damaged-20261029T120000Z-0123abcd.sqlite"):
         assert not pattern.match(name), name
 
 
@@ -1075,7 +1168,7 @@ def test_beside_without_a_data_root_says_where_the_records_go(source: Path, tmp_
                                      beside_confirmed=True))
     [plan] = of(events, "convert_plan")
     assert plan["output"] == "beside"
-    assert plan["fallback"] == "the provenance records go to the temp folder: no .helab-root found here or above"
+    assert plan["fallback"] == "the provenance rows go to the temp folder's index: no .helab-root found here or above"
 
 
 def test_a_flag_that_cant_be_read_is_said_so(source: Path, tmp_path: Path, private_store: str,
@@ -1113,35 +1206,34 @@ def test_a_kept_or_done_shot_whose_beside_txy_is_deleted_is_converted_again(sour
 def test_a_lost_beside_race_leaves_the_other_conversions_record(source: Path, tmp_path: Path,
                                                                 monkeypatch: pytest.MonkeyPatch) -> None:
     """Two conversions of one folder at once: the one that finds the TXY written meanwhile removes
-    its own record only if it is still its own."""
+    its own row only if it is still its own."""
     write_raw(source, 1, raw_bytes(10_000))
     request = request_for(source, tmp_path, beside=True, beside_confirmed=True)
     folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
-    record = folder / "d_txy_helab_m19v1_1.json"
-    theirs = provenance_record(shot=1, txy_sha256="theirs").to_json()
+    theirs = provenance_record(shot=1, output="beside", txy_sha256="theirs")
     original = txy.write_atomic
+    rival_row = True
 
-    def raced(path: Any, data: bytes, *, replace: bool = True) -> None:
-        if Path(path).parent == source:
-            # The other conversion: its TXY and then its record land between ours.
+    def raced(path: Any, data: bytes, *, replace: bool = True, before_rename: Any = None) -> None:
+        def then_theirs(info: os.stat_result) -> None:
+            before_rename(info)
+            # The other conversion: its row and then its TXY land between ours.
+            if rival_row:
+                with provenance.open_index(str(folder.parent), write=True) as index:
+                    index.record(folder.name, "", str(source), theirs, 1.0)
             Path(path).write_bytes(b"the other conversion's\n")
-            record.write_text(theirs)
-        original(path, data, replace=replace)
+        original(path, data, replace=replace, before_rename=then_theirs)
     monkeypatch.setattr(txy, "write_atomic", raced)
     events = run(source, request)
     assert [event["shot"] for event in of(events, "shot_kept")] == [1]
-    assert record.read_text() == theirs
-    # Without a rival record, ours (unmatched by any TXY) goes.
+    assert index_rows(folder) == {("m19v1", 1): theirs}
+    # Without a rival row, ours (unmatched by any TXY) goes.
     (source / "d_txy_helab_m19v1_1.txt").unlink()
-    record.unlink()
-
-    def raced_txy_only(path: Any, data: bytes, *, replace: bool = True) -> None:
-        if Path(path).parent == source:
-            Path(path).write_bytes(b"the other conversion's\n")
-        original(path, data, replace=replace)
-    monkeypatch.setattr(txy, "write_atomic", raced_txy_only)
+    with provenance.open_index(str(folder.parent), write=True) as index:
+        index.forget(folder.name, theirs)
+    rival_row = False
     run(source, request)
-    assert not record.exists()
+    assert index_rows(folder) == {}
 
 
 
@@ -1177,6 +1269,7 @@ def test_a_conversion_removes_old_leftovers_in_helabs_own_folder(source: Path, t
     write_raw(source, 1, raw_bytes(10_000))
     folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
     folder.mkdir(parents=True)
+    # (Old builds' JSON temporaries too: the index's builds write none, but theirs are HeLab's leftovers.)
     old = [folder / name for name in (PARTIAL_NAME, RECORD_PARTIAL, FOLDER_PARTIAL)]
     young = [folder / name for name in (".d_txy_helab_m19v1_2.txt.fedcba9876543210.partial",
                                         ".d_txy_helab_m19v1_2.json.fedcba9876543210.partial",
@@ -1201,3 +1294,491 @@ def test_a_conversion_removes_old_leftovers_in_helabs_own_folder(source: Path, t
     assert not any(path.exists() for path in old) and all(path.exists() for path in young + lookalikes)
     assert link.is_symlink() or sys.platform == "win32"
     assert elsewhere.read_bytes() == b"not HeLab's"
+
+
+# HeLab's index (Q26.2): one SQLite file per base, rebuildable.
+
+
+def index_file(tmp_path: Path) -> Path:
+    return tmp_path / "temps" / convert.FOLDER_NAME / provenance.INDEX_NAME
+
+
+def set_aside(tmp_path: Path) -> list[str]:
+    return sorted(name for name in os.listdir(index_file(tmp_path).parent)
+                  if provenance.SET_ASIDE_PATTERN.fullmatch(name))
+
+
+@pytest.mark.parametrize("problem", ["missing", "not a database", "malformed", "newer"])
+def test_a_missing_or_damaged_index_only_means_shots_convert_again(source: Path, tmp_path: Path, problem: str) -> None:
+    """Never an error the user must fix, never a crash: shots convert again. A damaged or newer index is
+    set aside under an exact name (never deleted: Settings → Cache's Clear removes it) and a new one made."""
+    write_raw(source, 1, raw_bytes(10_000))
+    write_raw(source, 2, raw_bytes(10_000, 20_000))
+    folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
+    assert len(of(run(source, request_for(source, tmp_path)), "shot_converted")) == 2
+    index = index_file(tmp_path)
+    if problem == "missing":
+        index.unlink()
+    elif problem == "not a database":
+        index.write_bytes(b"not a database, " * 300)
+    elif problem == "malformed":
+        data = bytearray(index.read_bytes())
+        page = int.from_bytes(data[16:18], "big")
+        data[page:] = b"\xff" * (len(data) - page)  # (Every page but the schema's.)
+        index.write_bytes(bytes(data))
+    else:
+        with contextlib.closing(sqlite3.connect(index)) as conn:
+            conn.execute(f"PRAGMA user_version = {provenance.SCHEMA + 1}")
+            conn.commit()
+    damaged = index.read_bytes() if index.exists() else b""
+    # A load finds no rows (and changes nothing); a conversion converts both shots again.
+    assert index_rows(folder) == {} and (index.read_bytes() if index.exists() else b"") == damaged
+    events = run(source, request_for(source, tmp_path))
+    assert sorted(event["shot"] for event in of(events, "shot_converted")) == [1, 2]
+    assert sorted(index_rows(folder)) == [("m19v1", 1), ("m19v1", 2)]
+    aside = set_aside(tmp_path)
+    if problem == "missing":
+        assert aside == []
+    else:
+        [name] = aside
+        assert name.startswith("index-newer-" if problem == "newer" else "index-damaged-")
+        assert (index.parent / name).read_bytes() == damaged
+    assert of(run(source, request_for(source, tmp_path)), "shot_converted") == []
+
+
+def test_an_index_that_cant_be_written_fails_the_conversion_to_be_tried_again(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Busy past the timeout (another process's transaction): no TXY without its row; the next one converts."""
+    write_raw(source, 1, raw_bytes(10_000))
+    run(source, request_for(source, tmp_path, shots=[]))
+    with provenance.open_index(str(index_file(tmp_path).parent), write=True):
+        pass
+    monkeypatch.setattr(provenance, "BUSY_SECONDS", 0.1)
+    holder = sqlite3.connect(index_file(tmp_path), isolation_level=None)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        # (WAL: the index opens and reads; the row's write is what waits, then fails.)
+        with pytest.raises(provenance.IndexUnavailable, match="index couldn't be written .database is locked"):
+            run(source, request_for(source, tmp_path))
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
+    assert not (folder / "d_txy_helab_m19v1_1.txt").exists() and set_aside(tmp_path) == []
+    assert len(of(run(source, request_for(source, tmp_path)), "shot_converted")) == 1
+
+
+def test_an_index_that_cant_be_set_aside_fails_the_conversion_to_be_tried_again(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows renames no file another process holds open (a running ``helab convert``, a load): a damaged
+    or newer index then can't be set aside, so the conversion fails before any TXY, leaving it as it was;
+    the next one (Live's Retry, ``helab convert``'s next pass) sets it aside and converts."""
+    write_raw(source, 1, raw_bytes(10_000))
+    index = index_file(tmp_path)
+    index.parent.mkdir(parents=True)
+    index.write_bytes(b"not a database, " * 300)
+
+    def held_open(path: str, reason: str) -> str:
+        raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+    monkeypatch.setattr(provenance, "set_aside", held_open)
+    with pytest.raises(provenance.IndexUnavailable, match="damaged and couldn't be set aside"):
+        run(source, request_for(source, tmp_path))
+    folder = Path(folder_for(str(tmp_path / "temps"), "path:" + str(source)))
+    assert not (folder / "d_txy_helab_m19v1_1.txt").exists()
+    assert index.read_bytes() == b"not a database, " * 300 and set_aside(tmp_path) == []
+    monkeypatch.undo()
+    assert len(of(run(source, request_for(source, tmp_path)), "shot_converted")) == 1
+    assert [name.startswith("index-damaged-") for name in set_aside(tmp_path)] == [True]
+
+
+def test_a_transaction_answered_busy_at_once_is_tried_again_until_the_busy_timeout(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SQLite answers "database is locked" at once, without its busy timeout, where waiting could
+    deadlock (CI run 40874212130, Windows: two writers creating the index): the transaction is tried
+    again for up to ``BUSY_SECONDS`` in all, each attempt's own busy timeout and the last sleep being
+    what is left of it (review Nit-7); any other error, or busy past then, is raised, and the
+    connection's timeout restored. Checked by behaviour (a fake clock), not wall time (review Nit-8)."""
+    conn = sqlite3.connect(tmp_path / "x.sqlite", isolation_level=None, timeout=60)
+    locked = sqlite3.OperationalError("database is locked")
+    answers: list[BaseException | None] = [locked, locked, None]
+
+    def action() -> str:
+        answer = answers.pop(0)
+        if answer is not None:
+            raise answer
+        return "done"
+    assert provenance._patient(conn, action) == "done" and answers == []
+    with pytest.raises(sqlite3.OperationalError, match="no such table"):
+        provenance._patient(conn, lambda: conn.execute("SELECT * FROM x"))
+
+    class Clock:
+        """``time`` for ``provenance``: time passes only by its sleeps."""
+        now = 100.0
+        sleeps: list[float] = []
+
+        @classmethod
+        def monotonic(cls) -> float:
+            return cls.now
+
+        @classmethod
+        def sleep(cls, seconds: float) -> None:
+            cls.sleeps.append(seconds)
+            cls.now += seconds
+    monkeypatch.setattr(provenance, "time", Clock)
+    monkeypatch.setattr(provenance, "BUSY_SECONDS", 1.0)
+    timeouts: list[int] = []
+
+    def stays_locked() -> None:
+        timeouts.append(int(conn.execute("PRAGMA busy_timeout").fetchone()[0]))
+        raise sqlite3.OperationalError("database is locked")
+    with pytest.raises(sqlite3.OperationalError, match="locked"):
+        provenance._patient(conn, stays_locked)
+    # Back-off from 5 ms doubling to 100 ms, the last sleep cut to what is left: 1 s in all, never more.
+    assert Clock.sleeps[:6] == [0.005, 0.01, 0.02, 0.04, 0.08, 0.1] and max(Clock.sleeps) == 0.1
+    assert sum(Clock.sleeps) == pytest.approx(1.0) and Clock.sleeps[-1] < 0.1
+    # Each attempt waits at most what is left (ms), and the connection's 10 s comes back after.
+    assert timeouts[0] == 1000 and timeouts == sorted(timeouts, reverse=True) and len(timeouts) == len(Clock.sleeps) + 1
+    assert conn.execute("PRAGMA busy_timeout").fetchone()[0] == 1000
+    monkeypatch.undo()
+    # A real lock held past the deadline: SQLite's own wait counts toward it too. Unbounded, the first
+    # attempt would wait this connection's 60 s; the bound leaves loaded runners 5 s.
+    monkeypatch.setattr(provenance, "BUSY_SECONDS", 1.0)
+    holder = sqlite3.connect(tmp_path / "x.sqlite", isolation_level=None)
+    holder.execute("BEGIN EXCLUSIVE")
+    try:
+        started = time.monotonic()
+        with pytest.raises(sqlite3.OperationalError, match="locked"):
+            provenance._patient(conn, lambda: conn.execute("BEGIN IMMEDIATE"))
+        assert time.monotonic() - started < provenance.BUSY_SECONDS + 5
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+        conn.close()
+
+
+def test_a_damaged_index_replaced_mid_write_keeps_its_bases_journal(tmp_path: Path) -> None:
+    """Review Low-7: a write that finds the index damaged sets it aside and makes the replacement in the
+    journal mode the index was opened with (DELETE where the base may not be local), not WAL."""
+    root = tmp_path / "converted-txy"
+    index = provenance.open_index(str(root), write=True, journal=provenance.DELETE)
+    try:
+        index.record("f", "", "/data/run", provenance_record(), 1.0)
+        path = root / provenance.INDEX_NAME
+        data = bytearray(path.read_bytes())
+        page = int.from_bytes(data[16:18], "big")
+        data[page:] = b"\xff" * (len(data) - page)
+        # (The file change counter moved too, so the open connection drops its cached pages.)
+        data[24:28] = (int.from_bytes(data[24:28], "big") + 1).to_bytes(4, "big")
+        with open(path, "r+b") as stream:  # (In place: the open connection reads it next.)
+            stream.write(bytes(data))
+        index.record("f", "", "/data/run", provenance_record(shot=4), 2.0)
+    finally:
+        index.close()
+    assert [name.startswith("index-damaged-") for name in sorted(os.listdir(root))
+            if provenance.SET_ASIDE_PATTERN.fullmatch(name)] == [True]
+    with contextlib.closing(sqlite3.connect(root / provenance.INDEX_NAME)) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "delete"
+    assert list(provenance.read_shots(str(root), "f")) == [("m19v1", 4)]
+
+
+def test_the_index_uri_quotes_the_whole_path(tmp_path: Path) -> None:
+    """Low-5: a UNC temp folder (``\\\\server\\share``) must not read as a URI authority, and ``?``,
+    ``#`` or ``%`` in a folder's name must stay in the path."""
+    assert provenance._uri("\\\\server\\share\\t") == "file:%5C%5Cserver%5Cshare%5Ct"
+    assert provenance._uri("C:\\Users\\x") == "file:C%3A%5CUsers%5Cx"
+    assert provenance._uri("//server/share") == "file:%2F%2Fserver%2Fshare"
+    # (Windows forbids "?" in a name; "#", "%" and spaces it allows.)
+    odd = tmp_path / ("a#c%d e" if sys.platform == "win32" else "a?b#c%d e") / "converted-txy"
+    with provenance.open_index(str(odd), write=True) as index:
+        index.record("f", "", "/data/run", provenance_record(), 1.0)
+    assert sorted(os.listdir(odd)) == [provenance.INDEX_NAME] and list(provenance.read_shots(str(odd), "f"))
+
+
+@pytest.mark.parametrize("problem", ["", "on a network drive (smbfs)"])
+def test_an_index_where_the_folder_may_not_be_local_uses_a_rollback_journal(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, problem: str) -> None:
+    """Low-5: WAL needs a local disk; the temp folder is the user's to set. Where ``cache_location_problem``
+    objects to the base (a network drive, a UNC path, a synced folder), a new index uses DELETE instead;
+    conversions and loads work the same either way."""
+    from helab.utils import cache_location
+    write_raw(source, 1, raw_bytes(10_000))
+    seen: list[str] = []
+
+    def problem_of(path: str) -> str:
+        seen.append(path)
+        return problem
+    monkeypatch.setattr(cache_location, "cache_location_problem", problem_of)
+    assert len(of(run(source, request_for(source, tmp_path)), "shot_converted")) == 1
+    assert seen == [str(tmp_path / "temps")] and convert.journal_for(str(tmp_path / "temps")) == (
+        provenance.DELETE if problem else provenance.WAL)
+    with contextlib.closing(sqlite3.connect(index_file(tmp_path))) as conn:
+        assert conn.execute("PRAGMA journal_mode").fetchone()[0] == ("delete" if problem else "wal")
+    assert of(run(source, request_for(source, tmp_path)), "shot_converted") == []
+    assert os.listdir(index_file(tmp_path).parent) != [] and not [
+        name for name in os.listdir(index_file(tmp_path).parent) if name.endswith(("-wal", "-shm", "-journal"))]
+
+
+WRITER = """
+import sys, time
+from helab.convert import provenance
+root, name, count, start, pause = sys.argv[1], sys.argv[2], int(sys.argv[3]), float(sys.argv[4]), float(sys.argv[5])
+while time.time() < start:
+    time.sleep(0.001)
+for shot in range(count):
+    record = provenance.Provenance(
+        shot=shot, raw_name=f"d{shot}.txt", raw_size=1, raw_mtime_ns=1, raw_sha256="", profile_name="p",
+        profile_version=1, profile_hash="h", profile_tag="m19v1", profile_calibrated=False, backend="numpy",
+        output="temp", txy_name=provenance.txy_name("m19v1", shot), txy_size=shot, txy_mtime_ns=shot,
+        txy_sha256="", hits=1, converted_at=time.time(), helab_version="0", read_seconds=0.0, parse_seconds=0.0,
+        reconstruct_seconds=0.0, format_seconds=0.0, write_seconds=0.0)
+    began = time.monotonic()
+    try:
+        with provenance.open_index(root, write=True) as index:
+            index.record(name, "", "/data/" + name, record, time.time())
+    except Exception as error:  # (Said in one line, so the test's message shows it whole.)
+        cause = error.__cause__ or error.__context__
+        print(f"shot {shot}: {type(error).__name__}: {error} (cause {type(cause).__name__}: {cause}; "
+              f"code {getattr(cause, 'sqlite_errorname', None)}) after {time.monotonic() - began:.2f} s",
+              file=sys.stderr)
+        raise
+    # A conversion reads, converts and writes a TXY between two rows (tens of milliseconds or more), so
+    # two converters leave each other gaps. Back to back, with no pause, the test measured SQLite's
+    # write lock, which isn't fair: on Windows one writer could miss every gap for BUSY_SECONDS (CI
+    # 40977028554). The pause keeps both writing at once, and every row is still checked.
+    time.sleep(pause)
+"""
+PAUSE = 0.005
+
+
+def test_two_writers_side_by_side_lose_nothing(tmp_path: Path) -> None:
+    """The app's helper and ``helab convert`` (two processes) writing one index at once: every row lands,
+    and the file stays sound. Each opens it per shot, harder than a conversion (one connection per run)."""
+    root = str(tmp_path / "converted-txy")
+    start = time.time() + 1.0
+    writers = [subprocess.Popen([sys.executable, "-c", WRITER, root, name, "150", str(start), str(PAUSE)],
+                                stderr=subprocess.PIPE, text=True) for name in ("helper", "command line")]
+    for writer in writers:
+        _, errors = writer.communicate(timeout=120)
+        assert writer.returncode == 0, errors.strip().splitlines()[0] if errors.strip() else errors
+    with provenance.open_index(root, write=False) as index:  # type: ignore[union-attr]
+        assert len(index.shots("helper")) == len(index.shots("command line")) == 150
+        assert [(row[0], row[3]) for row in index.folders()] == [("command line", sum(range(150))),
+                                                                 ("helper", sum(range(150)))]
+        assert index.conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert sorted(os.listdir(root)) == [provenance.INDEX_NAME]  # (No journal left between transactions.)
+
+
+KILLED_WRITER = """
+import os, sys, time
+from helab.convert import provenance
+root = sys.argv[1]
+index = provenance.open_index(root, write=True)
+index.conn.execute("PRAGMA wal_autocheckpoint = 0")  # (Every row stays in the -wal.)
+for shot in range(5):
+    index.record("f", "", "/data/run", provenance.Provenance(
+        shot=shot, raw_name=f"d{shot}.txt", raw_size=1, raw_mtime_ns=1, raw_sha256="", profile_name="p",
+        profile_version=1, profile_hash="h", profile_tag="m19v1", profile_calibrated=False, backend="numpy",
+        output="cache", txy_name=provenance.txy_name("m19v1", shot), txy_size=shot, txy_mtime_ns=shot,
+        txy_sha256="", hits=1, converted_at=time.time(), helab_version="0", read_seconds=0.0, parse_seconds=0.0,
+        reconstruct_seconds=0.0, format_seconds=0.0, write_seconds=0.0), time.time())
+os._exit(0)  # Killed: nothing closes the index, so nothing checkpoints its -wal.
+"""
+
+
+def test_a_cache_move_carries_rows_still_in_the_wal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """WAL (CI run 40879735789: a rollback journal starved two writers on Windows). A helper killed while
+    it held the index leaves rows in ``index.sqlite-wal``; the cache move's copy takes the ``-wal`` with
+    the index (``cache_move`` skips only ``-shm``, which SQLite rebuilds), so they are all there after it."""
+    from helab.utils import cache_move
+    from helab.utils.cache_store import CacheStore
+    app, cache, target = tmp_path / "app", tmp_path / "caches", tmp_path / "moved" / "caches"
+    with CacheStore(store_root(str(cache))):
+        pass
+    root = cache / convert.FOLDER_NAME
+    subprocess.run([sys.executable, "-c", KILLED_WRITER, str(root)], check=True, timeout=60)
+    assert (root / (provenance.INDEX_NAME + "-wal")).stat().st_size > 0
+    monkeypatch.setattr(cache_move, "same_disk", lambda source, target: False)
+    record = cache_move.move(cache_move.start(str(cache), str(target), str(app), "copy"), str(app),
+                             lambda done, total: None, lambda: False)
+    updated = cache_move.cutover(str(app), record, lambda value: True)
+    assert updated is not None and cache_move.cleanup(str(app), updated) == []
+    moved = target / convert.FOLDER_NAME
+    assert not (moved / (provenance.INDEX_NAME + "-shm")).exists()
+    assert sorted(shot for _, shot in provenance.read_shots(str(moved), "f")) == [0, 1, 2, 3, 4]
+    # The -wal and -shm are SQLite's: measured with the index's bytes, never as TXY nor cleared.
+    with provenance.open_index(str(moved), write=False) as index:  # type: ignore[union-attr]
+        index.conn.execute("PRAGMA wal_autocheckpoint = 0")
+        with contextlib.closing(sqlite3.connect(moved / provenance.INDEX_NAME)) as other:
+            other.execute("PRAGMA wal_autocheckpoint = 0")
+            other.execute("UPDATE folders SET last_used = 1.0")
+            other.commit()
+        companions = [moved / (provenance.INDEX_NAME + suffix) for suffix in ("-wal", "-shm")]
+        assert all(path.exists() for path in companions)
+        files = sum(os.path.getsize(path) for path in [moved / provenance.INDEX_NAME, *companions])
+        usage = helab_txy.converted_usage(str(moved))
+        assert (usage["files"], usage["clearable"], usage["bytes"]) == (0, 0, files)
+        assert helab_txy.clear_converted(str(moved)) == {"files": 0, "bytes": 0}
+        assert all(path.exists() for path in companions)
+
+
+def flag_no_cache(private_store: str, source: Path, on: bool = True) -> None:
+    events: list[Any] = []
+    cache_admin(options(private_store), "prefs", events.append, path=str(source), no_cache=on, no_auto_load=False,
+                set_at=time.time())
+
+
+def test_a_dont_cache_folder_converts_to_the_temp_folder(source: Path, tmp_path: Path, private_store: str) -> None:
+    """Q19.5, Q27.4: the store's Don't cache flag, read by the conversion itself (the app and the command
+    line alike), sends its TXY to the temp folder, still keyed by its data root."""
+    write_raw(source, 1, raw_bytes(10_000))
+    flag_no_cache(private_store, source)
+    events = run(source, request_for(source, tmp_path, private_store, destination="cache"))
+    [plan] = of(events, "convert_plan")
+    assert plan["output"] == "temp" and plan["fallback"] == "you chose Don't cache for this folder"
+    assert plan["key"].startswith("root://") and plan["folder"] == folder_for(str(tmp_path / "temps"), plan["key"])
+    assert Path(plan["folder"], "d_txy_helab_m19v1_1.txt").is_file()
+    assert not os.path.exists(os.path.join(private_store, convert.FOLDER_NAME))
+    # The flag off: the cache folder again (the temp folder's TXY stays until Settings → Cache clears it).
+    flag_no_cache(private_store, source, on=False)
+    [plan] = of(run(source, request_for(source, tmp_path, private_store, destination="cache")), "convert_plan")
+    assert plan["output"] == "cache" and plan["folder"] == folder_for(private_store, plan["key"])
+
+
+def test_a_dont_cache_flag_that_cant_be_read_converts_to_the_temp_folder(
+        source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    from helab.utils.cache_store import CacheStore, _error
+    write_raw(source, 1, raw_bytes(10_000))
+    monkeypatch.setattr(CacheStore, "read_prefs", lambda self, paths: {path: _error("locked") for path in paths})
+    [plan] = of(run(source, request_for(source, tmp_path, private_store, destination="cache")), "convert_plan")
+    assert plan["output"] == "temp" and plan["fallback"] == "the folder's Don't cache flag couldn't be read (locked)"
+
+
+class NoStdin:
+    """Tests never read the real stdin: any read fails the test."""
+
+    def isatty(self) -> bool:
+        raise AssertionError("the terminal check is patched in tests")
+
+    def readline(self) -> str:
+        raise AssertionError("stdin read in a test")
+
+
+def typed(source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch, *argv: str,
+          terminal: bool | None = False, answer: bool | None = None,
+          stdin: Any = None) -> tuple[ConvertRequest, list[str]]:
+    """``helab convert``'s request for ``argv``, its terminal and answer patched; the questions asked.
+    ``terminal`` None: not patched, ``sys.stdin`` being ``stdin`` (``NoStdin`` by default)."""
+    from helab import convert_cli
+    asked: list[str] = []
+
+    def ask(question: str) -> bool:
+        asked.append(question)
+        assert answer is not None, "asked without a terminal"
+        return answer
+    monkeypatch.setattr(sys, "stdin", NoStdin() if terminal is not None else stdin)
+    monkeypatch.setattr(builtins, "input", NoStdin().readline)
+    if terminal is not None:
+        monkeypatch.setattr(convert_cli, "_on_terminal", lambda: terminal)
+    monkeypatch.setattr(convert_cli, "_ask", ask)
+    args = convert_cli._arguments(["--watch", str(source), "--once", *argv])
+    request = convert_cli._request(args, str(source), MATLAB_2019.to_dict(), options(private_store))
+    request["temps"], request["workers"] = str(tmp_path / "temps"), 1
+    return request, asked
+
+
+@pytest.mark.parametrize("terminal, answer, output, cache", [
+    (True, True, "cache", True), (True, False, "cache", False), (False, None, "cache", False),
+    (False, None, "cache-forced", True), (True, None, "cache-forced", True),
+    (None, None, "cache", False), (None, None, "cache-forced", True)],
+    ids=["terminal-y", "terminal-N", "no-terminal", "forced", "forced-on-terminal", "no-stdin", "no-stdin-forced"])
+def test_a_typed_output_cache_asks_before_writing_a_dont_cache_folder_to_the_cache(
+        source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+        terminal: bool | None, answer: bool | None, output: str, cache: bool) -> None:
+    """Q~2 (Tony): the command line stands for the user, as ``beside`` does (Q12.4). One line names the
+    folder; for a typed ``--output cache`` a terminal asks (no by default), without one it's temp;
+    ``cache-forced`` asks nothing. No stdin at all (the windowed Windows app, ``console=False``; terminal
+    None: ``_on_terminal`` itself runs) is no terminal (Tern's Low-8)."""
+    write_raw(source, 1, raw_bytes(10_000))
+    flag_no_cache(private_store, source)
+    with caplog.at_level("WARNING", logger="helab.convert"):
+        request, asked = typed(source, tmp_path, private_store, monkeypatch, "--output", output,
+                               terminal=terminal, answer=answer, stdin=None)
+    assert asked == (["Write to the cache folder anyway? [y/N] "] if answer is not None else [])
+    [warning] = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+    assert warning.startswith(f"{source}: you chose Don't cache for this folder")
+    assert ("cache-forced" in warning) == (not terminal or output == "cache-forced")
+    assert request.get("destination") == "cache"
+    assert request.get("cache_confirmed", False) is cache
+    [plan] = of(run(source, request), "convert_plan")
+    base = private_store if cache else str(tmp_path / "temps")
+    assert (plan["output"], plan["folder"]) == ("cache" if cache else "temp", folder_for(base, plan["key"]))
+    assert plan["fallback"] == ("" if cache else "you chose Don't cache for this folder")
+    assert Path(plan["folder"], "d_txy_helab_m19v1_1.txt").is_file()
+
+
+@pytest.mark.parametrize("argv", [(), ("--output", "temp")], ids=["setting", "temp"])
+def test_the_output_settings_default_leaves_dont_cache_the_last_word(
+        source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+        argv: tuple[str, ...]) -> None:
+    """Without a typed ``--output cache`` (the setting's default is cache) nothing is asked and the
+    folder's flag wins, as in the app; a typed ``--output cache`` without the flag asks nothing either."""
+    write_raw(source, 1, raw_bytes(10_000))
+    flag_no_cache(private_store, source)
+    with caplog.at_level("WARNING", logger="helab.convert"):
+        request, asked = typed(source, tmp_path, private_store, monkeypatch, *argv, terminal=True)
+    assert not asked and not caplog.records and "cache_confirmed" not in request
+    assert request.get("destination") == ("temp" if "temp" in argv else "cache")
+    [plan] = of(run(source, request), "convert_plan")
+    assert plan["output"] == "temp" and plan["folder"] == folder_for(str(tmp_path / "temps"), plan["key"])
+    flag_no_cache(private_store, source, on=False)
+    request, asked = typed(source, tmp_path, private_store, monkeypatch, "--output", "cache", terminal=True)
+    assert not asked and not caplog.records and "cache_confirmed" not in request
+
+
+def test_a_missing_or_closed_stdin_is_no_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Tern's Low-8: ``sys.stdin`` is None in the windowed app and when closed (``0<&-``); a closed file
+    object raises ValueError. Neither is a terminal, and neither raises."""
+    from helab import convert_cli
+    closed = io.StringIO("y\n")
+    closed.close()
+    for stdin in (None, closed):
+        monkeypatch.setattr(sys, "stdin", stdin)
+        assert convert_cli._on_terminal() is False
+
+
+def test_the_answer_is_no_unless_yes(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]) -> None:
+    from helab import convert_cli
+    for typed_answer, yes in [("y\n", True), (" YES\n", True), ("\n", False), ("", False), ("n\n", False),
+                              ("yep\n", False)]:
+        monkeypatch.setattr(sys, "stdin", io.StringIO(typed_answer))
+        assert convert_cli._ask("Write? [y/N] ") is yes
+        assert capsys.readouterr().err == "Write? [y/N] "
+
+
+@pytest.mark.parametrize("method", ["rename", "copy"])
+def test_the_index_moves_with_the_cache_folder_and_its_shots_stay_current(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str) -> None:
+    """Brief item 7: converted-txy (TXY and index) is inside the cache folder, so a move carries it, and both
+    ways keep the TXY's mtimes (a rename, or ``shutil.copy2``): nothing converts again after it."""
+    from helab.utils import cache_move
+    from helab.utils.cache_store import CacheStore
+    app, cache, target = tmp_path / "app", tmp_path / "caches", tmp_path / "moved" / "caches"
+    with CacheStore(store_root(str(cache))):
+        pass
+    for shot in (1, 2):
+        write_raw(source, shot, raw_bytes(10_000 * shot))
+
+    def convert_into(folder: Path) -> list[dict[str, Any]]:
+        return run(source, request_for(source, tmp_path, destination="cache", cache={"directory": store_root(str(folder))}))
+    events = convert_into(cache)
+    assert len(of(events, "shot_converted")) == 2 and of(events, "convert_plan")[0]["output"] == "cache"
+    monkeypatch.setattr(cache_move, "same_disk", lambda source, target: method == "rename")
+    checked = cache_move.check_target(str(cache), str(target))
+    assert not checked["problem"] and checked["method"] == method
+    record = cache_move.move(cache_move.start(str(cache), str(target), str(app), method), str(app),
+                             lambda done, total: None, lambda: False)
+    updated = cache_move.cutover(str(app), record, lambda value: True)
+    assert updated is not None and cache_move.cleanup(str(app), updated) == []
+    assert (target / convert.FOLDER_NAME / provenance.INDEX_NAME).is_file() and not cache.exists()
+    moved = convert_into(target)
+    assert of(moved, "shot_converted") == [] and len(summary(moved)["current"]) == 2
