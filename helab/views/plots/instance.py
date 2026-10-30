@@ -13,8 +13,8 @@ from uuid import uuid4
 
 from PyQt6 import sip
 from PyQt6.QtCore import QObject, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
-from PyQt6.QtWidgets import QDockWidget, QLabel, QPushButton, QVBoxLayout, QWidget
-from pyqtgraph.parametertree import Parameter
+from PyQt6.QtWidgets import QDockWidget, QLabel, QPushButton, QTabWidget, QTreeWidgetItemIterator, QVBoxLayout, QWidget
+from pyqtgraph.parametertree import Parameter, ParameterTree
 
 from helab.analysis.backends import BACKEND, backend_specs
 from helab.analysis.constant_layers import (changed_keys, describe_constants, source_name, value_and_origin,
@@ -39,6 +39,7 @@ from helab.utils.io_service import IORequest, get_io_service
 from helab.utils.number_format import byte_size
 from helab.utils import txy_sources
 from helab.utils.ram_buffers import Buffers, arrays_in, buffers
+from helab.views.accessible import id_part, identify
 from helab.views.plots.cached_results import PENDING_NOTE, VERIFY_NOTE, CachedRuns
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.pictures import ReleasedPlot, snapshot
@@ -47,6 +48,37 @@ if TYPE_CHECKING:
     from helab.views.plots.arrangement import FolderWait
     from helab.views.plots.presets import PresetBar
     from helab.views.plots.workspace import PlotWorkspace
+
+
+def identify_parameters(settings: QWidget) -> QWidget:
+    """IDs and names for a plot's settings (pyqtgraph's parameter trees, helab/views/accessible.py):
+    each tree ``plot_settings`` (with pages, ``plot_settings_<n>`` and the page tabs
+    ``plot_settings_pages``), each value's editor ``param_<group>.<name>`` named by its title, and
+    its reset button ``param_<group>.<name>_reset``. ``settings`` itself, for chaining."""
+    trees = [settings] if isinstance(settings, ParameterTree) else settings.findChildren(ParameterTree)
+    if isinstance(settings, QTabWidget) and (bar := settings.tabBar()) is not None:
+        identify(bar, "plot_settings_pages", "Plot settings pages")
+    for number, tree in enumerate(trees, start=1):
+        identify(tree, "plot_settings" if len(trees) == 1 else f"plot_settings_{number}", "Plot settings")
+        found = QTreeWidgetItemIterator(tree)
+        while (item := found.value()) is not None:
+            found += 1
+            param = getattr(item, "param", None)
+            if not isinstance(param, Parameter):
+                continue
+            path: List[str] = []
+            step: Optional[Parameter] = param
+            while step is not None and step.parent() is not None:
+                path.insert(0, id_part(step.name()))
+                step = step.parent()
+            ident, title = "param_" + ".".join(path), str(param.title())
+            for attribute, suffix, name in (("widget", "", title), ("addWidget", "_add", f"Add to {title}"),
+                                            ("button", "", ""), ("defaultBtn", "_reset", f"Reset {title}")):
+                widget = getattr(item, attribute, None)
+                if isinstance(widget, QWidget):
+                    identify(widget, ident + suffix, name,
+                             "Set it back to its default" if attribute == "defaultBtn" else "")
+    return settings
 
 
 class LinkedAnalysisInstance(QObject):
@@ -82,6 +114,7 @@ class LinkedAnalysisInstance(QObject):
             return
             
         dock = AnalysisDock(f"{self.name} ({self.instance_id})", self.workspace.host)
+        dock.plot_id = self.instance_id
         dock.setStyleSheet(QDOCKWIDGET_STYLESHEET)
         dock.setWidget(content)
         dock.closed.connect(self.close)
@@ -160,8 +193,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.policy = policy
         self.follow = Follow(view, self.policy)
         self.parameter_root: Optional[Parameter] = None
-        self.status_label = QLabel()
-        self.input_label = QLabel()
+        self.status_label = identify(QLabel(), "plot_status")
+        self.input_label = identify(QLabel(), "plot_input")
         self.feed: Optional[LiveFeed] = workspace.live_feed if workspace is not None else None
         self._follow_timer = QTimer(self)
         self._follow_timer.setSingleShot(True)
@@ -279,8 +312,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
                                     self.txy_profile.name if self.txy_profile is not None else "")
         layout.addWidget(self.txy_row)
         self._show_txy()
-        layout.addWidget(settings_widget(self.parameter_root, [*specs, *drawing, *live]), 1)
-        self.rerun_button = QPushButton("Rerun with these settings")
+        layout.addWidget(identify_parameters(settings_widget(self.parameter_root, [*specs, *drawing, *live])), 1)
+        self.rerun_button = identify(QPushButton("Rerun with these settings"), "plot_rerun")
         self.rerun_button.setEnabled(bool(specs))
         self.rerun_button.clicked.connect(self.run)
         layout.addWidget(self.rerun_button)

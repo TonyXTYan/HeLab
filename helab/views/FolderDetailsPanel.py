@@ -17,6 +17,7 @@ from helab.utils.folder_cache import analysis_cached_text, data_root_row
 from helab.utils.number_format import fnum
 from helab.utils.io_service import IOService
 from helab.utils.time_format import clock as stopwatch, relative_age
+from helab.views.accessible import identify
 from helab.views.ElidedLabel import ElidedLabel
 from helab.views.FolderExplorer import (
     AMBER, AUTO_LOAD_OFF, AUTO_LOAD_OFF_TOOLTIP, AUTO_LOAD_PAUSED, AUTO_LOAD_PAUSED_TOOLTIP, LARGE_TOOLTIP, REFUSED_TOOLTIP,
@@ -136,7 +137,7 @@ class FolderDetailsPanel(QScrollArea):
         for key, name in self.ROWS:
             label = QLabel(name)
             label.setEnabled(False)  # Dimmed, like a form's field names.
-            value = ElidedLabel()
+            value = identify(ElidedLabel(), f"details_{key}")  # (Named by its text; the ID finds the row.)
             grid.addWidget(label, row, 0, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             grid.addWidget(value, row, 1)
             self.names[key], self.values[key] = label, value

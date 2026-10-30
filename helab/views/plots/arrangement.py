@@ -29,6 +29,7 @@ from helab.utils.settings_defaults import OPEN_PLOTS_SETTING, REOPEN_PLOTS_SETTI
 from helab.utils.settings_store import app_settings
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.instance import AnalysisInstance
+from helab.views.accessible import identify_buttons
 
 if TYPE_CHECKING:
     from helab.views.plots.script_tree import TreePanelWidget
@@ -427,6 +428,7 @@ class PlotReopen(QObject):
         box.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         box.buttonClicked.connect(lambda button: self.answer(button is keep))
         self._question = box
+        identify_buttons(box, "plots_not_reopened")
         box.show()
 
     def answer(self, keep: bool) -> None:

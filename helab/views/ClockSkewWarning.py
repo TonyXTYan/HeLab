@@ -16,6 +16,7 @@ from PyQt6.QtWidgets import QMessageBox, QWidget
 from helab.utils import events
 from helab.utils.folder_cache import FolderCache
 from helab.utils.time_format import span
+from helab.views.accessible import identify_buttons
 
 TITLE = "Computer clocks out of sync"
 TEXT = ("Files in {folder} are dated {skew} ahead of this computer's clock: this computer's clock and the "
@@ -53,6 +54,7 @@ class ClockSkewWarning(QObject):
         box.finished.connect(lambda _: self._closed(box))
         box.setWindowModality(Qt.WindowModality.NonModal)  # (A warning: work goes on behind it.)
         self.dialog = box
+        identify_buttons(box, "clock_skew")
         box.show()
 
     def _closed(self, box: QMessageBox) -> None:

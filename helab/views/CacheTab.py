@@ -31,6 +31,7 @@ from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import byte_size
 from helab.utils.settings_defaults import RESULT_REUSE_SETTING, read_setting
 from helab.utils.time_format import relative_age
+from helab.views.accessible import identify, identify_buttons
 
 GB = 10**9  # SI, as every size HeLab shows: budgets typed and shown in GB (Tony, 2026-10-26)
 DAY = 86400.0
@@ -318,6 +319,7 @@ class CacheTab(QWidget):
         layout.addWidget(self.plot_auto_reload)
         layout.addStretch(1)
 
+        self._identify()
         if cache is not None:
             cache.cacheAdminResult.connect(self._on_result)
             cache.cacheAdminDone.connect(self._on_done)
@@ -332,6 +334,30 @@ class CacheTab(QWidget):
         font.setBold(True)
         label.setFont(font)
         return label
+
+    def _identify(self) -> None:
+        """The tab's controls' IDs and names (helab/views/accessible.py)."""
+        identify(self.open_button, "cache_open", "Open cache folder")
+        identify(self.disk_budget, "disk_budget", "Disk budget")
+        for kind, button in self.kind_buttons.items():
+            identify(button, f"cache_clear_{kind}", f"{button.text().rstrip('…')} {KIND_ROWS[kind][0].lower()}…")
+        identify(self.results_button, "cache_clear_results", f"Clear {RESULTS_LABEL.lower()}…")
+        identify(self.result_reuse, "result_reuse")
+        identify(self.refresh_button, "cache_refresh", "Refresh cache sizes")
+        identify(self.clear_all_button, "cache_clear_all")
+        identify(self.prefs_button, "cache_clear_preferences", "Clear folder preferences…")
+        identify(self.converted_button, "cache_clear_converted", "Clear HeLab's converted TXY…")
+        identify(self.presets_button, "cache_presets")
+        identify(self.live_autosave, "live_autosave", "Live: save to the disk cache every")
+        for kind, what, days, button in (
+                ("datasets", "cached data", self.dataset_days, self.purge_datasets_button),
+                ("records", "folder records", self.record_days, self.purge_records_button),
+                ("results", "cached analysis", self.result_days, self.purge_results_button)):
+            identify(days, f"purge_{kind}_days", f"Remove {what} older than")
+            identify(button, f"purge_{kind}", f"Remove old {what}…")
+        identify(self.include_failures, "purge_include_failures")
+        identify(self.ram_budget, "ram_budget_setting", "RAM budget")
+        identify(self.plot_auto_reload, "plot_auto_reload")
 
     def _days(self) -> QSpinBox:
         days = QSpinBox()
@@ -362,6 +388,7 @@ class CacheTab(QWidget):
         box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=self)
         accept = box.addButton(verb, QMessageBox.ButtonRole.AcceptRole)
         box.addButton(QMessageBox.StandardButton.Cancel)
+        identify_buttons(box, "cache_confirm")
         box.exec()
         return box.clickedButton() is accept
 

@@ -8,6 +8,8 @@ from PyQt6.QtCore import Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QMouseEvent
 from PyQt6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from helab.views.accessible import identify
+
 TIPS = (
     "Data already cached shows at once when you select its folder, then is checked for changes.",
     "Live (toolbar) adds new shots to the selected folder as they arrive; Rerun a plot to include them.",
@@ -46,11 +48,11 @@ class CentralHint(QWidget):
         super().__init__(parent)
         self._layout = QVBoxLayout(self)
         self._layout.addStretch(1)
-        self.hint = QLabel(hint)
+        self.hint = identify(QLabel(hint), "central_hint")
         self.hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.hint.setWordWrap(True)
         self._layout.addWidget(self.hint)
-        self.tip = ClickableLabel()
+        self.tip = identify(ClickableLabel(), "central_tip", description="Show another tip")
         self.tip.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.tip.setWordWrap(True)
         self.tip.setStyleSheet("color: #888;")  # Dimmed, but enabled: it takes clicks.

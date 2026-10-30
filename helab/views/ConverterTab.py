@@ -34,6 +34,7 @@ from helab.utils.constants import (
 )
 from helab.utils.folder_cache import FolderCache
 from helab.utils.settings_defaults import CONVERT_OUTPUTS, read_setting
+from helab.views.accessible import identify, identify_buttons
 
 # Backends by name (``reconstruct._MODULES``), without importing them: whether one can run here is the
 # conversion's to say (an optional package or compiled extension may be missing).
@@ -109,6 +110,7 @@ class ProfileEditor(QDialog):
                 line.textChanged.connect(self._check)
                 editor = line
             self.editors[field.name] = editor
+            identify(editor, f"profile_{field.name}")  # (Named by its row's label, field.name.)
             form.addRow(field.name, editor)
         self.hash_label = QLabel()
         self.hash_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
@@ -118,6 +120,7 @@ class ProfileEditor(QDialog):
         layout.addWidget(self.hash_label)
         layout.addWidget(self.problem)
         self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
+        identify_buttons(self.buttons, "profile")
         self.buttons.accepted.connect(self.accept_profile)
         self.buttons.rejected.connect(self.reject)
         layout.addWidget(self.buttons)
@@ -246,6 +249,20 @@ class ConverterTab(QWidget):
                              (self.export_button, self.export_selected), (self.folder_button, self.show_folder)):
             button.clicked.connect(slot)
             buttons.addWidget(button)
+        # IDs and names (helab/views/accessible.py).
+        for widget, ident, name in (
+                (self.profile_combo, "convert_profile", "Conversions use the profile"),
+                (self.backend_combo, "convert_backend", "Backend"),
+                (self.output_combo, "convert_output", "HeLab's TXY go to"),
+                (self.source_combo, "tabs_txy_source", "Tabs and Live read"),
+                (self.list, "profiles_list", "Profiles"),
+                (self.duplicate_button, "profiles_duplicate", "Duplicate profile…"),
+                (self.edit_button, "profiles_edit", "Edit profile…"),
+                (self.delete_button, "profiles_delete", "Delete profile…"),
+                (self.import_button, "profiles_import", "Import profile…"),
+                (self.export_button, "profiles_export", "Export profile…"),
+                (self.folder_button, "profiles_folder", "Show profiles folder")):
+            identify(widget, ident, name)
         buttons.addStretch()
         layout.addLayout(buttons)
         self.refresh(read_setting(settings, CONVERT_PROFILE_SETTING, typed=True) or DEFAULT_PROFILE)
@@ -318,6 +335,7 @@ class ConverterTab(QWidget):
         box = QMessageBox(QMessageBox.Icon.Warning, title, text, parent=self)
         accept = box.addButton(verb, QMessageBox.ButtonRole.AcceptRole)
         box.addButton(QMessageBox.StandardButton.Cancel)
+        identify_buttons(box, "profile_confirm")
         box.exec()
         return box.clickedButton() is accept
 

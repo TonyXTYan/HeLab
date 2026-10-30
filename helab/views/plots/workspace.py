@@ -27,6 +27,7 @@ from helab.utils.number_format import byte_size
 from helab.views.CentralHint import CentralHint
 from helab.views.plots.dock import AnalysisDock
 from helab.views.plots.settings_panel import PlotSettingsPanel
+from helab.views.accessible import identify, identify_buttons
 
 if TYPE_CHECKING:
     from helab.views.FolderExplorer import FolderExplorer
@@ -58,7 +59,8 @@ class PlotWorkspace:
         self.panel_right_top_plot_settings = PlotSettingsPanel(parent=host)
         # Shown from 50 % of the RAM budget (loaded folders and plots); opens their sizes. The
         # window places it in its status bar.
-        self.ram_button = QToolButton()
+        self.ram_button = identify(QToolButton(), "ram_budget", "RAM budget",
+                                   "Show the sizes of the loaded folders and plots")
         self.ram_button.setAutoRaise(True)
         self.ram_button.hide()
         self.ram_budget: Optional[RamBudget] = None  # From ``setup_ram_budget``.
@@ -152,6 +154,7 @@ class PlotWorkspace:
         box.setWindowTitle("RAM nearly at its budget" if warn else "RAM in use")
         box.setText(text)
         box.setInformativeText(details)
+        identify_buttons(box, "ram_report")
         box.show()
         box.raise_()
 

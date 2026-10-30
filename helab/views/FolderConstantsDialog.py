@@ -24,6 +24,7 @@ from helab.analysis.physics import CONSTANTS, TABLE, Constant, ResolvedConstants
 from helab.utils.folder_cache import FolderCache
 from helab.utils.colours import AMBER as AMBER
 from helab.views.LabParametersTab import UNCONFIRMED_TIP, constant_editor, name_label, number
+from helab.views.accessible import identify, identify_buttons
 
 FOLDER_ROWS: tuple[Constant, ...] = tuple(constant for constant in CONSTANTS if constant.level == "folder")
 INHERITANCE_NOTE = ("A folder's values apply to it and to its subfolders that don't set their own, up to its "
@@ -65,7 +66,8 @@ class FolderConstantsDialog(QDialog):
         self._typed: set[str] = set(own)
         for row, constant in enumerate(FOLDER_ROWS):
             grid.addWidget(name_label(constant), row, 0)
-            check = QCheckBox("Set by hand" if constant.key == "fall_time" else "Set here")
+            check = identify(QCheckBox("Set by hand" if constant.key == "fall_time" else "Set here"),
+                             f"set_here_{constant.key}", f"Set {constant.title} here")
             check.setChecked(constant.key in own)
             check.setToolTip("Set the fall time by hand instead of deriving it, √(2h/g), from the fall distance"
                              if constant.key == "fall_time" else
@@ -80,7 +82,7 @@ class FolderConstantsDialog(QDialog):
             source = QLabel()
             self.sources[constant.key] = source
             grid.addWidget(source, row, 3)
-            restore = QPushButton("Restore")
+            restore = identify(QPushButton("Restore"), f"restore_{constant.key}", f"Restore {constant.title}")
             restore.setToolTip("Use the value from the folder above, the lab or the default again")
             restore.clicked.connect(lambda _=False, key=constant.key: self.restore(key))
             self.restore_buttons[constant.key] = restore
@@ -92,6 +94,7 @@ class FolderConstantsDialog(QDialog):
         layout.addWidget(self.notes_label)
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save | QDialogButtonBox.StandardButton.Cancel)
         self.save_button = buttons.button(QDialogButtonBox.StandardButton.Save)
+        identify_buttons(buttons, "constants")
         buttons.accepted.connect(self.save)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)

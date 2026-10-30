@@ -24,9 +24,13 @@ from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import GB, CacheTab, read_result_reuse
 from helab.views.ConverterTab import ConverterTab
 from helab.views.LabParametersTab import LabParametersTab
+from helab.views.accessible import identify
 
 
 class SettingsDialog(QDialog):
+    # Its tabs' titles, in order (Debug › Settings Tab lists them; a test checks they match).
+    TAB_TITLES = ("General", "Lab parameters", "TXY converter", "Scripts", "Cache", "Data roots")
+
     def __init__(self, parent: Optional[QWidget] = None, *, settings: QSettings | None = None,
                  cache: FolderCache | None = None) -> None:
         super().__init__(parent)
@@ -225,9 +229,30 @@ class SettingsDialog(QDialog):
         self.reset_button.clicked.connect(self.reset_settings)
 
         self.load_settings()
+        self._identify()
 
         # self.main_layout.setStretch(0, 1)
         # self.main_layout.setStretch(1, 0)
+
+    def _identify(self) -> None:
+        """The General tab's and the dialog's controls' IDs and names (helab/views/accessible.py);
+        each other tab names its own."""
+        if (bar := self.tabs.tabBar()) is not None:
+            identify(bar, "settings_tabs", "Settings tabs")
+        for widget, ident, name in (
+                (self.load_mode_combo, "load_mode", "When selecting another folder"),
+                (self.simultaneous_io_spin, "simultaneous_io", ""), (self.check_level_combo, "check_level", ""),
+                (self.live_interval_spin, "live_interval", ""), (self.auto_scan_visible_checkbox, "auto_scan_visible", ""),
+                (self.reopen_plots_checkbox, "reopen_plots", ""), (self.log_keep_spin, "log_keep", ""),
+                (self.dir_temps_edit, "temp_folder", "Temp folder"), (self.dir_caches_edit, "cache_folder", "Cache folder"),
+                (self.dir_temps_browse_btn, "temp_folder_browse", "Browse for temp folder…"),
+                (self.dir_temps_open_btn, "temp_folder_open", "Open temp folder"),
+                (self.dir_temps_reset_btn, "temp_folder_reset", "Reset temp folder to default"),
+                (self.dir_caches_browse_btn, "cache_folder_change", "Change cache folder…"),
+                (self.dir_caches_open_btn, "cache_folder_open", "Open cache folder"),
+                (self.save_button, "settings_save", ""), (self.cancel_button, "settings_cancel", ""),
+                (self.reset_button, "settings_reset", "")):
+            identify(widget, ident, name)
 
     def _make_tab_cache(self) -> None:
         # The GUI never opens the store: the tab asks a helper (FolderCache.cache_admin).
@@ -235,6 +260,12 @@ class SettingsDialog(QDialog):
         self.tabs.addTab(self.cache_tab, "Cache")
         self.roots_tab = DataRootsTab(self.cache)
         self.tabs.addTab(self.roots_tab, "Data roots")
+
+    def show_tab(self, title: str) -> None:
+        """Open at the tab titled ``title`` (as clicking it does)."""
+        for index in range(self.tabs.count()):
+            if self.tabs.tabText(index) == title:
+                self.tabs.setCurrentIndex(index)
 
     def show_purge(self) -> None:
         """Open at the Cache tab's Remove old entries (from the disk cache's 80% warning)."""

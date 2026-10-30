@@ -26,7 +26,7 @@ from uuid import uuid4
 
 from PyQt6.QtCore import QObject, QSettings, QTimer, QUrl, pyqtSignal
 from PyQt6.QtGui import QDesktopServices
-from PyQt6.QtWidgets import QAbstractButton, QMessageBox, QProgressDialog, QWidget
+from PyQt6.QtWidgets import QAbstractButton, QMessageBox, QProgressDialog, QPushButton, QWidget
 
 from helab.utils import cache_move
 from helab.utils.cache_locks import FileLock, lock_for_move
@@ -36,6 +36,7 @@ from helab.utils.settings_defaults import DIR_CACHES_SETTING
 from helab.utils.folder_cache import FolderCache
 from helab.utils.io_service import IORequest
 from helab.utils.number_format import byte_size
+from helab.views.accessible import identify, identify_buttons
 
 SHOW = "Show in Explorer" if sys.platform == "win32" else "Show in Finder"
 FAILED = "Couldn't move the disk cache"
@@ -254,6 +255,8 @@ class CacheMover(QObject):
         progress.setAutoClose(False)
         progress.setAutoReset(False)
         progress.canceled.connect(self.cancel)
+        for button in progress.findChildren(QPushButton):
+            identify(button, "cache_move_cancel")
         progress.show()
         self.progress = progress
 
@@ -372,6 +375,7 @@ class CacheMover(QObject):
             label = SHOW if len(folders) == 1 else f"{SHOW}: {os.path.basename(folder.rstrip(os.sep)) or folder}"
             buttons.append((box.addButton(label, QMessageBox.ButtonRole.ActionRole), folder))
         box.addButton(QMessageBox.StandardButton.Ok)
+        identify_buttons(box, "cache_move_done")
         box.exec()
         clicked = box.clickedButton()
         chosen = next((folder for button, folder in buttons if clicked is not None and button is clicked), "")

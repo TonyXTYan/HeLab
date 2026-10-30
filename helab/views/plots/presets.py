@@ -41,6 +41,7 @@ from helab.analysis.presets import (Arrangement, PlotCheck, RecordError, ScriptP
 from helab.utils.colours import AMBER
 from helab.utils.folder_cache import PRESETS_WAIT_READ, FolderCache
 from helab.views.plots.arrangement import capture, folder_name, open_arrangement
+from helab.views.accessible import identify, identify_buttons
 
 if TYPE_CHECKING:
     from helab.views.FolderExplorer import FolderExplorer
@@ -155,6 +156,7 @@ def replace_or_add(parent: Optional[QWidget], title: str, text: str) -> Optional
     replace = box.addButton("Replace", QMessageBox.ButtonRole.AcceptRole)
     add = box.addButton("Add", QMessageBox.ButtonRole.AcceptRole)
     box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+    identify_buttons(box, "preset_replace")
     box.exec()
     clicked = box.clickedButton()
     return "replace" if clicked is replace else "add" if clicked is add else None
@@ -165,6 +167,7 @@ def confirm(parent: Optional[QWidget], title: str, text: str, action: str) -> bo
     box = QMessageBox(QMessageBox.Icon.Question, title, text, QMessageBox.StandardButton.Cancel, parent)
     yes = box.addButton(action, QMessageBox.ButtonRole.AcceptRole)
     box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+    identify_buttons(box, "preset_confirm")
     box.exec()
     return box.clickedButton() is yes
 
@@ -210,19 +213,20 @@ class PresetBar(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(2)
         row.addWidget(QLabel("Preset:"))
-        self.combo = QComboBox()
+        self.combo = identify(QComboBox(), "preset_combo", "Preset", "Choose a preset of this plot's script")
         self.combo.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         row.addWidget(self.combo, 1)
-        self.apply_button = QPushButton("Apply")
+        self.apply_button = identify(QPushButton("Apply"), "preset_apply", "Apply preset")
         self.apply_button.setToolTip("Put this preset's settings into the plot's (Rerun runs with them)")
         self.apply_button.clicked.connect(self.apply)
-        self.save_button = QPushButton("Save…")
+        self.save_button = identify(QPushButton("Save…"), "preset_save", "Save preset…")
         self.save_button.setToolTip(f"Save these settings as a preset of {plot.name}, for every plot of it")
         self.save_button.clicked.connect(self.save)
-        self.delete_button = QPushButton("Delete…")
+        self.delete_button = identify(QPushButton("Delete…"), "preset_delete", "Delete preset…")
         self.delete_button.setToolTip("Delete this preset")
         self.delete_button.clicked.connect(self.delete)
-        self.changes_button = QToolButton()
+        self.changes_button = identify(QToolButton(), "preset_changes", "Save changes",
+                                       "Save the changed settings to the applied preset, or as a new one")
         self.changes_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         changes = QMenu(self.changes_button)
         self.save_to_action = QAction("Save to preset", changes)
@@ -237,7 +241,7 @@ class PresetBar(QWidget):
             row.addWidget(button)
         row.addWidget(self.changes_button)
         layout.addLayout(row)
-        self.note = QLabel()
+        self.note = identify(QLabel(), "preset_note")
         self.note.setTextFormat(self.note.textFormat().PlainText)
         self.note.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
         self.note.hide()

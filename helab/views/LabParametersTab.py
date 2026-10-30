@@ -17,6 +17,7 @@ from helab.analysis.parameter_tree import UnitSpinBox
 from helab.analysis.physics import Constant
 from helab.utils.colours import AMBER
 from helab.utils.lab_parameters import editable, lab_rows, read_lab_constants, write_lab_constants
+from helab.views.accessible import identify
 
 __all__ = ["AMBER", "LabParametersTab", "UNCONFIRMED", "UNCONFIRMED_TIP", "constant_editor", "name_label", "number"]
 UNCONFIRMED = "unconfirmed"
@@ -29,7 +30,7 @@ def constant_editor(constant: Constant, value: float) -> UnitSpinBox:
     value's decade, positive values only (at most the row's maximum) unless the row is signed (a
     position). A coded row (the trap's axial axis) takes its codes, whole numbers, with their labels
     in the tooltip (a drop-down: proposed)."""
-    box = UnitSpinBox()
+    box = identify(UnitSpinBox(), f"constant_{constant.key}", constant.title)
     if constant.choices:
         box.setOpts(value=int(value), int=True, step=1, bounds=[min(constant.choices), max(constant.choices)])
         box.setToolTip(constant.source)
@@ -109,7 +110,7 @@ class LabParametersTab(QWidget):
             box.sigValueChanged.connect(lambda *_, key=constant.key: self._update(key))
             self.editors[constant.key] = box
             grid.addWidget(box, row, 1)
-            restore = QPushButton("Restore")
+            restore = identify(QPushButton("Restore"), f"restore_{constant.key}", f"Restore {constant.title}")
             restore.setToolTip(f"Default: {constant.value:.10g} {constant.unit}")
             restore.clicked.connect(lambda _=False, key=constant.key: self.restore(key))
             self.restore_buttons[constant.key] = restore

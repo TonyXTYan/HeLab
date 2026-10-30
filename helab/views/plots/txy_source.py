@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from helab.analysis.dataset_view import DatasetView
 from helab.convert.profile import BUILTIN_PROFILES, UNCALIBRATED, DetectorProfile, file_tag, suggested_plates
 from helab.utils import txy_sources
+from helab.views.accessible import identify
 
 
 def known_profiles() -> dict[str, DetectorProfile]:
@@ -68,7 +69,7 @@ class TxySourceRow(QWidget):
         row = QHBoxLayout()
         row.setContentsMargins(0, 0, 0, 0)
         row.addWidget(QLabel("TXY:"))
-        self.combo = QComboBox()
+        self.combo = identify(QComboBox(), "txy_source", "TXY source", "Which TXY this plot's data is made of")
         self.combo.addItem("As the folder's tab", "")
         for value in txy_sources.SOURCES:
             self.combo.addItem(txy_sources.LABELS[value], value)
@@ -77,7 +78,7 @@ class TxySourceRow(QWidget):
             "and MATLAB's only: one plot on each, to compare. As the folder's tab: the source tabs and Live read "
             "(Settings → TXY converter).")
         row.addWidget(self.combo, 2)
-        self.profile_combo = QComboBox()
+        self.profile_combo = identify(QComboBox(), "txy_profile", "TXY profile", "Whose HeLab TXY are read")
         self.profile_combo.setToolTip("Whose HeLab TXY are read: those of the profile HeLab converts with "
                                       "(Settings → TXY converter), or another's, by the tag in their names.")
         self.profile_combo.addItem("Conversion profile", "")
@@ -85,7 +86,7 @@ class TxySourceRow(QWidget):
             self.profile_combo.addItem(f"{name} ({file_tag(item)})", name)
         row.addWidget(self.profile_combo, 1)
         layout.addLayout(row)
-        self.note = QLabel()
+        self.note = identify(QLabel(), "txy_note")
         self.note.setWordWrap(False)
         layout.addWidget(self.note)
         self.set_source(source, profile)

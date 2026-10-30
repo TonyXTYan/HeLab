@@ -16,6 +16,7 @@ from PyQt6.QtCore import QTimer
 from PyQt6.QtWidgets import QDialog, QDialogButtonBox, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
 
 from helab.utils.folder_cache import PRESETS_SAVING, FolderCache
+from helab.views.accessible import identify
 
 QUIT_NOW_TOOLTIP = ("Quit without waiting. The folders' TXY files stay where they are: the next check of "
                     "each reads the shots that weren't saved.")
@@ -36,7 +37,7 @@ class QuitSaveDialog(QDialog):
         self.label = QLabel()
         self.label.setWordWrap(True)
         layout.addWidget(self.label)
-        self.folders = QListWidget()
+        self.folders = identify(QListWidget(), "quit_saves", "Saves before quitting", "What HeLab is still saving")
         layout.addWidget(self.folders)
         note = QLabel("HeLab quits when they are saved. A save that makes no progress for a minute or two "
                       "stops by itself.")
@@ -48,7 +49,7 @@ class QuitSaveDialog(QDialog):
         quit_now.setToolTip(QUIT_NOW_TOOLTIP)
         quit_now.setAutoDefault(False)
         quit_now.clicked.connect(self.quit_now)
-        self.quit_now_button = quit_now
+        self.quit_now_button = identify(quit_now, "quit_now")
         layout.addWidget(buttons)
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.refresh)

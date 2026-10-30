@@ -16,6 +16,7 @@ from PyQt6.QtCore import QObject, pyqtBoundSignal, pyqtSignal
 from PyQt6.QtWidgets import QAbstractButton, QMessageBox, QWidget
 
 from helab.utils import app_log
+from helab.views.accessible import identify_buttons
 
 QUESTION = "Log files use {size} MB. Delete old ones?"
 
@@ -69,6 +70,7 @@ class OldLogs(QObject):
         box.setEscapeButton(keep)
         box.buttonClicked.connect(self._answered)
         self.box = box
+        identify_buttons(box, "old_logs")
         box.show()
 
     def _answered(self, button: QAbstractButton) -> None:
