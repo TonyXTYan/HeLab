@@ -456,8 +456,9 @@ def test_a_following_scatter_updates_its_page_in_place(
     assert figure["layout"]["uirevision"] == scatter_3d.UI_REVISION and len(updated.data[0].x) == 6
     assert "rev 2" in figure["layout"]["title"]["text"] and pane.note.text().endswith("3 shots")
     plot_id = pane.plot_id
+    del pane, dock, instance  # (The test's own holds: the app drops a closed plot's instance.)
     window.plots.close_plots()
-    qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None, timeout=10_000)  # Freed with the pane.
+    qtbot.waitUntil(lambda: figure_freed(plot_id), timeout=10_000)  # Freed with the pane.
 
 
 def test_live_reruns_are_marked_so_the_release_time_skips_its_bootstrap(
@@ -1552,3 +1553,11 @@ def test_transfer_fractions_highlight_follows_lives_newest_shot(
                         timeout=10_000)
         assert instance._content is content  # In place.
     assert "newest shot in red" in source(instance).text()
+
+
+def figure_freed(plot_id: str) -> bool:
+    """A closed Plotly pane's figure leaves the server once the pane's Python object goes (weakref.finalize,
+    not a Python callable on ``destroyed``: tests/test_destroyed_connections.py): deletes run, then a collection."""
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    gc.collect()
+    return dash_server.snapshot(plot_id) is None

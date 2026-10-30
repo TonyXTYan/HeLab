@@ -16,8 +16,8 @@ import numpy as np
 import numpy.typing as npt
 import pytest
 from PyQt6 import sip
-from PyQt6.QtCore import QSettings
-from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QMessageBox, QWidget
+from PyQt6.QtCore import QEvent, QSettings
+from PyQt6.QtWidgets import QApplication, QDockWidget, QLabel, QMainWindow, QMessageBox, QWidget
 from pytestqt.qtbot import QtBot
 
 from helab.analysis.budget import RamBudget
@@ -530,9 +530,10 @@ def test_the_scatter_keeps_a_snapshot_of_its_last_frame(window: Window, qtbot: Q
     pane = dock_of(instance).findChild(PlotlyPane)
     assert pane is not None
     plot_id = pane.plot_id
+    del pane  # (The test's own hold on it.)
     assert instance.release()
     assert isinstance(instance.released, ReleasedPlot) and instance.released.picture.picture.png
-    qtbot.waitUntil(lambda: dash_server.snapshot(plot_id) is None, timeout=10_000)  # Its page's data freed.
+    qtbot.waitUntil(lambda: figure_freed(plot_id), timeout=10_000)  # Its page's data freed.
 
 
 # Reloading
@@ -867,3 +868,11 @@ def test_a_scripts_private_arrays_count_and_go_when_the_plot_is_released(window:
     assert plot.release()
     gc.collect()
     assert script.released == [plot.instance_id] and kept() is None
+
+
+def figure_freed(plot_id: str) -> bool:
+    """A closed Plotly pane's figure leaves the server once the pane's Python object goes (weakref.finalize,
+    not a Python callable on ``destroyed``: tests/test_destroyed_connections.py): deletes run, then a collection."""
+    QApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete.value)
+    gc.collect()
+    return dash_server.snapshot(plot_id) is None
