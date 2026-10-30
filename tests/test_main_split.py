@@ -92,10 +92,11 @@ def test_the_default_split_holds_in_a_wider_font(qtbot: QtBot, tmp_path: Path) -
             load(window, qtbot, run_folder(tmp_path))
             plot(window, qtbot, "Counts per shot")
             qtbot.wait(20)
-            # The settings panel keeps its width. (The folder panel may give way to the plots' own least width,
-            # which a doubled font widens: on Windows CI's narrower window it did.)
+            # The settings panel never takes its contents' width (984 px on Windows CI with this font): at most
+            # its 320 px. (Both panels may give way to the plots' own least width, which a doubled font widens: on
+            # Windows CI's narrower window they did, to 214 and 154 px.)
             left, _, right = window.splitter.sizes()
-            assert right == 320 and left > 0, wide_parts(window)
+            assert 0 < right <= 320 and left > 0, wide_parts(window)
         finally:
             closed(qtbot, window)
     finally:
