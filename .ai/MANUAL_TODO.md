@@ -237,6 +237,10 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
 - [ ] **M23.3 Damaged raw files on the acquisition PC**: a deliberately truncated raw file is reported
   damaged after ~20 s with one notification; later shots convert.
 
+- [ ] **M32.1 Byte units on Windows** (Q26.1, block 32; a lab PC or a CI build): Settings → Cache
+  shows "8.0 GiB" for a fresh setting, and an existing 8 GB setting shows "7.5 GiB" and stays
+  8 000 000 000 after Save; Folder details' rate reads MiB/s; the status bar's RAM reads GiB.
+
 - [ ] **M30.1 The converted-TXY index in Settings › Cache** (block 30): on a machine with old-build
   `d_txy_helab_*.json` / `folder.json` in `converted-txy/`, open Settings › Cache: the row counts
   them, its tooltip has Cache folder and Temp folder lines, Clear removes them; then convert a folder

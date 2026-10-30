@@ -299,7 +299,7 @@ and A19.2 included"; don't start these without it.
 
 ## Byte units by OS (block 26)
 
-- **A26.1 OS-aware byte units** (Q26.1, decided): `number_format.byte_size(n, kind="disk" |
+- [x] **A26.1 OS-aware byte units** (Q26.1, decided; done on `agent/byte-units`, landed `8bf810f`): `number_format.byte_size(n, kind="disk" |
   "ram")` and `time_format.byte_rate` SI on macOS/Linux, powers of 1024 labelled KiB/MiB/GiB on
   Windows; RAM in GiB everywhere; budget defaults and minimums follow (8 GB / 8 GiB disk, 1 GB /
   1 GiB, RAM 1 GiB); the ~67 calls sorted into disk and RAM; tests for both platforms; AGENTS.md's
@@ -328,6 +328,12 @@ From the TXY Index floor's [handoff](sessions/2026-10-29-claude-txy-index/handof
 - **A30.5 Settings refuses a temp folder on a network drive or in a synced folder** (Q30.5): the
   cache folder's check (`cache_location.cache_location_problem`) and wording for Settings › General's
   temp folder; an existing such setting kept but warned about once.
+
+## Byte units floor (block 32)
+
+- **A32.1 `result_cache.LARGE_RESULT_BYTES` by OS** (optional): the 50 MB threshold could follow the
+  disk unit like the log thresholds, if Tony wants every threshold by OS
+  ([handoff](sessions/2026-10-29-claude-byte-units/handoff.md)).
 
 ## Not AI work (stays in MANUAL_TODO)
 

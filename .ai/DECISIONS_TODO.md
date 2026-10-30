@@ -278,6 +278,13 @@ Tony in Chat, 2026-10-30, on computer use and the smoke pass (blocks 5 and 31,
 - **Q31.3** the quit window lists every pending operation (kind, folder, how long), not only
   folder names.
 
+Tony in Chat, 2026-10-30, on the byte units floor (block 32,
+[handoff](sessions/2026-10-29-claude-byte-units/handoff.md)):
+
+- **Q32.1** a disk budget saved under the OS's minimum (in practice 1 GB on a Windows PC, the old
+  minimum) becomes 1 GiB at the next Settings Save: "ok (a)" (the minimum is 1 GiB, Q26.1 (c); HeLab
+  already uses 1 GiB from startup).
+
 ## Converter stage 4, HeLab core (block 12)
 
 From the `agent/txy-helab-core` handoff (`sessions/2026-10-29-claude-txy-helab-core/handoff.md`).
