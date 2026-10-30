@@ -20,6 +20,7 @@ from helab.analysis.dataset_view import DatasetView
 from helab.convert.profile import BUILTIN_PROFILES, UNCALIBRATED, DetectorProfile, file_tag, suggested_plates
 from helab.utils import txy_sources
 from helab.utils.accessible import identify
+from helab.views.ElidedLabel import ElidedLabel
 
 
 def known_profiles() -> dict[str, DetectorProfile]:
@@ -85,9 +86,11 @@ class TxySourceRow(QWidget):
         for name, item in sorted(known_profiles().items()):
             self.profile_combo.addItem(f"{name} ({file_tag(item)})", name)
         row.addWidget(self.profile_combo, 1)
+        for combo in (self.combo, self.profile_combo):  # (They shrink with the panel, not set its width: Q33.2.)
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(8)
         layout.addLayout(row)
-        self.note = identify(QLabel(), "txy_note")
-        self.note.setWordWrap(False)
+        self.note = identify(ElidedLabel(), "txy_note")  # (One line that never widens the panel: Q33.2.)
         layout.addWidget(self.note)
         self.set_source(source, profile)
         self.combo.currentIndexChanged.connect(self._picked)

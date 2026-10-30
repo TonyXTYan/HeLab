@@ -40,7 +40,8 @@ from helab.utils.constants import (
 )
 from helab.utils.number_format import byte_size, byte_unit, fnum
 from helab.utils.settings_defaults import (
-    AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, WORK_OFFLINE_SETTING, read_setting)
+    AUTO_SCAN_VISIBLE_SETTING, LOAD_MODE_SETTING, MAIN_SPLIT_SETTING, WORK_OFFLINE_SETTING, read_setting,
+    setting_default)
 from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
 from helab.views.ClockSkewWarning import ClockSkewWarning
@@ -1026,7 +1027,8 @@ class HelabMainWindow(QMainWindow):
         self._setup_right_side()
 
 
-        # Set the initial sizes of the panels
+        # The folder and settings panels' widths as the user left them (Q33.2), the plots the rest.
+        self.left_panel_width, self.right_panel_width = self.read_split(app_settings())
         self.splitter.setSizes([
             self.left_panel_width,
             self.DEFAULT_WIDTH-self.left_panel_width-self.right_panel_width,
@@ -1038,10 +1040,10 @@ class HelabMainWindow(QMainWindow):
         self.left_panel.setMinimumWidth(0)
         self.right_panel.setMinimumWidth(0)
 
-        # Set stretch factors
-        self.splitter.setStretchFactor(0, 1)  # Left panel
+        # A change in the window's width goes to the plots; the panels keep theirs.
+        self.splitter.setStretchFactor(0, 0)  # Left panel
         self.splitter.setStretchFactor(1, 1)  # Middle area
-        self.splitter.setStretchFactor(2, 1)  # Right panel
+        self.splitter.setStretchFactor(2, 0)  # Right panel
 
         self.splitter.splitterMoved.connect(self.on_splitter_moved)
 
@@ -1067,7 +1069,6 @@ class HelabMainWindow(QMainWindow):
 
         # Left panel
         self.left_panel = QWidget()
-        self.left_panel_width = 700  # Store the width of the left panel
         self._live_collapsed_panel = False  # Live collapsed it (``_live_panel``): Live off restores it.
         left_layout = QVBoxLayout(self.left_panel)
         left_layout.setContentsMargins(0, 0, 0, 0)
@@ -1245,7 +1246,6 @@ class HelabMainWindow(QMainWindow):
 
         # Right panel
         self.right_panel = QWidget()
-        self.right_panel_width = 500
         right_layout = QVBoxLayout(self.right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
         # Placeholder content
@@ -1297,6 +1297,41 @@ class HelabMainWindow(QMainWindow):
         self.splitter.addWidget(self.plots.middle_mainwindow)
 
         self.plots.update_placeholder_visibility()
+
+    # A panel narrower than this isn't a width to restore (the user dragged it nearly shut).
+    MIN_PANEL_WIDTH, MAX_PANEL_WIDTH = 80, 4000
+
+    @classmethod
+    def read_split(cls, settings: QSettings) -> tuple[int, int]:
+        """The folder and settings panels' saved widths (``main_window_split``, "<folders>,<settings>"); the
+        row's default for a value that isn't two widths from MIN_PANEL_WIDTH to MAX_PANEL_WIDTH."""
+        def widths(text: object) -> tuple[int, int] | None:
+            try:
+                left, right = (int(part) for part in str(text).split(","))
+            except ValueError:
+                return None
+            fits = all(cls.MIN_PANEL_WIDTH <= width <= cls.MAX_PANEL_WIDTH for width in (left, right))
+            return (left, right) if fits else None
+        saved = widths(read_setting(settings, MAIN_SPLIT_SETTING))
+        if saved is not None:
+            return saved
+        default = widths(setting_default(MAIN_SPLIT_SETTING))
+        assert default is not None
+        return default
+
+    def save_split(self) -> None:
+        """Keep the panels' widths for the next start (as HeLab quits). A shown panel's width is its own; a
+        collapsed one's, the width it had (``--geometry`` sizes the window for one run only: Q33.2)."""
+        self._remember_panel_widths()
+        app_settings().setValue(MAIN_SPLIT_SETTING, f"{self.left_panel_width},{self.right_panel_width}")
+
+    def _remember_panel_widths(self) -> None:
+        """The panels' widths to restore (toggle back, next start): each shown panel's current width."""
+        left, _, right = self.splitter.sizes()
+        if left >= self.MIN_PANEL_WIDTH:
+            self.left_panel_width = min(left, self.MAX_PANEL_WIDTH)
+        if right >= self.MIN_PANEL_WIDTH:
+            self.right_panel_width = min(right, self.MAX_PANEL_WIDTH)
 
     GEOMETRY = re.compile(r"(\d+)x(\d+)([+-]\d+)([+-]\d+)")
 
@@ -1366,8 +1401,7 @@ class HelabMainWindow(QMainWindow):
             self.toggle_left_panel_action.setChecked(True)
             self.view_toggle_left_panel.setChecked(True)
         else: # Collapse the left panel
-            self.left_panel_width = self.left_panel.width() if self.left_panel.width() > 600 else self.left_panel_width
-            self.right_panel_width = self.right_panel.width() if self.right_panel.width() > 300 else self.right_panel_width
+            self._remember_panel_widths()
             self.splitter.setSizes([0, self.splitter.sizes()[1], self.splitter.sizes()[2]])
             self.toggle_left_panel_action.setIcon(ToolIcons.ICON_LEFT_EXPAND)
             self.toggle_left_panel_action.setChecked(False)
@@ -1441,7 +1475,7 @@ class HelabMainWindow(QMainWindow):
             self.toggle_right_panel_action.setChecked(True)
             self.view_toggle_right_panel.setChecked(True)
         else:
-            self.right_panel_width = self.right_panel.width() if self.right_panel.width() > 300 else self.right_panel_width
+            self._remember_panel_widths()
             self.splitter.setSizes([
                 self.splitter.sizes()[0],
                 self.width()-self.left_panel_width,
@@ -1879,6 +1913,7 @@ class HelabMainWindow(QMainWindow):
                 a0.ignore()
             return
         self._closing = True
+        self.save_split()
         self.plot_reopen.quit()  # The open plots are recorded before they close.
         self.plots.close_plots()
         self.plots.detach()  # The RAM budget, then the Settings panel.

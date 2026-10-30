@@ -61,6 +61,8 @@ TXY_SOURCE_SETTING = "txy_source"
 # The plots that reopen at start (helab/views/plots/arrangement.py; presets are in the disk cache store).
 REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
 OPEN_PLOTS_SETTING = "open_plots"
+# The main window's folder and settings panels' widths, the plots taking the rest (Q33.2).
+MAIN_SPLIT_SETTING = "main_window_split"
 
 def default_disk_budget(platform: str | None = None) -> int:
     """8 GB on macOS and Linux, 8 GiB on Windows (Q22.7, Q26.1): disk units follow the OS
@@ -143,6 +145,10 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(OPEN_PLOTS_SETTING, str, "",
             "The plots open when HeLab last quit (or last opened or closed a plot), with their settings and "
             "places: an arrangement record (helab.analysis.presets, JSON). Unset: none."),
+    Setting(MAIN_SPLIT_SETTING, str, "380,320",
+            "The main window's folder panel and plot settings panel widths in logical pixels, \"<folders>,<settings>\", "
+            "saved as HeLab quits; the plots take the rest of the window. Each from 80 to 4000; otherwise the "
+            "default (Q33.2)."),
 )
 
 # Keys under a prefix: Settings → Lab parameters saves only the lab constants the user set,
