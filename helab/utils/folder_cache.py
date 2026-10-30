@@ -269,9 +269,10 @@ class FolderCache(QObject):
         # Quitting waits for saves (``cancel_for_quit``): no other folder work starts meanwhile.
         self.quitting = False
         # Converted TXY's last uses loads didn't write (``txy_unmarked``): (root, folder) → when,
-        # written as HeLab quits (``flush_txy_marks``, Q~3); the flush's owner while it runs.
+        # written as HeLab quits (``flush_txy_marks``, Q~3); the flush's owner while it runs, and its start.
         self.txy_unmarked: dict[tuple[str, str], float] = {}
         self._mark_flush = ""
+        self._mark_flush_started = 0.0
         # Each folder's flags, as the store or this session last said: {"no_cache", "no_auto_load", "set_at"}.
         self.prefs: OrderedDict[str, dict[str, Any]] = OrderedDict()
         # What the store last confirmed for each folder (listings, saves): shown again if a choice fails.
@@ -2700,13 +2701,16 @@ class FolderCache(QObject):
         for. A finished load's background save, and a save not yet started or still reading; a
         folder's flags or constants the user chose, still being written (``folder_settings_saving``):
         quitting would end that helper, and with it the user's choice; a plot's result being saved,
-        by its run or by Make room (``result_saving``); and presets being written."""
+        by its run or by Make room (``result_saving``); presets being written; and the converted TXY's
+        last uses loads didn't write (``TXY_LAST_USED``, ``flush_txy_marks``)."""
         writing = [self._finishing[owner] for owner in self._disk_cache_writers if owner in self._finishing]
         loading = [job.path for job in self.jobs.values() if job.operation == "load" and job.saves()]
         settings = [write[0] for write in (*self._pref_writes.values(), *self._constant_writes.values())]
         presets = [PRESETS_SAVING] if self.presets_saving() else []
         results = list(self._result_writes.values())
-        return list(dict.fromkeys((*writing, *loading, *self._deferred_saves, *settings, *results, *presets)))
+        marks = [TXY_LAST_USED] if self._mark_flush else []  # (Q~3; its start: ``quit_save_started``.)
+        return list(dict.fromkeys((*writing, *loading, *self._deferred_saves, *settings, *results, *presets,
+                                   *marks)))
 
     def result_saving(self, path: str) -> bool:
         """A plot's result of the folder (or, for ``RESULTS_SAVING``, one of unknown folder) is being
@@ -2728,14 +2732,20 @@ class FolderCache(QObject):
         marks = [[root, folder, at] for (root, folder), at in self.txy_unmarked.items()]
         if not self.service.submit(owner, 0, options["directory"], "cache_admin",
                                    {"cache": options, "action": "mark_used", "params": {"marks": marks}},
-                                   priority=True):
+                                   priority=True, timeout=MARK_FLUSH_TIMEOUT):
             return False
         self.txy_unmarked.clear()
-        self._mark_flush = owner
+        self._mark_flush, self._mark_flush_started = owner, time.monotonic()
+        self.quitSavesChanged.emit()
         return True
 
     def txy_marks_flushing(self) -> bool:
         return bool(self._mark_flush)
+
+    def quit_save_started(self, entry: str) -> float | None:
+        """When a ``quit_saves`` entry's work started (``time.monotonic()``), where this cache knows it:
+        ``TXY_LAST_USED`` for now; None for the others."""
+        return self._mark_flush_started if entry == TXY_LAST_USED and self._mark_flush else None
 
     def cancel_for_quit(self) -> None:
         """Quitting: stop the reads, listings and loads nothing will show, and data-root
@@ -3696,7 +3706,10 @@ class FolderCache(QObject):
             return
         if producer.owner == self._mark_flush and self._mark_flush:
             if event["kind"] in ("done", "error", "cancelled"):
+                if event["kind"] == "error":
+                    logging.warning("Converted TXY last used: %s", event.get("message", ""))
                 self._mark_flush = ""
+                self.quitSavesChanged.emit()
             return
         if self._on_root_event(producer, event) or self._on_verification_event(producer, event):
             return
@@ -4163,6 +4176,10 @@ PENDING_DISCARDED, PENDING_EXPIRED, PENDING_STORE, PENDING_CLEARED, PENDING_NOT_
     "discarded", "expired", "store", "cleared", "not_saved")
 # ``quit_saves``' entry while presets are being written (it names folders otherwise).
 PRESETS_SAVING = "Presets"
+# ``quit_saves``' entry for the converted TXY's last uses being written as HeLab quits (Q~3), and that
+# helper's no-progress limit: one quick write per base, so a stuck one never holds the quit window long.
+TXY_LAST_USED = "Converted TXY last used"
+MARK_FLUSH_TIMEOUT = 5.0
 # Why presets and saved results weren't taken while the cache folder's store was unknown (a failed
 # identity probe, FolderCache.store_answer): the note ends once a probe succeeds.
 STORE_NOT_CONFIRMED = "the disk cache's store couldn't be confirmed"

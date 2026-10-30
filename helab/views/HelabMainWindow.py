@@ -7,7 +7,7 @@ import sys
 import types
 import time
 from helab.utils.io_service import IORequest, delete_io_traces, get_io_service, io_trace_folder, io_trace_refused
-from helab.utils.folder_cache import OFFLINE_TOOLTIP, FolderCache, get_folder_cache, set_disk_budget, store_options
+from helab.utils.folder_cache import OFFLINE_TOOLTIP, get_folder_cache, set_disk_budget, store_options
 from helab.utils.gui_watchdog import GUIWatchdog
 from helab.utils.lab_parameters import read_lab_constants
 from helab.utils import app_log, events
@@ -71,11 +71,6 @@ OFFLINE_STATUS_TOOLTIP = ("Working offline (File › Work Offline): folders show
 REFRESH_TOOLTIP = ("Refresh folder list\nUpdate folder names and expanded folders in view.\n"
                    "Use Check folder status to update counts and status.")
 
-# Quitting with no quit window, HeLab's windows hidden: how long it lets the helper write the converted
-# TXY's last uses loads didn't (Q~3), and how often it looks. 0: never waits (they are then lost).
-MARK_FLUSH_GRACE = 2.0
-MARK_FLUSH_POLL_MS = 50
-
 
 class HelabMainWindow(QMainWindow):
     DEFAULT_WIDTH = 1600
@@ -99,7 +94,6 @@ class HelabMainWindow(QMainWindow):
         # Quitting waits for disk cache saves (QuitSaveDialog) unless Quit now, or none are left.
         self._quit_dialog: QuitSaveDialog | None = None
         self._quit_now = False
-        self._marks_wait: QTimer | None = None  # Quitting, waiting for the last uses (``_wait_for_marks``).
         self._cache_dialogs_detached = False
         self.watchdog = GUIWatchdog(self)
         # logging.debug(f"Current directory is {CURRENT_WORKING_DIRECTORY}")
@@ -1562,8 +1556,7 @@ class HelabMainWindow(QMainWindow):
             if a0 is not None:
                 a0.accept()
             return
-        if self._quit_dialog is not None or self._marks_wait is not None or (
-                not self._quit_now and self._wait_for_saves()):
+        if self._quit_dialog is not None or (not self._quit_now and self._wait_for_saves()):
             # The quit window decides: when the saves end, or Quit now.
             if a0 is not None:
                 a0.ignore()
@@ -1587,18 +1580,12 @@ class HelabMainWindow(QMainWindow):
     def _wait_for_saves(self) -> bool:
         """Quitting turns Live off (it never survives a restart), which saves its new shots. If
         any folder is being saved to the disk cache (that, or a finished load's background save),
-        a window names them and quitting waits, with Quit now. The converted TXY's last uses loads
-        didn't write (Q~3) are written meanwhile, or, with no window, with every window hidden for at
-        most ``MARK_FLUSH_GRACE`` (``_wait_for_marks``). Whether it waits."""
+        a window names them and quitting waits, with Quit now. Whether it waits."""
         for _, explorer in self._explorers():
             explorer.stop_live()
         cache = get_folder_cache(get_io_service())
-        # Converted TXY's last uses loads didn't write (Q~3): written meanwhile, never waited for.
-        flushing = cache.flush_txy_marks()
+        cache.flush_txy_marks()  # Converted TXY's last uses loads didn't write (Q~3): a save like the others.
         if not cache.quit_saves():
-            if flushing and MARK_FLUSH_GRACE > 0:
-                self._wait_for_marks(cache)
-                return True
             return False
         # Nothing else will be shown: the saves get the I/O. The cache's questions (Make room,
         # Save update) wait for the next session.
@@ -1609,25 +1596,6 @@ class HelabMainWindow(QMainWindow):
         self._quit_dialog.finished.connect(self._quit_after_saves)
         self._quit_dialog.open()
         return True
-
-    def _wait_for_marks(self, cache: FolderCache) -> None:
-        """No quit window: every window hides at once (quitting isn't seen to wait), and the process
-        quits when the last uses are written, or after ``MARK_FLUSH_GRACE`` whatever the helper does.
-        The event loop waits (a timer): the GUI never blocks on the helper."""
-        for widget in QApplication.topLevelWidgets():
-            widget.hide()
-        deadline = time.monotonic() + MARK_FLUSH_GRACE
-        timer = QTimer(self)
-
-        def check() -> None:
-            if cache.txy_marks_flushing() and time.monotonic() < deadline:
-                return
-            timer.stop()
-            self._marks_wait = None
-            self._quit_after_saves(0)
-        timer.timeout.connect(check)
-        timer.start(MARK_FLUSH_POLL_MS)
-        self._marks_wait = timer
 
     def _quit_after_saves(self, result: int) -> None:
         """The saves ended (or Quit now): quit."""

@@ -25,7 +25,8 @@ with CoCo: `helab/convert/txy.py` (the `before_rename` keyword), `helab/io_ops/a
   folder (the app and `helab convert` alike). Q~2 (Tony, decided): a typed `helab convert --output
   cache` overrides it after a warning and a terminal's `[y/N]`; `--output cache-forced` without asking.
 - Q~3 (Tony, decided): a load still marks `last_used` at most hourly; the uses that limit (or a busy
-  index) left unwritten are written by one best-effort helper as HeLab quits.
+  index) left unwritten are written as HeLab quits, by one helper that is a quit save like the others
+  (in the quit window, a 5 s no-progress limit, Quit now skips it).
 
 ## Design
 
@@ -235,49 +236,58 @@ one that fails on any read: no test reads the real stdin. Files: `helab/convert_
 `helab/io_ops/convert.py` (`_places`, `_not_cached`, `dont_cache`, the request's `cache_confirmed`),
 `tests/test_convert_helab.py`.
 
-### Q~3: last uses written at quit (Tony, via Side)
+### Q~3: last uses written at quit, a quit save like the others (Tony, via Side)
 
 A load still writes `last_used` at most every `LAST_USED_STEP` (1 h), waiting at most 200 ms. What it
 doesn't write, because of that step or a busy index, `_mark_used` sends as a new helper event
 `txy_unmarked` {root, folder, at} (`events.TxyUnmarkedEvent`; `touch` now says whether it skipped a
 row that is there, so a folder without a row sends nothing). `FolderCache._on_event` keeps the newest
 `at` per (root, folder) in memory (`txy_unmarked`). At quit, `_wait_for_saves` calls
-`FolderCache.flush_txy_marks()`: when anything is owed, **one** `cache_admin` `mark_used` request
-(local lane, priority) whose helper writes each `at` only if newer than the row's
-(`helab_txy.mark_used`, the index only: `admin.cache_admin` answers it before opening the store; busy
-timeout 500 ms; any error left alone). Nothing owed: nothing submitted. The GUI never opens the index.
-- **A quit window is up** (other saves): the flush runs meanwhile; when the window ends, `closeEvent`'s
-  `IOService.shutdown()` cancels it if it is still running.
-- **No quit window**: every top-level window hides at once (`QApplication.topLevelWidgets()`), then a
-  `QTimer` (50 ms) waits for the flush's `done`/`error`/`cancelled`, at most `MARK_FLUSH_GRACE` = 2 s,
-  and quits regardless (`_quit_after_saves`). The GUI thread never blocks; a second close meanwhile is
-  ignored (it ends within the grace anyway). Option (3), only while a window is up anyway: set
-  `MARK_FLUSH_GRACE = 0` (one line; the flush is then submitted and cancelled at shutdown).
+`FolderCache.flush_txy_marks()` just before it asks `quit_saves()`: when anything is owed, **one**
+`cache_admin` `mark_used` request (local lane, priority) whose helper writes each `at` only if newer
+than the row's (`helab_txy.mark_used`, the index only: `admin.cache_admin` answers it before opening
+the store; busy timeout 500 ms per statement; any error left alone). Nothing owed: nothing submitted,
+and quit is as before. The GUI never opens the index.
+- **A quit save** (Tony's decision, replacing the hidden 2 s grace built first in `c6277f0`, now
+  removed): while it runs, `quit_saves()` lists it, so the quit window opens (or, beside other saves,
+  shows one more entry) and waits for it; Quit now skips it (`IOService.shutdown()` cancels it). It
+  ends on `done`, `error` or `cancelled` (an error is logged), which emits `quitSavesChanged`.
+- **No-progress limit `MARK_FLUSH_TIMEOUT` = 5 s** (as proposed): the write is one statement per
+  folder, and the helper starts in well under a second here (60 ms in the tests). A stuck one (the
+  index locked by a conversion of another HeLab or `helab convert`; a slow disk) then holds the window
+  at most about 5 s plus the 500 ms busy wait in flight, and fails with IOService's usual "Timed out"
+  error (no retry: retries are for loads' files). Not shorter: the helper's start (a new Python process
+  and its imports, slower on Windows and on a loaded machine) counts against the limit.
+- **Labelling** (for Beacon's quit window by kind, folder and run time): `quit_saves()` still returns
+  strings. The flush's entry is the constant `folder_cache.TXY_LAST_USED` ("Converted TXY last used"),
+  which is its kind (as `PRESETS_SAVING` is the presets' kind); it names no folder (it is one write for
+  every base). Its start time is `FolderCache.quit_save_started(entry)`: `time.monotonic()` at submit
+  for `TXY_LAST_USED`, None for entries whose start this cache doesn't track yet (Beacon can extend it
+  to the others: saves' `_started`, `_finishing`). `QuitSaveDialog.state()` labels it "recording when
+  HeLab's converted TXY were last used", and the header counts it apart from the folders ("Saving 1
+  folder and converted TXY's last use to the disk cache before HeLab quits:").
 - With the disk cache off this session, `cache_admin` can't be sent: the marks are lost (as Q~4).
-- **A relaunch within those 2 s**: HeLab has no single-instance lock, so a new `helab` starts at once
-  beside the hidden, quitting process, as two HeLabs already may. The old one still holds its
-  `instances/<pid>.lock` until it exits, so a cache move asked in the new one in that moment sees
-  another HeLab running (the move's usual check). The flush holds the index's write lock for
-  milliseconds per base: the new instance's conversions wait for it (`_patient`, 10 s), and its loads'
-  200 ms marks may be skipped, and then owed at its own quit. A flush never moves a newer use back
-  (`last_used < at`). On macOS, clicking the Dock icon in those 2 s activates the hidden, quitting app
-  (LaunchServices reuses the running process) rather than starting one: nothing shows, and a click
-  after it exits starts HeLab.
+- A relaunch while the quit window is up: as with any quit save (the old HeLab still runs). The flush
+  holds the index's write lock for milliseconds per base; the new instance's conversions wait for it
+  (`_patient`), and its loads' 200 ms marks may be skipped and then owed at its own quit. A flush
+  never moves a newer use back (`last_used < at`).
 - Tests (`tests/test_txy_last_used_quit.py`): a load reports a mark skipped by the hour and one
   skipped busy, and nothing when it wrote; the flush writes only newer uses and never opens the store;
-  FolderCache keeps the newest use and submits once, nothing when nothing was skipped; quit writes
-  the uses through a real helper with every window hidden and no quit window, within the grace; quit
-  ends within the grace when the helper hangs (it waited, no longer) or fails (at once); nothing
-  skipped → quits at once, no `mark_used` submitted; with a quit window up the flush runs meanwhile.
-  The grace probe: with `MARK_FLUSH_GRACE = 0` the real-flush test fails.
-- **Files outside the owned paths** (Tony approved, via CoCo): `helab/views/HelabMainWindow.py`
-  (the `FolderCache` import, line 10; `MARK_FLUSH_GRACE`/`MARK_FLUSH_POLL_MS`, lines 74-78;
-  `_marks_wait`, line 102; `closeEvent`'s condition, lines 1565-1566; `_wait_for_saves`, lines
-  1590-1601; `_wait_for_marks`, lines 1613-1631), `helab/utils/folder_cache.py` (`txy_unmarked` and
-  `_mark_flush`, lines 271-274; `flush_txy_marks`/`txy_marks_flushing`, lines 2721-2739;
-  `_on_event`'s first lines, 3693-3700). Also `helab/io_ops/events.py` (`TxyUnmarkedEvent`, the
-  union and `KINDS`), `helab/io_ops/admin.py` (`mark_used`), `helab/io_ops/helab_txy.py`,
-  `helab/convert/provenance.py` (`touch`'s answer). IOService is unchanged.
+  FolderCache keeps the newest use, submits once with the 5 s limit, lists `TXY_LAST_USED` with its
+  start while it runs, and nothing when nothing was skipped; quit writes the uses through a real
+  helper in the quit window (its entry and header text checked); a flush without progress (the index's
+  write lock held, the limit patched to 0.2 s) times out and the window closes by itself, the use left
+  unwritten; Quit now skips it; nothing skipped → no quit window and no `mark_used`; beside another
+  save it is one more entry.
+- **Files outside the owned paths** (Tony approved, via CoCo): `helab/views/HelabMainWindow.py` (one
+  line in `_wait_for_saves`: `cache.flush_txy_marks()` before `quit_saves()`), `helab/views/QuitSaveDialog.py`
+  (the import; `state()`'s `TXY_LAST_USED` line; `_show`'s count and header), `helab/utils/folder_cache.py`
+  (`txy_unmarked`, `_mark_flush`, `_mark_flush_started` in `__init__`; `quit_saves()`'s `marks`;
+  `flush_txy_marks`, `txy_marks_flushing`, `quit_save_started` before `cancel_for_quit`; the first lines
+  of `_on_event`; `TXY_LAST_USED` and `MARK_FLUSH_TIMEOUT` beside `PRESETS_SAVING`). Also
+  `helab/io_ops/events.py` (`TxyUnmarkedEvent`, the union and `KINDS`), `helab/io_ops/admin.py`
+  (`mark_used`), `helab/io_ops/helab_txy.py`, `helab/convert/provenance.py` (`touch`'s answer).
+  IOService is unchanged.
 
 ### Housekeeping (brief item 6)
 
@@ -365,13 +375,11 @@ rows and old records of beside TXY stay; set-aside indexes go)."
 ### Quit (`.ai/architecture/live.md`'s quit sentence; `app-runtime-and-ui.md`)
 
 `app-runtime-and-ui.md` has no quit section; quitting is described in `live.md` ("Quitting turns
-Live off and waits for `FolderCache.quit_saves()` …"). Append there: "Quitting also writes the
-converted TXY's last uses loads skipped (Q~3, `FolderCache.flush_txy_marks`: one `cache_admin`
-`mark_used` helper, only when one was skipped). With a quit window up it runs meanwhile and is
-cancelled when the window ends; with none, every window hides at once and the process waits for it
-on the event loop at most `HelabMainWindow.MARK_FLUSH_GRACE` (2 s), then quits regardless
-(`_wait_for_marks`)." And in `app-runtime-and-ui.md`'s main-window part, one line: "Quit:
-`closeEvent` → `_wait_for_saves` (Live off, the quit window, the last-uses flush; live.md)".
+Live off and waits for `FolderCache.quit_saves()` …"). Add to that list: "and the converted TXY's last
+uses loads skipped (Q~3: `FolderCache.flush_txy_marks`, one `cache_admin` `mark_used` helper, only
+when one was skipped; its entry `TXY_LAST_USED`, its start `quit_save_started`; a 5 s no-progress
+limit, `MARK_FLUSH_TIMEOUT`)". In `app-runtime-and-ui.md`'s main-window part, one line: "Quit:
+`closeEvent` → `_wait_for_saves` (Live off, the last-uses flush, the quit window; live.md)".
 
 ### `.ai/architecture/converter.md`, Q~2 and Q~3
 
@@ -405,11 +413,10 @@ on the event loop at most `HelabMainWindow.MARK_FLUSH_GRACE` (2 s), then quits r
   terminal, temp with the warning. `--output cache-forced`: the cache folder, no question, one line
   naming the folder. The GUI and the setting's default keep "the flag wins" → temp. Built (Design ›
   Q~2); for `.ai/memory/results/txy-converter.md`.
-- **Q~3** (Tony, **decided** via Side, 2026-10-30): keep the hourly mark, and write the uses it (or a
-  busy index) skipped at quit, by one best-effort helper, never delaying quit beyond the quit window:
-  with no window, every window hides and the process waits at most 2 s. Built (Design › Q~3). CoCo is
-  asking Tony to confirm the hidden 2 s; option (3) (only while a quit window is up anyway) is
-  `MARK_FLUSH_GRACE = 0`. For `.ai/memory/results/txy-converter.md`.
+- **Q~3** (Tony, **decided** via Side, 2026-10-30, answered twice): keep the hourly mark, and write
+  the uses it (or a busy index) skipped at quit, by one helper that joins `quit_saves` like the other
+  saves: shown in the quit window, a 5 s no-progress limit, Quit now skips it. Nothing submitted when
+  nothing was skipped. Built (Design › Q~3). For `.ai/memory/results/txy-converter.md`.
 - **Q~4** (Tony): with the disk cache off this session, Settings › Cache lists nothing, so the temp
   folder's converted TXY aren't shown or clearable then. Proposed: leave for caching v2 (rare: the
   cache is off only when its folder can't be used).
@@ -478,8 +485,8 @@ on the event loop at most `HelabMainWindow.MARK_FLUSH_GRACE` (2 s), then quits r
   terminal, `helab convert --watch <it> --once --output cache`: the warning and `[y/N]`; Enter → the
   temp folder, `y` → the cache folder; piped (`< /dev/null`) → temp; `--output cache-forced` → cache.
 - **M~3**: load a converted folder's TXY twice within the hour (Settings › Cache: "last used" from
-  the first), quit with nothing else saving: every window disappears at once and HeLab exits within
-  about 2 s; at the next start Settings › Cache shows the second load's time.
+  the first), quit with nothing else saving: the quit window shows "Converted TXY last used" briefly
+  and closes by itself; at the next start Settings › Cache shows the second load's time.
 
 ## Review round 1 (Tern, `review.md`): what changed
 
@@ -614,7 +621,8 @@ CI run 40874212130 (c546394) passed every job, with two RERUNs, quoted from "rer
   cache without asking; `--yes` was built first and dropped before any push (Tony's second answer).
   `--help` and `convert_cli`'s docstring say so ("whatever the output asked" is gone). The flag is
   read before the conversion in `helab convert`'s own process; no I/O rule is touched.
-- Q~3: the skipped last uses are written at quit (Design › Q~3, with the files and lines outside the
-  owned paths and how a relaunch within the 2 s behaves).
-- The proposals (converter.md, app-runtime-and-ui.md) and M~2, M~3 carry them. Tern's round 5 notes
-  (`review.md`) are committed with them.
+- Q~3: the skipped last uses are written at quit as a quit save (Design › Q~3, with the files outside
+  the owned paths and the labelling for Beacon). `c6277f0` (pushed) had Tony's first answer, a hidden
+  2 s grace; the next commit replaces it.
+- The proposals (converter.md, live.md, app-runtime-and-ui.md) and M~2, M~3 carry them. Tern's round 5
+  notes (`review.md`) were committed in `c6277f0`.

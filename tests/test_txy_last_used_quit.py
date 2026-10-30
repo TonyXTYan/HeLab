@@ -1,8 +1,8 @@
 """Q~3 (Tony): a load moves a converted folder's ``last_used`` on at most hourly, and what that limit
-(or a busy index) left unwritten is written as HeLab quits: by one best-effort helper (``cache_admin``
-``mark_used``, the index only), never delaying quit beyond the quit window. With no quit window
-every window hides at once and the process waits at most ``MARK_FLUSH_GRACE`` (the event loop: the
-GUI never blocks). Synthetic folders under ``tmp_path`` only."""
+(or a busy index) left unwritten is written as HeLab quits, by one helper (``cache_admin``
+``mark_used``, the index only) that is a save like the others: the quit window shows it
+(``TXY_LAST_USED``), it stops after ``MARK_FLUSH_TIMEOUT`` without progress, and Quit now skips it.
+Synthetic folders under ``tmp_path`` only."""
 from __future__ import annotations
 
 import contextlib
@@ -13,15 +13,14 @@ import time
 from typing import Any, Iterator
 
 import pytest
-from PyQt6.QtWidgets import QApplication
 from pytestqt.qtbot import QtBot
 
 from helab.convert import provenance
 from helab.io_ops import helab_txy, infra
 from helab.io_ops.admin import cache_admin
-from helab.utils.folder_cache import FolderCache, get_folder_cache, store_options
+from helab.utils import folder_cache
+from helab.utils.folder_cache import MARK_FLUSH_TIMEOUT, TXY_LAST_USED, FolderCache, get_folder_cache, store_options
 from helab.utils.io_service import IOService, get_io_service
-from helab.views import HelabMainWindow as main_window
 from helab.views.HelabMainWindow import HelabMainWindow
 from test_txy_sources import _key, loaded, make_run, options, run_load
 from helab.utils import txy_sources
@@ -106,76 +105,91 @@ def frozen() -> Iterator[FolderCache]:
     service.shutdown()
 
 
-def test_the_cache_remembers_unwritten_last_uses_and_flushes_them_once(frozen: FolderCache) -> None:
+def test_the_cache_remembers_unwritten_last_uses_and_flushes_them_once_as_a_quit_save(frozen: FolderCache) -> None:
     cache = frozen
+    changed: list[bool] = []
+    cache.quitSavesChanged.connect(lambda: changed.append(True))
     assert not cache.flush_txy_marks() and not cache.service.pending  # Nothing skipped: nothing submitted.
+    assert not changed and cache.quit_saves() == []
     load = cache.service.pending
     from helab.utils.io_service import IORequest
     producer = IORequest("tab", 0, "/data/run", "load", {}, 60.0)
     for at in (5.0, 9.0, 7.0):
         cache.service.resultReady.emit(producer, {"kind": "txy_unmarked", "root": "/c", "folder": FOLDER, "at": at})
     cache.service.resultReady.emit(producer, {"kind": "txy_unmarked", "root": "/t", "folder": FOLDER, "at": 3.0})
-    assert cache.txy_unmarked == {("/c", FOLDER): 9.0, ("/t", FOLDER): 3.0}
-    assert cache.flush_txy_marks() and cache.txy_marks_flushing() and not cache.txy_unmarked
+    assert cache.txy_unmarked == {("/c", FOLDER): 9.0, ("/t", FOLDER): 3.0} and cache.quit_saves() == []
+    before = time.monotonic()
+    assert cache.flush_txy_marks() and cache.txy_marks_flushing() and not cache.txy_unmarked and changed
     [request] = load
-    assert (request.operation, request.payload["action"]) == ("cache_admin", "mark_used")
+    assert (request.operation, request.payload["action"], request.timeout) == ("cache_admin", "mark_used", 5.0)
+    assert MARK_FLUSH_TIMEOUT == 5.0
     assert request.payload["params"]["marks"] == [["/c", FOLDER, 9.0], ["/t", FOLDER, 3.0]]
     assert request.payload["cache"] == store_options()
+    # A save like the others: its own entry (its kind), with its start.
+    assert cache.quit_saves() == [TXY_LAST_USED]
+    started = cache.quit_save_started(TXY_LAST_USED)
+    assert started is not None and before <= started <= time.monotonic()
+    assert cache.quit_save_started("/data/run") is None
     assert not cache.flush_txy_marks()  # (Once.)
     cache.service.resultReady.emit(request, {"kind": "admin_result", "action": "mark_used", "next_deadline": None})
-    assert cache.txy_marks_flushing()
+    assert cache.quit_saves() == [TXY_LAST_USED]
+    changed.clear()
     cache.service.resultReady.emit(request, {"kind": "error", "message": "failed"})
-    assert not cache.txy_marks_flushing()
+    assert not cache.txy_marks_flushing() and cache.quit_saves() == [] and changed
+    assert cache.quit_save_started(TXY_LAST_USED) is None
 
 
 def window_cache(qtbot: QtBot) -> tuple[HelabMainWindow, FolderCache]:
     window = HelabMainWindow()
     qtbot.addWidget(window)
-    window.show()
     return window, get_folder_cache(get_io_service())
 
 
-def test_quit_writes_the_skipped_last_uses_with_every_window_hidden(qtbot: QtBot, tmp_path: Path) -> None:
+def test_quit_writes_the_skipped_last_uses_in_the_quit_window(qtbot: QtBot, tmp_path: Path) -> None:
     root = tmp_path / "converted-txy"
     root.mkdir()
     index_with(root, 100.0)
     window, cache = window_cache(qtbot)
     cache.txy_unmarked[(str(root), FOLDER)] = 200.0
-    started = time.monotonic()
     window.close()
-    assert not window._closing and window._quit_dialog is None  # No quit window,
-    assert not [widget for widget in QApplication.topLevelWidgets() if widget.isVisible()]  # and nothing seen.
-    qtbot.waitUntil(lambda: window._closing, timeout=int(main_window.MARK_FLUSH_GRACE * 1000) + 3000)
-    assert time.monotonic() - started < main_window.MARK_FLUSH_GRACE + 2
+    dialog = window._quit_dialog
+    assert not window._closing and dialog is not None
+    assert [dialog.folders.item(row).text() for row in range(dialog.folders.count())] == [  # type: ignore[union-attr]
+        f"{TXY_LAST_USED} — recording when HeLab's converted TXY were last used"]
+    assert dialog.label.text() == "Saving converted TXY's last use to the disk cache before HeLab quits:"
+    qtbot.waitUntil(lambda: window._closing, timeout=30000)
     assert last_used(root) == 200.0
 
 
-@pytest.mark.parametrize("outcome", ["hangs", "fails"])
-def test_quit_never_waits_past_its_grace_for_the_flush(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
-                                                       outcome: str) -> None:
+def test_a_flush_without_progress_stops_by_itself_and_ends_the_quit_window(
+        qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    """Its no-progress limit (5 s; 0.2 s here) ends it: with the index's write lock held, its write waits
+    500 ms without a word, so the limit comes first; an error, so the entry goes and the window closes
+    by itself, as for any save that stops. The use stays unwritten."""
+    monkeypatch.setattr(folder_cache, "MARK_FLUSH_TIMEOUT", 0.2)
+    root = tmp_path / "converted-txy"
+    root.mkdir()
+    index_with(root, 100.0)
     window, cache = window_cache(qtbot)
-    cache.txy_unmarked[("/no/such/converted-txy", FOLDER)] = 1.0
-    if outcome == "hangs":
-        monkeypatch.setattr(main_window, "MARK_FLUSH_GRACE", 0.5)
-        def hanging() -> bool:
-            cache._mark_flush = "never ends"
-            return True
-        monkeypatch.setattr(cache, "flush_txy_marks", hanging)
-    else:
-        def failing() -> bool:
-            assert FolderCache.flush_txy_marks(cache)
-            request = next(r for r in (*cache.service.pending, *cache.service.active) if r.owner == cache._mark_flush)
-            cache.service.resultReady.emit(request, {"kind": "error", "message": "the helper failed"})
-            return True
-        monkeypatch.setattr(cache, "flush_txy_marks", failing)
-    started = time.monotonic()
+    cache.txy_unmarked[(str(root), FOLDER)] = 200.0
+    with contextlib.closing(sqlite3.connect(root / provenance.INDEX_NAME, isolation_level=None)) as holder:
+        holder.execute("BEGIN IMMEDIATE")  # (A conversion's write, held.)
+        window.close()
+        assert window._quit_dialog is not None and cache.quit_saves() == [TXY_LAST_USED]
+        qtbot.waitUntil(lambda: window._closing, timeout=10000)
+        holder.execute("ROLLBACK")
+    assert any(record.getMessage().startswith("Converted TXY last used: Timed out") for record in caplog.records)
+    assert last_used(root) == 100.0
+
+
+def test_quit_now_skips_the_flush(qtbot: QtBot, tmp_path: Path) -> None:
+    window, cache = window_cache(qtbot)
+    cache.txy_unmarked[(str(tmp_path / "converted-txy"), FOLDER)] = 1.0
     window.close()
-    assert not window._closing and not window.isVisible()
+    dialog = window._quit_dialog
+    assert dialog is not None and TXY_LAST_USED in cache.quit_saves()
+    dialog.quit_now_button.click()
     qtbot.waitUntil(lambda: window._closing, timeout=3000)
-    took = time.monotonic() - started
-    assert took < main_window.MARK_FLUSH_GRACE + 1.5
-    if outcome == "hangs":
-        assert took >= main_window.MARK_FLUSH_GRACE - 0.05  # It waited, but no longer.
 
 
 def test_nothing_skipped_quits_at_once_and_submits_nothing(qtbot: QtBot) -> None:
@@ -188,16 +202,17 @@ def test_nothing_skipped_quits_at_once_and_submits_nothing(qtbot: QtBot) -> None
         return original(owner, generation, path, operation, *args, **kwargs)
     cache.service.submit = watching  # type: ignore[method-assign]
     window.close()
-    assert window._closing and "mark_used" not in submitted
+    assert window._closing and window._quit_dialog is None and "mark_used" not in submitted
 
 
-def test_with_a_quit_window_up_the_flush_runs_meanwhile_and_ends_with_it(qtbot: QtBot, tmp_path: Path) -> None:
+def test_beside_other_saves_the_flush_is_one_more_entry(qtbot: QtBot, tmp_path: Path) -> None:
     window, cache = window_cache(qtbot)
     cache.txy_unmarked[(str(tmp_path / "converted-txy"), FOLDER)] = 1.0
     path = str(tmp_path / "run")
     cache._deferred_saves[path] = ("owner", {})
     window.close()
-    assert window._quit_dialog is not None and window._marks_wait is None and window.isVisible()
-    assert not cache.txy_unmarked  # (Submitted.)
+    dialog = window._quit_dialog
+    assert dialog is not None and cache.quit_saves()[0] == path
+    assert dialog.label.text() == "Saving 1 folder and converted TXY's last use to the disk cache before HeLab quits:"
     del cache._deferred_saves[path]
-    qtbot.waitUntil(lambda: window._closing, timeout=3000)
+    qtbot.waitUntil(lambda: window._closing, timeout=30000)

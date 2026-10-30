@@ -92,3 +92,11 @@ Final runs (after 35b50d0):
   (191): no issues. `pyright helab tests`, `pyright --pythonplatform Windows helab tests`: 0 errors.
 - Probes: with `cache_confirmed` ignored in `_places`, the three cache cases of the Q~2 test fail;
   with `MARK_FLUSH_GRACE = 0`, the real-flush quit test fails.
+
+## Q~3 as a quit save (Tony's second answer), 2026-10-30
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest` (macOS):
+  `8222 passed, 669 skipped, 2 warnings in 143.96s`, no RERUN.
+- The five type checks clean (mypy strict helab 191, tests 160, win32 191; pyright macOS and Windows 0 errors).
+- `tests/test_txy_last_used_quit.py` 3 runs in a row: 8 passed each. The no-progress test holds the
+  index's write lock (the helper answers in ~60 ms otherwise, too fast for a timeout to be sure).
