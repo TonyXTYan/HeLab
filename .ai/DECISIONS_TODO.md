@@ -298,6 +298,16 @@ polish" floor after Smoke ready lands (Q33.6):
   touches the same widgets.
 - **Q23.7** `helab convert --once` calls a raw file damaged only at 60 s by its mtime (its settle
   age), not 20 s: "c" (Tony, 2026-10-30). Live and `--watch` keep 20 s with two checks.
+- **Q23.6** a custom profile's tag is `u` + **32** hex digits of its content hash (was 8): "so it's
+  really annoying, also pushes the user to make a proper frozen profile" (Tony, 2026-10-30). Built-in
+  tags unchanged. Names stay far inside every file system's 255-per-name limit (~56 characters, ~82
+  for the temporary name); `file_kinds.HELAB_TXY`'s tag pattern (16 characters now) must take 33;
+  Windows' 260-character full path is the only real limit: test a deep path, and say so clearly.
+- **Q33.7** Live's check interval (Settings › General, 3 s) and the **settle time** (now only
+  `HELAB_SETTLE_SECONDS`, 5 s) are both settings, defaults 3 and 5 s; the settle time 2–60 s (below
+  2 s HeLab can't tell a file still being written: `RACY_SECONDS`). It applies to every read (browse,
+  load, cache), so its help says so and AGENTS.md's "5 s" becomes the default. Measured again on a
+  live lab run (M33.1).
 
 Tony in Chat, 2026-10-30, on the byte units floor (block 32,
 [handoff](sessions/2026-10-29-claude-byte-units/handoff.md)):
@@ -363,9 +373,7 @@ Q12.7 confirmed as Q18.6 (the patterns now tagged).
   reopened plot starts "As the folder's tab". The same question as Q14.2: answer it there.
 - **Q23.5 The Live line turns amber for no-hit shots** (the whole line, which otherwise means
   "stopped"). Alternative: amber only in Folder details. Proposed: as built.
-- **Q23.6 A beside TXY from another computer with a colliding `u` tag** would be taken as current (no
-  record there). Proposed (revised 2026-10-30, explained to Tony): `u` + 12 hex digits now (≈1e-13;
-  existing custom-profile beside TXY convert again once), rather than accept (≈1e-6).
+
 ## Versions across machines (block 27)
 
 Tony asked (2026-10-29) how robust HeLab is when the acquisition PC runs an older frozen build, his
