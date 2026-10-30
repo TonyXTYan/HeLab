@@ -120,6 +120,25 @@ hook, landing): [.ai/maestri-setup.md](../.ai/maestri-setup.md).
    pass, with output kept whole and every RERUN explained or filed; and
    Ground is clean before the merge.
 
+### Feature floors with named areas (hybrid, Tony 2026-10-31)
+
+A floor is still one feature or fix: its own short branch, one Worker, one Reviewer, one landing. Per-area
+standing floors were considered and not taken: features cross areas (TXY Index touched the converter, the
+helpers, `FolderCache`, Settings and the CLI), long-lived area branches drift, and an agent's context ages
+while the architecture files keep the area's knowledge. On top of that:
+
+- **The areas** follow the code map and the architecture files: `io` (helpers, `IOService`, `FolderCache`'s
+  jobs, Live), `cache` (the store, data roots, cache moves), `convert` (the TXY converter and its I/O),
+  `plots` (analysis, plots, scripts) and `app` (runtime, UI, settings, release and CI).
+- **Each brief names its areas and owned paths.** Two floors whose areas overlap don't run at once, or the
+  later one merges the earlier before its final push.
+- **The Reviewer checks the brief's areas against their architecture files' rules** as well as the change.
+- **An area floor** is for work that is one area and long: caching v2 / store-v4 is one staged floor, landing
+  stage by stage, rather than a floor per stage.
+- **An area review** before or after a release: one read-only Reviewer per area on one floor, each against its
+  area's invariants and boundaries, findings verified, no fixes (the first: v0.0.7a1,
+  `sessions/2026-10-31-claude-area-review/`). The Coordinator turns findings into floors or known-issues.
+
 Each push starts the full CI matrix (macOS, Windows, Ubuntu), so agents push only at
 checkpoints, never with every commit: when the work is done, after review fixes, or when a CI
 run is worth it, e.g. to check a fix on Windows (Tony, 2026-10-29).

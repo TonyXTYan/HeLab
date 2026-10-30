@@ -349,6 +349,28 @@ Tony in Chat, 2026-10-30, via the Assistant, on the UI polish floor (block 36,
   behaviour with only the away line naming the plot).
 - **Q36.2** offering a restart after a temp folder change (or applying it live): **v0.0.8** (open below).
 
+## Quick Fixes 7 (block 38)
+
+From Quick Fixes 7's [handoff](sessions/2026-10-31-claude-quick-fixes-7/handoff.md) (Rivet on Ground,
+Codex's review of PR #10, six rounds; detail in its `notes.md`).
+
+- **Q38.1** Beside conversion on a file system with neither hard links nor a no-replace rename
+  (`txy.write_atomic` refuses rather than risk replacing a file: `c194f37`). (a) Refuse as built: the
+  run fails with the reason, auto-convert stops (amber line, Retry), Live goes on, nothing is written.
+  (b) Per shot: `shot_unconvertible` with the reason, not tried again while the raw file is unchanged, as
+  for a path too long. (c) Fall back to HeLab's cache or temp folder for that run, saying so in the plan
+  (as `convert_plan`'s `fallback` does when the folder's flag is off). Proposed: (a); (b) or (c) only if
+  M38.1 shows the lab share needs it (macOS FAT and Linux's local file systems work; Windows refuses an
+  existing name itself).
+- **Q38.2** Under HeLab priority, should Live switch a shot held from MATLAB's TXY to a HeLab TXY converted
+  during Live (read it again as a changed shot, like a HeLab-held shot converted again)? As built
+  (`fefe6ab`), it keeps MATLAB's until the folder's next load (Refresh, reopening, a restart). Proposed:
+  no, keep it (no mismatch, no surprise rereads during a run; the next load takes HeLab's).
+- **Q38.3** (wording) After switching to HeLab only, Folder details' load line counts the shots it leaves
+  out (only MATLAB's TXY) as "N files removed", though no file went (`924109a`). Proposed: "N left out
+  (TXY source)", apart from files really gone (a `load_counts` key and
+  `FolderExplorer.load_count_details`).
+
 ## UI polish (block 36)
 
 From the UI polish floor's [handoff](sessions/2026-10-30-claude-ui-polish/handoff.md) and Ibis's

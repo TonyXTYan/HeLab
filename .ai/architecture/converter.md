@@ -190,7 +190,13 @@ Windows): a reader never sees half a file. HeLab's own output name is `d_txy_hel
 
 Built on `agent/txy-helab-core` (landed `775fb1d`; session `.ai/sessions/2026-10-29-claude-txy-helab-core/`).
 `reconstruct._load` takes `_LOAD_LOCK` for a backend's first import; `txy.write_atomic(replace=False)`
-never replaces an existing file (HeLab's writes beside raw files).
+never replaces an existing file (HeLab's writes beside raw files): a hard link, else the OS's no-replace rename
+(macOS `renamex_np(RENAME_EXCL)`, Linux `renameat2(RENAME_NOREPLACE)`, through ctypes, `txy._exclusive_rename`;
+Windows' `os.rename` refuses an existing name itself), never a check then a rename. An existing name raises
+`FileExistsError` (`shot_kept`). Where neither works (no such call, or EINVAL/ENOSYS/ENOTSUP/EOPNOTSUPP) the
+write is refused (`OSError` ENOTSUP, "Not written: this folder's file system can't add a file without risking
+replacing one already there …"), nothing is left behind, and the conversion fails with that reason (Q38.1; M38.1
+for the lab share). `txy.PLATFORM`, read at call time, is the seam (Quick Fixes 7, Codex on PR #10, `c194f37`).
 
 #### The operation
 
@@ -213,8 +219,8 @@ stalls). Payload (`io_ops.convert.ConvertRequest`):
 | `beside_confirmed` | command line only: beside for this run without the flag |
 | `backend` | default `pipeline.APP_BACKEND` (`numpy`); unavailable → the operation errors before any read |
 | `shots` | only these shot numbers (None: every raw file) |
-| `seen` | **required**: the previous `convert_summary`'s `waiting` list; `[]` for a folder's first conversion (which then only records: every file not already current waits for the next check). None only from `helab convert --once` (one check, files unmodified for `ONCE_SETTLE_SECONDS` = 60 s). Live and every other caller in the app always send a list; a request without the key is refused. |
-| `done`, `kept`, `skip` | the previous summary's `current`, `kept`, `unconvertible`, sent back: not checked again while unchanged |
+| `seen` | **required**: the previous `convert_summary`'s `waiting` list; `[]` for a folder's first conversion (which then only records: every file not already current waits for the next check). None only from `helab convert --once` (one check, files unmodified for `ONCE_SETTLE_SECONDS` = 60 s). Live and every other caller in the app always send a list; a request without the key is refused. Under another profile than the last conversion's, `FolderCache.convert` sends each entry without its reason and message (name, size, mtime and first-seen time kept), so a file waiting under one profile is read again under the next, its two looks and damaged clock kept (Quick Fixes 7, Codex on PR #10, `d9a154d`). |
+| `done`, `kept`, `skip` | the previous summary's `current`, `kept`, `unconvertible`, sent back (`FolderCache.convert`, all three only for the same profile): not checked again while unchanged; a done or kept shot only while its TXY is there (beside: the source listing; cache or temp: one listing of HeLab's folder for the output). Quick Fixes 7, Codex on PR #10, `b069c1f`, `d5da485` |
 | `redo` | `stale` (default: convert when the provenance says so) or `always` |
 | `workers` | processes (default `DEFAULT_WORKERS`: min(4, cores/2); 1 in a frozen app, see A12.1) |
 
@@ -368,9 +374,15 @@ folders (`folders()`: the cache base by root key, temps by root key, temps by pa
 files, current only by provenance for the conversion profile's hash (`could_take` limits which records
 are read). `load`, `live_check` and `save_held` take `txy` (FolderCache adds it to every load,
 `with_txy`) and the held origins; shots are reused only from the same kind of TXY, and a held one is
-trusted only with the wanted profile hash. **Only MATLAB's TXY feed the folder-mismatch rule**: a
+trusted only with the wanted profile hash. In Live checks and saves a held shot keeps its kind while that
+TXY is there (`live_check` and `save_held` pass `compose()` every held shot's kind), held from MATLAB's too
+(its kind `""`), so under HeLab priority a HeLab TXY converted during Live replaces it only at the folder's
+next load (Refresh, reopening, a restart: loads compose without held kinds; Q38.2; Quick Fixes 7, Codex on
+PR #10, `fefe6ab`). **Only MATLAB's TXY feed the folder-mismatch rule**: a
 held HeLab shot whose TXY is gone, changed or no longer current is read again or dropped as removed,
-never a mismatch (HeLab's can go or be rewritten legitimately). The dataset signature is the
+never a mismatch (HeLab's can go or be rewritten legitimately). HeLab only leaves out shots that have only
+MATLAB's TXY: not missing (no mismatch), removed from the data shown (Folder details' load line counts them
+as files removed, Q38.3; `924109a`). The dataset signature is the
 folder's MATLAB one (`helab_txy.folder_print`: the data's MATLAB shots plus the settled MATLAB TXY of
 HeLab-held shots, never waiting or young files). Per-shot origins (`helab:<hash>`) are in the dataset's `info.txy`, `ViewIdentity.source`
 and `Coverage.origins`; a 0-byte HeLab TXY is an empty shot. Each plot's settings have a TXY row

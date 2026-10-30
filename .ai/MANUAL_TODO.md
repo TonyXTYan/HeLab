@@ -188,6 +188,16 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   raw files in a deep folder shows "Path too long for Windows …" in the Live line's tooltip; or check
   `LongPathsEnabled` there and note it.
 
+## Beside conversion on the lab share (added 2026-10-31, block 38)
+
+- [ ] **M38.1 Can the lab share add a file without replacing one?** (Tony, on the Mac with the lab share
+  mounted; Q38.1): in a scratch folder on the share (never a data folder), run the probe in Quick Fixes 7's
+  [notes](sessions/2026-10-31-claude-quick-fixes-7/notes.md) §1 (`python3 -I probe.py <scratch folder>`).
+  It reports whether `os.link` works and whether `renamex_np(RENAME_EXCL)` refuses an existing name and
+  renames onto a new one, then leaves files `a`, `b`, `c` to delete. If neither works, beside conversion
+  on the share from macOS fails with the reason (`c194f37`) and Q38.1's (b) or (c) is worth building.
+  Windows PCs are unaffected (`os.rename` refuses an existing name itself).
+
 ## Post-2025 plates, in the lab (added 2026-10-29, block 25)
 
 - [x] **M25.1 Corner cabling** (Tony, 2026-10-29: it was the cable swap; handled as a 180° detector

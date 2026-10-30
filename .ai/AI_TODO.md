@@ -396,6 +396,18 @@ From the Assistant's Live tests on HeLab's test data (`tests/test_live_testdata.
   it ("read stopped at line N"). `test_damaged_files_during_live_are_said_once_and_the_run_goes_on` then
   checks the flag.
 
+## Quick Fixes 7 (block 38)
+
+From Quick Fixes 7's [handoff](sessions/2026-10-31-claude-quick-fixes-7/handoff.md) (Rivet on Ground, Codex's
+review of PR #10, six rounds).
+
+- **A38.1** Audit `helab/io_ops/live.py`'s matching paths for the two gaps Codex found in `save_held`: no
+  test for a held HeLab shot whose TXY has gone, nor for a shadowed MATLAB TXY that has settled. Its
+  `file_names`/signature shapes are the same, so the same two holes may be there.
+- **A38.2** (display only) `AutoConvert.damaged` in `helab/views/explorer_live.py` keeps a file counted
+  "damaged" while it stays unconvertible, even when a later profile fails it for another reason; on a new
+  summary it could keep only names whose current message starts with `DAMAGED_TEXT`.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

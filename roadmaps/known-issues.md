@@ -22,7 +22,13 @@ How to use it:
 - [ ] **Lab data: a corrupted MATLAB TXY** in
   `dld_output_cheerypicked/20260722-tight-trap-1000Hzsampling/d_txy_forc183.txt` (two programs
   wrote it at once), and July 2026 TXY from the 2023 lab edit beside AutoConvert's (Q25.3). HeLab's
-  own conversion is unaffected; reconvert those shots from raw.
+  own conversion is unaffected; reconvert those shots from raw. The test data's copy (nested
+  `20260722-tight-trap-1000Hzsampling`, shot 183) lost bytes too (line 465 holds 4 values; 7 hits are
+  missing): `tests/test_convert_testdata.py` lists it in `FAULTS` as an archive fault, which must still
+  differ (Side's `ffe346c`). A fault in MATLAB's archive, not HeLab.
+- [ ] Beside conversion fails on a file system with neither hard links nor a no-replace rename:
+  `txy.write_atomic` refuses rather than risk replacing a file, and the run stops with the reason (Quick
+  Fixes 7, `c194f37`; Q38.1; M38.1 for the lab share).
 
 - [ ] **A cached dataset over ~2.1 GB can't be saved.** `pack_dataset` (`helab/utils/cache_store.py:459`)
   compresses a whole folder in one Blosc call, and python-blosc 1.11.4 caps a call at 2,147,483,631
@@ -104,6 +110,14 @@ How to use it:
   HeLab's code. That test now closes each web-view plot once walked (at most one renderer open).
   A second mechanism, now fixed (below): a SIGSEGV on the main thread when a Plotly plot's dock was
   deleted; some of these worker crashes may have been it. Watch whether they recur after `c104502`.
+  They do: `test_accessible_names.py` crashed its worker on Ground CI 41100591971 (Windows Tests 1/2, job
+  124217404251, gw0, `371751d`), PR CI 41095142656 attempt 1 (macOS Tests 1/2, `8ccc0be`) and PR CI
+  41104589243 (macOS Tests 1/2, job 124231159424, `92c532b`); each passed on rerun (2026-10-31).
+- [ ] `test_accessible_names.py::test_every_script_and_each_library`: "Controls without an accessible
+  name: Basic plots v1 › Plot T, X, Y histograms: QTabBar < QMainWindow < QSplitter < HelabMainWindow: no
+  ID", Windows CI 41086378298 (Tests 1/2, job 124168617741, gw0, `dev/v0.0.7` `9de3e19`, 2026-10-31);
+  passed on rerun. Not a worker crash: likely a dock tab bar Qt makes when docks tabify, walked before
+  `identify` names it. Cause not found.
 - [ ] `test_gui_responsiveness.py::test_timeout_retry_releases_dead_helper_slot_while_artifact_reader_is_blocked[2]`:
   `waitUntil timed out in 3000 milliseconds` at line 292 (the `finally`'s wait for the killed fake
   helpers to exit after `service.shutdown()`), on Windows CI run 40803552596 (`agent/txy-ship`) and
@@ -114,11 +128,13 @@ How to use it:
   xdist worker crashed on Windows CI run 40803552596; passed on retry (no traceback; look for a
   faulthandler dump). Again: the Plotly case on `agent/byte-units` CI 40865344851 (job 123418722344,
   gw3), and `[values1-Matplotlib-CountsPerShot]` on `agent/txy-index` CI 40883472651 (job
-  123480992297, gw1).
+  123480992297, gw1). The Plotly case again on Windows Tests 2/2: Ground CI 41084197666 (job
+  124161029996, `dd540cd`) and PR CI 41095142656 (`8ccc0be`).
 - [ ] `test_io_service_run.py::test_writing_held_data_out_counts_as_progress`: `assert (2 == 1)` at
   line 40 (two progress marks, 0.7 ms and 1.4 ms, where one is expected), Windows CI 40863356565
   (job 123411955603, `agent/txy-index`); passed on retry. Again: `agent/runner-tools` CI 40989399407
-  (Windows). A Windows timing flake; IOService untouched.
+  (Windows); Ground CI 41084197666 (Windows Tests 2/2, job 124161029996, two marks 0.96 ms and 1.5 ms).
+  A Windows timing flake; IOService untouched.
 - [ ] `test_root_discovery.py::test_volume_check_alone_refreshes_hints_without_visiting_markers`:
   xdist worker gw2 crashed on macOS CI 40866574094 attempt 1 (job 123422851726, `agent/txy-index`
   `9691873`; `INTERNALERROR> AssertionError: (…, <WorkerController gw2>)`, exit code 3, no RERUN);
@@ -144,13 +160,20 @@ How to use it:
   `assert '2026-10-29' in 'Last successful status scan: 2026-10-30 00:00:19 …'` at line 286. It takes
   the expected date from a timestamp ~35 s before the scan the tooltip shows. Fix: the date of the time
   the tooltip shows, or a frozen clock.
+- [ ] `test_folder_summary.py::test_visible_scans_follow_scrolling_without_prefetching_offscreen_folders`:
+  `all(...)` False at line 868 over the pending scan requests, once in a local `-n 12` full run
+  (2026-10-31, Ground `dev/v0.0.7` `01ce35f`, Quick Fixes 7 round 6); passed on rerun. Cause not found.
+- [ ] `test_presets_window.py::test_applying_a_live_preset_in_a_real_tab_starts_live_once_listed`:
+  `waitUntil timed out in 30000 milliseconds` at line 104, Windows Tests (1/2), PR CI 41087162687 (job
+  124171347360, `b836b56`, 2026-10-31); passed on rerun. Cause not found.
 - [ ] `test_root_gui.py::test_the_gui_never_writes_the_saved_file_itself`: xdist worker gw0 crashed
   once on macOS CI (run 40790093719, `agent/quick-fixes-5` `ed0635c`, job 123172940859, 2026-10-29);
   passed on its rerun. A crash, not an assertion (a native fault in a GUI test?); cause unknown.
 - [ ] `test_test_isolation.py::test_pytest_imports_the_checkout_it_runs_in_before_any_other`: a
   collection error in pathlib `lstat` on Windows CI (run 40754482305, `agent/txy-packaging` `7d2bff9`),
   passed on retry. Again on Windows Tests (2/2): `agent/byte-units` CI 40989130996 (job
-  123847075029) and `agent/smoke-ready` CI 40990082872 (job 123850152612), both passed on retry.
+  123847075029) and `agent/smoke-ready` CI 40990082872 (job 123850152612), both passed on retry; Ground
+  CI 41072414259 (job 124119750861, `2960680`).
 - [ ] `test_gui_responsiveness.py::test_stalled_process_keeps_heartbeat_and_shutdown_responsive`:
   `assert 0.2199… < 0.2` (line 228) on macOS CI (run 40764414177), passed on retry.
 - [ ] Tests that `chdir` while helpers can start: a helper inherits the working folder, which its
@@ -241,7 +264,10 @@ Landed in `dev/v0.0.7`:
   INFO)`, which skips `Logger.setLevel`'s cache clear, so after an INFO line logged at WARNING earlier in
   the worker the log came out empty. Fixed on `agent/runner-tools` (`15c907c`, landed `0316bae`):
   `root.setLevel(INFO)` restored in its `finally`; the repro is
-  `test_milestones.py::test_the_log_file_tests_hold_after_an_info_line_at_warning`.
+  `test_milestones.py::test_the_log_file_tests_hold_after_an_info_line_at_warning`. The sibling
+  `test_the_log_file_keeps_tracebacks_and_rotates` had the same `root.level` attribute mistake: it failed
+  all 6 tries on macOS PR CI 41095142656 (Tests 1/2, job 124198926348, gw3) and was fixed in Quick Fixes 7
+  round 6 (`01ce35f`), with `test_app_log.py::test_the_rotation_test_holds_after_an_info_line_at_warning`.
 
 - [x] **A plot tab's × stopped responding** soon after the tabs appeared (0.0.6a1 to 0.0.7a1; the smoke
   pass's "didn't respond to computer-use clicks", which were pointer clicks): `DockTabCloser` connected
