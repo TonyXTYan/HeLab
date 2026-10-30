@@ -119,3 +119,122 @@ none has a RERUN line or "rerun reasons":
 | ubuntu Converter backends | 123810456780 | 662 passed, 516 skipped |
 | macos Converter backends | 123810456784 | 662 passed, 516 skipped |
 | windows Converter backends | 123810457046 | 661 passed, 517 skipped |
+
+---
+
+# Round 2: `2c5c9ee..f120395` (Reviewer Moss, 2026-10-30)
+
+**Scope.** The review fixes (`8e12052`), the `test_app_log` level fix (`15c907c`), `helab convert`'s
+`convert_done` line (`347748e`), the Windows fixes (`89e1ced`) and the two `dev/v0.0.7` merges
+(`0a612d3` TXY Index, `09df6ce` Byte Units).
+
+**No High or Low findings. L1 and N1-N4 are fixed.** Two Nits remain, both optional. Nothing blocks
+landing.
+
+## Round 1's findings
+
+- **L1 fixed.** `folder_cache.py`: a Live save now logs `source=save live=true`. Python's chained
+  conditional reads as `save` if `save_memory`, else `cache`, `folder` or `check`, as intended.
+  `test_a_live_shot_and_lives_save_say_so` checks `(folder, False)`, `(folder, True)`,
+  `(save, True)`.
+- **N1 fixed.** The parser now matches only `^MILESTONE` or ` helab.milestone: MILESTONE`, with the
+  whole tail in the form. The new tests reject another logger's line and junk after the fields. A
+  pathological input (5,000 fields then an unclosed quote) parsed in 1 ms, so there is no
+  backtracking blow-up.
+- **N2 fixed.** U+0085, U+2028 and U+2029 are escaped after `json.dumps`. A new 20,000-case fuzz
+  (printable, quotes, backslashes, `=`, `\x0b`, `\x1c`, U+0085, U+2028, U+2029, non-ASCII) gave
+  0 mismatches, both for the bare message and for the full log line, and every line stayed one line
+  under `splitlines()`.
+- **N3 fixed.** `is_stub` now catches `ExpatError`, and a test covers it.
+- **N4 fixed.**
+  - The stub `cd`s to the checkout before sourcing the env file (tested with `$(pwd)` in the env
+    file).
+  - A missing checkout, env file or venv now goes to stderr, the system log (`logger`) and an
+    alert.
+  - Paths with a `"`, a control character or a line break (and a backslash on POSIX) are refused
+    when the stub is built.
+  - `$` and backticks in a path stay literal: `shlex.quote` covers them, and the variables are
+    expanded only inside double quotes. The new test uses a checkout named `check $HOME \`out\``.
+  - Windows (`89e1ced`): a backslash is refused only where `os.sep == "/"`, which is right
+    because the stub is macOS only and Windows builds are only the tests'.
+- **`15c907c`.** `setLevel` instead of setting the attribute is the right cause and fix (setting
+  the attribute skips `Logger.setLevel`'s cache clear). The regression test reproduces the order
+  dependence.
+
+## `helab convert`'s `convert_done` (`347748e`, `convert_cli.py:148-196`)
+
+- **Same fields and the same quiet-run rule as Live's line.** The rule is `converted`, or
+  `no_hit`, or `(unconvertible, waiting, kept)` changed since the last line; the first run always
+  logs.
+- `--watch` takes one folder (`main`, line 304), so the `_Log`'s `logged_counts` is never compared
+  across folders.
+- `seconds` is a float (`time.monotonic()` difference, `io_ops/convert.py:717`), and `output` is
+  the output mode, not a path. Both match the GUI line.
+- The lazy `from helab.utils import app_log` follows the module's lazy-import pattern (the log file
+  is started through the same module at line 278).
+- `test_each_helab_convert_run_says_what_it_did` covers the in-process counts and the no-line
+  quiet runs. `test_helab_convert_once_writes_its_line_in_its_log_file` reads the real command's
+  log file.
+
+**N5. `no_hit` means something slightly different in the CLI line than in the GUI line.**
+`convert_cli.py:168` vs `explorer_live.py:818`. The CLI adds one for every `shot_converted` with
+`hits == 0` in the run. Live counts the growth of the `AutoConvert.no_hits` *set*.
+- **Re-converted shot:** a raw file that changes and is converted again (`redo="stale"`) with no
+  hits again counts in the CLI line but not in Live's.
+- **Failed or cancelled run:** its no-hit shots are dropped in the CLI line (reset at the next
+  `convert_plan`, and there's no summary, so no line). In Live they are carried into the next line.
+
+Both are edge cases, and both fit "that run's no-hit shots" loosely. Either align them or say in
+the proposed doc that the CLI counts conversions and Live counts new shots.
+
+## The merges
+
+- `git diff 09df6ce^2 f120395` (Byte Units' `b9be661`, the merge's second parent, against the tip)
+  touches only this branch's 13 files: the session docs, `dev/dev_app.py`, `app_log.py`,
+  `runner.py`, `convert_cli.py`, `folder_cache.py`, `explorer_live.py`, `test_app_log.py`,
+  `test_dev_app.py` and `test_milestones.py`.
+- In the shared modules the hunks are only the milestone lines, their imports and the two
+  `AutoConvert` fields. The merges changed nothing else.
+- `origin/dev/v0.0.7` has moved since, to `e74a5cf`. The landing merges onto that tip.
+
+## The handoff's proposals
+
+- The proposals are accurate against the code: the field lists, `source=cache|folder|check|save`
+  and the quiet-run rule. The stub's README, testing and runbook notes match the round-1 evidence.
+  The RERUN and Windows-cause accounts match CI 40989399407 and the fix.
+- **N6.**
+  - The `app-runtime-and-ui.md` paragraph could add N5's counting difference if it isn't aligned.
+  - `converter.md`'s `helab convert` section could get one line that the command logs
+    `convert_done by=cli`.
+  - The runbook's "newest `helab-<pid>.log` of the app folder" should say that with
+    `--env-file .ai/local/floor-env.sh` the app folder is the floor's (`HELAB_APP_DIR_OVERRIDE`),
+    not `~/Library/Caches/HeLab/`.
+
+## Checks (rerun here at `f120395`)
+
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **8300 passed, 669
+  skipped, 2 warnings in 149.06 s, no reruns.** The 2 warnings are pyqtgraph's NumPy 2.5 one.
+- `mypy helab/ --strict`: no issues in 191 files.
+- `mypy tests --strict`: no issues in 162 files.
+- `mypy helab/ --strict --platform win32`: no issues in 191 files.
+- `pyright helab tests` and `pyright --pythonplatform Windows helab tests`: 0 errors, 0 warnings.
+- `mypy --strict dev/dev_app.py`: no issues.
+
+## CI run 40992860349 (`f120395`)
+
+**Green on all three OSes.** The conclusion is `success`, and all 13 jobs that ran succeeded:
+Detect, Build ×3, Converter backends ×3 and Tests (1/2)/(2/2) ×3. The compat jobs were skipped,
+as they are on non-PR runs. I read each test job's log, and none has a RERUN line or "rerun
+reasons":
+
+| Job | ID | Result |
+|---|---|---|
+| ubuntu Tests (1/2) | 123859167162 | 4135 passed, 324 skipped |
+| ubuntu Tests (2/2) | 123859167148 | 4163 passed, 347 skipped |
+| macos Tests (1/2) | 123859167058 | 4138 passed, 322 skipped |
+| macos Tests (2/2) | 123859167054 | 4162 passed, 347 skipped |
+| windows Tests (1/2) | 123859167073 | 4123 passed, 335 skipped |
+| windows Tests (2/2) | 123859166974 | 4144 passed, 363 skipped |
+| ubuntu Converter backends | 123859167093 | 693 passed, 516 skipped |
+| macos Converter backends | 123859167068 | 693 passed, 516 skipped |
+| windows Converter backends | 123859166997 | 692 passed, 517 skipped |

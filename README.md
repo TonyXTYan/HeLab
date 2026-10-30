@@ -124,6 +124,8 @@ helab convert --watch FOLDER [--once] [--output temp|cache|beside]   # headless 
 
 On later runs, just activate `venv` and run `helab`. Without activating, run `venv/bin/helab` (macOS/Linux) or `venv\Scripts\helab` (Windows).
 
+On macOS, to drive a source run with computer-use tools (which need a bundle ID), build a small app stub once: `python dev/dev_app.py`, then `open .ai/local/HeLab-dev.app --args …`. It runs this checkout's `venv/bin/python -m helab` as "HeLab-dev" (`au.edu.anu.he-bec-lab.dev`).
+
 Notes:
 - Bare `python` on lab PCs is often an old interpreter (for example Python 2.7). Use the one in `venv`.
 - On Windows, start HeLab from the desktop, not over SSH. An SSH session as an administrator runs elevated, and it can leave cache folders that a normal launch can't write to.

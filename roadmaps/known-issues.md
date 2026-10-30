@@ -106,8 +106,8 @@ How to use it:
   `waitUntil timed out in 3000 milliseconds` at line 292 (the `finally`'s wait for the killed fake
   helpers to exit after `service.shutdown()`), on Windows CI run 40803552596 (`agent/txy-ship`) and
   once locally on macOS; passed on retry. Again on Windows: Ground CI 40861772277 (`9f0b21f`) and
-  `agent/txy-index` CI 40874212130; Ground CI 40988453930 (`c492242`, Windows Tests 1/2). A candidate: 3 s
-  under load.
+  `agent/txy-index` CI 40874212130; Ground CI 40988453930 (`c492242`, Windows Tests 1/2) and 41000437956 (`43cb202`). A
+  candidate: 3 s under load.
 - [ ] `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`: an
   xdist worker crashed on Windows CI run 40803552596; passed on retry (no traceback; look for a
   faulthandler dump). Again: the Plotly case on `agent/byte-units` CI 40865344851 (job 123418722344,
@@ -115,7 +115,8 @@ How to use it:
   123480992297, gw1).
 - [ ] `test_io_service_run.py::test_writing_held_data_out_counts_as_progress`: `assert (2 == 1)` at
   line 40 (two progress marks, 0.7 ms and 1.4 ms, where one is expected), Windows CI 40863356565
-  (job 123411955603, `agent/txy-index`); passed on retry. A Windows timing flake; IOService untouched.
+  (job 123411955603, `agent/txy-index`); passed on retry. Again: `agent/runner-tools` CI 40989399407
+  (Windows). A Windows timing flake; IOService untouched.
 - [ ] `test_root_discovery.py::test_volume_check_alone_refreshes_hints_without_visiting_markers`:
   xdist worker gw2 crashed on macOS CI 40866574094 attempt 1 (job 123422851726, `agent/txy-index`
   `9691873`; `INTERNALERROR> AssertionError: (…, <WorkerController gw2>)`, exit code 3, no RERUN);
@@ -214,6 +215,13 @@ crashed" on CI with no traceback is usually CI's 120 s timeout, whose stacks
 ## Fixed
 
 Landed in `dev/v0.0.7`:
+
+- [x] `test_app_log.py::test_each_helab_writes_its_own_log_file` failed all 5 reruns once in seven `-n 4`
+  runs (`assert 'from 101' in ''`): it raised the root level with `monkeypatch.setattr(root, "level",
+  INFO)`, which skips `Logger.setLevel`'s cache clear, so after an INFO line logged at WARNING earlier in
+  the worker the log came out empty. Fixed on `agent/runner-tools` (`15c907c`, landed `0316bae`):
+  `root.setLevel(INFO)` restored in its `finally`; the repro is
+  `test_milestones.py::test_the_log_file_tests_hold_after_an_info_line_at_warning`.
 
 - [x] **A plot tab's × stopped responding** soon after the tabs appeared (0.0.6a1 to 0.0.7a1; the smoke
   pass's "didn't respond to computer-use clicks", which were pointer clicks): `DockTabCloser` connected
