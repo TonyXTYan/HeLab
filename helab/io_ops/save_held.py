@@ -47,6 +47,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
     data is saved with its record, so its shots' origins stay with it."""
     import numpy as np
     import pandas as pd
+    from helab.convert.provenance import txy_name
     from helab.utils.cache_store import StoreError
     store = _open_store(cache_options, send, path)
     try:
@@ -189,7 +190,11 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
             reread.append({"shot": shot, "path": filename, "old": list(was[shot]), "new": list(item[1:]),
                            "read": shot in data})
         fingerprint = sorted(replaced.get(entry[0], entry) for entry in fingerprint)
-        names = [file_names[shot] for shot, _, _ in fingerprint]
+        # A held HeLab shot whose TXY has gone (``helab_off``) has no name listed: it keeps the one its TXY would
+        # have beside the raw file, which the quick check's sample finds gone or changed (and ``unsettled``
+        # makes that check a full one anyway).
+        tag = str(held_record.get("profile_tag") or txy.get("profile_tag") or "")
+        names = [file_names.get(shot) or txy_name(tag, shot) for shot, _, _ in fingerprint]
         saving = store is not None and guard is not None and not no_cache and bool(data)
         had_dataset = False
         if saving:
@@ -238,7 +243,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         try:
             _write_dataset(store, path, guard, data, fingerprint, problematic, names, listed_at, counts, unsettled,
                            had_dataset, (cache_options or {}).get("budget"), (cache_options or {}).get("budget_set_at"),
-                           send, times, txy_record=record)
+                           send, times, txy_record=record, signature=signature)
         except Exception as exc:
             _save_failed(store, exc, send)
     finally:

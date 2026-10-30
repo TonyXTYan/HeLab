@@ -755,6 +755,57 @@ def test_a_live_save_has_the_folders_signature(tmp_path: Path, private_store: st
     assert loaded(saved)["signature"] == scan["signature"]
 
 
+def held_from_a_load(source: Path, tmp_path: Path, private_store: str) -> tuple[dict[str, Any], Path]:
+    """A load's ``loaded`` (no store) and its arrays where the app keeps held data for a Live save."""
+    events = run_load(source, tmp_path, None, options(tmp_path, private_store))
+    held_dir = tmp_path / "held"
+    held_dir.mkdir()
+    for shot, array in shots_read(events).items():
+        np.save(held_dir / f"{shot}.npy", array)
+    return loaded(events), held_dir
+
+
+def saved_info(source: Path, private_store: str) -> dict[str, Any]:
+    with stores._cache_store(store_root(private_store), [str(source)]) as store:
+        row = store.read_dataset_row(str(source)).value
+    assert row is not None
+    return dict(row["info"])
+
+
+def test_a_live_save_whose_held_helab_txy_went_saves_the_rest(tmp_path: Path, private_store: str) -> None:
+    """Codex 4424923880: held shots 3 and 4 were read from HeLab's TXY, since cleared, and the folder has no
+    MATLAB TXY for them: the save goes on (they count as unsettled), with a name for each shot."""
+    source = make_run(tmp_path, private_store)
+    first, held_dir = held_from_a_load(source, tmp_path, private_store)
+    helab_txy.clear_converted(helab_txy.converted_root(store_root(private_store)))
+    saved: list[dict[str, Any]] = []
+    save_held(str(source), saved.append, {"directory": store_root(private_store)},  # type: ignore[arg-type]
+              first["fingerprint"], [], str(held_dir), txy=options(tmp_path, private_store), held_txy=first["txy"])
+    assert "shots_missing" not in kinds_of(saved) and "cache_saved" in kinds_of(saved)
+    result = loaded(saved)
+    assert result["fingerprint"] == [list(entry) for entry in first["fingerprint"]] and result["unsettled_files"] == 2
+    assert result["names"] == ["d_txy_forc1.txt", "d_txy_forc2.txt", "d_txy_helab_m19v1_3.txt",
+                               "d_txy_helab_m19v1_4.txt"]
+    info = saved_info(source, private_store)
+    assert info["names"] == result["names"] and info["unsettled"] == 2
+
+
+def test_a_live_saves_dataset_has_the_signature_it_sent(tmp_path: Path, private_store: str) -> None:
+    """Codex 4424923889: a settled MATLAB TXY of held HeLab shot 3 counts in the ``loaded`` signature (the
+    folder's); the dataset saved must carry that one, or the tab can't match ``cache_saved``."""
+    source = make_run(tmp_path, private_store)
+    first, held_dir = held_from_a_load(source, tmp_path, private_store)
+    old = time.time() - 600
+    os.utime(matlab_txy(source, 3), (old, old))
+    saved: list[dict[str, Any]] = []
+    save_held(str(source), saved.append, {"directory": store_root(private_store)},  # type: ignore[arg-type]
+              first["fingerprint"], [], str(held_dir), txy=options(tmp_path, private_store), held_txy=first["txy"])
+    result = loaded(saved)
+    assert result["txy"]["origins"]["3"] == f"helab:{PROFILE}"  # (Still held from HeLab's.)
+    assert result["signature"] != first["signature"]  # (Shot 3's MATLAB TXY counts now.)
+    assert saved_info(source, private_store)["signature"] == result["signature"]
+
+
 def test_live_asks_the_store_for_a_key_once_a_session(tmp_path: Path, private_store: str,
                                                       monkeypatch: pytest.MonkeyPatch) -> None:
     from helab.io_ops import live as live_module
