@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Callable, Optional, cast
 
 from PyQt6 import sip
-from PyQt6.QtCore import QObject, QPoint, QRect, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QEvent, QObject, QPoint, QRect, QSize, Qt, QTimer, pyqtSignal, pyqtSlot
 from PyQt6.QtGui import QCloseEvent, QFocusEvent, QGuiApplication, QPainter, QPaintEvent
 from PyQt6.QtWidgets import (QAbstractButton, QAbstractItemView, QAbstractSlider, QAbstractSpinBox, QComboBox,
                              QDockWidget, QLineEdit, QMainWindow, QSizePolicy, QSplitter, QTabBar, QToolButton,
@@ -233,7 +233,19 @@ class AnalysisDock(QDockWidget):
         self._fit_handle()
         super().setWidget(self.frame)
         self.floated_turn = 0
+        self._double_clicked = False  # (During a double-click on the title, which floats it on the press.)
         self.topLevelChanged.connect(self._floated)
+
+    def event(self, event: QEvent | None) -> bool:
+        """A double-click on the title floats the plot while the button is still down; noted, so it is
+        placed as a float, not left where it is as a drag would be (review Low 1)."""
+        if event is None or event.type() != QEvent.Type.MouseButtonDblClick:
+            return super().event(event)
+        self._double_clicked = True
+        try:
+            return super().event(event)
+        finally:
+            self._double_clicked = False
 
     @pyqtSlot()
     def dock_back(self) -> None:
@@ -246,7 +258,7 @@ class AnalysisDock(QDockWidget):
             return
         AnalysisDock._floated_count += 1
         self.floated_turn = AnalysisDock._floated_count
-        if not mouse_held():  # (A drag: where the user lets go.)
+        if self._double_clicked or not mouse_held():  # (A drag: where the user lets go.)
             self.place_floating()
 
     def place_floating(self) -> None:

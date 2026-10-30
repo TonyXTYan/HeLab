@@ -6,11 +6,11 @@ from typing import cast
 
 import pytest
 from pytestqt.qtbot import QtBot
-from PyQt6.QtCore import QPoint, QRect, QSize
-from PyQt6.QtWidgets import QLineEdit
+from PyQt6.QtCore import QPoint, QRect, QSize, Qt
+from PyQt6.QtWidgets import QApplication, QLineEdit
 
 from helab.views.plots.dock import AnalysisDock
-from test_plot_settings_panel import Plots, plots  # noqa: F401  (the fixture)
+from test_plot_settings_panel import Plots, let_go, plots  # noqa: F401  (the fixtures)
 
 
 def available(dock: AnalysisDock) -> QRect:
@@ -78,6 +78,24 @@ def test_a_dragged_plot_stays_where_it_is_let_go(plots: Plots, qtbot: QtBot, sma
     monkeypatch.setattr(AnalysisDock, "place_floating", lambda self: placed.append(True))
     one.setFloating(True)
     assert one.isFloating() and not placed and one.floated_turn > 0
+
+
+def test_a_double_click_on_the_title_floats_and_places_it(plots: Plots, qtbot: QtBot, small: QSize,
+                                                          let_go: None) -> None:
+    """Qt floats a dock on the double-click's press, the button still down: placed all the same, not taken
+    for a drag (review Low 1)."""
+    one = cast(AnalysisDock, plots.add())
+    plots.area.move(60, 50)
+    plots.show(qtbot)
+    docked_at = one.mapToGlobal(QPoint(0, 0))
+    qtbot.mouseDClick(one, Qt.MouseButton.LeftButton, pos=QPoint(one.width() // 2, 5))  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(one.isFloating)
+    qtbot.wait(20)
+    step = QPoint(AnalysisDock.FLOAT_STEP, AnalysisDock.FLOAT_STEP)
+    assert one.geometry() == QRect(docked_at + step, small) and not one._double_clicked
+    if QApplication.mouseButtons() != Qt.MouseButton.NoButton:  # (The release went to its new window.)
+        qtbot.mouseRelease(one, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(one.settings.isVisible)  # Its page follows once let go.
 
 
 def test_the_dock_button_puts_a_floating_plot_back_with_its_settings(plots: Plots, qtbot: QtBot) -> None:
