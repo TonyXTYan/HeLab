@@ -5,6 +5,8 @@ from __future__ import annotations
 
 import builtins
 import contextlib
+import ctypes
+import errno
 import io
 import json
 import os
@@ -230,6 +232,116 @@ def test_write_atomic_without_replace_never_touches_an_existing_file(tmp_path: P
     with pytest.raises(FileExistsError):
         txy.write_atomic(target, b"other\n", replace=False)
     assert [path.name for path in folder.iterdir()] == [target.name]  # No temporary file left.
+
+
+def no_links(monkeypatch: pytest.MonkeyPatch, then: Callable[[Path], object] = lambda _: None) -> None:
+    """``os.link`` refused as on a file system without hard links (FAT, many SMB mounts); ``then`` runs
+    with the target first, as another writer may at that moment."""
+    def refused(source: Any, target: Any, *args: Any, **kwargs: Any) -> None:
+        then(Path(target))
+        raise OSError(errno.ENOTSUP, "Operation not supported", str(target))
+    monkeypatch.setattr(os, "link", refused)
+
+
+def test_without_links_a_file_written_meanwhile_is_never_replaced(tmp_path: Path,
+                                                                   monkeypatch: pytest.MonkeyPatch) -> None:
+    """Codex 4424923871: without hard links, a check then a rename replaced a TXY another writer made in
+    between (macOS's and Linux's ``rename`` replace). The rename itself must refuse the name."""
+    folder = tmp_path / "out"
+    folder.mkdir()
+    target = folder / "d_txy_helab_m19v1_1.txt"
+    no_links(monkeypatch, lambda path: path.write_bytes(b"another writer's\n"))
+    # Any check misses a file that appears just after it.
+    monkeypatch.setattr(os.path, "lexists", lambda path: False)
+    with pytest.raises(FileExistsError):
+        txy.write_atomic(target, b"ours\n", replace=False)
+    assert target.read_bytes() == b"another writer's\n" and [path.name for path in folder.iterdir()] == [target.name]
+    # Nothing there: the OS's own refusing rename writes it (Windows' plain rename).
+    no_links(monkeypatch)
+    other = folder / "d_txy_helab_m19v1_2.txt"
+    txy.write_atomic(other, b"ours\n", replace=False)
+    assert other.read_bytes() == b"ours\n" and sorted(path.name for path in folder.iterdir()) == [
+        target.name, other.name]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Windows' os.rename refuses an existing name itself")
+def test_the_refusing_rename_is_the_oss_own(tmp_path: Path) -> None:
+    folder = tmp_path / "out"
+    folder.mkdir()
+    rename = txy._exclusive_rename(sys.platform)
+    assert rename is not None
+    old, new = folder / "old", folder / "new"
+    old.write_bytes(b"old")
+    new.write_bytes(b"new")
+    assert rename(os.fsencode(old), os.fsencode(new)) == -1 and ctypes.get_errno() == errno.EEXIST
+    assert new.read_bytes() == b"new"
+    new.unlink()
+    assert rename(os.fsencode(old), os.fsencode(new)) == 0 and new.read_bytes() == b"old" and not old.exists()
+    assert txy._exclusive_rename("sunos5") is None  # (Neither call: the write is refused.)
+
+
+def failing_rename(code: int) -> Callable[[bytes, bytes], int]:
+    def rename(old: bytes, new: bytes) -> int:
+        ctypes.set_errno(code)
+        return -1
+    return rename
+
+
+@pytest.mark.parametrize("rename", [None, failing_rename(errno.EINVAL), failing_rename(errno.ENOSYS),
+                                    failing_rename(errno.ENOTSUP), failing_rename(errno.EOPNOTSUPP)])
+def test_without_links_or_a_refusing_rename_nothing_is_written(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, rename: Callable[[bytes, bytes], int] | None) -> None:
+    """No hard links and no rename that refuses a name (the C library lacks it, or the file system or
+    kernel can't): the write is refused, not risked, even with nothing there."""
+    folder = tmp_path / "out"
+    folder.mkdir()
+    monkeypatch.setattr(txy, "PLATFORM", "linux")
+    monkeypatch.setattr(txy, "_exclusive_rename", lambda platform: rename)
+    no_links(monkeypatch)
+    renamed: list[Any] = []
+    monkeypatch.setattr(os, "rename", lambda *args: renamed.append(args))
+    target = folder / "d_txy_helab_m19v1_1.txt"
+    with pytest.raises(OSError) as refused:
+        txy.write_atomic(target, b"ours\n", replace=False)
+    assert refused.value.errno == errno.ENOTSUP and "can't add a file without risking" in str(refused.value)
+    assert refused.value.filename == str(target)
+    assert renamed == [] and list(folder.iterdir()) == []  # (Nor its temporary file.)
+
+
+@pytest.mark.parametrize("code, error", [(errno.EEXIST, FileExistsError), (errno.EACCES, PermissionError)])
+def test_the_refusing_renames_other_answers(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int,
+                                            error: type[OSError]) -> None:
+    folder = tmp_path / "out"
+    folder.mkdir()
+    monkeypatch.setattr(txy, "PLATFORM", "darwin")
+    monkeypatch.setattr(txy, "_exclusive_rename", lambda platform: failing_rename(code))
+    no_links(monkeypatch)
+    with pytest.raises(error) as raised:
+        txy.write_atomic(folder / "d_txy_helab_m19v1_1.txt", b"ours\n", replace=False)
+    assert raised.value.errno == code and list(folder.iterdir()) == []
+
+
+def test_on_windows_without_links_its_rename_refuses(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Windows' ``os.rename`` (MoveFileEx without replace) refuses an existing name itself."""
+    folder = tmp_path / "out"
+    folder.mkdir()
+
+    def windows_rename(old: Any, new: Any) -> None:
+        if os.path.lexists(new):
+            raise FileExistsError(errno.EEXIST, "Cannot create a file when that file already exists", str(new))
+        os.replace(old, new)
+
+    def never(platform: str) -> None:
+        raise AssertionError("not on Windows")
+    monkeypatch.setattr(txy, "PLATFORM", "win32")
+    monkeypatch.setattr(txy, "_exclusive_rename", never)
+    monkeypatch.setattr(os, "rename", windows_rename)
+    no_links(monkeypatch)
+    target = folder / "d_txy_helab_m19v1_1.txt"
+    txy.write_atomic(target, b"ours\n", replace=False)
+    with pytest.raises(FileExistsError):
+        txy.write_atomic(target, b"other\n", replace=False)
+    assert target.read_bytes() == b"ours\n" and [path.name for path in folder.iterdir()] == [target.name]
 
 
 # The helper operation.
@@ -625,6 +737,21 @@ def test_the_command_lines_beside_needs_no_flag(source: Path, tmp_path: Path) ->
     events = run(source, request_for(source, tmp_path, beside=True, beside_confirmed=True))
     assert of(events, "convert_plan")[0]["output"] == "beside"
     assert (source / "d_txy_helab_m19v1_1.txt").is_file()
+
+
+
+def test_a_beside_conversion_that_cant_add_a_file_safely_fails_with_why(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """No hard links and no refusing rename in the source folder: nothing is written there, and the
+    conversion fails naming the reason (tried again at the next run)."""
+    write_raw(source, 1, raw_bytes(10_000))
+    before = sorted(path.name for path in source.iterdir())
+    monkeypatch.setattr(txy, "_exclusive_rename", lambda platform: None)
+    monkeypatch.setattr(txy, "PLATFORM", "linux")
+    no_links(monkeypatch)
+    with pytest.raises(OSError, match="can't add a file without risking"):
+        run(source, request_for(source, tmp_path, beside=True, beside_confirmed=True))
+    assert sorted(path.name for path in source.iterdir()) == before
 
 
 # The converter flags in the store.
