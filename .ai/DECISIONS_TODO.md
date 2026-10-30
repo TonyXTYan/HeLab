@@ -277,6 +277,37 @@ Tony in Chat, 2026-10-30, on computer use and the smoke pass (blocks 5 and 31,
   smoke pass keeps one step done the way a person would.
 - **Q31.3** the quit window lists every pending operation (kind, folder, how long), not only
   folder names.
+- **Q5.1** the smoke pass runs on Sonnet 5.5 (it drove both runs so far); Haiku stays untried.
+
+Tony in Chat, 2026-10-30, on the provisional UI pass (block 33,
+[findings](sessions/2026-10-30-claude-ui-provisional-0.0.7/findings.md), "as proposed"), for a "UI
+polish" floor after Smoke ready lands (Q33.6):
+
+- **Q33.1** double-clicking a folder with no subfolders selects it (and so loads it) instead of making
+  it the tree's top; a typed path to such a folder opens its parent and selects its row; a folder
+  with subfolders, or not listed yet, opens as today.
+- **Q33.2** the default split gives the plots the room: folders ~380 px, settings ~320 px, plots the
+  rest, the user's drags kept across restarts; the folder panel does **not** collapse by itself when
+  a plot opens (only Live collapses it, Q18.3). The runbook collapses it for the plot steps.
+- **Q33.3** a newly floated plot opens offset ~40 px from the last one, at a usable size (~800×600,
+  kept on screen); a restart restores where the user left them.
+- **Q33.4** a floating plot window gets a **Dock** button ("add a dock back button").
+- **Q33.5** the Debug menu's three placeholder items ("Debug - 6", "Draw a line in debug console",
+  "Debug - validate tab status") go.
+- **Q33.6** go for the UI polish floor (Q33.1–Q33.5, A33.1–A33.4), after Smoke ready lands, since it
+  touches the same widgets.
+- **Q23.7** `helab convert --once` calls a raw file damaged only at 60 s by its mtime (its settle
+  age), not 20 s: "c" (Tony, 2026-10-30). Live and `--watch` keep 20 s with two checks.
+- **Q23.6** a custom profile's tag is `u` + **32** hex digits of its content hash (was 8): "so it's
+  really annoying, also pushes the user to make a proper frozen profile" (Tony, 2026-10-30). Built-in
+  tags unchanged. Names stay far inside every file system's 255-per-name limit (~56 characters, ~82
+  for the temporary name); `file_kinds.HELAB_TXY`'s tag pattern (16 characters now) must take 33;
+  Windows' 260-character full path is the only real limit: test a deep path, and say so clearly.
+- **Q33.7** Live's check interval (Settings › General, 3 s) and the **settle time** (now only
+  `HELAB_SETTLE_SECONDS`, 5 s) are both settings, defaults 3 and 5 s; the settle time 2–60 s (below
+  2 s HeLab can't tell a file still being written: `RACY_SECONDS`). It applies to every read (browse,
+  load, cache), so its help says so and AGENTS.md's "5 s" becomes the default. Measured again on a
+  live lab run (M33.1).
 
 Tony in Chat, 2026-10-30, on the byte units floor (block 32,
 [handoff](sessions/2026-10-29-claude-byte-units/handoff.md)):
@@ -284,6 +315,17 @@ Tony in Chat, 2026-10-30, on the byte units floor (block 32,
 - **Q32.1** a disk budget saved under the OS's minimum (in practice 1 GB on a Windows PC, the old
   minimum) becomes 1 GiB at the next Settings Save: "ok (a)" (the minimum is 1 GiB, Q26.1 (c); HeLab
   already uses 1 GiB from startup).
+
+Tony in Chat, 2026-10-30, via the Assistant, on the Smoke ready floor (block 34,
+[handoff](sessions/2026-10-30-claude-smoke-ready/handoff.md)):
+
+- **Q34.1** Debug › Save Window Screenshot to Temp Folder, without a dialog: yes, built.
+- **Q34.2** a folder tab's own controls keep the same IDs in every tab (only the shown tab's are on
+  screen); the tab bar's close buttons and the Debug items carry the tab's number: keep.
+- **Q34.3** Debug › Close Folder Tab › <title>, with Debug › Show Folder Tab › <title> beside it
+  ("tabs switchable by name"): yes, built.
+- **Q34.4** a conversion running at quit is waited for in the quit window (its shot finishes; Quit now
+  skips it): yes, as built.
 
 ## Converter stage 4, HeLab core (block 12)
 
@@ -342,11 +384,6 @@ Q12.7 confirmed as Q18.6 (the patterns now tagged).
   reopened plot starts "As the folder's tab". The same question as Q14.2: answer it there.
 - **Q23.5 The Live line turns amber for no-hit shots** (the whole line, which otherwise means
   "stopped"). Alternative: amber only in Folder details. Proposed: as built.
-- **Q23.6 A beside TXY from another computer with a colliding `u` tag** would be taken as current (no
-  record there). Proposed: accept (≈1e-6), or later write the hash into the name.
-- **Q23.7 `helab convert --once` and damaged files**: one look has no "first seen", so `--once` goes
-  by the mtime alone (≥ 20 s; its settle rule is 60 s by the mtime alone too). Alternative: `--once`
-  never reports damaged. Proposed: as built.
 
 ## Versions across machines (block 27)
 
@@ -433,13 +470,6 @@ Finding numbers refer to the
     Proposed: no; only `legacy/tdc_autoconverter`.
 
 ## Automating the smoke pass (blocks 5, 31)
-
-- **Q5.1 Which model drives the smoke pass** ([runbook](sessions/2026-10-28-claude-smoke-automation/plan.md))?
-  Proposed: Haiku 5.5, with Sonnet 5.5 if Haiku misreads the screen. The dry run (A5.1, done
-  2026-10-28) used Sonnet 5.5 ([results](sessions/2026-10-28-claude-smoke-mac/results.md)), so
-  Haiku is still untried.
-  Also: which computer-use tool runs it on each machine (the Claude desktop app's computer use
-  on the Mac; check a lab PC can run it)?
 
 - **Q31.4 Where the test data lives** (computer-use extra 6): a set prepared locally in
   `~/GitHub-Local/HeLab-testdata` (75 MB, 148 files: a few raw + MATLAB TXY shots per detector era,

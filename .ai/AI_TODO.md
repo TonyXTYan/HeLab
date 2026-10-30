@@ -335,6 +335,32 @@ From the TXY Index floor's [handoff](sessions/2026-10-29-claude-txy-index/handof
   disk unit like the log thresholds, if Tony wants every threshold by OS
   ([handoff](sessions/2026-10-29-claude-byte-units/handoff.md)).
 
+## Provisional UI pass (block 33)
+
+From the [findings](sessions/2026-10-30-claude-ui-provisional-0.0.7/findings.md); in the UI polish
+floor (Q33.6).
+
+- [ ] **A33.1** Tab out of a plot setting opens the next row's editor (an empty wide box until the
+  next click); Tab should commit and stop, like Return after Smoke ready.
+- [ ] **A33.2** Offline, Folder details says "Loaded from cache · not checked yet" beside "checked,
+  unchanged"; make the two agree with the summary's "not checked (offline)".
+- [ ] **A33.3** Settings › General labels the temp folder "DIR_TEMPS:" (the constant's name); word it
+  like the cache folder's row.
+- [ ] **A33.4** After a plot floats, the settings panel's Float button floats whichever plot the panel
+  names, not the one just floated; make it act on (or show) the right plot.
+
+## Smoke ready (block 34)
+
+From the Smoke ready floor's [handoff](sessions/2026-10-30-claude-smoke-ready/handoff.md) (landed `4ad8ac5`).
+
+- **A34.1 Screenshots of QtWebEngine panes on the lab PCs** paint black on screen and so in the grab
+  ([memory](memory/results/lab-pc-qtwebengine-black-render.md)); the plot's HTML export covers them.
+  No workaround built; the 3D scatter's OpenGL fallback view wasn't grabbed (M34.2).
+- **A34.2 A test guard for Qt-made senders**: fail on `X.<signal>.connect(lambda …)` whose lambda
+  refers to `X` where `X` comes from `findChildren`/`findChild`/`tabBar()`/`widgetForAction` (Wren's
+  AST scan finds 14 such connections, all safe today). It backs AGENTS.md's rule; a sender reached
+  through another name would escape it.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

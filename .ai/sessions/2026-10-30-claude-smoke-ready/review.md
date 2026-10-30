@@ -576,3 +576,85 @@ remove it.
 The code is ready. **R5-1 is open:** a test-only fix, or a known-issues entry with the explanation
 above. The landing rule needs every RERUN explained or in known-issues, and its cause here is
 probable, not proven. R5-2 is a one-line test fix. A~4 goes to known-issues as Beacon proposes.
+
+---
+
+# Round 6: R5 fixes (4620adc..ffabdd2)
+
+First-parent commits: 31c37b0 (the runner-menu fixture's teardown names what quitting still waits for)
+and ffabdd2 (window tests leave nothing saving at quit; R5-2; web-view plots closed once walked).
+Only tests changed (`tests/test_accessible_names.py`, `tests/test_debug_runner_menu.py`,
+`tests/test_parameter_return.py`).
+
+## Checks run
+
+- **Full suite** on ffabdd2 (detached worktree), `-n 4 --reruns 5 --reruns-delay 1`: **8303 passed, 669
+  skipped, no RERUN.**
+- **Type checks:** `mypy helab/ --strict` (194 files), `--platform win32` (194), `mypy tests --strict`
+  (165): clean. `pyright helab tests` and `--pythonplatform Windows`: 0 errors.
+- **CI run 40998446014** (head ffabdd2): completed, success, every job green, **no RERUN in any job**
+  (no "rerun reasons" section in any log).
+
+  | Job | Result |
+  |---|---|
+  | macOS Tests (1/2) 123877019300 | 4137 passed, 322 skipped |
+  | macOS Tests (2/2) 123877019446 | 4166 passed, 347 skipped |
+  | Ubuntu Tests (1/2) 123877019356 | 4135 passed, 324 skipped |
+  | Ubuntu Tests (2/2) 123877019221 | 4167 passed, 347 skipped |
+  | Windows Tests (1/2) 123877019265 | 4124 passed, 333 skipped |
+  | Windows Tests (2/2) 123877019281 | 4150 passed, 361 skipped (it includes the folder tab test, which reran in round 5) |
+  | Converter backends 123877019268 / 123877019370 / 123877019364 | success |
+  | The three Builds | success |
+
+## R5-1: resolved
+
+The folder tab test now runs on a RAM-only folder (`no_auto_data_root`: conftest places no
+`.helab-root`, so nothing is saved to the disk cache). It asserts that nothing for that folder is
+pending, then waits up to 60 s until `quit_saves()` is empty, naming `quit_entries()` if not. The
+`window` fixture's teardown names what quitting still waited for (31c37b0). This removes the cause I
+found in round 5: a background save still running at teardown, which the quit window then waited for.
+
+## Does the RAM-only marker make a test skip what it checks? No
+
+- **The names walk** (both main-window cases in `test_accessible_names.py`): a scratch copy recorded
+  every control each walk visits, with and without the marker.
+  - `test_the_main_window_with_a_folder_and_plots`: the same 92 controls (class and ID) either way,
+    and the same ones shown.
+  - `test_every_script_and_each_library`: the same 422 controls, and the same ones shown.
+
+  A data root adds no control; the walk also checks hidden controls.
+- **`test_debug_runner_menu.py`** (now marked as a whole module): no test there asserts anything about
+  caching. The only matches for "cache" or "saved" are the Settings tab name "Cache", the screenshot's
+  "Screenshot saved", and the quit checks.
+  - Dump State's "no I/O during the dump" check still patches `IOService.submit` for the dump itself,
+    unchanged.
+  - Its other assertions are about what the window shows: the tabs, the summary line, Folder details,
+    the plot's source line.
+- **`test_parameter_return.py`'s window test** checks that the value Return took is the one the plot
+  runs with. That doesn't depend on caching (saved-result reuse is off by default anyway).
+
+## R5-2 and the Nit: resolved
+
+- **R5-2:** the temp-folder screenshot test patches `HelabMainWindow.DIR_TEMPS` to its own `tmp_path`
+  (HelabMainWindow imports it by value). A rerun finds none of the first attempt's files.
+- **Nit:** `close_web_views` closes each web-view (Plotly) plot right after its walk, so at most one is
+  open at a time.
+  - The walk still sees `PlotlyPane` before it closes (`covered_by` checks the class was walked).
+  - `opened` is lowered by the number closed, so `wait_for_plots` still counts right.
+  - IDs of plots shown side by side are still checked on the PyQtGraph plots and in the per-Library
+    step.
+- **Also:** `covered_by()` now reads the class list from `COVERED`, replacing the attribute set on the
+  test function and its `type: ignore`s. No behaviour change.
+
+## Verdict (round 6)
+
+**Nothing is open.** Every finding from rounds 1–6 is resolved. CI 40998446014 is green on every job
+with no RERUN. The RERUNs from earlier rounds are all explained:
+- H1: fixed;
+- known-issues:135: the Windows pathlib flake, to which run 40990082872 is added;
+- R5-1: fixed;
+- A~4: goes into known-issues at landing.
+
+Left for CoCo at landing (records, not findings):
+- the known-issues entries (A~4; the tab × GC bug closed; known-issues:81 reworded);
+- the handoff's doc proposals.
