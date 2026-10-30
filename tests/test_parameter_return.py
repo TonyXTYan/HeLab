@@ -73,7 +73,7 @@ def test_escape_closes_the_editor_with_the_value_put_back(qtbot: QtBot) -> None:
     assert param.value() == 1.0
 
 
-def test_an_invalid_entry_then_return_gives_the_value_back_as_tab_does(qtbot: QtBot) -> None:
+def test_an_invalid_entry_then_return_or_tab_gives_the_value_back(qtbot: QtBot) -> None:
     root, tree = tree_of(qtbot)
     param = parameter_of(root, SPECS[1])
     after: dict[Qt.Key, tuple[Any, str]] = {}
@@ -84,6 +84,30 @@ def test_an_invalid_entry_then_return_gives_the_value_back_as_tab_does(qtbot: Qt
         after[key] = (param.value(), item.widget.lineEdit().text())
     assert after[Qt.Key.Key_Return] == after[Qt.Key.Key_Tab] == (3, "3")
     qtbot.waitUntil(lambda: closed(item))
+
+
+@pytest.mark.parametrize("key", [Qt.Key.Key_Tab, Qt.Key.Key_Backtab], ids=["tab", "backtab"])
+def test_tab_takes_the_value_and_closes_the_editor_without_opening_the_next(qtbot: QtBot, key: Qt.Key) -> None:
+    """A33.1: Tab (or Shift+Tab) out of a value commits and stops, like Return; no other row's editor opens."""
+    root, tree = tree_of(qtbot)
+    param = parameter_of(root, SPECS[0])
+    item = open_row(qtbot, tree, param)
+    type_into(qtbot, item, "7.5", key)
+    assert param.value() == 7.5
+    qtbot.waitUntil(lambda: closed(item))
+    assert item.displayLabel.text() == "7.5 s" and not tree.selectedItems() and tree.hasFocus()
+    for other in (parameter_of(root, spec) for spec in SPECS[1:]):
+        assert all(not row.widget.isVisible() for row in other.items)
+
+
+def test_tab_out_of_a_choice_closes_it(qtbot: QtBot) -> None:
+    root, tree = tree_of(qtbot)
+    param = parameter_of(root, SPECS[2])
+    item = open_row(qtbot, tree, param)
+    qtbot.keyClick(item.widget, Qt.Key.Key_Down)  # type: ignore[no-untyped-call]
+    qtbot.keyClick(item.widget, Qt.Key.Key_Tab)  # type: ignore[no-untyped-call]
+    qtbot.waitUntil(lambda: closed(item))
+    assert param.value() == "b" and not tree.selectedItems()
 
 
 def test_a_choice_is_taken_as_picked_and_return_closes_it(qtbot: QtBot) -> None:
