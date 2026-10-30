@@ -385,6 +385,17 @@ was done on the floor.
 - **A36.4** (Ibis R3-2) `tests/test_main_split.py` would accept a settings panel collapsed to zero width;
   check `0 < right` too.
 
+## Live tests on the test data (block 37)
+
+From the Assistant's Live tests on HeLab's test data (`tests/test_live_testdata.py`, 2026-10-31).
+
+- **A37.1** (Q37.1) Say when a raw file's reading stops early: the parser (`helab/convert/raw.py`, both
+  `fastio.parse_strict` and `_parse_textscan`) reports the line where an unreadable token ended it, the
+  conversion keeps MATLAB's TXY byte for byte and adds the stop to its event (a `shot_converted` field, or
+  a warning kind in `helab/io_ops/events.py`), and the Live line, Folder details and `helab convert` name
+  it ("read stopped at line N"). `test_damaged_files_during_live_are_said_once_and_the_run_goes_on` then
+  checks the flag.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

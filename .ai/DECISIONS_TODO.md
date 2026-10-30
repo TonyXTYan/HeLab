@@ -283,6 +283,14 @@ Tony in Chat, 2026-10-30, on computer use and the smoke pass (blocks 5 and 31,
   MATLAB 2023 reference set); CI reads it with the `HF_TOKEN` secret, and its tests skip without it
   ([testing](architecture/testing.md)).
 
+Tony in Chat, 2026-10-31, on the Live tests on the test data (block 37):
+
+- **Q37.1** a raw file with an unreadable line mid-file (the test data's `damaged/d3.txt`) converts as
+  MATLAB's textscan reads it, stopping at that line (204 of the shot's 588 hits), so the TXY stays
+  MATLAB's byte for byte; but HeLab says so: the shot is flagged "read stopped at line N" on the Live
+  line, in Folder details and by `helab convert` (A37.1). Today it is silent;
+  `tests/test_live_testdata.py` pins that until A37.1.
+
 Tony in Chat, 2026-10-30, on the provisional UI pass (block 33,
 [findings](sessions/2026-10-30-claude-ui-provisional-0.0.7/findings.md), "as proposed"), for a "UI
 polish" floor after Smoke ready lands (Q33.6):
