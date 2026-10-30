@@ -806,6 +806,50 @@ def test_a_live_saves_dataset_has_the_signature_it_sent(tmp_path: Path, private_
     assert saved_info(source, private_store)["signature"] == result["signature"]
 
 
+def test_a_shot_held_from_matlabs_keeps_it_when_helabs_is_converted(tmp_path: Path, private_store: str) -> None:
+    """Codex 4425456506: under HeLab priority, shot 1 held from MATLAB's TXY (HeLab had none then) stays
+    MATLAB's in Live's check and its save when HeLab's TXY of it is converted later: no mismatch ("changed")."""
+    source = tmp_path / "run"
+    source.mkdir()
+    for shot in (1, 2, 3):
+        write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 1))))
+    old = time.time() - 600
+    os.utime(matlab_txy(source, 1), (old, old))
+    convert(source, tmp_path, private_store, shots=[2, 3])
+    priority = options(tmp_path, private_store, txy_sources.HELAB_PRIORITY)
+    events = run_load(source, tmp_path, None, priority)
+    first = loaded(events)
+    assert sorted(first["txy"]["origins"]) == ["2", "3"]  # (Shot 1 is MATLAB's.)
+    convert(source, tmp_path, private_store, shots=[1])  # HeLab's TXY of shot 1, current, arrives.
+    txy = {**priority, "key": _key(source, private_store)}
+
+    def check() -> list[dict[str, Any]]:
+        output = tmp_path / "live"
+        output.mkdir()
+        sent: list[dict[str, Any]] = []
+        live_check(str(source), str(output), sent.append, first["fingerprint"],  # type: ignore[arg-type]
+                   txy=txy, memory_origins=first["txy"]["origins"])
+        return sent
+    assert kinds_of(check()) == ["live_unchanged"]  # (The held data stands: nothing to read.)
+    held_dir = tmp_path / "held"
+    held_dir.mkdir()
+    for shot, array in shots_read(events).items():
+        np.save(held_dir / f"{shot}.npy", array)
+    saved: list[dict[str, Any]] = []
+    save_held(str(source), saved.append, {"directory": store_root(private_store)},  # type: ignore[arg-type]
+              first["fingerprint"], [], str(held_dir), txy=priority, held_txy=first["txy"])
+    assert "shots_missing" not in kinds_of(saved)
+    assert sorted(loaded(saved)["txy"]["origins"]) == ["2", "3"] and loaded(saved)["names"][0] == "d_txy_forc1.txt"
+    # A load takes HeLab's for it, as the source asks (read anew: another kind than the one held).
+    again = loaded(run_load(source, tmp_path, None, priority, memory=first["fingerprint"],
+                            memory_origins=first["txy"]["origins"], base_signature=first["signature"]))
+    assert sorted(again["txy"]["origins"]) == ["1", "2", "3"]
+    # So does one from the saved dataset (as after a restart): its other shots reused, shot 1 read.
+    restored = run_load(source, tmp_path, private_store, priority)
+    assert sorted(loaded(restored)["txy"]["origins"]) == ["1", "2", "3"]
+    assert loaded(restored)["cache_reason"] == "Reused 2 shots from disk cache; 1 new or changed TXY file to read"
+
+
 def test_live_asks_the_store_for_a_key_once_a_session(tmp_path: Path, private_store: str,
                                                       monkeypatch: pytest.MonkeyPatch) -> None:
     from helab.io_ops import live as live_module
