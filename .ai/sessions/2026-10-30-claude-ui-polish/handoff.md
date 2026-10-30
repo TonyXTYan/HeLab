@@ -72,6 +72,26 @@ Ibis's review: [review.md](review.md). `origin/dev/v0.0.7` is merged in at `cb05
 | `e8bf139` | Q23.6 user tags `u` + 32 hex; path too long said plainly |
 | `78db15f` | Q23.6 test fix: the deep folder is always its own (a long basetemp made it `tmp_path` itself) |
 
+## Round 3 (Ibis's round 2)
+
+- **R2-1** (`2c13796`): a closed Plotly plot's figure now leaves the Dash server **as it closes**, not when garbage
+  collection reaches the closed instance's reference cycles. `PlotlyPane.release_figure()` calls its finalizer
+  (`self._free`, once); `dock.release_figures(widget)` calls it on every part of a plot leaving its dock, from
+  `AnalysisDock.setWidget` (the plot replaced: another library, released for RAM) and from the plot's close. Plain
+  calls, so the SIGSEGV fix stands. The four older Plotly tests are back as they were (holding the pane, waiting
+  with no `gc.collect()`; `971c348` reverted), the real-window close test checks it at once without a collection,
+  and two unit tests cover `release_figure` and a plot drawn anew; all seven fail with `release_figure` a no-op.
+- **R2-2** (`e0afa54`): the settings panel's least width is `MIN_SETTINGS_WIDTH` **250 px**, set (not from the
+  contents, which on Windows need more than 320) and below the 320 default; `read_split` and
+  `_remember_panel_widths` use it for the settings width (the folders keep 80). To fit 250 at macOS's default
+  font with a plot open, the Presets and Scripts rows' combos shrink to 3 and 4 characters and their buttons to
+  their text + 8 px (measured: nothing cut from 248 px; before, the Presets row's Delete… was cut below 280). A
+  test drags the panel to its least width and finds no control past its edge or narrower than its text.
+- **R2-3** (`2c13796`): the guard also catches `connect(slot=…)`, `destroyed[QObject].connect(…)` and a
+  `destroyed` signal stored in a name first.
+- **Checks:** full suite inside and outside the checkout **8473 passed, 669 skipped, no RERUN**; the six type
+  checks clean. `dev/v0.0.7` unchanged since `7b51c84`.
+
 ## What each does, and the brief's questions
 
 **Q33.1** (`FolderExplorer.on_double_click`, `_navigate_input`, `without_subfolders`, `_select_listed`). Memory only:
