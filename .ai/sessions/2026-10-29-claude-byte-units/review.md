@@ -232,3 +232,69 @@ This is the same test and the same symptom as the existing `roadmaps/known-issue
 drawing test, with no byte units involved. gw3 had run the new subprocess test about 3 % earlier,
 but that test runs in its own process and passed. The Coordinator should add run 40865344851 to
 that known-issues entry when landing.
+
+## Merge check (TXY Index landed, `c492242`; merge `8a03bbe`, head `1e5c166`; 2026-10-30)
+
+**The resolution is units only. No new findings; none open.**
+
+- **What the branch adds on top of the landed `dev/v0.0.7`.** I compared `git diff c492242..1e5c166 -- helab tests`
+  with the diff I reviewed, `9f0b21f..f28e20b`, after removing the line-number and index headers.
+  Leaving out `CacheTab.py` and `test_converter_tab.py`, the two are **identical**: the merge
+  changed nothing else in code or tests.
+- **`helab/views/CacheTab.py`.** Against `c492242`, the only changes are the reviewed units changes.
+  TXY Index's logic and text are all kept: `clearable_bytes`, the "what is left of HeLab's converted
+  TXY" wording, `converted_used`, the per-base tooltip, `bases`, `newer` and "which Clear leaves".
+  Its four new `byte_size` calls all have `'disk'`, which is correct, since they measure converted
+  TXY on disk:
+  - line 476: `clearable_bytes`;
+  - line 664: the converted label;
+  - line 667: a base's bytes;
+  - line 668: a newer index's bytes.
+
+  The disk budget box, `_snap_disk_budget` and the RAM box are as reviewed.
+- **`tests/test_converter_tab.py`.** The only changes are `'disk'` added to the six `byte_size`
+  calls (lines 301, 303, 346, 349, 350, 369), which match the code's kind. No assertion text
+  changed otherwise.
+- **No call without a kind.**
+  - Grepping the merged tree, every `byte_size(` call in `helab/` and `tests/` passes `'disk'` or
+    `'ram'`. That is 59 calls in `helab/` (`git grep -c`, outside `number_format`). mypy and
+    pyright would fail any call missing the required argument, and both pass.
+  - `byte_rate` takes no kind (it is always disk). Its one call is `FolderExplorer.py:1565`, and
+    the tests pass `platform=`.
+- **Checks on the merged tree** (`8691589`, which differs from `1e5c166` only in `handoff.md`):
+  - touched tests (`test_converter_tab`, `test_cache_tab`, `test_number_format`,
+    `test_settings_defaults`): 96 passed;
+  - full suite `-n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`: **8250
+    passed, 669 skipped, 2 warnings, no RERUN** (132 s);
+  - mypy `--strict` on helab (191 files) and tests (160), both again with `--platform win32`:
+    no issues;
+  - pyright, default and `--pythonplatform Windows`: 0 errors.
+
+### CI run 40989130996 (head `1e5c166`)
+
+**Conclusion `success`. All 13 non-skipped jobs passed. One RERUN, a known Windows flake.** I read
+each job log with `gh api .../actions/jobs/<id>/logs`.
+
+| Job ID | Job | Result |
+|---|---|---|
+| 123847074921 | windows Tests (1/2) | 4098 passed, 333 skipped |
+| 123847075029 | windows Tests (2/2) | 4123 passed, 361 skipped, **1 rerun** |
+| 123847075080 | windows Converter backends | 692 passed, 517 skipped |
+| 123847075074 | macos Tests (1/2) | 4111 passed, 322 skipped |
+| 123847075077 | macos Tests (2/2) | 4139 passed, 347 skipped |
+| 123847074985 | macos Converter backends | 693 passed, 516 skipped |
+| 123847074999 | ubuntu Tests (1/2) | 4108 passed, 324 skipped |
+| 123847075062 | ubuntu Tests (2/2) | 4140 passed, 347 skipped |
+| 123847074912 | ubuntu Converter backends | 693 passed, 516 skipped |
+| 123847075766 / 123847075106 / 123847075163 | Build windows / macos / ubuntu | success |
+| 123847017611 | Detect branch and version bump | success |
+
+**The RERUN (job 123847075029, windows Tests (2/2)):**
+`tests/test_test_isolation.py::test_pytest_imports_the_checkout_it_runs_in_before_any_other`.
+The rerun reason reads: "AssertionError: … ERROR collecting test session … pathlib\_abc.py:437:
+in lstat / return self.stat(follow_symlinks=False)" (at `tests\test_test_isolation.py:47`). It
+passed on retry.
+
+This is the same test and the same symptom as the existing `roadmaps/known-issues.md` entry
+(line 135, Windows CI run 40754482305). It is unrelated to units: the inner pytest's collection
+`lstat` failed on Windows. The Coordinator should add run 40989130996 to that entry when landing.
