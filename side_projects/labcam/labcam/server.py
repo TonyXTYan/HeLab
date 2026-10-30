@@ -1,4 +1,4 @@
-"""HTTP: `/` the page, `/stream` the overlay as MJPEG, `/frame.jpg` one overlay frame, `/raw.jpg` the
+"""HTTP: `/` the page, `/stream` the overlay as MJPEG (`?overlay=0` without it), `/frame.jpg` one overlay frame, `/raw.jpg` the
 un-mirrored camera frame, `/state.json` every reading and lock, `/log` the recent log, `/history.csv` and `/locks.csv` today's
 data, `/history.json?hours=N` the last N hours for the plots;
 POST `/api/region` {name, corners} and `/api/reference` change the boxes and the reference frame."""
@@ -6,6 +6,7 @@ POST `/api/region` {name, corners} and `/api/reference` change the boxes and the
 from __future__ import annotations
 
 import collections
+import gzip
 import json
 import logging
 import threading
@@ -46,6 +47,10 @@ class RingHandler(logging.Handler):
 
 def make_handler(engine: Engine, ring: RingHandler) -> type[BaseHTTPRequestHandler]:
     page = resources.files("labcam").joinpath("page.html").read_bytes()
+    # Plotly's browser library, from the plotly package (the page needs no internet), gzipped once.
+    from plotly.offline import get_plotlyjs
+
+    plotly_js = gzip.compress(get_plotlyjs().encode("utf-8"))
 
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
@@ -98,23 +103,33 @@ def make_handler(engine: Engine, ring: RingHandler) -> type[BaseHTTPRequestHandl
                 except ValueError:
                     hours = 1.0
                 self._json(history.series(hours))
+            elif path == "/plotly.min.js":
+                self.send_response(200)
+                self.send_header("Content-Type", "application/javascript")
+                self.send_header("Content-Encoding", "gzip")
+                self.send_header("Content-Length", str(len(plotly_js)))
+                self.send_header("Cache-Control", "max-age=86400")
+                self.end_headers()
+                self.wfile.write(plotly_js)
             elif path == "/stream":
-                self._stream()
+                self._stream(plain="overlay=0" in query)
             else:
                 self._send(b"not found", "text/plain", HTTPStatus.NOT_FOUND)
 
-        def _stream(self) -> None:
+        def _stream(self, plain: bool = False) -> None:
             self.send_response(200)
             self.send_header("Content-Type", "multipart/x-mixed-replace; boundary=frame")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Connection", "close")
             self.end_headers()
             seen = -1
+            if plain:
+                engine.plain_viewers += 1
             try:
                 while True:
                     with engine.changed:
                         engine.changed.wait_for(lambda: engine.frame_seq != seen, timeout=5)
-                        jpeg, seen = engine.overlay_jpeg, engine.frame_seq
+                        jpeg, seen = (engine.plain_jpeg if plain else engine.overlay_jpeg), engine.frame_seq
                     if jpeg is None:
                         continue
                     self.wfile.write(
@@ -126,6 +141,9 @@ def make_handler(engine: Engine, ring: RingHandler) -> type[BaseHTTPRequestHandl
                     )
             except (BrokenPipeError, ConnectionResetError):
                 pass
+            finally:
+                if plain:
+                    engine.plain_viewers -= 1
             self.close_connection = True
 
         def do_POST(self) -> None:
@@ -137,6 +155,12 @@ def make_handler(engine: Engine, ring: RingHandler) -> type[BaseHTTPRequestHandl
                 return
             if self.path == "/api/reference":
                 self._json({"message": engine.set_reference()})
+            elif self.path == "/api/snap":
+                name = body.get("name")
+                if name not in engine.config.instruments:
+                    self._json({"error": "unknown instrument"}, HTTPStatus.BAD_REQUEST)
+                    return
+                self._json({"message": engine.snap(name)})
             elif self.path == "/api/region":
                 name, corners = body.get("name"), body.get("corners")
                 try:

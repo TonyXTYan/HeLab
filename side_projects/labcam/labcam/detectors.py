@@ -62,15 +62,18 @@ def _rect(x: float, y: float, w: float, h: float) -> list[Point]:
 class TraceLevel(Detector):
     """A digital scope's signal: its shape and its height on the screen (0 top, 1 bottom).
 
-    Signal pixels are those far (`contrast`) from the empty screen's colour: `background` ([B, G, R], taken
-    from a frame with a thin line; followed slowly while a thin line shows), else the screen's median colour,
-    which fails once a block covers most of the screen. A thin trace and a filled band alike count. `margin` (fraction) trims the screen's edges, where
-    the bezel, menus and labels sit. Per column: the signal's height (its extent) and its median row.
-    - thickness: the median column's extent, as a fraction of the screen's height (a thin line ≈ 0.04–0.07);
-    - waviness: how far the columns' median rows spread (10–90 %), as a fraction of the height;
-    - shape: `line` (thinner than `thin`, flatter than `flat`), `wavy` (thin but not flat), `block` (thick),
-      or `none`. For a laser lock's error signal a flat thin line means locked;
-    - level: the median of the columns' median rows.
+    Each column of the screen is compared with its own median colour, so a faint thin line (only ~20 levels
+    off the screen) still stands out while the screen's overall colour drifts with the light; a pixel at least
+    `contrast` away is signal. `margin` (fraction) trims the screen's edges (bezel, menus, labels).
+    - thickness: the median column's count of signal pixels, as a fraction of the height (a line ≈ 0.04–0.12,
+      a stray label or grid dot adds a pixel, not an extent);
+    - filled: how far the columns' median colour is from the empty screen's (`background`, [B, G, R]); a block
+      covering most of the screen makes the median the block's colour, so it reads as filled even when the
+      leftover screen is what differs per column;
+    - waviness: how far the columns' median signal rows spread (10–90 %), as a fraction of the height;
+    - shape: `block` (thicker than `thin` or filled beyond `fill`), `line` (flatter than `flat`), `wavy`, or
+      `none` (an empty screen). For a laser lock's error signal a flat thin line means locked;
+    - level: the median of the columns' median signal rows.
     `ok` is a flat thin line within `tolerance` of the middle.
     """
 
@@ -92,43 +95,47 @@ class TraceLevel(Detector):
         inner = cv2.GaussianBlur(roi[top:bottom, left:right], (3, 3), 0).astype(np.float32)
         if inner.shape[0] < 5 or inner.shape[1] < 5:
             return Reading("unknown", "region too small")
-        background = self.background if self.background is not None else np.median(inner.reshape(-1, 3), axis=0)
-        distance = np.abs(inner - background).max(axis=2)
-        signal = distance >= self.inst.option("contrast", 40.0)
+        column_colour = np.median(inner, axis=0, keepdims=True)
+        signal = np.abs(inner - column_colour).max(axis=2) >= self.inst.option("contrast", 25.0)
+        filled = 0.0
+        if self.background is not None:
+            filled = float(np.median(np.abs(column_colour[0] - self.background).max(axis=1)))
+        fill_limit = self.inst.option("fill", 40.0)
         columns = np.nonzero(signal.any(axis=0))[0]
         found = len(columns) / signal.shape[1]
+        scale = max(1, h - 1)
+        thin, flat = self.inst.option("thin", 0.2), self.inst.option("flat", 0.12)
+        tol = self.inst.option("tolerance", 0.15)
         if found < self.MIN_COLUMNS:
+            if filled > fill_limit:
+                return Reading("off", "block (fills the screen)", {"shape": "block", "filled": round(filled), "found": round(found, 2)},
+                               round(min(1.0, filled / (2 * fill_limit)), 2))
             if self.background is not None:
-                # The empty screen is seen clearly: the trace is off the screen (or switched off).
-                return Reading("off", "empty screen", {"shape": "none", "found": round(found, 2)}, 0.6,
+                return Reading("off", "empty screen", {"shape": "none", "filled": round(filled), "found": round(found, 2)}, 0.6,
                                "no trace on the screen: off-screen or switched off?")
             return Reading("unknown", "no signal", {"shape": "none", "found": round(found, 2)}, 0.5,
                            f"signal seen in {found:.0%} of columns")
-        extents, medians = [], []
-        for c in columns:
-            rows = np.nonzero(signal[:, c])[0]
-            extents.append(float(rows[-1] - rows[0] + 1))
-            medians.append(float(np.median(rows)))
-        scale = max(1, h - 1)
-        thickness = float(np.median(extents)) / scale
+        counts = signal.sum(axis=0)[columns]
+        medians = [float(np.median(np.nonzero(signal[:, c])[0])) for c in columns]
+        thickness = float(np.median(counts)) / scale
         waviness = float(np.percentile(medians, 90) - np.percentile(medians, 10)) / scale
         level = (float(np.median(medians)) + top) / scale
-        thin, flat = self.inst.option("thin", 0.2), self.inst.option("flat", 0.12)
-        shape = "block" if thickness > thin else ("line" if waviness <= flat else "wavy")
+        blocked = thickness > thin or filled > fill_limit
+        shape = "block" if blocked else ("line" if waviness <= flat else "wavy")
         if shape == "line" and self.background is not None:
             # Follow slow light changes from frames that show the empty screen around a thin line.
-            empty = inner[~signal]
-            if len(empty) > 0.5 * signal.size:
-                self.background = 0.95 * self.background + 0.05 * np.median(empty, axis=0)
-        tol = self.inst.option("tolerance", 0.15)
+            self.background = 0.95 * self.background + 0.05 * np.median(column_colour[0], axis=0)
         centred = abs(level - 0.5) <= tol
         status = "ok" if shape == "line" and centred else "off"
         place = "middle" if centred else ("high" if level < 0.5 else "low")
         text = {"line": f"flat line, {place} ({level:.2f})", "wavy": f"wavy ({waviness:.2f}), {place}",
-                "block": f"block ({thickness:.2f} thick)"}[shape]
-        # Sure: how clearly the measure is past its threshold, and how much of the screen shows a signal.
-        margin_of = abs(thickness - thin) / thin if shape == "block" else min(abs(thickness - thin) / thin, abs(waviness - flat) / flat)
-        confidence = round(min(found, 0.5 + min(0.5, margin_of)), 2)
+                "block": f"block ({thickness:.2f} thick)" if thickness > thin else "block (fills the screen)"}[shape]
+        # Sure: how clearly past its thresholds, and how much of the screen shows a signal.
+        if shape == "block":
+            margin_of = max((thickness - thin) / thin, (filled - fill_limit) / fill_limit)
+        else:
+            margin_of = min((thin - thickness) / thin, (fill_limit - filled) / fill_limit, abs(waviness - flat) / flat)
+        confidence = round(min(found if shape != "block" else 1.0, 0.5 + min(0.5, max(0.0, margin_of))), 2)
         y = level * (h - 1)
         marks: list[tuple[Any, ...]] = [
             ("line", [(left, y), (right, y)]),
@@ -139,7 +146,7 @@ class TraceLevel(Detector):
             status,
             text,
             {"shape": shape, "level": round(level, 3), "thickness": round(thickness, 3),
-             "waviness": round(waviness, 3), "found": round(found, 2)},
+             "waviness": round(waviness, 3), "filled": round(filled), "found": round(found, 2)},
             confidence,
             marks=marks,
         )
@@ -184,11 +191,12 @@ class Needle(Detector):
 
 
 class Dot(Detector):
-    """An analogue scope's spot: where it is, and whether it moved more than `still_px` over the last
-    `window` seconds (the 15–85 % range of its positions, so a few odd frames don't count). `want` ("still",
-    the default, or "moving") says which is `ok`.
+    """An analogue scope's spot: where it is, and whether it moved over the last `window` seconds by more than
+    `still` (a fraction of the screen's width, default 0.1; the 15–85 % range of its positions, so a few odd
+    frames don't count), or disappeared. `want` ("still", the default, or "moving") says which is `ok`.
 
-    The spot is the brightest compact area above the screen's own background (a large median blur).
+    The spot is the brightest compact area above the screen's own background (a large median blur), away from
+    the region's edges. How sure: how clearly the spot stands out, and how far its movement is from the limit.
     """
 
     MIN_CONTRAST = 30.0
@@ -212,8 +220,13 @@ class Dot(Detector):
         window = self.inst.option("window", 10.0)
         while self.history and now - self.history[0][0] > window:
             self.history.popleft()
+        want_still = self.inst.options.get("want", "still") == "still"
+        gone_status = "off" if want_still else "unknown"
         if peak < self.MIN_CONTRAST:
-            return Reading("unknown", "no dot", {"contrast": round(peak, 1)}, 0.0, "nothing bright enough (covered?)")
+            # The engine reads a covered screen as "covered?" before this; here the screen is clear and empty.
+            return Reading(gone_status, "dot gone", {"gone": "yes", "contrast": round(peak, 1)},
+                           round(min(1.0, 0.5 + (self.MIN_CONTRAST - peak) / self.MIN_CONTRAST), 2),
+                           "nothing bright on the screen")
         _, labels, stats, centroids = cv2.connectedComponentsWithStats((excess >= 0.6 * peak).astype(np.uint8))
         py, px = np.unravel_index(int(np.argmax(excess)), excess.shape)
         label = int(labels[py, px])
@@ -227,19 +240,23 @@ class Dot(Detector):
         # swinging past) don't count as the spot moving; a spot that wanders does.
         spread = float(max(np.subtract(*np.percentile(xs, [85, 15])), np.subtract(*np.percentile(ys, [85, 15])))) \
             if len(self.history) > 1 else 0.0
-        moving = spread > self.inst.option("still_px", 2.0)
-        want_still = self.inst.options.get("want", "still") == "still"
+        limit = self.inst.option("still", 0.1) * gray.shape[1]
+        moving = spread > limit
         marks: list[tuple[Any, ...]] = [("circle", (cx, cy), 6)]
         marks += [("point", (x, y)) for _, x, y in list(self.history)[-20:]]
         status = "ok" if moving != want_still else "off"
-        text = f"moving ({spread:.1f} px)" if moving else f"still ({spread:.1f} px in {window:.0f} s)"
+        share = spread / gray.shape[1]
+        text = f"moving ({share:.0%} of the screen)" if moving else f"still ({spread:.1f} px in {window:.0f} s)"
         if len(self.history) < 3:
             status, text = "unknown", "watching…"
+        seen = min(1.0, peak / (2 * self.MIN_CONTRAST))  # a spot twice the needed contrast is plainly there
+        clear = min(1.0, abs(spread - limit) / limit)  # how far from the limit
         return Reading(
             status,
             text,
-            {"x": round(cx, 1), "y": round(cy, 1), "spread_px": round(spread, 2), "contrast": round(peak, 1)},
-            min(1.0, peak / 100),
+            {"x": round(cx, 1), "y": round(cy, 1), "spread_px": round(spread, 2), "limit_px": round(limit, 1),
+             "contrast": round(peak, 1)},
+            round(seen * (0.5 + 0.5 * clear), 2),
             marks=marks,
         )
 

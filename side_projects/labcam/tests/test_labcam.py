@@ -60,12 +60,12 @@ def test_trace_block_and_wavy() -> None:
 def test_locks() -> None:
     instruments = {
         "top": config.Instrument("top", "trace", "Top", config.rect_corners(0, 0, 1, 1), {}),
-        "dot": config.Instrument("dot", "dot", "Dot", config.rect_corners(0, 0, 1, 1), {"still_px": 2.0}),
+        "dot": config.Instrument("dot", "dot", "Dot", config.rect_corners(0, 0, 1, 1), {}),
         "needle": config.Instrument("needle", "needle", "Needle", config.rect_corners(0, 0, 1, 1), {"tolerance": 0.2}),
     }
     readings = {
         "top": Reading("ok", "flat line", {"shape": "line", "level": 0.5}, 0.9),
-        "dot": Reading("ok", "still", {"spread_px": 0.5}, 0.8),
+        "dot": Reading("ok", "still", {"spread_px": 0.5, "limit_px": 10.0}, 0.8),
         "needle": Reading("ok", "middle", {"offset": 0.05}, 0.7),
     }
     specs = ["top:flat", "dot:still", "needle:middle"]
@@ -108,7 +108,7 @@ def test_needle() -> None:
 
 
 def test_dot_still_then_moving() -> None:
-    dot = Dot(inst("dot", still_px=2.0, window=60))
+    dot = Dot(inst("dot", still=0.1, window=60))
 
     def frame(x: int) -> np.ndarray:
         image = np.full((60, 100, 3), 120, np.uint8)
@@ -119,8 +119,12 @@ def test_dot_still_then_moving() -> None:
         reading = dot.update(frame(40))
     assert reading.status == "ok" and reading.text.startswith("still")  # still is what's wanted by default
     reading = dot.update(frame(60))
-    assert reading.status == "off" and reading.text.startswith("moving")
-    assert dot.update(np.full((60, 100, 3), 120, np.uint8)).status == "unknown"
+    assert reading.status == "ok"  # one odd position is outvoted
+    for _ in range(3):
+        reading = dot.update(frame(60))
+    assert reading.status == "off" and reading.text.startswith("moving")  # 20 px of a 100 px screen
+    gone = dot.update(np.full((60, 100, 3), 120, np.uint8))
+    assert gone.status == "off" and gone.text == "dot gone"
 
 
 def test_wavemeter_digits_and_vote() -> None:

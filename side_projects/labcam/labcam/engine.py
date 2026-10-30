@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import dataclasses
 import logging
 import threading
@@ -14,6 +15,7 @@ import cv2
 import numpy as np
 
 from . import history
+from . import snap as snap_module
 from . import locks as locks_module
 from .align import Aligner
 from . import region as regions
@@ -33,8 +35,9 @@ KINDS: dict[str, type[Detector]] = {
     "wavemeter": Wavemeter,
 }
 ALIGN_EVERY = 5.0  # s
-LOCK_SETTLE = 3
+LOCK_SETTLE = 1.5  # s a loss (or unknown) must last before it shows
 LOCK_AFTER = 10.0  # s
+SURE_WINDOW = 10.0  # s of "how sure" summarised as median ± std
 COVER_ACCEPT = 600.0  # s: surroundings changed this long become the usual ones
 COVER_PAD = 10.0  # px around a moving area that still counts as in front of an instrument
 
@@ -72,7 +75,10 @@ class Engine:
         self.regions: dict[str, regions.Region] = {}
         self.marks: dict[str, list[tuple[Any, ...]]] = {}
         self.overlay_jpeg: bytes | None = None
+        self.plain_jpeg: bytes | None = None  # without the overlay, while plain_viewers > 0
+        self.plain_viewers = 0
         self.raw_frame: Image | None = None
+        self._recent_frames: collections.deque[Image] = collections.deque(maxlen=max(1, config.average_frames))
         self.frame_seq = 0
         self.changed = threading.Condition()
         self.timings: dict[str, float] = {}
@@ -81,7 +87,9 @@ class Engine:
         self._last_align = 0.0
         self._last_slow: dict[str, float] = {}
         self._slow_busy = threading.Event()
-        self._streaks: dict[str, tuple[str, int]] = {}
+        self._streaks: dict[str, tuple[str, float]] = {}
+        self._history: dict[str, collections.deque[tuple[float, Reading]]] = {}
+        self._sure: dict[str, collections.deque[tuple[float, float]]] = {}  # instrument or laser → (time, sure)
         self._reference_wanted = not self._load_reference()
         self._stop = threading.Event()
         self.locks: dict[str, locks_module.Lock] = {}
@@ -112,6 +120,19 @@ class Engine:
         return "reference frame set"
 
     # Boxes ---------------------------------------------------------------------------------------------
+
+    def snap(self, name: str) -> str:
+        """Snaps the instrument's region to its screen's edges on the current frame (see snap.py)."""
+        frame = self.raw_frame
+        region = self.regions.get(name)
+        if frame is None or region is None:
+            return "no frame yet"
+        inst = self.config.instruments[name]
+        result = snap_module.snap(frame, region.corners, inst.options.get("background"))
+        if not result.ok:
+            return f"{name}: edges not found on every side (found {result.found} of {snap_module.SAMPLES}); kept as it was"
+        self.set_corners(name, result.corners)
+        return f"{name} snapped (moved up to {result.moved:.0f} px); check it, Edit region if it's off"
 
     def set_corners(self, name: str, corners: Corners) -> None:
         """`corners` in the current frame; stored in the reference frame's coordinates."""
@@ -151,6 +172,7 @@ class Engine:
         if self.config.mirror:
             frame = cv2.flip(frame, 1)
         self.raw_frame = frame
+        self._recent_frames.append(frame)
         self.timings["decode_ms"] = (time.monotonic() - t0) * 1000
         if self._reference_wanted:
             self.set_reference()
@@ -158,11 +180,11 @@ class Engine:
         now = time.time()
         if now - self._last_analysis >= 1.0 / max(0.05, self.config.analysis_hz):
             self._last_analysis = now
-            self._analyse(frame, now)
+            self._analyse(self._averaged(), now)
         t1 = time.monotonic()
         items = [
             Item(self.config.instruments[n].label, self.config.instruments[n].kind, self.regions[n].corners, r,
-                 self.marks.get(n, []))
+                 self.marks.get(n, []), int(self.config.instruments[n].option("label_dx", 0)))
             for n, r in self.readings.items()
             if n in self.regions
         ]
@@ -171,11 +193,24 @@ class Engine:
         image = draw(frame, items, header)
         ok, encoded = cv2.imencode(".jpg", image, [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality])
         self.timings["draw_ms"] = (time.monotonic() - t1) * 1000
+        plain = None
+        if self.plain_viewers > 0:  # someone watches without the overlay: the frame as it is, un-mirrored
+            done, plain_encoded = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, self.config.jpeg_quality])
+            plain = plain_encoded.tobytes() if done else None
         if ok:
             with self.changed:
                 self.overlay_jpeg = encoded.tobytes()
+                self.plain_jpeg = plain
                 self.frame_seq += 1
                 self.changed.notify_all()
+
+    def _averaged(self) -> Image:
+        """The mean of the last `average_frames` decoded frames: camera noise and a single odd frame fade, while a
+        flickering or oscillating trace smears into the band it covers (which is how it should read)."""
+        frames = [f for f in self._recent_frames if f.shape == self._recent_frames[-1].shape]
+        if len(frames) == 1:
+            return frames[0]
+        return np.mean(np.stack(frames), axis=0).round().astype(np.uint8)
 
     def _analyse(self, frame: Image, now: float) -> None:
         t0 = time.monotonic()
@@ -278,27 +313,74 @@ class Engine:
                 log.exception("%s failed", name)
             reading = Reading("unknown", "error", note=note)
         self.timings[f"{name}_ms"] = (time.monotonic() - t) * 1000
+        if not isinstance(detector, (Wavemeter, Motion)):  # those vote and hold by themselves
+            reading = self._smoothed(name, reading)
         self.raw_readings[name] = dataclasses.replace(reading)
         previous = self.readings.get(name)
-        # A new status counts only after `settle` analyses in a row (default 3): a flickering signal
-        # keeps its status, with a note, instead of flipping it and the log every half second.
-        settle = int(self.config.instruments[name].option("settle", 3))
-        streak_status, streak = self._streaks.get(name, ("", 0))
-        streak = streak + 1 if reading.status == streak_status else 1
-        self._streaks[name] = (reading.status, streak)
-        if previous is not None and reading.status != previous.status and streak < settle:
-            reading.note = (f"{reading.note}; " if reading.note else "") + f"{reading.status} {streak}/{settle}, still shown as {previous.status}"
+        # A new status counts only once it has lasted `settle` seconds (default 1): a flickering signal keeps
+        # its status, with a note, instead of flipping it and the log at every check.
+        settle = self.config.instruments[name].option("settle", 1.0)
+        now = time.time()
+        streak_status, since = self._streaks.get(name, ("", now))
+        if reading.status != streak_status:
+            since = now
+        self._streaks[name] = (reading.status, since)
+        if previous is not None and reading.status != previous.status and now - since < settle:
+            reading.note = (f"{reading.note}; " if reading.note else "") + f"{reading.status} for {now - since:.1f} s, still shown as {previous.status}"
             reading.status = previous.status
         if previous is None or previous.status != reading.status:
             level = logging.WARNING if reading.status == "off" else logging.INFO
             log.log(level, "%s: %s → %s (%s)%s", name, previous.status if previous else "start", reading.status,
                     reading.text, f"; {reading.note}" if reading.note else "")
         self.readings[name] = reading
+        self._note_sure(name, reading.confidence)
+
+    def _smoothed(self, name: str, reading: Reading) -> Reading:
+        """The instrument's last `smooth` seconds (default 1) of checks voted on: the most common (status,
+        shape) wins, its numbers are the medians of the checks that agree, and how sure is scaled by that
+        agreement. A stray frame or misdetection is outvoted; a lasting change wins within the window."""
+        now = time.time()
+        window = self._history.setdefault(name, collections.deque())
+        window.append((now, reading))
+        span = self.config.instruments[name].option("smooth", 1.0)
+        while window and now - window[0][0] > span:
+            window.popleft()
+        if len(window) == 1:
+            return reading
+        def key(r: Reading) -> tuple[str, Any]:
+            return r.status, r.values.get("shape")
+        counts = collections.Counter(key(r) for _, r in window)
+        winner, votes = counts.most_common(1)[0]
+        agreeing = [r for _, r in window if key(r) == winner]
+        latest = agreeing[-1]
+        values = dict(latest.values)
+        for field, value in latest.values.items():
+            numbers = [r.values.get(field) for r in agreeing]
+            if isinstance(value, (int, float)) and all(isinstance(n, (int, float)) for n in numbers):
+                values[field] = round(float(np.median(np.array(numbers, dtype=float))), 3)
+        share = votes / len(window)
+        values["agree"] = f"{votes}/{len(window)}"
+        return dataclasses.replace(latest, values=values, confidence=round(latest.confidence * share, 2))
+
+    def _note_sure(self, key: str, confidence: float) -> None:
+        now = time.time()
+        window = self._sure.setdefault(key, collections.deque())
+        window.append((now, confidence))
+        while now - window[0][0] > SURE_WINDOW:
+            window.popleft()
+
+    def sure_stats(self, key: str) -> dict[str, float] | None:
+        """How sure, over the last SURE_WINDOW seconds: median and standard deviation."""
+        window = self._sure.get(key)
+        if not window:
+            return None
+        values = np.array([c for _, c in window])
+        return {"median": round(float(np.median(values)), 2), "std": round(float(values.std()), 2), "n": len(values)}
 
     # Output --------------------------------------------------------------------------------------------
 
     def _update_locks(self) -> None:
-        """Each laser's lock from its signs. `lost` and `unknown` count after LOCK_SETTLE analyses in a row;
+        """Each laser's lock from its signs. `lost` and `unknown` count after LOCK_SETTLE seconds;
         `locked` only after every sign has held for LOCK_AFTER seconds, so a lock signal passing through a
         flat moment isn't taken for a lock."""
         now = time.time()
@@ -319,13 +401,14 @@ class Engine:
             if previous is None and lock.state == "locked":
                 lock = locks_module.Lock("unknown", 0.0, lock.signs)  # locked only after LOCK_AFTER, from the start too
             if previous is not None and lock.state != previous.state:
-                waiting = (now - since < LOCK_AFTER) if lock.state == "locked" else (streak < LOCK_SETTLE)
+                waiting = now - since < (LOCK_AFTER if lock.state == "locked" else LOCK_SETTLE)
                 if waiting:
                     lock = locks_module.Lock(previous.state, previous.confidence, lock.signs)
             if previous is None or previous.state != lock.state:
                 level = logging.WARNING if lock.state == "lost" else logging.INFO
                 log.log(level, "%s %s (sure %.0f%%): %s", laser, lock.state.upper(), lock.confidence * 100, lock.summary)
             self.locks[laser] = lock
+            self._note_sure("lock:" + laser, lock.confidence)
 
     def state(self) -> dict[str, Any]:
         alignment = self.aligner.current
@@ -351,6 +434,7 @@ class Engine:
             "analyses": self.analysis_count,
             "locks": {
                 laser: {"state": lock.state, "confidence": lock.confidence, "why": lock.summary,
+                        "sure_10s": self.sure_stats("lock:" + laser),
                         "signs": [{"sign": s.name, "holds": s.holds, "why": s.why} for s in lock.signs]}
                 for laser, lock in self.locks.items()
             },
@@ -358,6 +442,7 @@ class Engine:
             "instruments": {
                 name: {
                     "label": inst.label,
+                    "sure_10s": self.sure_stats(name),
                     "kind": inst.kind,
                     "corners": [[round(x, 1), round(y, 1)] for x, y in
                                 (self.regions[name].corners if name in self.regions else inst.corners)],

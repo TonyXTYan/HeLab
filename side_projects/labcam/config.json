@@ -1,9 +1,10 @@
 {
   "source": "http://CAMERA-HOST:8081/stream",
   "mirror": true,
-  "analysis_hz": 2.0,
-  "stream_fps": 5.0,
+  "analysis_hz": 5.0,
+  "stream_fps": 10.0,
   "jpeg_quality": 80,
+  "average_frames": 3,
   "instruments": {
     "left_top": {
       "kind": "trace",
@@ -31,27 +32,28 @@
         75,
         72,
         73
-      ]
+      ],
+      "contrast": 30
     },
     "left_middle": {
       "kind": "trace",
       "label": "Left middle scope",
       "corners": [
         [
-          243,
-          440
+          239.2,
+          439.0
         ],
         [
-          308,
-          451
+          297.2,
+          452.0
         ],
         [
-          308,
-          501
+          297.3,
+          500.4
         ],
         [
-          244,
-          490
+          241.9,
+          489.3
         ]
       ],
       "tolerance": 0.15,
@@ -59,7 +61,8 @@
         208,
         173,
         152
-      ]
+      ],
+      "contrast": 18
     },
     "wavemeter": {
       "kind": "wavemeter",
@@ -82,7 +85,8 @@
           673,
           19
         ]
-      ]
+      ],
+      "label_dx": -150
     },
     "wavemeter_power": {
       "kind": "wavemeter",
@@ -135,24 +139,24 @@
       "label": "Scope dot",
       "corners": [
         [
-          654,
+          652,
           306
         ],
         [
-          755,
-          326
+          750,
+          327
         ],
         [
-          752,
-          395
+          747,
+          403
         ],
         [
-          647,
-          381
+          650,
+          382
         ]
       ],
-      "still_px": 3.0,
-      "want": "still"
+      "want": "still",
+      "still": 0.1
     },
     "people": {
       "kind": "motion",

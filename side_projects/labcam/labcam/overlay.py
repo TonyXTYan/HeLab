@@ -25,6 +25,7 @@ class Item:
     corners: Corners  # in the frame
     reading: Reading
     marks: list[tuple[Any, ...]]  # in the frame
+    label_dx: int = 0  # moves the label sideways (px), off something it would hide
 
 
 def _p(point: tuple[float, float]) -> tuple[int, int]:
@@ -58,7 +59,11 @@ def _dashed(image: Image, a: tuple[float, float], b: tuple[float, float], colour
         cv2.line(image, _p(p0), _p(p1), colour, 1)
 
 
+OPACITY = 0.75
+
+
 def draw(frame: Image, items: list[Item], header: str) -> Image:
+    """Everything drawn at OPACITY over the frame, so what's under a label or a box still shows a little."""
     out = frame.copy()
     taken: list[tuple[int, int, int, int]] = []
     for item in items:
@@ -82,7 +87,7 @@ def draw(frame: Image, items: list[Item], header: str) -> Image:
             xs = [p[0] for p in item.corners]
             ys = [p[1] for p in item.corners]
             top = min(ys)
-            _label(out, text, int(min(xs)), int(max(ys) + 16 if top < 30 else top - 4), colour, taken)
+            _label(out, text, int(min(xs)) + item.label_dx, int(max(ys) + 16 if top < 30 else top - 4), colour, taken)
     stamp = time.strftime("%Y-%m-%d %H:%M:%S")
     _label(out, f"{header}  {stamp}" if header else stamp, out.shape[1] - 330, out.shape[0] - 10, (255, 255, 255))
-    return out
+    return cv2.addWeighted(out, OPACITY, frame, 1 - OPACITY, 0)

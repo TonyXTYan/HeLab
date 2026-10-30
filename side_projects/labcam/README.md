@@ -7,12 +7,19 @@ Watches the lab rack camera (an MJPEG stream, e.g. the Raspberry Pi's ustreamer 
 | Left top / left middle scope | `trace` | the signal's shape (flat thin line, wavy, block, empty screen) and height (0 top, 1 bottom); `ok` = a flat line within `tolerance` of the middle |
 | Wavemeter, Power | `wavemeter` | the wavelength (nm) or frequency (GHz), and the power, by OCR; unsure digits show as `?` |
 | Lock-in needle | `needle` | the needle's offset from the centre (-1 … 1); `ok` within `tolerance` |
-| Scope dot | `dot` | whether the spot moved more than `still_px` in the last `window` s (`ok` = still, `want`) |
+| Scope dot | `dot` | whether the spot moved more than `still` (a fraction of the screen's width, 0.1) in the last `window` s, or disappeared (`ok` = still, `want`) |
 | People | `motion` | movement outside the instruments' regions (`off` = someone moving) |
 
 It serves a page with the overlay stream, a table of every reading (with how sure it is), the log, and a
-region editor. Statuses: `ok`, `off` (amber), `unknown` (grey: couldn't tell; never a guess). A new status
-counts only after `settle` (3) analyses in a row, so a flickering signal doesn't flip it.
+region editor. Statuses: `ok`, `off` (amber), `unknown` (grey: couldn't tell; never a guess).
+
+**Timescales.** The camera sends 25 fps; labcam decodes 10 a second (`stream_fps`, also the overlay's rate) and
+checks the instruments 5 times a second (`analysis_hz`), each time on the average of the last 3 decoded frames
+(`average_frames`: camera noise and a single odd frame fade; an oscillating trace smears into the band it
+covers, which reads as not flat). Each instrument's result is then voted over its last second of checks
+(`smooth`): the most common status and shape win, with the medians of their numbers, so a stray
+misdetection is outvoted. A new status shows once it has lasted 1 s (`settle`); a laser shows lost after
+1.5 s and locked after 10 s. The wavemeter reads every 2 s and votes by itself.
 
 ## Laser locks
 
@@ -48,7 +55,9 @@ earlier days gzipped to about a tenth at start and at midnight; days older than 
 - `history-<date>.csv`: the locks, then each instrument's status and numbers (trace shape, level, thickness and
   waviness; wavemeter value; power; needle offset; dot spread and position; movement 0/1).
 
-The page plots them (15 min to 7 days): the locks as coloured bands (paler when less sure), the wavemeter
+The page plots them with Plotly (served by labcam from the plotly package, no internet needed; 15 min to 7
+days, one figure on a shared time axis, hover for each point's time, value, status and, for a lock, why; drag to
+zoom): the locks as coloured bands (paler when less sure), the wavemeter
 and power, trace thickness and level, the needle, the dot's movement and people. `/locks.csv` and
 `/history.csv` download today's files.
 

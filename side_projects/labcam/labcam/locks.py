@@ -3,7 +3,7 @@
 `config.json` → "locks": {"He4": ["left_top:flat", "scope_dot:still", "lockin:middle"], ...}. A sign is
 `<instrument>:<condition>`:
 - `flat`: a scope's trace is a flat thin line (shape `line`);
-- `still` / `moving`: the scope dot's spread over its window is within / beyond `still_px`;
+- `still` / `moving`: the scope dot's spread over its window is within / beyond its limit (a gone dot fails both);
 - `middle`: the needle (or a trace's level) is within its `tolerance` of the middle;
 - `ok`: the instrument's own status is `ok`.
 
@@ -65,10 +65,13 @@ def sign(spec: str, instruments: dict[str, Instrument], readings: dict[str, Read
             return Sign(spec, None, reading.confidence, f"{label}: no trace")
         return Sign(spec, shape == "line", reading.confidence, f"{label}: {shape}")
     if condition in ("still", "moving"):
+        if values.get("gone") == "yes":
+            return Sign(spec, False, reading.confidence, f"{label}: dot gone")
         spread = values.get("spread_px")
         if not isinstance(spread, (int, float)):
             return Sign(spec, None, 0.0, f"{label}: {reading.text}")
-        still = spread <= inst.option("still_px", 2.0)
+        limit = values.get("limit_px")
+        still = spread <= (limit if isinstance(limit, (int, float)) else inst.option("still_px", 2.0))
         return Sign(spec, still == (condition == "still"), reading.confidence, f"{label}: {reading.text}")
     if condition == "middle":
         offset = values.get("offset", values.get("level"))

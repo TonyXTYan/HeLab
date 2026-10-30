@@ -143,8 +143,8 @@ class Recorder:
         lock_header = [c for laser in locks for c in (laser, f"{laser}_sure", f"{laser}_why")]
         lock_row = [v for lock in locks.values() for v in (lock.state, lock.confidence, lock.summary)]
         self.locks.write(now, ["time", *lock_header], [stamp, *lock_row])
-        header = ["time"] + [c for laser in locks for c in (laser, f"{laser}_sure")]
-        row: list[Any] = [stamp] + [v for lock in locks.values() for v in (lock.state, lock.confidence)]
+        header = ["time"] + [c for laser in locks for c in (laser, f"{laser}_sure", f"{laser}_why")]
+        row: list[Any] = [stamp] + [v for lock in locks.values() for v in (lock.state, lock.confidence, lock.summary)]
         for name, inst in instruments.items():
             fields = FIELDS.get(inst.kind, [])
             header += [f"{name}.status"] + [f"{name}.{f}" for f in fields]
@@ -175,9 +175,11 @@ def series(hours: float, max_points: int = 1500) -> dict[str, Any]:
             rows += [r for r in csv.DictReader(f) if r.get("time", "") >= since]
     rows.sort(key=lambda r: r["time"])
     step = max(1, len(rows) // max_points)
+    # Lock columns: no "." (instruments' are "<name>.<field>"), not time, and not a lock's _sure or _why.
+    lasers = {k for r in rows[:1] for k in r if "." not in k and k != "time" and not k.endswith(("_sure", "_why"))}
     # Keep every row where a lock state changes, so thinning never hides a short loss.
     kept = [r for i, r in enumerate(rows) if i % step == 0 or i == 0
-            or any(k.endswith(("He3", "He4")) and r.get(k) != rows[i - 1].get(k) for k in r)]
+            or any(k in lasers and r.get(k) != rows[i - 1].get(k) for k in r)]
     columns = sorted({k for r in kept for k in r})
 
     def convert(text: str | None) -> Any:

@@ -35,6 +35,7 @@ class Config:
     analysis_hz: float
     stream_fps: float
     jpeg_quality: int
+    average_frames: int
     instruments: dict[str, Instrument]
     locks: dict[str, list[str]] = field(default_factory=dict)  # laser → its signs (see locks.py)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
@@ -80,7 +81,7 @@ def load(path: Path | None = None) -> Config:
     """Reads the defaults (or `path`), then the page's edits on top."""
     data = _read(path or DEFAULTS)
     local = _read(LOCAL) if path is None else {}
-    for key in ("source", "mirror", "analysis_hz", "stream_fps", "jpeg_quality"):
+    for key in ("source", "mirror", "analysis_hz", "stream_fps", "jpeg_quality", "average_frames"):
         if key in local:
             data[key] = local[key]
     instruments: dict[str, Instrument] = {}
@@ -97,6 +98,7 @@ def load(path: Path | None = None) -> Config:
         analysis_hz=float(data.get("analysis_hz", 2.0)),
         stream_fps=float(data.get("stream_fps", 5.0)),
         jpeg_quality=int(data.get("jpeg_quality", 80)),
+        average_frames=int(data.get("average_frames", 3)),
         instruments=instruments,
         locks={str(k): [str(v) for v in signs] for k, signs in {**data.get("locks", {}), **local.get("locks", {})}.items()},
     )
