@@ -4,15 +4,53 @@ Watches the lab rack camera (an MJPEG stream, e.g. the Raspberry Pi's ustreamer 
 
 | Instrument | Kind | Says |
 |---|---|---|
-| Left top / left middle scope | `trace` | where the signal sits on the screen (0 top, 1 bottom); `ok` within `tolerance` of the middle |
+| Left top / left middle scope | `trace` | the signal's shape (flat thin line, wavy, block, empty screen) and height (0 top, 1 bottom); `ok` = a flat line within `tolerance` of the middle |
 | Wavemeter, Power | `wavemeter` | the wavelength (nm) or frequency (GHz), and the power, by OCR; unsure digits show as `?` |
 | Lock-in needle | `needle` | the needle's offset from the centre (-1 … 1); `ok` within `tolerance` |
-| Scope dot | `dot` | whether the spot moved more than `still_px` in the last `window` s (`ok` = moving) |
+| Scope dot | `dot` | whether the spot moved more than `still_px` in the last `window` s (`ok` = still, `want`) |
 | People | `motion` | movement outside the instruments' regions (`off` = someone moving) |
 
 It serves a page with the overlay stream, a table of every reading (with how sure it is), the log, and a
 region editor. Statuses: `ok`, `off` (amber), `unknown` (grey: couldn't tell; never a guess). A new status
 counts only after `settle` (3) analyses in a row, so a flickering signal doesn't flip it.
+
+## Laser locks
+
+`config.json` → `locks` names each laser's signs (see `labcam/locks.py`):
+
+- **He3**: the left middle scope shows a flat thin line in the middle (`left_middle:ok`). A block, a wavy or
+  spiky trace, or an empty screen means it isn't locked.
+- **He4**: the left top scope shows a flat line in the middle, the scope dot is still and the lock-in needle
+  is in the middle (`left_top:ok`, `scope_dot:still`, `lockin:middle`).
+
+A laser is `locked` only once every sign has held for 10 s, `lost` as soon as one fails for 3 analyses (about
+1.5 s), `unknown` when a sign can't be told. Each comes with how sure it is (its surest failing sign, or its
+least sure sign when locked) and why. The banner on the page shows them; changes are logged (a loss as a
+WARNING).
+
+**Someone in front.** Before reading an instrument, labcam checks whether it may be hidden: movement over its
+region (from the People check), or its surroundings (a band around the region: the scope's frame, the
+meter's case) unlike usual. "Usual" is a running average taken while nothing is in front, so slow changes
+don't count; a change lasting 10 minutes becomes the new usual (logged). A hidden instrument reads
+`covered?` (`unknown`), and a laser whose signs can't be told only because of that keeps its last state,
+half as sure, with "now covered: …" as the reason. Its surroundings' change is in `/state.json`
+(`surround_change`, usually 2–4; `cover_change`, default 15, is the limit).
+
+A trace's shape is measured against its empty screen's colour (`background`, [B, G, R], taken from a frame
+with a thin line), since a block can cover most of the screen. If the light or the scope's display changes,
+take it again from a locked frame.
+
+## History
+
+Under `data/`, a row every 5 s and at every lock change (so no loss falls between rows; about 2.5 MB a day,
+earlier days gzipped to about a tenth at start and at midnight; days older than 7 are deleted):
+- `locks-<date>.csv`: each laser's state, how sure, and why;
+- `history-<date>.csv`: the locks, then each instrument's status and numbers (trace shape, level, thickness and
+  waviness; wavemeter value; power; needle offset; dot spread and position; movement 0/1).
+
+The page plots them (15 min to 7 days): the locks as coloured bands (paler when less sure), the wavemeter
+and power, trace thickness and level, the needle, the dot's movement and people. `/locks.csv` and
+`/history.csv` download today's files.
 
 ## Set up (once)
 
@@ -73,8 +111,8 @@ Git, and skip without it). HeLab's own pytest skips this folder: its environment
 
 ## The page
 
-- **Overlay stream** (`/stream`), every reading (`/state.json`), the log (`/log`), today's readings
-  (`/readings.csv`, one row per analysis), the un-mirrored camera frame (`/raw.jpg`).
+- **Overlay stream** (`/stream`), every reading and lock (`/state.json`), the log (`/log`), the history
+  (`/history.json?hours=N`, `/history.csv`, `/locks.csv`), the un-mirrored camera frame (`/raw.jpg`).
 - **Edit region**: click an instrument's four corners (top-left, top-right, bottom-right, bottom-left) on the
   picture, or drag a rectangle. Four corners follow a screen seen at an angle: the region is straightened
   before it is read, so "middle" is the middle of the screen itself. Edits go to `config.local.json` (not in
@@ -86,7 +124,7 @@ Git, and skip without it). HeLab's own pytest skips this folder: its environment
 
 ## Files
 
-`logs/labcam.log` (rotated, 2 MB × 10), `data/readings-<date>.csv`, `reference.jpg`, `config.local.json`, all
+`logs/labcam.log` (a file per day, the last 7 kept), `data/locks-<date>.csv`, `data/history-<date>.csv`, `reference.jpg`, `config.local.json`, all
 beside this README and ignored by Git.
 
 ## Limits (2026-10-30)

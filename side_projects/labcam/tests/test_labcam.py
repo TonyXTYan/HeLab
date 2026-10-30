@@ -18,8 +18,8 @@ np = pytest.importorskip("numpy")
 HOME = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(HOME))
 
-from labcam import config, region  # noqa: E402
-from labcam.detectors import Dot, Needle, TraceLevel  # noqa: E402
+from labcam import config, history, locks, region  # noqa: E402
+from labcam.detectors import Dot, Needle, Reading, TraceLevel  # noqa: E402
 from labcam.wavemeter import digits_for, vote, with_point  # noqa: E402
 
 SAMPLE = HOME / "tests" / "sample_mirrored.jpg"  # a camera frame, kept out of Git
@@ -41,8 +41,56 @@ def screen(trace_y: int | None = None, background: int = 40, colour: int = 220) 
 def test_trace_level(y: int, status: str, word: str) -> None:
     reading = TraceLevel(inst("trace", tolerance=0.15)).update(screen(y))
     assert reading.status == status
-    assert reading.text.startswith(word)
+    assert word in reading.text
+    assert reading.values["shape"] == "line"
     assert reading.values["level"] == pytest.approx((y + 0.5) / 59, abs=0.03)
+
+
+def test_trace_block_and_wavy() -> None:
+    block = screen(None)
+    cv2.rectangle(block, (0, 15), (99, 45), (220, 220, 220), -1)
+    reading = TraceLevel(inst("trace")).update(block)
+    assert reading.values["shape"] == "block" and reading.status == "off"
+    wavy = screen(None)
+    points = np.array([(x, int(30 + 20 * np.sin(x / 6))) for x in range(100)], np.int32)
+    cv2.polylines(wavy, [points], False, (220, 220, 220), 2)
+    assert TraceLevel(inst("trace")).update(wavy).values["shape"] == "wavy"
+
+
+def test_locks() -> None:
+    instruments = {
+        "top": config.Instrument("top", "trace", "Top", config.rect_corners(0, 0, 1, 1), {}),
+        "dot": config.Instrument("dot", "dot", "Dot", config.rect_corners(0, 0, 1, 1), {"still_px": 2.0}),
+        "needle": config.Instrument("needle", "needle", "Needle", config.rect_corners(0, 0, 1, 1), {"tolerance": 0.2}),
+    }
+    readings = {
+        "top": Reading("ok", "flat line", {"shape": "line", "level": 0.5}, 0.9),
+        "dot": Reading("ok", "still", {"spread_px": 0.5}, 0.8),
+        "needle": Reading("ok", "middle", {"offset": 0.05}, 0.7),
+    }
+    specs = ["top:flat", "dot:still", "needle:middle"]
+    lock = locks.evaluate(specs, instruments, readings)
+    assert (lock.state, lock.confidence) == ("locked", 0.7)
+    readings["top"] = Reading("off", "block", {"shape": "block"}, 0.95)
+    lock = locks.evaluate(specs, instruments, readings)
+    assert (lock.state, lock.confidence) == ("lost", 0.95) and "block" in lock.summary
+    readings["top"] = Reading("unknown", "no signal", {"shape": "none"}, 0.5)
+    assert locks.evaluate(specs, instruments, readings).state == "unknown"
+
+
+def test_history_round_trip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(history, "DATA", tmp_path)
+    instruments = {"top": config.Instrument("top", "trace", "Top", config.rect_corners(0, 0, 1, 1), {})}
+    recorder = history.Recorder()
+    for shape in ("line", "block"):
+        readings = {"top": Reading("ok", shape, {"shape": shape, "level": 0.5, "thickness": 0.05}, 0.9)}
+        lock = locks.evaluate(["top:flat"], instruments, readings)
+        recorder.record(time.time(), instruments, readings, {"He3": lock})
+    data = history.series(1)
+    assert data["rows"] == 2
+    assert data["columns"]["He3"] == ["locked", "lost"]
+    assert data["columns"]["top.thickness"] == [0.05, 0.05]
+    assert (tmp_path / f"locks-{time.strftime('%Y-%m-%d')}.csv").exists()
 
 
 def test_trace_dark_on_light_and_missing() -> None:
@@ -69,9 +117,9 @@ def test_dot_still_then_moving() -> None:
 
     for _ in range(4):
         reading = dot.update(frame(40))
-    assert reading.status == "off" and reading.text.startswith("still")
+    assert reading.status == "ok" and reading.text.startswith("still")  # still is what's wanted by default
     reading = dot.update(frame(60))
-    assert reading.status == "ok" and reading.text.startswith("moving")
+    assert reading.status == "off" and reading.text.startswith("moving")
     assert dot.update(np.full((60, 100, 3), 120, np.uint8)).status == "unknown"
 
 
@@ -124,5 +172,72 @@ def test_sample_frame_dot() -> None:
     for _ in range(3):
         reading = dot.update(cut)
         time.sleep(0.01)
-    assert reading.status == "off"  # one frame again and again: still
+    assert reading.status == "ok"  # one frame again and again: still
     assert reading.values["x"] == pytest.approx(58, abs=4)
+
+
+@needs_sample
+def test_hand_in_front_holds_the_lock(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A hand over the left top scope: it reads "covered?", and He4 keeps its last state, said so."""
+    from unittest import mock
+
+    from labcam import engine
+    from labcam.source import FrameSource
+
+    monkeypatch.setattr(history, "DATA", tmp_path)
+    cfg = config.load(HOME / "config.json")
+    cfg.analysis_hz = 100
+    eng = engine.Engine(cfg, FrameSource(str(SAMPLE)))
+    frame = cv2.imread(str(SAMPLE))
+    hand = cv2.flip(frame, 1)
+    corners = np.array(cfg.instruments["left_top"].corners)
+    cx, cy = corners.mean(axis=0).astype(int)
+    cv2.ellipse(hand, (int(cx) - 25, int(cy) + 20), (45, 60), 20, 0, 360, (120, 150, 200), -1)
+    hand = cv2.flip(hand, 1)  # back to the camera's mirrored view
+    clock = [time.time()]
+    with mock.patch("time.time", lambda: clock[0]):
+        for image, frames in ((frame, 40), (hand, 6)):
+            jpeg = cv2.imencode(".jpg", image)[1].tobytes()
+            for _ in range(frames):
+                eng._frame(jpeg)
+                clock[0] += 0.5
+            if image is frame:
+                he4 = eng.locks["He4"].state
+    assert "left_top" in eng.covered
+    assert eng.readings["left_top"].status == "unknown"
+    assert eng.locks["He4"].state == he4 and "covered" in eng.locks["He4"].summary
+
+
+def test_history_thins_rows_and_reads_gzip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import gzip
+
+    monkeypatch.setattr(history, "DATA", tmp_path)
+    instruments = {"top": config.Instrument("top", "trace", "Top", config.rect_corners(0, 0, 1, 1), {})}
+    line = {"top": Reading("ok", "line", {"shape": "line", "level": 0.5}, 0.9)}
+    block = {"top": Reading("off", "block", {"shape": "block"}, 0.9)}
+    recorder = history.Recorder()
+    start = time.time() - 60
+    for i in range(20):  # 0.5 s apart: rows at 0, 5 s and the lock change at 7 s
+        readings = block if i == 14 else line
+        recorder.record(start + i * 0.5, instruments, readings,
+                        {"He3": locks.evaluate(["top:flat"], instruments, readings)})
+    data = history.series(1)
+    assert data["columns"]["He3"] == ["locked", "locked", "lost", "locked"]
+    # An earlier day's file, gzipped, is read too.
+    old = time.strftime("%Y-%m-%d", time.localtime(time.time() - 86400))
+    with gzip.open(tmp_path / f"history-{old}.csv.gz", "wt", encoding="utf-8") as f:
+        f.write("time,He3\n" + time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(time.time() - 3600 * 20)) + ",lost\n")
+    assert history.series(24)["rows"] == 5
+
+
+def test_old_days_deleted_and_compressed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import gzip
+
+    monkeypatch.setattr(history, "DATA", tmp_path)
+    day = lambda n: time.strftime("%Y-%m-%d", time.localtime(time.time() - n * 86400))  # noqa: E731
+    (tmp_path / f"history-{day(0)}.csv").write_text("time\n")
+    (tmp_path / f"history-{day(2)}.csv").write_text("time\nx\n")
+    (tmp_path / f"locks-{day(9)}.csv.gz").write_bytes(gzip.compress(b"time\n"))
+    history.compress_old()
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(
+        [f"history-{day(0)}.csv", f"history-{day(2)}.csv.gz"])

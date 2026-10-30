@@ -5,6 +5,9 @@
 :root{--bg:#111;--fg:#ddd;--dim:#888;--ok:#50c850;--off:#ffa028;--unknown:#aaa;--line:#333}
 body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.35 -apple-system,system-ui,sans-serif}
 #view{position:relative;max-width:1280px;margin:0 auto}
+details{border-top:1px solid var(--line);margin:4px 0}
+summary{cursor:pointer;color:var(--dim);font-weight:600;padding:4px 0;user-select:none}
+summary:hover{color:var(--fg)}
 #view img{display:block;width:100%;height:auto}
 #view canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;display:none}
 main{max-width:1280px;margin:0 auto;padding:6px 10px}
@@ -20,35 +23,58 @@ th{color:var(--dim);font-weight:normal}
 #log{height:260px;overflow:auto;background:#000;border:1px solid var(--line);padding:4px;font:12px ui-monospace,monospace;white-space:pre-wrap}
 .WARNING{color:var(--off)}.ERROR,.CRITICAL{color:#f55}.DEBUG{color:#777}
 #msg{color:var(--ok)}
+.locks{display:flex;gap:10px;margin:6px 0;flex-wrap:wrap}
+.lock{padding:6px 12px;border-radius:6px;border:1px solid var(--line);min-width:220px}
+.lock b{font-size:16px}
+.lock.locked{border-color:var(--ok)}.lock.lost{border-color:var(--off);background:#2a1a05}
+.chart{margin:4px 0}
+.chart canvas{width:100%;height:110px;display:block;background:#000;border:1px solid var(--line)}
+.chart .title{color:var(--dim);font-size:12px;display:flex;gap:12px;flex-wrap:wrap}
+.chart .title i{font-style:normal}
 </style></head><body>
-<div id="view"><img id="stream" src="stream" alt="Overlay stream"><canvas id="draw"></canvas></div>
 <main>
-  <div class="bar">
-    <span>Source: <b id="src">…</b></span>
-    <span>Alignment: <b id="align">…</b></span>
-    <span>Timing: <b id="timing">…</b></span>
-  </div>
-  <table><thead><tr><th>Instrument</th><th>Status</th><th>Reading</th><th>Sure</th><th>Details</th><th></th></tr></thead>
-    <tbody id="rows"></tbody></table>
-  <div class="bar">
-    <button id="ref" title="Use the current frame as the one boxes are drawn on; later frames are matched to it">Set reference frame</button>
-    <a href="raw.jpg" target="_blank"><button>Camera frame</button></a>
-    <a href="readings.csv" target="_blank"><button>Today's readings (CSV)</button></a>
-    <span id="msg"></span>
-  </div>
-  <div class="bar">
-    <span>Log</span>
-    <label><input type="checkbox" id="debug"> debug lines</label>
-    <label><input type="checkbox" id="pause"> pause</label>
-  </div>
-  <div id="log"></div>
+  <div id="locks" class="locks"></div>
+  <details open data-key="view"><summary>Camera</summary>
+    <div id="view"><img id="stream" src="stream" alt="Overlay stream"><canvas id="draw"></canvas></div>
+    <div class="bar">
+      <span>Source: <b id="src">…</b></span>
+      <span>Alignment: <b id="align">…</b></span>
+      <span>Timing: <b id="timing">…</b></span>
+    </div>
+  </details>
+  <details open data-key="instruments"><summary>Instruments</summary>
+    <table><thead><tr><th>Instrument</th><th>Status</th><th>Reading</th><th>Sure</th><th>Details</th><th></th></tr></thead>
+      <tbody id="rows"></tbody></table>
+    <div class="bar">
+      <button id="ref" title="Use the current frame as the one boxes are drawn on; later frames are matched to it">Set reference frame</button>
+      <a href="raw.jpg" target="_blank"><button>Camera frame</button></a>
+      <a href="locks.csv" target="_blank"><button>Today's locks (CSV)</button></a>
+      <a href="history.csv" target="_blank"><button>Today's history (CSV)</button></a>
+      <span id="msg"></span>
+    </div>
+  </details>
+  <details open data-key="history"><summary>History</summary>
+    <div class="bar">
+      <select id="hours"><option value="0.25">15 min</option><option value="1" selected>1 h</option>
+        <option value="6">6 h</option><option value="24">24 h</option><option value="168">7 days</option></select>
+      <span id="histinfo"></span>
+    </div>
+    <div id="charts"></div>
+  </details>
+  <details open data-key="log"><summary>Log</summary>
+    <div class="bar">
+      <label><input type="checkbox" id="debug"> debug lines</label>
+      <label><input type="checkbox" id="pause"> pause</label>
+    </div>
+    <div id="log"></div>
+  </details>
 </main>
 <script>
 const $ = id => document.getElementById(id);
 const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
 let editing = null;
 const img = $("stream"), canvas = $("draw"), ctx = canvas.getContext("2d");
-img.onerror = () => setTimeout(() => { img.src = "stream?" + Date.now(); }, 2000);
+img.onerror = () => setTimeout(() => { if (viewSection.open) img.src = "stream?" + Date.now(); }, 2000);
 
 function say(text) { $("msg").textContent = text; setTimeout(() => { $("msg").textContent = ""; }, 5000); }
 
@@ -100,6 +126,7 @@ document.onkeydown = ev => { if (ev.key === "Escape") { canvas.style.display = "
 async function refresh() {
   try {
     const s = await (await fetch("state.json")).json();
+    showLocks(s.locks);
     const src = s.source;
     $("src").textContent = src.connected ? `connected, frame ${src.last_frame_age ?? "–"} s old` : `not connected: ${src.error}`;
     $("src").className = src.connected ? "ok" : "off";
@@ -136,6 +163,108 @@ async function pollLog() {
     if (atEnd) box.scrollTop = box.scrollHeight;
   } catch (e) {}
 }
-setInterval(refresh, 1000); setInterval(pollLog, 1000); refresh(); pollLog();
+// Lock banner -------------------------------------------------------------------------------------------
+function showLocks(locks) {
+  $("locks").innerHTML = Object.entries(locks || {}).map(([laser, l]) =>
+    `<div class="lock ${l.state}" title="${esc(l.signs.map(s => (s.holds === null ? "?" : s.holds ? "✓" : "✗") + " " + s.why).join("\n"))}">
+       <b>${esc(laser)}</b> <span class="${l.state === "locked" ? "ok" : l.state === "lost" ? "off" : "unknown"}"><b>${l.state}</b></span>
+       <span class="values">sure ${Math.round(l.confidence * 100)}%</span><br><span class="values">${esc(l.why)}</span></div>`).join("");
+}
+
+// History plots ------------------------------------------------------------------------------------------
+const COLOURS = ["#4fc3f7", "#ffb74d", "#81c784", "#e57373", "#ba68c8", "#fff176"];
+const STATE_COLOUR = {locked: "#50c850", lost: "#ffa028", unknown: "#555", ok: "#50c850", off: "#ffa028"};
+// Each chart: title, columns (prefix match on the instrument name), and how to draw them.
+const CHARTS = [
+  {title: "Locks", kind: "state", columns: c => ["He3", "He4"].filter(k => k in c)},
+  {title: "Wavemeter (nm or GHz)", kind: "line", columns: c => Object.keys(c).filter(k => /^wavemeter\.value$/.test(k))},
+  {title: "Power", kind: "line", columns: c => Object.keys(c).filter(k => /^wavemeter_power\.value$/.test(k))},
+  {title: "Trace thickness (fraction of screen; a flat line ≈ 0.05)", kind: "line", columns: c => Object.keys(c).filter(k => k.endsWith(".thickness"))},
+  {title: "Trace level (0 top, 1 bottom)", kind: "line", columns: c => Object.keys(c).filter(k => k.endsWith(".level")), range: [0, 1]},
+  {title: "Lock-in needle offset (-1 … 1)", kind: "line", columns: c => Object.keys(c).filter(k => k.endsWith(".offset")), range: [-1, 1]},
+  {title: "Scope dot movement (px in its window)", kind: "line", columns: c => Object.keys(c).filter(k => k.endsWith(".spread_px"))},
+  {title: "People (movement)", kind: "bars", columns: c => Object.keys(c).filter(k => k.endsWith(".present"))},
+];
+
+function drawChart(canvas, times, series, chart) {
+  const w = canvas.width = canvas.clientWidth * devicePixelRatio, h = canvas.height = canvas.clientHeight * devicePixelRatio;
+  const g = canvas.getContext("2d"); g.clearRect(0, 0, w, h);
+  if (times.length < 2) return;
+  const t0 = times[0], t1 = times[times.length - 1], x = t => (t - t0) / Math.max(1, t1 - t0) * (w - 2) + 1;
+  g.font = `${10 * devicePixelRatio}px ui-monospace,monospace`;
+  if (chart.kind === "state") {
+    const rowH = h / series.length;
+    series.forEach(([name, values, sure], r) => {
+      for (let i = 0; i < times.length - 1; i++) {
+        g.globalAlpha = 0.35 + 0.65 * (sure ? (sure[i] ?? 0) : 1);
+        g.fillStyle = STATE_COLOUR[values[i]] || "#333";
+        g.fillRect(x(times[i]), r * rowH + 2, Math.max(1, x(times[i + 1]) - x(times[i])), rowH - 4);
+      }
+      g.globalAlpha = 1; g.fillStyle = "#fff"; g.fillText(name, 4, r * rowH + 12 * devicePixelRatio);
+    });
+    return;
+  }
+  const all = series.flatMap(([, v]) => v.filter(n => typeof n === "number"));
+  if (!all.length) { g.fillStyle = "#777"; g.fillText("no numbers in this range", 6, h / 2); return; }
+  // Axis from the 1st–99th percentile, so one misread doesn't flatten the rest.
+  const sorted = [...all].sort((a, b) => a - b), pick = q => sorted[Math.min(sorted.length - 1, Math.floor(q * sorted.length))];
+  let [lo, hi] = chart.range || [pick(0.01), pick(0.99)];
+  if (hi === lo) { hi += 0.5; lo -= 0.5; }
+  const y = v => h - 4 - (v - lo) / (hi - lo) * (h - 8);
+  series.forEach(([, values], s) => {
+    g.strokeStyle = g.fillStyle = COLOURS[s % COLOURS.length]; g.lineWidth = devicePixelRatio;
+    if (chart.kind === "bars") {
+      values.forEach((v, i) => { if (v) g.fillRect(x(times[i]), 4, Math.max(1, devicePixelRatio), h - 8); });
+      return;
+    }
+    g.beginPath(); let pen = false;
+    values.forEach((v, i) => {
+      if (typeof v !== "number") { pen = false; return; }
+      v = Math.min(hi, Math.max(lo, v));
+      pen ? g.lineTo(x(times[i]), y(v)) : g.moveTo(x(times[i]), y(v)); pen = true;
+    });
+    g.stroke();
+  });
+  g.fillStyle = "#999";
+  const digits = Math.abs(hi - lo) < 0.01 ? 4 : Math.abs(hi - lo) < 1 ? 3 : 2;
+  g.fillText(hi.toFixed(digits), 4, 11 * devicePixelRatio); g.fillText(lo.toFixed(digits), 4, h - 4);
+}
+
+async function refreshHistory() {
+  if (!document.querySelector('details[data-key="history"]').open) return;
+  try {
+    const hours = $("hours").value;
+    const data = await (await fetch("history.json?hours=" + hours)).json();
+    const c = data.columns, times = (c.time || []).map(t => Date.parse(t));
+    $("histinfo").textContent = times.length ? `${data.rows} rows, ${new Date(times[0]).toLocaleString()} – ${new Date(times[times.length - 1]).toLocaleTimeString()}` : "no history yet";
+    const box = $("charts"); box.innerHTML = "";
+    for (const chart of CHARTS) {
+      const names = chart.columns(c);
+      if (!names.length) continue;
+      const div = document.createElement("div"); div.className = "chart";
+      const legend = names.map((n, i) => chart.kind === "state" ? "" : `<i style="color:${COLOURS[i % COLOURS.length]}">■ ${esc(n)}</i>`).join("");
+      div.innerHTML = `<div class="title"><span>${esc(chart.title)}</span>${legend}</div><canvas></canvas>`;
+      box.appendChild(div);
+      const series = names.map(n => [n, c[n], c[n + "_sure"]]);
+      drawChart(div.querySelector("canvas"), times, series, chart);
+    }
+  } catch (e) { $("histinfo").textContent = "history unavailable"; }
+}
+$("hours").onchange = refreshHistory;
+
+// Sections remember being open or closed (per browser). A closed camera section stops its stream.
+for (const d of document.querySelectorAll("details[data-key]")) {
+  try { const v = localStorage.getItem("labcam-open-" + d.dataset.key); if (v !== null) d.open = v === "1"; } catch (e) {}
+  d.addEventListener("toggle", () => {
+    try { localStorage.setItem("labcam-open-" + d.dataset.key, d.open ? "1" : "0"); } catch (e) {}
+    if (d.dataset.key === "view") img.src = d.open ? "stream?" + Date.now() : "";
+    if (d.dataset.key === "history" && d.open) refreshHistory();
+  });
+}
+const viewSection = document.querySelector('details[data-key="view"]');
+if (!viewSection.open) img.src = "";
+
+setInterval(refresh, 1000); setInterval(pollLog, 1000); setInterval(refreshHistory, 10000);
+refresh(); pollLog(); refreshHistory();
 </script>
 </body></html>

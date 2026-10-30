@@ -1,5 +1,6 @@
 """HTTP: `/` the page, `/stream` the overlay as MJPEG, `/frame.jpg` one overlay frame, `/raw.jpg` the
-un-mirrored camera frame, `/state.json` every reading, `/log` the recent log, `/readings.csv` today's data;
+un-mirrored camera frame, `/state.json` every reading and lock, `/log` the recent log, `/history.csv` and `/locks.csv` today's
+data, `/history.json?hours=N` the last N hours for the plots;
 POST `/api/region` {name, corners} and `/api/reference` change the boxes and the reference frame."""
 
 from __future__ import annotations
@@ -8,6 +9,7 @@ import collections
 import json
 import logging
 import threading
+import urllib.parse
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from importlib import resources
@@ -16,6 +18,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from . import history
 from .engine import Engine, latest_csv
 
 log = logging.getLogger("labcam.server")
@@ -82,12 +85,19 @@ def make_handler(engine: Engine, ring: RingHandler) -> type[BaseHTTPRequestHandl
                     self._send(data.tobytes(), "image/jpeg")
                 else:
                     self._send(b"no frame yet", "text/plain", HTTPStatus.SERVICE_UNAVAILABLE)
-            elif path == "/readings.csv":
-                csv_path = latest_csv()
+            elif path in ("/history.csv", "/locks.csv", "/readings.csv"):
+                csv_path = latest_csv("locks" if path == "/locks.csv" else "history")
                 if csv_path is None:
                     self._send(b"no readings yet", "text/plain", HTTPStatus.NOT_FOUND)
                 else:
-                    self._send(csv_path.read_bytes(), "text/csv")
+                    self._send(csv_path.read_bytes(), "text/csv; charset=utf-8")
+            elif path == "/history.json":
+                params = urllib.parse.parse_qs(query)
+                try:
+                    hours = min(24 * 14, max(0.05, float(params.get("hours", ["1"])[0])))
+                except ValueError:
+                    hours = 1.0
+                self._json(history.series(hours))
             elif path == "/stream":
                 self._stream()
             else:

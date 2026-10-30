@@ -36,6 +36,7 @@ class Config:
     stream_fps: float
     jpeg_quality: int
     instruments: dict[str, Instrument]
+    locks: dict[str, list[str]] = field(default_factory=dict)  # laser → its signs (see locks.py)
     lock: threading.Lock = field(default_factory=threading.Lock, repr=False)
 
     def set_corners(self, name: str, corners: Corners) -> None:
@@ -97,4 +98,5 @@ def load(path: Path | None = None) -> Config:
         stream_fps=float(data.get("stream_fps", 5.0)),
         jpeg_quality=int(data.get("jpeg_quality", 80)),
         instruments=instruments,
+        locks={str(k): [str(v) for v in signs] for k, signs in {**data.get("locks", {}), **local.get("locks", {})}.items()},
     )

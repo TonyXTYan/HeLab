@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import csv
+import dataclasses
 import logging
 import threading
 import time
@@ -13,6 +13,8 @@ from typing import Any
 import cv2
 import numpy as np
 
+from . import history
+from . import locks as locks_module
 from .align import Aligner
 from . import region as regions
 from .config import HOME, Config, Corners
@@ -31,7 +33,28 @@ KINDS: dict[str, type[Detector]] = {
     "wavemeter": Wavemeter,
 }
 ALIGN_EVERY = 5.0  # s
-DATA = HOME / "data"
+LOCK_SETTLE = 3
+LOCK_AFTER = 10.0  # s
+COVER_ACCEPT = 600.0  # s: surroundings changed this long become the usual ones
+COVER_PAD = 10.0  # px around a moving area that still counts as in front of an instrument
+
+
+def _ring(frame: Image, corners: Corners, size: tuple[int, int] = (64, 48)) -> Any:
+    """The band around a region: the region grown by 25 % about its centre, straightened to `size`, grey,
+    without its middle 80 % (the region itself), with its mean taken off so a change of light overall doesn't
+    count. None if it falls outside the frame."""
+    points = np.array(corners, np.float64)
+    centre = points.mean(axis=0)
+    outer = [(float(x), float(y)) for x, y in centre + (points - centre) * 1.25]
+    h, w = frame.shape[:2]
+    if min(min(p) for p in outer) < 0 or max(p[0] for p in outer) >= w or max(p[1] for p in outer) >= h:
+        return None
+    grey = cv2.cvtColor(cv2.resize(regions.cut(frame, regions.make(outer)), size), cv2.COLOR_BGR2GRAY).astype(np.float32)
+    keep = np.ones(grey.shape, bool)
+    dy, dx = int(size[1] * 0.1), int(size[0] * 0.1)
+    keep[dy:-dy, dx:-dx] = False
+    band = grey[keep]
+    return band - band.mean()
 
 
 class Engine:
@@ -41,6 +64,11 @@ class Engine:
         self.aligner = Aligner()
         self.detectors = {name: KINDS[inst.kind](inst) for name, inst in config.instruments.items()}
         self.readings: dict[str, Reading] = {}
+        self.raw_readings: dict[str, Reading] = {}  # before the status debounce; locks read these
+        self.covered: dict[str, str] = {}  # instrument → why it may be hidden this analysis
+        self.surround_change: dict[str, float] = {}
+        self._usual_rings: dict[str, Any] = {}
+        self._covered_since: dict[str, float] = {}
         self.regions: dict[str, regions.Region] = {}
         self.marks: dict[str, list[tuple[Any, ...]]] = {}
         self.overlay_jpeg: bytes | None = None
@@ -56,9 +84,9 @@ class Engine:
         self._streaks: dict[str, tuple[str, int]] = {}
         self._reference_wanted = not self._load_reference()
         self._stop = threading.Event()
-        self._csv_day = ""
-        self._csv: Any = None
-        self._csv_writer: Any = None
+        self.locks: dict[str, locks_module.Lock] = {}
+        self._lock_streaks: dict[str, tuple[str, int, float]] = {}
+        self.recorder = history.Recorder()
         self._thread = threading.Thread(target=self._run, name="labcam-engine", daemon=True)
 
     # Reference frame -----------------------------------------------------------------------------------
@@ -163,7 +191,14 @@ class Engine:
             if isinstance(detector, Motion):
                 own = self.regions[name]
                 detector.ignore = [own.unmap(r.corners) for n, r in self.regions.items() if n != name]
-        for name, detector in self.detectors.items():
+        # Movement first: the other instruments use it to tell when someone is in front of them.
+        order = sorted(self.detectors.items(), key=lambda item: not isinstance(item[1], Motion))
+        self.covered = {}
+        for name, detector in order:
+            if not isinstance(detector, Motion):
+                why = self._cover(frame, name)
+                if why:
+                    self.covered[name] = why
             if isinstance(detector, Wavemeter):
                 # OCR is slow: it runs on its own thread, one field at a time, so the overlay keeps moving.
                 due = now - self._last_slow.get(name, 0.0) >= self.config.instruments[name].option("every", 2.0)
@@ -176,7 +211,50 @@ class Engine:
             self._run_detector(name, detector, frame, self.regions[name])
         self.analysis_count += 1
         self.timings["analysis_ms"] = (time.monotonic() - t0) * 1000
-        self._record(now)
+        self._update_locks()
+        self.recorder.record(now, self.config.instruments, self.readings, self.locks)
+
+    def _cover(self, frame: Image, name: str) -> str:
+        """Why the instrument may be hidden right now ("" if it isn't): movement over its region, or its
+        surroundings (the frame around the screen, which doesn't change by itself) unlike the reference's."""
+        region = self.regions[name]
+        polygon = np.array(region.corners, np.float32)
+        area = max(1.0, abs(cv2.contourArea(polygon)))
+        for mark in self.marks.get("people", []) if self.readings.get("people", None) else []:
+            if mark[0] != "loop":
+                continue
+            box = np.array(mark[1], np.float32)
+            x0, y0 = box.min(axis=0) - COVER_PAD
+            x1, y1 = box.max(axis=0) + COVER_PAD
+            clipped = polygon.copy()
+            clipped[:, 0] = clipped[:, 0].clip(x0, x1)
+            clipped[:, 1] = clipped[:, 1].clip(y0, y1)
+            if abs(cv2.contourArea(clipped)) / area > 0.15:
+                return "movement in front"
+        # Compared with this instrument's usual surroundings: a running average of its band, updated while
+        # nothing is in front, so slow changes (light, a cable moved for good) don't count but a hand does.
+        inst = self.config.instruments[name]
+        ring = _ring(frame, region.corners)
+        if ring is None:
+            return ""
+        usual = self._usual_rings.get(name)
+        if usual is None:
+            self._usual_rings[name] = ring
+            return ""
+        change = float(np.mean(np.abs(ring - usual)))
+        self.surround_change[name] = round(change, 1)
+        now = time.time()
+        if change > inst.option("cover_change", 15.0):
+            since = self._covered_since.setdefault(name, now)
+            if now - since > COVER_ACCEPT:
+                log.info("%s: surroundings changed for %.0f min; taking them as the new usual", name, COVER_ACCEPT / 60)
+                self._usual_rings[name] = ring
+                self._covered_since.pop(name, None)
+                return ""
+            return f"its surroundings changed ({change:.0f}): something in front?"
+        self._covered_since.pop(name, None)
+        self._usual_rings[name] = 0.95 * usual + 0.05 * ring
+        return ""
 
     def _run_slow(self, name: str, detector: Detector, frame: Image, region: regions.Region) -> None:
         try:
@@ -186,8 +264,12 @@ class Engine:
 
     def _run_detector(self, name: str, detector: Detector, frame: Image, region: regions.Region) -> None:
         t = time.monotonic()
+        covered = self.covered.get(name, "")
         try:
             reading = detector.update(regions.cut(frame, region, detector.oversample))
+            if covered and reading.status != "unknown":
+                reading = dataclasses.replace(reading, status="unknown", text=f"covered? ({reading.text})",
+                                              note=covered, confidence=0.0)
             self.marks[name] = region.map_marks(reading.marks, detector.oversample)
         except Exception as exc:
             note = f"{type(exc).__name__}: {exc}"
@@ -196,6 +278,7 @@ class Engine:
                 log.exception("%s failed", name)
             reading = Reading("unknown", "error", note=note)
         self.timings[f"{name}_ms"] = (time.monotonic() - t) * 1000
+        self.raw_readings[name] = dataclasses.replace(reading)
         previous = self.readings.get(name)
         # A new status counts only after `settle` analyses in a row (default 3): a flickering signal
         # keeps its status, with a note, instead of flipping it and the log every half second.
@@ -214,27 +297,35 @@ class Engine:
 
     # Output --------------------------------------------------------------------------------------------
 
-    def _record(self, now: float) -> None:
-        """One CSV row per analysis: data/readings-<date>.csv."""
-        day = time.strftime("%Y-%m-%d", time.localtime(now))
-        names = list(self.config.instruments)
-        if day != self._csv_day:
-            if self._csv is not None:
-                self._csv.close()
-            DATA.mkdir(exist_ok=True)
-            path = DATA / f"readings-{day}.csv"
-            new = not path.exists()
-            self._csv = path.open("a", newline="", encoding="utf-8")
-            self._csv_writer = csv.writer(self._csv)
-            if new:
-                self._csv_writer.writerow(["time"] + [f"{n}_{c}" for n in names for c in ("status", "text")])
-            self._csv_day = day
-        row = [time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(now))]
-        for n in names:
-            r = self.readings.get(n)
-            row += [r.status, r.text] if r else ["", ""]
-        self._csv_writer.writerow(row)
-        self._csv.flush()
+    def _update_locks(self) -> None:
+        """Each laser's lock from its signs. `lost` and `unknown` count after LOCK_SETTLE analyses in a row;
+        `locked` only after every sign has held for LOCK_AFTER seconds, so a lock signal passing through a
+        flat moment isn't taken for a lock."""
+        now = time.time()
+        for laser, specs in self.config.locks.items():
+            lock = locks_module.evaluate(specs, self.config.instruments, self.raw_readings)
+            previous = self.locks.get(laser)
+            hidden = [self.config.instruments[s.split(":")[0]].label for s in specs if s.split(":")[0] in self.covered]
+            if lock.state == "unknown" and hidden and previous is not None and previous.state != "unknown":
+                # Someone in front: keep what was last seen rather than call it lost or unknown.
+                lock = locks_module.Lock(previous.state, round(previous.confidence * 0.5, 2), lock.signs,
+                                         held=f"{previous.state} before; now covered: {', '.join(hidden)}")
+            streak_state, streak, since = self._lock_streaks.get(laser, ("", 0, now))
+            if lock.state == streak_state:
+                streak += 1
+            else:
+                streak, since = 1, now
+            self._lock_streaks[laser] = (lock.state, streak, since)
+            if previous is None and lock.state == "locked":
+                lock = locks_module.Lock("unknown", 0.0, lock.signs)  # locked only after LOCK_AFTER, from the start too
+            if previous is not None and lock.state != previous.state:
+                waiting = (now - since < LOCK_AFTER) if lock.state == "locked" else (streak < LOCK_SETTLE)
+                if waiting:
+                    lock = locks_module.Lock(previous.state, previous.confidence, lock.signs)
+            if previous is None or previous.state != lock.state:
+                level = logging.WARNING if lock.state == "lost" else logging.INFO
+                log.log(level, "%s %s (sure %.0f%%): %s", laser, lock.state.upper(), lock.confidence * 100, lock.summary)
+            self.locks[laser] = lock
 
     def state(self) -> dict[str, Any]:
         alignment = self.aligner.current
@@ -255,7 +346,14 @@ class Engine:
                 "angle": round(alignment.angle, 2),
                 "note": alignment.note,
             },
+            "covered": self.covered,
+            "surround_change": self.surround_change,
             "analyses": self.analysis_count,
+            "locks": {
+                laser: {"state": lock.state, "confidence": lock.confidence, "why": lock.summary,
+                        "signs": [{"sign": s.name, "holds": s.holds, "why": s.why} for s in lock.signs]}
+                for laser, lock in self.locks.items()
+            },
             "timings_ms": {k: round(v, 1) for k, v in self.timings.items()},
             "instruments": {
                 name: {
@@ -272,6 +370,6 @@ class Engine:
         }
 
 
-def latest_csv() -> Path | None:
-    files = sorted(DATA.glob("readings-*.csv"))
-    return files[-1] if files else None
+def latest_csv(kind: str = "history") -> Path | None:
+    found = [p for p in history.files(kind) if p.suffix == ".csv"]
+    return found[-1] if found else None

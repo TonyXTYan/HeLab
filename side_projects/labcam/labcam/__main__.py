@@ -8,6 +8,7 @@ import logging.handlers
 import sys
 
 from . import config as config_module
+from . import history
 from .config import HOME
 from .engine import Engine
 from .server import RingHandler, serve
@@ -32,8 +33,9 @@ def main() -> None:
     console = logging.StreamHandler()
     console.setLevel(logging.INFO)
     (HOME / "logs").mkdir(exist_ok=True)
-    file = logging.handlers.RotatingFileHandler(HOME / "logs" / "labcam.log", maxBytes=2_000_000, backupCount=10,
-                                                encoding="utf-8")
+    # A file per day, the last KEEP_DAYS kept (Tony, 2026-10-30).
+    file = logging.handlers.TimedRotatingFileHandler(HOME / "logs" / "labcam.log", when="midnight",
+                                                     backupCount=history.KEEP_DAYS, encoding="utf-8")
     file.setLevel(logging.DEBUG if args.debug else logging.INFO)
     ring = RingHandler()
     ring.setLevel(logging.DEBUG)
