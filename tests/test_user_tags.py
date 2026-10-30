@@ -89,7 +89,7 @@ def test_path_too_long_names_the_oss_refusal(error: BaseException, platform: str
                                                         (3, WINDOWS_MAX_PATH - 1, False), (5, 400, False)])
 def test_windows_errors_206_and_3_on_a_long_path(winerror: int, length: int, too_long: bool) -> None:
     error = OSError(errno.EINVAL, "Windows' error")  # (Not a FileNotFoundError: the Windows error decides.)
-    error.winerror = winerror  # type: ignore[attr-defined]  # (Set by Python on Windows only.)
+    setattr(error, "winerror", winerror)  # (An attribute Python sets on Windows only.)
     path = "C:\\" + "d" * (length - 3)
     assert (path_too_long(error, path, "win32") is not None) is too_long
     short = FileNotFoundError(errno.ENOENT, "No such file")  # A short path not found is just that.
