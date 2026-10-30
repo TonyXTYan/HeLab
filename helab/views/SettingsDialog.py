@@ -7,8 +7,8 @@ from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QChe
     QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem, QDoubleSpinBox
 from PyQt6.QtCore import QSettings, QUrl
 
-from helab.io_ops.fingerprints import DEFAULT_SETTLE_SECONDS, MAX_SETTLE_SECONDS, MIN_SETTLE_SECONDS, settle_seconds
 from helab.utils import app_log, folder_cache
+from helab.utils.settle_time import DEFAULT_SETTLE_SECONDS, MAX_SETTLE_SECONDS, MIN_SETTLE_SECONDS, settle_seconds
 from helab.utils.accessible import identify
 from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import fnum

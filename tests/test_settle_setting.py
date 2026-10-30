@@ -155,6 +155,9 @@ def test_a_real_helper_leaves_a_file_newer_than_the_settle_time(tmp_path: Path, 
 
 def test_the_setting_reads_within_its_limits_and_its_default_is_the_helpers(tmp_path: Path) -> None:
     assert setting_default(SETTLE_SECONDS_SETTING) == fingerprints.DEFAULT_SETTLE_SECONDS == 5.0
+    # The GUI takes the limits from the standard-library module both sides share, not from a helper module.
+    import helab.views.SettingsDialog as dialog_module
+    assert "helab.io_ops" not in Path(str(dialog_module.__file__)).read_text(encoding="utf-8")
     settings = QSettings(str(tmp_path / "settings.ini"), QSettings.Format.IniFormat)
     assert read_settle_seconds(settings) == 5.0
     for saved, read in (("8.5", 8.5), ("1", 2.0), ("90", 60.0), ("soon", 5.0)):

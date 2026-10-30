@@ -7,7 +7,7 @@ table can't be read (``KeyError``) and no read has a default of its own
 reader still checks the value it gets (a malformed or out-of-range saved value is replaced by
 the default there, e.g. ``constants.read_disk_budget``).
 
-Standard library, QtCore and ``number_format`` (standard library only): ``helab.utils.constants``
+Standard library, QtCore, ``number_format`` and ``settle_time`` (standard library only): ``helab.utils.constants``
 and the I/O helpers import it.
 """
 from __future__ import annotations
@@ -18,6 +18,7 @@ from typing import Any
 from PyQt6.QtCore import QSettings
 
 from helab.utils import number_format
+from helab.utils.settle_time import DEFAULT_SETTLE_SECONDS
 
 
 @dataclass(frozen=True)
@@ -99,8 +100,8 @@ SETTINGS: tuple[Setting, ...] = (
     Setting(LIVE_INTERVAL_SETTING, float, 3.0,
             "Seconds from the end of one Live check to the start of the next, 0.5 to 600 "
             "(Settings → General)."),
-    Setting(SETTLE_SECONDS_SETTING, float, 5.0,
-            "Seconds a file must be unmodified before HeLab reads it, 2 to 60 (Settings › General, Q33.7): newer "
+    Setting(SETTLE_SECONDS_SETTING, float, DEFAULT_SETTLE_SECONDS,
+            "Seconds a file must be unmodified before HeLab reads it, 2 to 60 (Settings → General, Q33.7): newer "
             "files may still be being written, so every read leaves them for later (browsing, loads, Live, cache "
             "checks and conversions). Below 2 s a file still being written can't be told apart. Sent with every "
             "I/O request; HELAB_SETTLE_SECONDS, when set, wins (tests)."),

@@ -227,7 +227,7 @@ class IOService(QObject):
         self.before_start: Callable[[IORequest], None] | None = None
         # The I/O trace's recording folder while it's on (``start_io_trace``), sent with each request.
         self.trace_dir: str | None = None
-        # Set by the main window: the settle time (Settings › General, Q33.7), sent with every request as
+        # Set by the main window: the settle time (Settings → General, Q33.7), sent with every request as
         # ``settle_seconds``, which the helper applies first (``fingerprints.configure_settle``). None: not
         # sent, so the helper keeps its default.
         self.settle_seconds: float | None = None

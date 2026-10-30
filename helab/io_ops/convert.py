@@ -10,7 +10,7 @@ function in its own process (``helab.convert_cli``); the app runs it in a helper
 
 **Settle checks** (A10.1; 2019-halos d3667 is the evidence: MATLAB converted it 0.25 s after its
 last write). A raw file is converted only when it is unmodified for ``fingerprints.SETTLE_SECONDS``
-(the settle time, Settings › General, default 5 s; sent with each request, Q33.7) by this computer's clock and not dated in the future; its (size, mtime) are the same at two
+(the settle time, Settings → General, default 5 s; sent with each request, Q33.7) by this computer's clock and not dated in the future; its (size, mtime) are the same at two
 checks a check interval apart, the previous conversion's (the caller sends its ``waiting`` list
 back as ``seen``: a file not in it waits for the next check) and this one's, and the same again
 before and after it is read; it ends with a newline; and its first line is on the profile's
