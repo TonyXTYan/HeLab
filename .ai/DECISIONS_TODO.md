@@ -277,6 +277,25 @@ Tony in Chat, 2026-10-30, on computer use and the smoke pass (blocks 5 and 31,
   smoke pass keeps one step done the way a person would.
 - **Q31.3** the quit window lists every pending operation (kind, folder, how long), not only
   folder names.
+- **Q5.1** the smoke pass runs on Sonnet 5.5 (it drove both runs so far); Haiku stays untried.
+
+Tony in Chat, 2026-10-30, on the provisional UI pass (block 33,
+[findings](sessions/2026-10-30-claude-ui-provisional-0.0.7/findings.md), "as proposed"), for a "UI
+polish" floor after Smoke ready lands (Q33.6):
+
+- **Q33.1** double-clicking a folder with no subfolders selects it (and so loads it) instead of making
+  it the tree's top; a typed path to such a folder opens its parent and selects its row; a folder
+  with subfolders, or not listed yet, opens as today.
+- **Q33.2** the default split gives the plots the room: folders ~380 px, settings ~320 px, plots the
+  rest, the user's drags kept across restarts; the folder panel does **not** collapse by itself when
+  a plot opens (only Live collapses it, Q18.3). The runbook collapses it for the plot steps.
+- **Q33.3** a newly floated plot opens offset ~40 px from the last one, at a usable size (~800×600,
+  kept on screen); a restart restores where the user left them.
+- **Q33.4** a floating plot window gets a **Dock** button ("add a dock back button").
+- **Q33.5** the Debug menu's three placeholder items ("Debug - 6", "Draw a line in debug console",
+  "Debug - validate tab status") go.
+- **Q33.6** go for the UI polish floor (Q33.1–Q33.5, A33.1–A33.4), after Smoke ready lands, since it
+  touches the same widgets.
 
 Tony in Chat, 2026-10-30, on the byte units floor (block 32,
 [handoff](sessions/2026-10-29-claude-byte-units/handoff.md)):
@@ -343,10 +362,12 @@ Q12.7 confirmed as Q18.6 (the patterns now tagged).
 - **Q23.5 The Live line turns amber for no-hit shots** (the whole line, which otherwise means
   "stopped"). Alternative: amber only in Folder details. Proposed: as built.
 - **Q23.6 A beside TXY from another computer with a colliding `u` tag** would be taken as current (no
-  record there). Proposed: accept (≈1e-6), or later write the hash into the name.
+  record there). Proposed (revised 2026-10-30, explained to Tony): `u` + 12 hex digits now (≈1e-13;
+  existing custom-profile beside TXY convert again once), rather than accept (≈1e-6).
 - **Q23.7 `helab convert --once` and damaged files**: one look has no "first seen", so `--once` goes
   by the mtime alone (≥ 20 s; its settle rule is 60 s by the mtime alone too). Alternative: `--once`
-  never reports damaged. Proposed: as built.
+  never reports damaged. Proposed (revised 2026-10-30, explained to Tony): `--once` calls a file
+  damaged only at 60 s, its settle age, so a stale share time or a slow clock rarely gives a false one.
 
 ## Versions across machines (block 27)
 
@@ -433,13 +454,6 @@ Finding numbers refer to the
     Proposed: no; only `legacy/tdc_autoconverter`.
 
 ## Automating the smoke pass (blocks 5, 31)
-
-- **Q5.1 Which model drives the smoke pass** ([runbook](sessions/2026-10-28-claude-smoke-automation/plan.md))?
-  Proposed: Haiku 5.5, with Sonnet 5.5 if Haiku misreads the screen. The dry run (A5.1, done
-  2026-10-28) used Sonnet 5.5 ([results](sessions/2026-10-28-claude-smoke-mac/results.md)), so
-  Haiku is still untried.
-  Also: which computer-use tool runs it on each machine (the Claude desktop app's computer use
-  on the Mac; check a lab PC can run it)?
 
 - **Q31.4 Where the test data lives** (computer-use extra 6): a set prepared locally in
   `~/GitHub-Local/HeLab-testdata` (75 MB, 148 files: a few raw + MATLAB TXY shots per detector era,
