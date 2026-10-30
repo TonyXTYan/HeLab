@@ -89,3 +89,59 @@ it; the tab couldn't match `cache_saved`, and the restored data looked out of da
 
 **Test** (`test_a_live_saves_dataset_has_the_signature_it_sent`): a settled MATLAB TXY of held HeLab
 shot 3; the stored signature equals `loaded`'s. Fails on `2960680` (`89490808… != 7ea4d6ce…`); passes now.
+
+# Round 2 (Codex's re-review 5714477187 on `e56d3d2`)
+
+## 4. P2 `io_ops/convert.py`: done shots taken as current without their TXY (comment 4425255644)
+
+**Cause.** `there = not beside or shot.shot in beside_txy`: for cache/temp output always true, so a shot
+in the remembered `done`/`kept` lists (`FolderCache.convert_lists`, sent back each run) with an unchanged
+raw stat was reported current without looking for its TXY. After Settings › Cache cleared HeLab's TXY, or
+with another destination (another folder), those shots never converted again this session (the lists
+survive Live off/on).
+
+**Fix.** When the request carries done or kept shots and the output isn't beside, `_txy_shots(folder,
+tag)` lists HeLab's folder for the output once (local, not a source folder; `os.scandir`, as
+`_remove_own_partials` does) for this tag's TXY names. A done/kept shot counts only while its TXY is
+there; one without goes through the ordinary check (its TXY's stat and index row: `provenance.stale`) and
+converts again. A listing that fails gives "none there", which costs only those per-shot checks. Beside
+is unchanged (the source listing's `beside_txy`). Cost: one local listing per run with done shots (each
+Live tick with auto-convert on).
+
+**Test.** `test_convert_helab.py::test_done_shots_whose_txy_went_convert_again`: converted to the cache,
+quiet with the lists sent back, cleared (`clear_converted`) → both convert again; then destination temp
+→ convert again; then quiet. Fails on `51cd8c4` (`[] == [1, 2]`); passes now.
+
+## 5. P2 `folder_cache.convert`: `skip` sent whatever the profile (comment 4425255663)
+
+**Cause.** `payload["skip"] = lists["unconvertible"]` sat outside `if lists["profile"] == profile`, so a raw
+file unconvertible under one profile was skipped under every later one.
+
+**Which failures are profile-independent?** `refuse()`'s reasons: `damaged` (format checks: final newline,
+the first channel is the profile's trigger, rows), `failed` (a conversion error, or a path too long, whose
+length includes the profile's tag), `no_rows` (no rows after reconstruction with the profile's settings).
+Only an empty raw file fails alike under every profile, and reading it again is cheap. So all of `skip` is
+the profile's, like `done`/`kept`; nothing kept apart.
+
+**Fix.** `skip` is sent only with the same profile.
+
+**What the user sees.** After choosing another profile (Settings › TXY converter › Save): the file isn't in
+that conversion's `seen` (the waiting list only), so it waits one tick ("Not seen with this size and date
+at the previous check"), then is read under the new profile. Converted: it shows as converted. Still
+damaged: the next tick lists it as damaged on the Live line and in Folder details again, and no second
+notification comes, because `events.DAMAGED_RAW` is keyed by (path, raw name, size, mtime), once per
+session. (With `DAMAGED_SECONDS` 20 s in the app, a file read again is "waiting" until 20 s after this
+computer first saw it, as for any file, then damaged.)
+
+**Tests.** `test_live_convert.py::test_a_file_unconvertible_under_one_profile_is_tried_under_another`
+(damaged under matlab-2019, skipped, then under matlab-2023-lab-edit read again, damaged, one
+notification): fails on `51cd8c4` (`[] == [4]`). `test_the_lists_of_the_last_conversion_are_sent_back`
+asserted `payload["skip"]` under another profile, the flagged behaviour: now asserts it's absent (fails on
+`51cd8c4`).
+
+## Round 2 checks
+
+`pytest -n 12 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-qf7`: 8505 passed, 672 skipped,
+2 warnings (pyqtgraph's NumPy 2.5 `arr.shape`, as before) in 107.85 s; no RERUN
+(`.ai/temp/qf7-suite-r2.log`). The five type checks: no issues / 0 errors. Round 1's CI run 41078799066:
+every job green (13 run, the rest skipped as on a dev branch).
