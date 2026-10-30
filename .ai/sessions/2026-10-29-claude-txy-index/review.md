@@ -661,3 +661,90 @@ The compat matrix was skipped (a push, not a PR). Every new Q~2/Q~3 test passed 
   - Ledger is making (2) now (uncommitted). It's acceptable as a test fix if the known-issues entry
     keeps (1) and (3) open.
   - Whichever lands needs its own green CI run before landing.
+
+## Round 7 check (head `460360b`, `git diff 0b00fdc..460360b`)
+
+**Result: 0 open findings.** Low-8, Nit-9 and Nit-10 are closed. The paced two-writer test still
+catches a lost write. A~4 is sound as a later item. When the quit flush runs is still Tony's open
+question (Q~3), so I judged the flush only as built.
+
+| Finding | Status | What I checked |
+|---|---|---|
+| Low-8 | **closed** | `_on_terminal` (`convert_cli.py:203–209`) is now `sys.stdin is not None and sys.stdin.isatty()`, and it catches the `ValueError` a closed file object raises. Two new `no-stdin` cases run the real `_on_terminal` with `sys.stdin = None`: `--output cache` → temp and the warning; `cache-forced` → the cache. `test_a_missing_or_closed_stdin_is_no_terminal` covers None and a closed stream. |
+| Nit-9 | **closed** (documented) | Handoff, Design › Q~3, "One flush, best effort": a mark that arrives after the flush isn't written, so `last_used` can be up to an hour old, and it only orders Settings › Cache's list. Whether to flush later is part of Tony's pending answer. |
+| Nit-10 | **closed** | The header no longer says "to the disk cache" for the last uses. Alone: "Recording when converted TXY were last used before HeLab quits:". With other saves: "Saving 1 folder to the disk cache and recording when … before HeLab quits:". Both are tested, and M~3 shows the wording to Tony. |
+
+### A correction to my round 6: fix (1) was already the code
+
+`_prepare` (`provenance.py:376–396`) takes `BEGIN IMMEDIATE` only when `user_version` is 0, and checks it
+again inside the transaction. For an existing index it only reads. So each shot in the test was one
+write transaction, as Ledger now writes. I backed fix (1) on the handoff's wrong account, without
+reading `_prepare`. The corrected cause fits:
+- In WAL, the last connection to close checkpoints and deletes the `-wal`, so each per-shot open
+  rebuilds it. That is the test's churn.
+- `convert_folder` opens the index once per run (`convert.py:585`) and closes it in its `finally`
+  (`:713`), so a real conversion doesn't churn this way.
+
+### The 5 ms pause doesn't hide a lost write
+
+The probe is `scratchpad/pause_probe.py`. It runs the test's own `WRITER` (read from the test file),
+two processes, 150 rows each, with one mutation: a write that meets the other writer's lock gives up
+silently (busy timeout 0, no retry, returns 0, the process still exits 0).
+
+| Pause | Mutated | Runs | Rows (helper / command line) | The test |
+|---|---|---|---|---|
+| 5 ms | no | 3 | 150 / 150 each time | passes |
+| 5 ms | yes | 8 | 127–145 / 134–145; 5–23 writes lost per writer per run | **fails 8 of 8** |
+| 0 | yes | 3 | 121–131 / 130–134 | fails 3 of 3 |
+
+So the pause keeps both writers contending, about a tenth of the writes meeting the other's lock on
+macOS, and a dropped write still fails the count assert. Ledger's own probe, one row dropped, gives
+`149 == 150`.
+
+On CI 40979891876, Windows Tests (2/2) took about 11.3 s for this test (00:33:27 → 00:33:39,
+including the 1 s start delay and two interpreter starts). That is slow but within the 120 s
+`communicate` timeout, and it didn't rerun. If it reruns again, the known-issues entry already names
+(3), an OS lock serialising writers, as the last resort.
+
+### A~4: sound, for later
+
+The handoff's claims hold:
+- Per-shot churn is test-only, since `convert_folder` opens the index once.
+- `helab convert --watch` reopens each pass, and the app's helper once per request.
+- While `helab convert` holds a connection, the helper's close isn't the last, so it neither
+  checkpoints nor deletes the `-wal`, and the next open has nothing to rebuild.
+- It doesn't change the lock's fairness.
+
+One cost to add to A~4: on Windows a long-held connection keeps the file open without delete
+sharing. So while `helab convert` runs, the app's helper can't set aside a damaged index
+(`IndexUnavailable`, as accepted in round 1). The proposal's "reopen after `IndexUnavailable` or a
+set-aside" covers `helab convert`'s side, but the app's conversions would fail until it notices.
+That is rare and acceptable, but worth a line in A~4.
+
+### Checks (floor venv, macOS, head `460360b`, clean tree before and after)
+
+- **Full suite**, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8225 passed, 669 skipped, 0 reruns** (2 min 9 s).
+- **Type checks:** `mypy helab/ --strict` (191), `mypy tests --strict` (160) and `mypy helab/ --strict
+  --platform win32` (191) found no issues. `pyright helab tests` and `pyright --pythonplatform Windows
+  helab tests` found 0 errors.
+
+### CI run 40979891876 (head `460360b`, attempt 1): success, no RERUN
+
+I read every job's log. No job has a "rerun reasons" section or a RERUN line.
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123817092786 | 4098 passed |
+| Ubuntu Tests (2/2) | 123817092481 | 4124 passed |
+| macOS Tests (1/2) | 123817092567 | 4101 passed |
+| macOS Tests (2/2) | 123817092637 | 4124 passed |
+| Windows Tests (1/2) | 123817092525 | 4088 passed |
+| Windows Tests (2/2) | 123817092680 | 4108 passed |
+| Ubuntu Converter backends | 123817092638 | 693 passed |
+| macOS Converter backends | 123817092455 | 693 passed |
+| Windows Converter backends | 123817092454 | 692 passed |
+| Detect branch; ubuntu, macos, windows Build | 123817037145; 123817092477, 123817092676, 123817092833 | success |
+
+The compat matrix was skipped (a push). The two-writer test passed with no rerun in every job that
+runs it: Tests (2/2) on each OS, and the Converter backends jobs, which run `test_convert_helab.py`.

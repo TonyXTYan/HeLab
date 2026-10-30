@@ -24,7 +24,7 @@ Folder flags (right-click › Don't cache / Don't auto-load this folder; store `
 
 ## Converted TXY in the cache folder
 
-HeLab's own TXY under the cache folder (`converted-txy/`) aren't in the store: outside the disk budget, and nothing removes them without asking (Q12.3, Tony 2026-10-29: they get their own budget, separate from the dataset budget, built with caching v2; until then none). Settings → Cache shows their size (`inventory.converted_txy`) and clears them when asked (`cache_admin clear_converted_txy`, `removed` kind `converted_txy`; records of beside TXY stay); Clear folder preferences names `write_beside`. A dataset's `info.txy` records its source and HeLab shots' origins; shots are reused only from the same kind of TXY; data of MATLAB's TXY alone is as before.
+HeLab's own TXY under the cache and temp folders (`converted-txy/`, Q27.5) aren't in the store: outside the disk budget, and nothing removes them without asking (Q12.3, Tony 2026-10-29: they get their own budget, separate from the dataset budget, built with caching v2; until then none). Settings → Cache shows their size per folder and when last used (`inventory.converted_txy`, `events.ConvertedSummaryField`, through each base's `converted-txy/index.sqlite`) and clears them when asked (`cache_admin clear_converted_txy` with the temp folder as `temps`; `removed` kind `converted_txy`; rows and old records of beside TXY stay; damaged set-aside indexes go; a newer HeLab's index is left alone); Clear folder preferences names `write_beside`. A dataset's `info.txy` records its source and HeLab shots' origins; shots are reused only from the same kind of TXY; data of MATLAB's TXY alone is as before.
 
 ## Folder constants
 

@@ -242,6 +242,26 @@ post-2025 plates (block 25) and versions (block 27):
   prepared for the distributed analysis too": a direction, settled with the design (the plan's
   [Versioning](../roadmaps/caching-v2.md#versioning)).
 
+Tony in Chat, 2026-10-30, via the Assistant, on the converted-TXY index floor (block 30,
+[handoff](sessions/2026-10-29-claude-txy-index/handoff.md)):
+
+- **Q30.1** a HeLab TXY is current only while its size **and mtime** are the index row's (was size
+  alone): yes.
+- **Q30.2** (answered twice) a typed `helab convert --output cache` overrides a Don't cache folder
+  (the user's intent, as Q12.4): a warning naming the folder, then `[y/N]` on a terminal (default
+  temp), temp with the warning without one; `--output cache-forced` writes to the cache without
+  asking. The app and the setting's default keep "the flag wins". Built.
+- **Q30.3** `last_used`: a load marks at most hourly; the uses it skipped are written at quit, a quit
+  save like the others (the quit window, a ~5 s no-progress limit, Quit now skips it; built), and
+  also in the background every ~10 min ("(a)+(c)"; A30.4), respecting Work Offline, lane pausing, quit
+  and the cache being off.
+- **Q30.4** with the disk cache off this session, Settings › Cache doesn't list the temp folder's
+  converted TXY: "ok", left for caching v2.
+- **Q30.5** Settings refuses a temp folder on a network drive, a UNC path or a synced folder, as it
+  does the cache folder ("HeLab's temp folder can't be on a network drive or in a synced folder
+  ({problem}): choose a folder on this computer's own disk."; an existing such setting kept but
+  warned about once): yes (A30.5).
+
 ## Converter stage 4, HeLab core (block 12)
 
 From the `agent/txy-helab-core` handoff (`sessions/2026-10-29-claude-txy-helab-core/handoff.md`).
