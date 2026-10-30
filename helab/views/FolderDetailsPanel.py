@@ -256,8 +256,12 @@ class FolderDetailsPanel(QScrollArea):
                              REFUSED_TOOLTIP if large[1] else LARGE_TOOLTIP)
         elif opened:
             # Not loading: shown from the cache with auto-load off, or its check was cancelled.
-            rows["state"] = ("Loaded from cache · not checked yet", "Shown from memory or the disk cache; "
-                             "Load data checks it against the folder.") if unchecked else ("Loaded", "")
+            if unchecked and explorer.model.cache.offline:  # (As the summary says it: A33.2.)
+                rows["state"] = ("Loaded from cache · not checked (offline)", "Shown from memory or the disk cache; "
+                                 "working offline, it isn't checked against the folder. Work online to check it.")
+            else:
+                rows["state"] = ("Loaded from cache · not checked yet", "Shown from memory or the disk cache; "
+                                 "Load data checks it against the folder.") if unchecked else ("Loaded", "")
         elif shown:
             changed = node is not None and dataset is not None and FolderExplorer._changed_since_load(node, dataset)
             rows["state"] = ("Folder changed · showing previous data" if changed else "Showing previous data",
@@ -314,7 +318,7 @@ class FolderDetailsPanel(QScrollArea):
                 rows["convert"] = (text[:1].upper() + text[1:], line)
         if dataset is None or not shown:
             return rows
-        self._data_rows(explorer, dataset.metadata, rows, loading, opened)
+        self._data_rows(explorer, dataset.metadata, rows, loading, opened, unchecked=unchecked)
         return rows
 
     def _load_rows(self, explorer: FolderExplorer, rows: dict[str, tuple[str, str]]) -> None:
@@ -359,8 +363,9 @@ class FolderDetailsPanel(QScrollArea):
 
     @staticmethod
     def _data_rows(explorer: FolderExplorer, meta: Mapping[str, Any], rows: dict[str, tuple[str, str]],
-                   loading: bool, opened: bool) -> None:
-        """The shown dataset: counts, size, when it was loaded, where from and its problem shots."""
+                   loading: bool, opened: bool, *, unchecked: bool = False) -> None:
+        """The shown dataset: counts, size, when it was loaded, where from and its problem shots. Shown
+        unchecked (``unchecked``), it never says an earlier check found it unchanged."""
         def number(key: str) -> int:
             value = meta.get(key, 0)
             return int(value) if isinstance(value, (int, float)) and math.isfinite(value) else 0
@@ -389,15 +394,19 @@ class FolderDetailsPanel(QScrollArea):
                          relative_age(time.time() - loaded_at)]
                 seconds = meta.get("load_seconds")
                 took = seconds if isinstance(seconds, (int, float)) and math.isfinite(seconds) else None
+                unchanged = bool(meta.get("unchanged")) and not unchecked
+                offline = unchecked and explorer.model.cache.offline
                 if took is not None:
                     parts.append(f"took {stopwatch(took)}")
-                elif meta.get("unchanged"):
+                elif unchanged:
                     parts.append("checked, unchanged")
+                if offline:
+                    parts.append("not checked (offline)")
                 rows["loaded"] = (" · ".join(parts), "\n".join(filter(None, (
                     f"Read into memory {when:%Y-%m-%d %H:%M:%S %Z}",
                     "Load time: running time, without queued or paused time" if took is not None else "",
-                    "The folder was not modified since the disk cache; nothing was read"
-                    if meta.get("unchanged") else ""))))
+                    "The folder was not modified since the disk cache; nothing was read" if unchanged else "",
+                    "Working offline: not checked against the folder" if offline else ""))))
         origin = load_origin(explorer.load_source, explorer.load_counts) if opened else None
         if origin:
             rows["source"] = (origin, "\n".join(filter(None, (
