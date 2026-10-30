@@ -158,3 +158,40 @@ if they state the held rule for HeLab shots only, the same.
 converted HeLab TXY (read it again as a changed shot, like a HeLab-held shot converted again), rather than at
 the next load? Proposed: no, keep it as now (no mismatch, no surprise rereads during a run; the next load
 takes HeLab's).
+
+# Round 4 (Codex's fourth review 5714936123 on `fb40034`)
+
+Detail in `notes.md` (Round 4). Round 3's CI run **41084197666 passed**.
+
+| Finding | Commit | Files |
+|---|---|---|
+| P2 4425610377, `seen` carried a profile's waiting reasons across a profile change | `d9a154d` | `helab/utils/folder_cache.py`, `tests/test_live_convert.py` |
+
+7. Under another profile, `seen` keeps each waiting file's name, size, mtime and first-seen time and drops its
+   reason and message (the brief's "keep only the fingerprint"). Same profile: unchanged.
+   - **Two-looks rule:** kept across the change: a file seen unchanged at the previous check is read at the first
+     conversion under the new profile (dropping `seen` entirely would cost every waiting file one more tick).
+   - **Damaged clock:** goes on from when this computer first saw the file unchanged (the file's, not the profile's).
+   - Only `not_trigger_first` depends on the profile; all reasons are dropped (one more read at most).
+
+**Other remembered fields (none left profile-blind):** `convert_lists`' `current`/`kept`/`unconvertible` are the
+profile's only, `waiting` is now stripped of its reasons, `profile` is the comparison; the backend needn't be
+compared (identical bytes); destination/beside are covered by round 2's "TXY still there"; `convert_reasons` is
+display text, replaced by the next run's; the index rows carry the profile hash. Damaged and low-count
+notifications are once per raw file by design (Q18.5), not per profile.
+
+**A~2 (display only, `explorer_live.py`):** `AutoConvert.damaged` keeps a file counted "damaged" while it stays
+unconvertible, even when a later profile fails it for another reason; on a new summary it could keep only names
+whose current message starts with `DAMAGED_TEXT`.
+
+**Tests (fail on `dd540cd`, pass now):** `test_a_file_waiting_off_one_profiles_trigger_converts_under_another`
+(`[] == [4]`); `test_the_lists_of_the_last_conversion_are_sent_back` (asserts the stripped entry).
+
+**Checks:** full suite -n 12: 8507 passed, 672 skipped, no RERUN; five type checks clean.
+
+**Pushed:** `dev/v0.0.7` with `d9a154d` and this session commit on top (hash and CI run in the report).
+
+**Doc proposals:** `live.md` Auto-convert parenthesis (extending round 2's): "(`seen`/`done`/`kept`/`skip`;
+`done`/`kept`/`skip` only for the same profile, and under another `seen` without its reasons: a file waiting or
+unconvertible under one profile is read again under the next)". `converter.md`'s `seen` row, if it names the
+reasons, the same.
