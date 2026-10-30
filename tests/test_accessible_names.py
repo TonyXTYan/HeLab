@@ -321,8 +321,8 @@ def close_web_views(scripts: TreePanelWidget) -> int:
 
 
 @pytest.mark.no_auto_data_root  # RAM only: no save left for the quit to wait for (handoff A~5).
-@covers("PlotlyPane", "MatplotlibPane", "UnitSpinBox", "CommitTextEdit", "PositionPlot", "DensityPlot", "ReleasePlot",
-        "SpectrumPlot", "CountsPlot", "FractionsPlot", "HistogramsWidget", "HotSpotsPlot",
+@covers("PlotlyPane", "MatplotlibPane", "UnitSpinBox", "CommitTextEdit", "SettingsTree", "PositionPlot", "DensityPlot",
+        "ReleasePlot", "SpectrumPlot", "CountsPlot", "FractionsPlot", "HistogramsWidget", "HotSpotsPlot",
         "ShotTimesWidget", "TrendsWidget", "VelocityWidget")
 def test_every_script_and_each_library(qtbot: QtBot, tmp_path: Path) -> None:
     """Every script of every group, once, on a synthetic folder, then one plot per Library (Drawing ›

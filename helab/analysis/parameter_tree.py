@@ -6,8 +6,9 @@ from decimal import Decimal
 from typing import Any, Sequence, cast
 
 from PyQt6.QtCore import QEvent, QObject, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QFocusEvent, QKeyEvent
-from PyQt6.QtWidgets import QApplication, QTabWidget, QTextEdit, QWidget
+from PyQt6.QtGui import QFocusEvent, QKeyEvent, QResizeEvent, QShowEvent
+from PyQt6.QtWidgets import (QApplication, QHeaderView, QTabWidget, QTextEdit, QTreeWidgetItemIterator,
+                             QWidget)
 import pyqtgraph.functions as fn
 from pyqtgraph.parametertree import Parameter, ParameterTree, registerParameterType
 from pyqtgraph.parametertree.parameterTypes.basetypes import SimpleParameter, WidgetParameterItem
@@ -351,6 +352,54 @@ def apply_visibility(root: Parameter, specs: Sequence[ParameterSpec]) -> None:
             parameter_of(root, spec).setOpts(visible=spec.applies(values))
 
 
+NAME_SHARE = 0.5  # a settings tree's name column takes at most this share of its width
+
+
+class SettingsTree(ParameterTree):  # type: ignore[misc]
+    """pyqtgraph's tree with its name column at most ``NAME_SHARE`` of the tree's width and the
+    values filling the rest. pyqtgraph sizes both columns to their contents, so in a narrow panel
+    a long name pushed the values off the right edge (smoke pass 2026-10-30). A name cut short
+    shows in full in its tooltip; the column can still be dragged wider until the tree resizes."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        header = self.header()
+        if header is not None:
+            header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+            header.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.itemExpanded.connect(self.fit_names)
+        self.itemCollapsed.connect(self.fit_names)
+
+    def fit_names(self, *_: object) -> None:
+        """The name column as wide as its names, up to ``NAME_SHARE`` of the tree; each name in
+        its row's tooltip."""
+        found = QTreeWidgetItemIterator(self)
+        while (item := found.value()) is not None:
+            found += 1
+            param = getattr(item, "param", None)
+            if isinstance(param, Parameter):
+                item.setToolTip(0, str(param.title()))
+        viewport = self.viewport()
+        width = viewport.width() if viewport is not None else self.width()
+        self.setColumnWidth(0, min(self.sizeHintForColumn(0), int(width * NAME_SHARE)))
+
+    def setParameters(self, *args: Any, **kwargs: Any) -> None:
+        super().setParameters(*args, **kwargs)
+        self.fit_names()
+
+    def addParameters(self, *args: Any, **kwargs: Any) -> None:
+        super().addParameters(*args, **kwargs)
+        self.fit_names()
+
+    def resizeEvent(self, e: QResizeEvent | None) -> None:
+        super().resizeEvent(e)
+        self.fit_names()
+
+    def showEvent(self, a0: QShowEvent | None) -> None:
+        super().showEvent(a0)
+        self.fit_names()
+
+
 def settings_widget(root: Parameter, specs: Sequence[ParameterSpec]) -> QWidget:
     """The tree of ``root``; when the parameters name more than one ``page``, a tab per page
     (in declaration order) holding its parameters and groups, all still under ``root``."""
@@ -362,13 +411,13 @@ def settings_widget(root: Parameter, specs: Sequence[ParameterSpec]) -> QWidget:
             placed.add(top)
             pages.setdefault(spec.page, []).append(root.child(top))
     if len(pages) <= 1:
-        tree = ParameterTree()
+        tree = SettingsTree()
         tree.setParameters(root, showTop=False)
         return cast(QWidget, tree)
     tabs = QTabWidget()
     tabs.setDocumentMode(True)
     for page, parameters in pages.items():
-        tree = ParameterTree()
+        tree = SettingsTree()
         for parameter in parameters:
             tree.addParameters(parameter, showTop=True)
         tabs.addTab(tree, page or "Settings")

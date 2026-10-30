@@ -25,6 +25,14 @@ use (Q6.1). The lab PC pass and M1.3 Live are the first checks of v0.0.7.
 **v0.0.7:** the converter step is M1.9 (Q24.3, "live convert and plot update"); M1.10 checks two
 versions on one Mac (block 27).
 
+**v0.0.7, Mac, partial (2026-10-30, on 6dec236):** run by computer use with the
+[runbook](sessions/2026-10-30-claude-smoke-handoff/runbook.md)
+([results](sessions/2026-10-30-claude-smoke-final-mac/results.md)). M1.1, M1.2 (cached), M1.6 (offline) and
+M1.7 (all 13 DLD plots) pass; M1.4-1 partly. Its one bug, the plot settings table's Value column off the right
+edge in a narrow panel, is fixed on Ground. Still to run: M1.4-2 to 4, M1.5, M1.6-3, M1.8, M1.9, M36.1–M36.4,
+and by hand: the plot/settings splitter drags, and two newly floated plots open offset (Q33.3). Skipped: M1.3
+(nothing acquiring), M1.10. Then the lab PC pass.
+
 These checks gate a release (Tony, 2026-10-28: Q1.1; amended for v0.0.6a1 by Q6.1, above). Run the pass once
 on a Mac and once on a lab PC (Windows), on the release candidate. Steps marked **Lab PC**
 matter most there. Each machine takes about 45 min, and step 3 needs a run acquiring.
@@ -37,7 +45,8 @@ Afterwards, an agent ticks the items below that the pass covered
 (A1.8, [AI_TODO](AI_TODO.md)).
 
 A small model can drive most of it through computer use, with Tony reviewing the screenshots:
-see the [runbook](sessions/2026-10-28-claude-smoke-automation/plan.md) (Q5.1). Its dry run on the
+see the [runbook](sessions/2026-10-30-claude-smoke-handoff/runbook.md) (Q5.1; the first one,
+[plan](sessions/2026-10-28-claude-smoke-automation/plan.md)). Its dry run on the
 Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
 [results](sessions/2026-10-28-claude-smoke-mac/results.md).
 

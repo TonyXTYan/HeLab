@@ -19,7 +19,8 @@ from pyqtgraph.parametertree import ParameterTree
 
 from helab.analysis.dataset_view import DatasetView, ViewKey, build_view, root_key, view_of
 from helab.analysis import display_units, selection
-from helab.analysis.parameter_tree import UnitSpinBox, build_tree, parameter_of, settings_widget, tree_values
+from helab.analysis.parameter_tree import (NAME_SHARE, SettingsTree, UnitSpinBox, build_tree, parameter_of, settings_widget,
+                                          tree_values)
 from helab.analysis.parameters import ParameterSpec, describe, effective, tree_children
 from helab.analysis.results import AnalysisContext, AnalysisResult, Cancelled, RamResults
 from helab.analysis.runner import AnalysisRunner
@@ -352,6 +353,44 @@ def test_settings_pages_become_tabs(qtbot: QtBot) -> None:
     assert [item.param.name() for item in fit.listAllItems()] == ["Fit", "model", "width"]
     parameter_of(root, specs[3]).setValue(True)
     assert tree_values(root, specs) == {"bins": 10, "model": "gauss", "width": 1.0, "log_y": True}
+
+
+def test_values_stay_in_view_in_a_narrow_panel(qtbot: QtBot) -> None:
+    """The DLD T, X, Y histograms' settings in a panel 281 px wide (smoke pass 2026-10-30): the name
+    column takes at most half, so every value shows; a name cut short is whole in its tooltip.
+    pyqtgraph alone sized the names to their longest and pushed the values off the right edge."""
+    specs = dld_plots.TxyHistograms().parameters("Plot")
+    root = build_tree(specs)
+    tabs = settings_widget(root, specs)
+    assert isinstance(tabs, QTabWidget)
+    qtbot.addWidget(tabs)
+    tabs.resize(281, 600)
+    tabs.show()
+    qtbot.waitExposed(tabs)
+    cut = 0
+    for page in range(tabs.count()):
+        tabs.setCurrentIndex(page)
+        tree = tabs.widget(page)
+        assert isinstance(tree, SettingsTree)
+        viewport: QWidget | None = tree.viewport()
+        assert viewport is not None
+        shown: QWidget = viewport
+        qtbot.waitUntil(lambda: shown.width() > 200)
+        width = shown.width()
+        if tree.sizeHintForColumn(0) > width * NAME_SHARE:  # its longest name doesn't fit in half
+            cut += 1
+            assert tree.columnWidth(0) == int(width * NAME_SHARE)
+        else:
+            assert tree.columnWidth(0) == tree.sizeHintForColumn(0)
+        assert tree.columnViewportPosition(1) + tree.columnWidth(1) <= width
+    assert cut  # the case the smoke pass found
+    item = next(iter(parameter_of(root, specs[0]).items))
+    assert item.toolTip(0) == specs[0].title
+    tabs.setCurrentIndex(0)
+    first = tabs.widget(0)
+    assert isinstance(first, SettingsTree)
+    tabs.resize(1200, 600)  # wide enough: the names take what they need
+    qtbot.waitUntil(lambda: first.columnWidth(0) == first.sizeHintForColumn(0))
 
 
 # Shots and view range
