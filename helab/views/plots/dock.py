@@ -330,8 +330,10 @@ class DockTabCloser(QObject):
             if not bar.property("helabClosable"):
                 bar.setProperty("helabClosable", True)
                 bar.setTabsClosable(True)
-                # A slot of this object, not a lambda: a lambda's connection here was seen to stop
-                # delivering in CI's test order (the tab's × did nothing; H1 in the floor's review).
+                # A bound slot and sender(), never a lambda capturing ``bar``: Qt made the bar, so sip
+                # keeps no reference to its wrapper, and the wrapper and such a lambda form a cycle
+                # the first full gc.collect() clears, leaving a connection that calls nothing (the
+                # tab's × went dead, 0.0.6a1-0.0.7a1).
                 bar.tabCloseRequested.connect(self._tab_close_requested)
                 bar.tabMoved.connect(self.schedule_fit)
             self.identify_tabs(bar)

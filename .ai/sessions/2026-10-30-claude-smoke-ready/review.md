@@ -146,3 +146,139 @@ accessibility, so a runner can't find `param_<group>.<name>` until it selects th
   bars' objectNames.
 - **Tests:** settings via `app_settings()`, synthetic folders in `tmp_path`, only PyQtGraph plots (no
   `QWebEngineView` made by the tests; the main window is closed through `_closing`).
+
+---
+
+# Re-review: review fixes and phase B items 2–4 (94ed478..270b368)
+
+Reviewed `git diff 94ed478..270b368` (ed4c227 Dump State, `--geometry`, Return in plot settings;
+270b368 the phase A fixes).
+
+## Checks run
+
+- **Full suite** on 270b368 (detached worktree of that commit), `-n 4 --reruns 5 --reruns-delay 1
+  --basetemp=.ai/temp/pytest-review`: **8222 passed, 669 skipped, no RERUN.**
+- `mypy helab/ --strict` (193 files), `--platform win32` (193), `mypy tests --strict` (163): clean.
+  `pyright helab tests`, `--pythonplatform Windows`: 0 errors.
+- CI run 40984390827: see the end.
+
+## H1: the cause is now pinned down (and it is a user-visible bug since 0.0.6a1)
+
+**Mechanism, reproduced in isolation** (a scratch script, `QT_QPA_PLATFORM=offscreen`): a lambda
+connected to a signal of an object **Qt made itself** (here `QTabWidget.tabBar()`; in HeLab the dock
+tab bars `QMainWindowLayout` makes, found with `findChildren`), **capturing that object** (`bar=bar`),
+stops being called after one `gc.collect()` once nothing else holds the object's Python wrapper:
+
+```
+lambda capturing bar, no gc: delivered=True
+lambda capturing bar, gc.collect(): delivered=False
+lambda not capturing bar, gc.collect(): delivered=True
+lambda capturing bar, ref kept, gc.collect(): delivered=True
+bound pyqtSlot, gc.collect(): delivered=True
+```
+
+The wrapper and the lambda form a cycle (PyQt's GC traversal of a QObject visits its slot proxies'
+callables; the lambda holds the wrapper). sip keeps no reference to a wrapper of a C++-made object,
+so the cycle is garbage: the collector clears the wrapper, and clearing a QObject's wrapper clears
+its slot proxies, so the Qt connection stays but calls nothing. A bar made in Python (sip keeps its
+wrapper once C++ owns it) survives, and so does a bound `pyqtSlot` (a plain Qt connection, no proxy).
+This matches Beacon's observations: nothing disconnects it; "in isolation it survives `gc.collect()`"
+(the isolated test held `bar`); and it depends on test order (when a full collection falls between
+`fit()` and the click depends on what the worker allocated before).
+
+**Not new in 94ed478:** the lambda dates from 9c477c2 (0.0.6a1, 2026-10-28). What 94ed478 changed is
+the worker's history before that test (the new `test_accessible_names.py` ran first on `gw0` every
+time), so a collection now fell in that window. **The fix (a bound `pyqtSlot` with `sender()`) removes
+the cause, not just the timing.** Accepted.
+
+**The same pattern elsewhere:** an AST scan of `helab/` for `X.signal.connect(lambda …)` whose lambda
+refers to `X` finds 14 connections. In every one, either the sender is made in Python (`QMessageBox(...)`, `self.…`,
+Parameters, `UnitSpinBox`), or it comes from `menu.addMenu(...)` (sip keeps it; checked: the Debug
+submenus still fill after `gc.collect()`). Only `DockTabCloser`'s Qt-made bar was at risk. (A lambda
+reaching the sender through another name, or a `functools.partial`, would escape this scan; none seen
+by reading the Qt-made-object call sites: `tabBar()`, `findChildren`, `widgetForAction`.)
+
+### R1 (High, docs): the known issue and A~2 give the wrong cause
+
+With the old lambda, a **real mouse click** on a plot tab's × did nothing after one `gc.collect()` in
+the real main window (two plots tabbed; scratch test, the 94ed478 `fit` patched back in: "lambda: the
+tab's x did nothing after a GC"; the 270b368 slot: closed). In the app a full collection runs every so
+often, so **in 0.0.6a1–0.0.7a1 a plot tab's × goes dead soon after its tab bar is made**. That is
+almost certainly known-issues:85 ("A plot tab's 'x' didn't respond to computer-use clicks (the dock
+title's 'x' did)"): computer-use clicks are pointer clicks, and the dock title's × is Qt's own
+button with no lambda. A~2 says real clicks work and puts the smoke observation down to
+accessibility. The accessibility part is true for an AX *press* (`QAccessibleTabBar` doesn't list the
+close buttons), but it isn't what the smoke pass hit. The handoff should say: the × was dead after a
+GC (fixed in 270b368, user-visible, worth a release-notes line), and separately AX can't press a
+tab's × (A~2's routes stand). The known-issues entry closes with the GC cause, and the `dock.py`
+comment ("was seen to stop delivering in CI's test order") should name the mechanism so the pattern
+isn't reintroduced. Proposed AGENTS.md or architecture line: *never connect a lambda that captures
+the sender when Qt made the sender (found with `findChildren`, `tabBar()`, …): use a bound slot and
+`sender()`*.
+
+### R2 (Low): the new × test can't catch the bug
+
+`tests/test_debug_runner_menu.py:203` (`test_a_plot_tabs_close_button_closes_that_plot_when_clicked`)
+clicks without a collection, and it keeps `bar` in a local variable (which alone keeps the lambda
+alive), so it passes with the old lambda too. Take the button, `del bar`, `gc.collect()`, then click:
+that version fails on 94ed478's `fit` and passes on 270b368's (checked as above).
+
+## The other phase A fixes
+
+- **H2:** resolved. The names and IDs stay within the approved scope (`panes.py`, `backends.py`,
+  `release_time.py`, `density_images.py`, `helab/utils/accessible.py`). `identify_plot_controls`
+  (`dock.py:171`) prefixes them with `plot_<n>.` when the dock takes its content, so two plots never
+  share an ID. It renames only interactive classes, and nothing in HeLab looks up those by name
+  (`findChild` is used only for the labels `plot_data_source`, `plot_error`, `plot_note` and
+  `plot_opengl`, none of them renamed). The walk now opens every script of every group and one plot
+  per Library, and the guard covers `helab/analysis` and `helab/scripts`.
+  - **Nit:** `backends.py:99` reads Matplotlib's private `NavigationToolbar2QT._actions` (present in
+    3.11.2). If an upgrade renamed it, every Matplotlib pane would fail to build (an `AttributeError`),
+    not just lose its IDs. Use `getattr(self.toolbar, "_actions", {})`.
+  - **Nit:** controls a drawing creates after `setWidget` (none today) would miss the `plot_<n>.`
+    prefix. The walk would only catch that when two such plots are shown at once.
+- **H3, L2, L3:** resolved. The docstring now says macOS and Linux, and the runbook and M~3 have
+  their lines. Six message boxes are walked (`ASKS`), and `INLINE_SKIPPED` gives a reason for each
+  of the rest.
+- **L1:** resolved. Every runner item's lambda checks `sip.isdeleted` before it acts.
+- **N1–N3:** resolved or explained: tab bar IDs come from the first plot's number, the self-test
+  covers a control with no ID and an unnamed tab, and the GUI-thread write is explained in a comment.
+
+## Phase B items 2–4
+
+- **Dump State** (`helab/views/state_dump.py`) reads memory only. Every field is a plain attribute
+  or a property over one (`FolderExplorer.live` → `live_control.live`, `load_path` → `_load_path`,
+  `loading`, `load_progress`, `load_error`, `summary_buttons`), a label's text, tooltip or
+  visibility, `FolderCache.offline`, or plot instance fields. A test fails the dump on any
+  `IOService.submit`. It has every field brief B item 2 lists (summary lines, Folder details, status
+  bar, folder and plot tabs, each plot's source line and tooltip, plot count, Live). It suits the
+  `--smoke` channel: a versioned `schema` (`helab.state/1`), and controls and tabs named by their
+  phase A IDs (`folder_tab_<n>`, plot numbers, `details_<key>`, status-bar button IDs). No finding.
+  (`"closing"` reads `window._closing`; fine within the package.)
+- **`--geometry`:** HeLab saves no window geometry (no `saveGeometry`, `restoreGeometry` or
+  `saveState` on the main window), so nothing persists. The option is taken out of argv before
+  `QApplication` sees it, applied before `show()`, and `resize` can't go below the minimum size;
+  there are tests for parsing and placement. **Nit:** `--geometry` followed by another option uses
+  that option as its value (`helab --geometry -x`: logged as ignored and `-x` dropped). Harmless.
+- **Return and Escape in plot settings** (`parameter_tree.py`, approved): Return closes the editor
+  on the next event-loop pass, after the box has committed; Escape restores and closes. It covers
+  numbers (`UnitNumberItem`) and choices (the new `helab_list`). Nothing in HeLab compares a
+  parameter's type with `"list"`, so the remap is safe (grep). pyqtgraph gives the choice combo
+  `setValue`, which Escape uses. The new tests include the next run taking the value. No finding.
+
+## CI run 40984390827 (head 270b368)
+
+Completed, success, every job green, **no RERUN in any job** (each log's summary line and rerun
+lines read):
+macOS Tests (1/2) 123831926635 4098 passed, 322 skipped; (2/2) 123831926545 4124 passed, 347 skipped;
+Ubuntu (1/2) 123831926757 4095 passed, 324 skipped; (2/2) 123831926720 4125 passed, 347 skipped;
+Windows (1/2) 123831926531 4085 passed, 333 skipped; (2/2) 123831926584 4108 passed, 361 skipped;
+Converter backends 123831926706 / 123831926673 / 123831926619 and the three Builds: success.
+`test_every_script_and_each_library` passed on all three OSes (under the 120 s per-test timeout).
+
+## Verdict
+
+The code is ready. **Open before landing: R1** (handoff and known-issues: the × was dead after a
+GC, a user-visible bug fixed here, not only an accessibility gap; the `dock.py:333` comment should
+name the mechanism) **and R2** (the × test: `del bar`, then `gc.collect()`, before the click). The
+two Nits are optional.

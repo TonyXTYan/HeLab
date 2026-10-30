@@ -96,7 +96,8 @@ class MatplotlibPane(QWidget):
         self.canvas = FigureCanvasQTAgg(figure)  # type: ignore[no-untyped-call]
         self.canvas.setParent(self)
         self.toolbar = NavigationToolbar2QT(self.canvas, self)  # type: ignore[no-untyped-call]
-        for tool, action in self.toolbar._actions.items():  # Named by their text; IDs by Matplotlib's tool name.
+        # Named by their text; IDs by Matplotlib's tool name (its private table: none if it's renamed).
+        for tool, action in getattr(self.toolbar, "_actions", {}).items():
             identify_action(self.toolbar, action, f"mpl_{tool}")
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)

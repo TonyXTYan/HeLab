@@ -72,18 +72,29 @@ built where it asks: an entry in `ASKS`.
 
 ## Review fixes (Wren, review.md)
 
-- **H1** (the rerun on all three OSes): reproduced locally with CI's exact command
-  (`pytest -n 4 --test-group 1/2 -rR --cov=helab … --timeout=120 --timeout-method=thread`: 1 RERUN of
-  `test_plots_close_from_their_tab_and_the_settings_panel` on gw0, 4 runs of 4); replaying gw0's
-  order alone, even under xdist, never failed. Instrumented at the failure: one tab bar, 3 tabs,
-  closable, marked by `DockTabCloser`, `dock_at` finding every dock; the test's
-  `tabCloseRequested.emit` never reached `close_tab`, while calling `close_tab` directly closed the
-  plot. So the **lambda connected to `tabCloseRequested`** (`lambda index, bar=bar: self.close_tab(bar,
-  index)`) stopped delivering; nothing in HeLab disconnects it, and in isolation it survives
-  `gc.collect()`, so the PyQt mechanism isn't pinned down. Fixed by connecting a bound
-  `pyqtSlot(int)` of the closer (`_tab_close_requested`, the bar from `sender()`): CI's command twice
-  since, **no RERUN**. Why this branch: the only changes on that path are the closer's extra refits
-  and naming; with the lambda gone the order no longer fails.
+- **H1** (the rerun on all three OSes): **a real bug since 0.0.6a1, fixed.** `DockTabCloser`
+  connected each dock tab bar's `tabCloseRequested` to a lambda capturing the bar (9c477c2). Qt makes
+  those bars (`QMainWindowLayout`; HeLab finds them with `findChildren`), so sip keeps no reference to
+  their Python wrappers; wrapper and lambda form a cycle, and the first full `gc.collect()` after the
+  bar is fitted clears it: the Qt connection stays but calls nothing (Wren reproduced it in
+  isolation; my CI-order instrumentation showed the emit never reaching `close_tab` while a direct
+  call worked). So **a plot tab's × went dead soon after its tab bar was made**, for mouse clicks
+  too: that is known-issues' "A plot tab's x didn't respond to computer-use clicks" (pointer clicks;
+  the dock title's ×, Qt's own button, has no lambda). The order dependency in CI was only when a
+  collection fell between the fit and the test's emit. Fixed by a bound `pyqtSlot(int)` reading the
+  bar from `sender()` (a plain Qt connection, no Python proxy); the comment at the connection names
+  the mechanism. `test_a_plot_tabs_close_button_closes_that_plot_when_clicked` now drops its
+  reference to the bar and collects before the click: it fails with the old lambda (checked) and
+  passes now. CI's group 1/2 command ran clean three times locally, and CI 40984390827 had no RERUN.
+  - **Release notes:** "A plot tab's × works again: it stopped responding soon after the tabs
+    appeared (0.0.6a1–0.0.7a1)."
+  - **Proposed rule** (app-runtime-and-ui.md, and a line in AGENTS.md under UI): never connect a
+    lambda (or `functools.partial`) that captures the sender when Qt made the sender (found with
+    `findChildren`, `tabBar()`, `widgetForAction`, …); use a bound slot and `sender()`.
+  - **A~3** A test guard from Wren's AST scan: fail on `X.<signal>.connect(lambda …)` whose lambda
+    refers to `X` where `X` comes from `findChildren`/`findChild`/`tabBar()`/`widgetForAction`. Cheap
+    for the direct form (Wren's scan finds 14 such connections, all safe today); it would miss a
+    sender reached through another name, so it backs the rule rather than replaces it.
 - **H2**: done as above (approved files), the test runs every script and each Library, the guard
   covers `helab/analysis` and `helab/scripts`.
 - **H3**: docs: the test's docstring (macOS and Linux), the runbook line on combos, M~3.
@@ -95,6 +106,10 @@ built where it asks: an entry in `ASKS`.
   buttons' IDs (each plot's number) are the stable ones. No fallback ID for docks that aren't plots
   (there are none; the walk would flag one).
 - **N2**: the self-test covers a control with no ID and a tab without a name.
+- **Re-review** (Wren, R1, R2, nits): H1's cause and A~2 rewritten as above, the connection's comment
+  names the mechanism; the × test collects before its click (R2); Matplotlib's private `_actions`
+  read with a default, so a rename only loses the IDs; `--geometry` followed by another option keeps
+  that option for Qt instead of taking it as the value (a test).
 - **N3**: the screenshot (and Dump State) write stays on the GUI thread: one folder in HeLab's temp
   folder and one small file the user picked, as Settings' profile export does (a comment says so).
 
@@ -168,7 +183,8 @@ built where it asks: an entry in `ASKS`.
   Ctrl+Enter to commit. In the main window, Escape is also Cancel Loading's shortcut while a load
   runs (unchanged). Tests: `tests/test_parameter_return.py`, including that the plot's next run gets
   the value.
-- **Plot tab ×**: real clicks work (a test); background/accessibility clicks can't, see A~2.
+- **Plot tab ×**: it went dead after a garbage collection (fixed, review H1); an accessibility press
+  can't reach it (A~2).
 
 ## For Tony, follow-ups and manual checks
 
@@ -190,17 +206,15 @@ built where it asks: an entry in `ASKS`.
   `script_group`; `app_menu` reaches Debug › Run Plot › … with its items filled (Qt fills them on
   the menu's opening; check that the accessibility route opens it the same way: an item pressed
   without the menu opening may be stale, and then does nothing rather than act on a closed plot).
-- **A~2** (for known-issues, replacing "A plot tab's x didn't respond to computer-use clicks"): Qt's
-  tab bar never exposes its tabs' close buttons to accessibility: `QAccessibleTabBar`
-  (qtbase `complexwidgets.cpp`) lists only the tabs (role PageTab, its rect the whole tab with its ×,
-  one action: press, which selects it) and the two scroll arrows, so a click by accessibility at the ×
-  presses the tab, already selected, and nothing happens. PyQt6 has no `QAccessible` bindings, so
-  HeLab can't add the button to the tree. Real clicks work (test). Runner routes: Debug › Close Plot
-  Tab › <title>, the Settings panel's "Close plot" (ID `close_plot`), or the dock title bar's ×, which
-  Qt does expose ("Close"). The same holds for folder tabs' × (Debug has no folder-tab item; File has
-  none either). No cheap fix: a tab's context menu wouldn't help, as PageTab offers no ShowMenu action
-  to open it by accessibility. Only Qt itself (a `QAccessibleTabBar` that lists the close buttons,
-  upstream) would.
+- **A~2** (for known-issues): close "A plot tab's x didn't respond to computer-use clicks" with
+  its cause: the × went dead after a garbage collection (the lambda above), fixed on this floor.
+  Separately, as a note for runners rather than a bug: an accessibility *press* can't reach a tab's ×,
+  because Qt's tab bar never exposes its close buttons (`QAccessibleTabBar`, qtbase
+  `complexwidgets.cpp`, lists only the tabs, role PageTab with one action, press, which selects the
+  tab, and the two scroll arrows); PyQt6 can't add them. Runner routes: Debug › Close Plot Tab ›
+  <title>, the Settings panel's "Close plot" (`close_plot`), or the dock title bar's × ("Close"). The
+  same holds for folder tabs' ×. No cheap way to expose it: a tab's context menu wouldn't help, as a
+  PageTab offers no ShowMenu action; only Qt itself could list the close buttons.
 - **Q~3** A Debug › Close Folder Tab › <title> item (as for plots), for a runner closing folder tabs?
 - **M~4** On the Mac: `helab --geometry 1600x928+0+39` opens the window there (content 1600×928, the
   frame's top-left at 0,39); Debug › Dump State… writes a JSON naming the open folder and plot tabs.

@@ -1241,6 +1241,9 @@ class HelabMainWindow(QMainWindow):
         for arg in args:
             if arg == "--geometry":
                 value, found = next(args, ""), True
+                if value.startswith("-") and not HelabMainWindow.GEOMETRY.fullmatch(value):
+                    rest.append(value)  # (Another option, not a value: kept.)
+                    value = ""
             elif arg.startswith("--geometry="):
                 value, found = arg.partition("=")[2], True
             else:

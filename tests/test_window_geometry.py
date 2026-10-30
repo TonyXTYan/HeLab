@@ -16,6 +16,7 @@ from helab.views.HelabMainWindow import HelabMainWindow
     (["helab", "--geometry=1200x800-1280+10", "-x"], QRect(-1280, 10, 1200, 800), ["helab", "-x"]),
     (["helab", "--geometry", "big"], None, ["helab"]),  # Ignored (and logged), and not passed to Qt.
     (["helab", "--geometry"], None, ["helab"]),
+    (["helab", "--geometry", "-x"], None, ["helab", "-x"]),  # Another option: kept for Qt.
     (["helab", "--geometry", "1600x928"], None, ["helab"]),
 ])
 def test_the_option_is_read_and_taken_out(argv: list[str], geometry: QRect | None, rest: list[str]) -> None:

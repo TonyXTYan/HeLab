@@ -3,6 +3,7 @@ plot, pick the script group, show and close a plot tab, open each Settings tab, 
 screenshot. Each item does what its control does; submenus are filled as they show."""
 from __future__ import annotations
 
+import gc
 import os
 import time
 from pathlib import Path
@@ -202,9 +203,10 @@ def test_dump_state_saves_what_the_window_shows_from_memory(
 
 def test_a_plot_tabs_close_button_closes_that_plot_when_clicked(
         window: HelabMainWindow, qtbot: QtBot, tmp_path: Path) -> None:
-    """A mouse click on a plot tab's × closes its plot (known-issues: computer-use clicks on it did
-    nothing: Qt's tab bar doesn't expose its close buttons to accessibility, so a click by
-    accessibility presses the tab; Debug › Close Plot Tab and the Settings panel's Close plot do it)."""
+    """A mouse click on a plot tab's × closes its plot, also after a full garbage collection with
+    nothing holding the bar's wrapper (known-issues: until 0.0.7a1 the × went dead then, its lambda
+    emptied by the collector). (A press by accessibility can't reach it: Qt's tab bar doesn't expose
+    its close buttons; Debug › Close Plot Tab and the Settings panel's Close plot do it.)"""
     from PyQt6.QtCore import Qt
     from PyQt6.QtWidgets import QTabBar
     load(window, qtbot, run_folder(tmp_path))
@@ -215,6 +217,8 @@ def test_a_plot_tabs_close_button_closes_that_plot_when_clicked(
     bar = window.plots.middle_mainwindow.findChild(QTabBar, "plot_tabs_1")
     assert isinstance(bar, QTabBar)
     button = bar.findChild(QWidget, f"close_plot_tab_{first.instance_id}")
+    del bar
+    gc.collect()
     assert button is not None and first.dock_widget is not None
     assert button.accessibleName() == f"Close plot tab: {first.dock_widget.windowTitle()}"
     qtbot.mouseClick(button, Qt.MouseButton.LeftButton)  # type: ignore[no-untyped-call]
