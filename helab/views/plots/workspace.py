@@ -108,8 +108,8 @@ class PlotWorkspace:
         self.ram_button.setText(f"RAM {usage.share:.0%} of budget")
         self.ram_button.setStyleSheet(f"color: {AMBER};" if usage.share >= DIALOG_SHARE else "")
         self.ram_button.setToolTip(
-            f"Loaded folders and plots use {byte_size(usage.total)} of the {byte_size(usage.budget)} RAM budget "
-            f"(Settings → Cache): folders {byte_size(usage.datasets)}, plots {byte_size(usage.plots)} more.\n"
+            f"Loaded folders and plots use {byte_size(usage.total, 'ram')} of the {byte_size(usage.budget, 'ram')} RAM budget "
+            f"(Settings → Cache): folders {byte_size(usage.datasets, 'ram')}, plots {byte_size(usage.plots, 'ram')} more.\n"
             f"Above {RELEASE_SHARE:.0%}, plots not viewed lately are released (each keeps a picture and reloads "
             "when shown)." + (f"\n{released} plot{'' if released == 1 else 's'} released now." if released else "")
             + "\nClick for the biggest plots and folders.")
@@ -124,16 +124,16 @@ class PlotWorkspace:
         assert budget is not None  # Shown only once setup_ram_budget ran.
         usage = budget.usage
         plots, folders = budget.biggest()
-        text = (f"Loaded folders and plots use {byte_size(usage.total)}, {usage.share:.0%} of the RAM budget "
-                f"({byte_size(usage.budget)}, Settings → Cache). Above {RELEASE_SHARE:.0%}, HeLab first drops "
+        text = (f"Loaded folders and plots use {byte_size(usage.total, 'ram')}, {usage.share:.0%} of the RAM budget "
+                f"({byte_size(usage.budget, 'ram')}, Settings → Cache). Above {RELEASE_SHARE:.0%}, HeLab first drops "
                 "loaded folders no tab shows, then releases plots not viewed lately: each keeps a picture and "
                 "reloads from RAM or the disk cache when shown again. Closing plots or tabs frees RAM too.")
-        lines = ["Biggest plots:", *(f"  {label} — {byte_size(size)}" for label, size in plots)] if plots else []
+        lines = ["Biggest plots:", *(f"  {label} — {byte_size(size, 'ram')}" for label, size in plots)] if plots else []
         if folders:
             lines.append("Biggest loaded folders:")
             for path, size, shown in folders:
                 name = os.path.basename(path.rstrip(os.sep)) or path
-                lines.append(f"  {name} — {byte_size(size)}" + (" (shown in a tab)" if shown else ""))
+                lines.append(f"  {name} — {byte_size(size, 'ram')}" + (" (shown in a tab)" if shown else ""))
         return text, "\n".join(lines)
 
     def show_ram_report(self, warn: bool = False) -> None:

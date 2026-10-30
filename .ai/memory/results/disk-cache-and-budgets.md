@@ -22,7 +22,7 @@ session reviewed by Codex until clean.
 - **Nothing is removed without the user asking.** Records are kept forever and never removed
   to make room. Removals go through one store function that bumps generations/epochs, so a
   save already running can't bring removed data back.
-- **Disk budget**, default 8 GB, counts live data only. At **80%** automatic loads of folders
+- **Disk budget**, default 8 GB (8 GiB on Windows, Q26.1), counts live data only. At **80%** automatic loads of folders
   without cached data pause ("Auto-load paused — disk cache 80% full"); the warning comes once
   per crossing (Open purge settings / Ignore this time, which lasts the session until usage
   rises another 10% of the budget). A save that doesn't fit asks **Make room / Don't cache this

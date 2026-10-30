@@ -216,7 +216,7 @@ class CacheMover(QObject):
             return
         self.method, self.bytes = str(event["method"]), int(event["bytes"])
         if not self.confirm(f"HeLab pauses loading and folder checks while it moves the cache "
-                            f"({byte_size(self.bytes)}) to {self.target}."):
+                            f"({byte_size(self.bytes, 'disk')}) to {self.target}."):
             self._finish(False, "", "", quiet=True)
             return
         if cache_move.read_record(self.app_dir) is not None:

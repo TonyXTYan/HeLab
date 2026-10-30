@@ -78,5 +78,10 @@ def test_stalled_read_has_no_estimate() -> None:
 
 
 def test_byte_rate_labels() -> None:
-    assert [byte_rate(value) for value in (0, 850, 12_500, 10_000_000, 99_960_000, 1.2e9)] == [
-        "0 B/s", "850 B/s", "12.5 kB/s", "10.0 MB/s", "100 MB/s", "1.20 GB/s"]
+    """Disk units (Q26.1): SI on macOS and Linux (and in the tests, conftest), KiB… on Windows."""
+    values = (0, 850, 12_500, 10_000_000, 99_960_000, 1.2e9)
+    for platform in ("darwin", "linux", None):
+        assert [byte_rate(value, platform=platform) for value in values] == [
+            "0 B/s", "850 B/s", "12.5 kB/s", "10.0 MB/s", "100 MB/s", "1.20 GB/s"]
+    assert [byte_rate(value, platform="win32") for value in values] == [
+        "0 B/s", "850 B/s", "12.2 KiB/s", "9.54 MiB/s", "95.3 MiB/s", "1.12 GiB/s"]

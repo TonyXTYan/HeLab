@@ -18,8 +18,8 @@ class LargeFolderDialog(QDialog):
         self.setWindowTitle("Load a large folder?")
         layout = QVBoxLayout(self)
         self.text = QLabel(
-            f"{name} would take about {byte_size(estimate)} in RAM (its TXY files' size on disk).\n"
-            f"RAM budget {byte_size(ram_budget)} · this computer has {byte_size(total)} of RAM.\n"
+            f"{name} would take about {byte_size(estimate, 'ram')} in RAM (its TXY files' size on disk).\n"
+            f"RAM budget {byte_size(ram_budget, 'ram')} · this computer has {byte_size(total, 'ram')} of RAM.\n"
             "While it loads, HeLab may briefly use about 2–3× this.")
         self.text.setToolTip(path)
         layout.addWidget(self.text)

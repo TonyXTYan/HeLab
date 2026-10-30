@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import QAbstractButton, QMessageBox, QWidget
 from helab.utils import app_log
 from helab.utils.accessible import identify_buttons
 
-QUESTION = "Log files use {size} MB. Delete old ones?"
+QUESTION = "Log files use {size} {unit}. Delete old ones?"
 
 
 class OldLogs(QObject):
@@ -62,7 +62,7 @@ class OldLogs(QObject):
         if size <= app_log.ASK_BYTES or self.asked:
             return
         self.asked = True
-        box = QMessageBox(QMessageBox.Icon.Question, "HeLab", QUESTION.format(size=round(size / app_log.MB)),
+        box = QMessageBox(QMessageBox.Icon.Question, "HeLab", QUESTION.format(size=round(size / app_log.MB), unit=app_log.MB_UNIT),
                           QMessageBox.StandardButton.NoButton, self.parent_widget)
         self.delete_button = box.addButton("Delete", QMessageBox.ButtonRole.DestructiveRole)
         self.keep_button = keep = box.addButton("Keep", QMessageBox.ButtonRole.RejectRole)

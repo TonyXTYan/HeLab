@@ -26,12 +26,13 @@ def app() -> Any:
 def test_memory_usage_window_initialization(mock_summarize: MagicMock, mock_get_objects: MagicMock, app: Any) -> None:
     mock_get_objects.return_value = ['object1', 'object2', 'object3']
     mock_summarize.return_value = [
-        ('type1', 0, 1_000_000),
-        ('type2', 0, 500_000),
-        ('type3', 0, 250_000)
+        ('type1', 0, 1 << 20),  # (MiB: RAM is in powers of 1024 on every OS, Q26.1)
+        ('type2', 0, 1 << 19),
+        ('type3', 0, 1 << 18)
     ]
     window = MemoryUsageWindow()
     assert window.series.count() == 3
+    assert window.series.slices()[0].label() == "type1: 1.00 MiB"
     # assert window.series.at(0).value() == 1.0
     # assert window.series.at(1).value() == 0.5
     # assert window.series.at(2).value() == 0.25

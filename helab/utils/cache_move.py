@@ -279,7 +279,7 @@ def check_target(source: str, target: str, app_dir: str = "") -> MoveCheckFields
     result["free"] = free
     if method == COPY and free < size:
         volume = os.path.basename(_mount(parent)) or _mount(parent)
-        return refuse(f"Not enough space on '{volume}': needs {byte_size(size)}, {byte_size(free)} free.")
+        return refuse(f"Not enough space on '{volume}': needs {byte_size(size, 'disk')}, {byte_size(free, 'disk')} free.")
     return result
 
 

@@ -1,4 +1,5 @@
 """Time labels shared by folder summaries and memory-only tooltips."""
+from helab.utils import number_format
 
 
 def relative_age(seconds: float) -> str:
@@ -35,13 +36,9 @@ def clock(seconds: float) -> str:
     return f"{hours}:{rest // 60:02}:{rest % 60:02}" if hours else f"{rest // 60}:{rest % 60:02}"
 
 
-def byte_rate(per_second: float) -> str:
-    """Three significant figures, in SI units as ``number_format.byte_size``: ``850 B/s``,
-    ``12.5 MB/s``, ``1.20 GB/s``."""
-    value = max(0.0, per_second)
-    for unit in ("B", "kB", "MB", "GB"):
-        if value < 999.5 or unit == "GB":
-            break
-        value /= 1000
+def byte_rate(per_second: float, *, platform: str | None = None) -> str:
+    """Three significant figures, in disk units as ``number_format.byte_size(..., "disk")`` (SI on
+    macOS and Linux, powers of 1024 on Windows): ``850 B/s``, ``12.5 MB/s``, ``1.20 GB/s``."""
+    value, unit = number_format.scaled(per_second, "disk", platform)
     digits = 0 if value >= 99.95 or unit == "B" else 1 if value >= 9.995 else 2
     return f"{value:.{digits}f} {unit}/s"

@@ -32,6 +32,18 @@ def test_the_table_is_well_formed() -> None:
         assert prefix.key.endswith("/") and prefix.default is None and not any(k.startswith(prefix.key) for k in keys)
 
 
+def test_the_disk_budget_default_and_minimums_follow_the_os_units() -> None:
+    """Q26.1, Q22.7: 8 GB on macOS and Linux, 8 GiB on Windows, at least 1 GB / 1 GiB; RAM at
+    least 1 GiB everywhere. The table's row is this platform's (the tests run with macOS's)."""
+    from helab.utils import number_format
+    assert settings_defaults.default_disk_budget("darwin") == settings_defaults.default_disk_budget("linux") == 8 * 10**9
+    assert settings_defaults.default_disk_budget("win32") == 8 << 30
+    assert setting_default(constants.DISK_BUDGET_SETTING) == settings_defaults.default_disk_budget(number_format.PLATFORM)
+    assert constants.MIN_DISK_BUDGET == number_format.byte_unit(3, "disk")[0] == 10**9
+    assert number_format.byte_unit(3, "disk", "win32")[0] == 1 << 30
+    assert constants.MIN_RAM_BUDGET == 1 << 30
+
+
 def test_constants_defaults_are_the_tables() -> None:
     assert constants.DEFAULT_LOAD_MODE == setting_default(constants.LOAD_MODE_SETTING) == "finish"
     assert constants.DEFAULT_CHECK_LEVEL == setting_default(constants.CHECK_LEVEL_SETTING) == "medium"
