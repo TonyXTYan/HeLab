@@ -1,9 +1,8 @@
 # UI polish: handoff (Worker, 2026-10-30)
 
 Branch `agent/ui-polish` from `43cb202` (`dev/v0.0.7`). Brief: [brief.md](brief.md); working notes: [notes.md](notes.md);
-Ibis's review: [review.md](review.md). `origin/dev/v0.0.7` at `cb05f27` (Runner Tools) is merged in (no conflict).
-The TXY Index follow-up lands later: expect a small conflict in `helab/io_ops/helab_txy.py`'s `_OWN_FILE`, where
-this floor changes only `{1,15}` to `{1,32}`.
+Ibis's review: [review.md](review.md). `origin/dev/v0.0.7` is merged in at `cb05f27` (Runner Tools) and then
+`7b51c84` (the TXY Index follow-up), both without conflicts; `_OWN_FILE`'s `{1,32}` and `path_too_long` survived.
 
 ## Round 2 (after Ibis's review and Tony's answers)
 
@@ -47,6 +46,9 @@ this floor changes only `{1,15}` to `{1,32}`.
   its figure to leave the server (`86d32ce`'s timing change); fixed in the next commit by dropping their own holds.
   `mypy helab/ --strict` and `mypy tests --strict`, each also `--platform win32`, `pyright helab tests` and
   `--pythonplatform Windows`: all clean.
+- **After merging `7b51c84`:** the full suite inside **8468 passed, 669 skipped, no RERUN**; outside **8468
+  passed, 669 skipped, no RERUN**; the six type checks clean. (The push of `dbfabe9`, before that merge, started CI
+  41009004976, superseded by the next push's run.)
 - **Ibis's other notes for the docs:** the Dock button's ID `plot_dock` repeats in each floating window (as
   `floating_settings_toggle`), unique per window: a line for the accessible-ID docs; the deep-path test runs only
   its "converts" branch on GitHub's Windows runners (long paths on), the "too long" branch is covered by the
