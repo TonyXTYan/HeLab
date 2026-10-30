@@ -51,13 +51,13 @@ Worker: Gauge (Claude Code), 2026-10-29. Brief: [brief.md](brief.md). Decision Q
 
 ## Sorting: every call (module, line at `HEAD`, kind)
 
-64 `byte_size` calls and 1 `byte_rate`. RAM: the RAM budget, In use, "in RAM when loaded", large
+66 `byte_size` calls and 1 `byte_rate` (lines at the merge with TXY Index, `8a03bbe`). RAM: the RAM budget, In use, "in RAM when loaded", large
 folders' RAM estimate, plots' memory, RAM budget drops. Disk: the store, its budget, cached data
 and results, folders, files, converted TXY, I/O traces, free space, rates.
 
 | Module | Line | Kind | What |
 |---|---|---|---|
-| `helab/utils/folder_cache.py` | 4183 | disk | Cached analysis badge: results' size |
+| `helab/utils/folder_cache.py` | 4235 | disk | Cached analysis badge: results' size |
 | `helab/utils/cache_move.py` | 282 | disk ×2 | Move refused: needs / free on the volume |
 | `helab/models/SnapshotFileSystemModel.py` | 460, 461 | ram | Large / too large folder: ~size in RAM |
 | `helab/views/explorer_text.py` | 15, 16 | ram | the same, summary text |
@@ -69,15 +69,15 @@ and results, folders, files, converted TXY, I/O traces, free space, rates.
 | `helab/views/FolderExplorer.py` | 2317 | disk | Don't cache: remove its cached data (size) |
 | `helab/views/CacheMover.py` | 218 | disk | moving the cache (size) |
 | `helab/views/DataRootsTab.py` | 272, 289, 362, 377 | disk | a root's cached data and saved results |
-| `helab/views/CacheTab.py` | 75 | ram ×2 | RAM budget box: budget and total RAM |
-| `helab/views/CacheTab.py` | 468, 651 | disk | converted TXY (TXY Index floor's rows: units only) |
-| `helab/views/CacheTab.py` | 482, 492, 507, 518, 530 | disk | Clear / purge confirmations |
-| `helab/views/CacheTab.py` | 556, 557, 558 | ram | In use: total, shown in tabs, plots |
-| `helab/views/CacheTab.py` | 571, 581, 612 | disk | purge estimates, retired files |
-| `helab/views/CacheTab.py` | 617 | disk ×2 | usage of budget |
-| `helab/views/CacheTab.py` | 622, 637 | disk | cached data, cached analysis rows |
-| `helab/views/CacheTab.py` | 628 | ram | "About X in RAM when loaded" (row tooltip) |
-| `helab/views/CacheTab.py` | 703, 706, 708 | disk | Lower the disk budget? |
+| `helab/views/CacheTab.py` | 87 | ram ×2 | RAM budget box: budget and total RAM |
+| `helab/views/CacheTab.py` | 476, 664, 667, 668 | disk | converted TXY: Clear, row, per-base tooltip (TXY Index's rows: units only) |
+| `helab/views/CacheTab.py` | 495, 505, 520, 531, 543 | disk | Clear / purge confirmations |
+| `helab/views/CacheTab.py` | 569, 570, 571 | ram | In use: total, shown in tabs, plots |
+| `helab/views/CacheTab.py` | 584, 594, 625 | disk | purge estimates, retired files |
+| `helab/views/CacheTab.py` | 630 | disk ×2 | usage of budget |
+| `helab/views/CacheTab.py` | 635, 650 | disk | cached data, cached analysis rows |
+| `helab/views/CacheTab.py` | 641 | ram | "About X in RAM when loaded" (row tooltip) |
+| `helab/views/CacheTab.py` | 730, 733, 735 | disk | Lower the disk budget? |
 | `helab/views/CacheDialogs.py` | 38, 55 | disk | Make room (datasets, results) |
 | `helab/views/CacheDialogs.py` | 201, 222 | disk ×3 | Not enough room: entry, usage, budget |
 | `helab/views/CacheDialogs.py` | 215 | disk ×3 | Save update: growth, usage, budget |
