@@ -143,7 +143,7 @@ def test_a_deep_folder_converts_or_says_its_path_is_too_long(tmp_path: Path) -> 
     """A real conversion beside raw files in a folder whose TXY path passes Windows' 260 characters (its
     temporary name more still): it converts where the OS allows it (macOS, Linux, Windows with long paths
     turned on, as on GitHub's runners) and is refused with exactly that message where it doesn't."""
-    folder = tmp_path
+    folder = tmp_path / "deep"  # (A folder of its own, however long the temp folder already is.)
     while len(str(folder)) < 230:  # (Below Windows' 248 for a folder, so the test can make it anywhere.)
         folder = folder / ("d" * min(40, 236 - len(str(folder))))
     folder.mkdir(parents=True)
