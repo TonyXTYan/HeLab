@@ -32,7 +32,7 @@ Brief: [brief.md](brief.md). Detail and evidence: [notes.md](notes.md).
 | `helab/utils/folder_cache.py` | the `load_done` line (and the `app_log` import) |
 | `helab/analysis/runner.py` | the `plot_done` line (and the import) |
 | `helab/views/explorer_live.py` | the `convert_done` line, with two `AutoConvert` fields (`no_hits_logged`, `logged_counts`) for this run's no-hit count and the quiet-run rule (CoCo OK'd the counter) |
-| `helab/convert_cli.py` | CLI_PENDING |
+| `helab/convert_cli.py` | the `convert_done` line (`by=cli`) in `_Log`, with its two counters (`no_hits`, this run's, reset on `convert_plan`; `logged_counts`), after TXY Index landed (`347748e`) |
 | `dev/dev_app.py` | new: the stub builder |
 | `tests/test_milestones.py`, `tests/test_dev_app.py` | new |
 | `tests/test_app_log.py` | `test_each_helab_writes_its_own_log_file` raises the root level with `setLevel` (CoCo's OK; see RERUN below) |
@@ -69,7 +69,16 @@ tests/test_app_log.py:134: AssertionError
 
 ## Checks
 
-CHECKS_PENDING
+Branch at `347748e` (`dev/v0.0.7` `c492242`, TXY Index, merged in `0a612d3` with no conflicts), macOS 26 (Darwin 25.6):
+
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: **8275 passed, 669 skipped,
+  2 warnings in 156.09 s**, no reruns (the 2 warnings: pyqtgraph's NumPy 2.5 `arr.shape` deprecation
+  in `test_t_spectrum.py`, not this branch's).
+- The same without `--basetemp`: **8275 passed, 669 skipped, 2 warnings in 176.37 s**, no reruns.
+- `mypy helab/ --strict`: Success, 191 files; `mypy tests --strict`: Success, 162 files;
+  `pyright helab tests`: 0 errors, 0 warnings; `mypy helab/ --strict --platform win32`: Success,
+  191 files; `pyright --pythonplatform Windows helab tests`: 0 errors, 0 warnings.
+- CI: the run of this push (the one push since `2c5c9ee`, whose run 40977894008 was green); its ID and jobs are in the report to CoCo, as a docs-only push would run CI again.
 
 ## Proposed doc changes (for the Coordinator)
 
