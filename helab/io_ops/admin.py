@@ -40,9 +40,9 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     if action not in ADMIN_ACTIONS:
         raise ValueError(f"Unknown cache action: {action}")
     if action == "mark_used":
-        # Quitting (Q~3): the converted TXY's last uses loads didn't write; the index only, not the store.
-        helab_txy.mark_used(list(params.get("marks") or []))
-        send({"kind": "admin_result", "action": action, "next_deadline": None})
+        # The converted TXY's last uses loads didn't write (Q30.3, A30.4); the index only, not the store.
+        send({"kind": "admin_result", "action": action, "next_deadline": None,
+              "unwritten": helab_txy.mark_used(list(params.get("marks") or []))})
         return
     root = cache_options["directory"]
     budget = params.get("budget", cache_options.get("budget"))

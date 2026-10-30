@@ -25,7 +25,7 @@ trigger channel, no rows) once unmodified for ``DAMAGED_SECONDS`` (20 s; a shot 
 30 s), both by its mtime against this clock and since this computer first saw it with that size and
 mtime (each ``waiting`` entry carries that time, sent back in ``seen``; so a source clock behind ours
 can't make a file paused mid-write look old; ``--once``, one look with no history, goes by the mtime
-alone, as its settle rule does), is **damaged** (Q18.5): unconvertible (``shot_unconvertible``, reason ``damaged``, the check in
+alone and wants ``ONCE_SETTLE_SECONDS``, as its settle rule does, Q23.7), is **damaged** (Q18.5): unconvertible (``shot_unconvertible``, reason ``damaged``, the check in
 ``problem``), no TXY, skipped from then on while unchanged, so it never holds up later shots. One the
 converter fails on is unconvertible too.
 
@@ -41,7 +41,7 @@ helper killed mid-write), only those matching exactly the name ``write_atomic`` 
 sent as ``partial_removed``.
 ``cache`` writes under the cache folder, keyed by the folder's data root like the store
 (``root://<uuid>/<relative>``); a folder without one, with the disk cache off, or marked Don't cache
-(Q19.5, Q27.4: the store's flag, read here; unless ``cache_confirmed``, Q~2) goes to ``temp``
+(Q19.5, Q27.4: the store's flag, read here; unless ``cache_confirmed``, Q30.2) goes to ``temp``
 (HeLab's temp folder) and ``convert_plan`` says why (``fallback``). HeLab's folder for a source folder is
 ``<base>/converted-txy/<hash of its key>/``; the base's ``converted-txy/index.sqlite`` names the key
 and path (its ``folders`` row, updated when the folder moved) and holds the shots' rows. A
@@ -99,7 +99,8 @@ READ_BLOCK = 8 * 1024 * 1024
 # One shot this large (raw bytes) is cut into pieces for the pool, for Live's latency.
 SPLIT_BYTES = 20 * 10**6
 PROGRESS_INTERVAL = 0.25
-# A single check (seen None: ``helab convert --once`` only) wants a file this long unmodified.
+# A single check (seen None: ``helab convert --once`` only) wants a file this long unmodified, to read it
+# and to call it damaged (Q23.7: by its mtime alone, with no first seen to go by).
 ONCE_SETTLE_SECONDS = 60.0
 # Heartbeats while a shot computes stop after this, plus a second per COMPUTE_RATE raw bytes (ten
 # times slower than the plain-Python reference): a hung backend then times out.
@@ -161,7 +162,7 @@ class ConvertRequest(TypedDict):
     setting (``cache``, default, or ``temp``). ``beside``: the app believes the folder's
     ``write_beside`` flag is on (checked again in the store here); ``beside_confirmed``: the user
     asked for beside for this run (the command line only). ``cache_confirmed``: the user typed
-    ``--output cache`` and confirmed it for a Don't cache folder (the command line only, Q~2; anywhere
+    ``--output cache`` and confirmed it for a Don't cache folder (the command line only, Q30.2; anywhere
     else that folder's flag wins and its TXY go to the temp folder). ``temps``: HeLab's temp folder.
     ``cache``: ``store_options()``. ``shots``: only these (None: every raw file).
     ``seen`` (required): the previous conversion's ``waiting`` list, ``[]`` for a folder's first
@@ -300,7 +301,7 @@ def _not_cached(store: CacheStore, path: str) -> str:
 
 
 def dont_cache(path: str, cache: dict[str, Any]) -> str:
-    """``_not_cached`` before a conversion (``helab convert --output cache`` asks first, Q~2). "" also
+    """``_not_cached`` before a conversion (``helab convert --output cache`` asks first, Q30.2). "" also
     when the store can't be read or the folder has no data root: those send it to temp anyway."""
     from helab.utils.cache_paths import UnresolvedRemotePath
     from helab.utils.cache_store import StoreError
@@ -545,11 +546,14 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
 
     def unfinished_or_damaged(shot: _Shot, code: str, message: str) -> None:
         """A file failing the format checks: damaged once unmodified for DAMAGED_SECONDS by its mtime and
-        since this computer first saw it so, else waiting."""
+        since this computer first saw it so, else waiting. ``--once`` (one look, no history) goes by the
+        mtime alone, so it wants ONCE_SETTLE_SECONDS, as its settle rule does (Q23.7), and never less than
+        two looks."""
         age = now - shot.mtime_ns / 1e9
-        if seen is not None:  # (``--once``: one look, no history; the mtime alone, as its settle rule.)
-            age = min(age, now - seen_since(shot))
-        if age >= DAMAGED_SECONDS:
+        limit = max(ONCE_SETTLE_SECONDS, DAMAGED_SECONDS)
+        if seen is not None:
+            age, limit = min(age, now - seen_since(shot)), DAMAGED_SECONDS
+        if age >= limit:
             refuse(shot, DAMAGED, f"Damaged: {message} (unchanged for {age:,.0f} s)", code)
         else:
             wait(shot, code, message)

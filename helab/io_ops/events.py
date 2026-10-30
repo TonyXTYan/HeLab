@@ -110,6 +110,8 @@ class AdminResultFields(TypedDict, total=False):
     store: str  # the store an adoption answered from (its ``store_id``)
     # HeLab's TXY under the cache and temp folders after a Clear (``helab_txy.converted_summary``).
     converted_txy: ConvertedSummaryField
+    # ``mark_used``'s marks ([root, folder, at]) a busy or failing index left unwritten (A30.4).
+    unwritten: list[list[Any]]
 
 
 # Process and progress
@@ -852,7 +854,8 @@ class ClockSkewEvent(TypedDict):
 class TxyUnmarkedEvent(TypedDict):
     """A load took a TXY from HeLab's folder ``folder`` (its 24-hex name) under ``root`` (a base's
     ``converted-txy``) at ``at``, but didn't write that last use (``helab_txy.LAST_USED_STEP``, or the
-    index busy): the app writes it as it quits (``cache_admin`` ``mark_used``, Q~3)."""
+    index busy): the app writes it in the background about every 10 minutes (A30.4) and as it quits
+    (``cache_admin`` ``mark_used``, Q30.3)."""
     kind: Literal["txy_unmarked"]
     root: str
     folder: str

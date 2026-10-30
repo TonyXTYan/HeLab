@@ -748,3 +748,255 @@ I read every job's log. No job has a "rerun reasons" section or a RERUN line.
 
 The compat matrix was skipped (a push). The two-writer test passed with no rerun in every job that
 runs it: Tests (2/2) on each OS, and the Converter backends jobs, which run `test_convert_helab.py`.
+
+## Round 8 review (head `18514ff`, `git diff c492242..18514ff`: A30.4, background last-use writes)
+
+**Result: 0 open findings, no blocker.** I add one optional Nit (Nit-11). Every point CoCo asked about
+holds.
+
+| Question | Answer | Where |
+|---|---|---|
+| No write after quit starts | **holds** | `flush_txy_marks` sets `_marks_quit`, stops `_marks_timer` and cancels a background write in flight. `_schedule_marks` and `_marks_due` both refuse once `_marks_quit`, `quitting`, `_closing` or `service.closed` is set, so a mark that arrives later (a save's load ending) starts nothing (tested). |
+| No write after shutdown | **holds** | `shutdown()` sets `_closing` and stops the timer. A background write still running then is cancelled by `IOService.shutdown()`, and its late `cancelled` can't reschedule (`_closing`). |
+| No older time from a race | **holds** | Both writers run `UPDATE … SET last_used = at WHERE … AND last_used < at`, so the final value is the larger `at`, whatever order the writes land in. The quit flush sends the current `txy_unmarked`, which is never older per key than what the background write took: it keeps the max. A cancelled background helper that is still writing can't move a value back. |
+| The timer can't spin | **holds** | One single-shot timer, armed only when not already active, with nothing owed and nothing running. Retries are 600 s (offline, cache off, after a write ends with marks still owed) or `SWEEP_RETRY` 5 s (foreground busy, or the queue full). |
+| 5 s under sustained foreground work | **fine** | Each retry is a memory-only check, no I/O and no submit. `hold_background` lasts only while a foreground load reads a file or a listing progresses, plus `RESUME_DELAY` 0.5 s, and a Live check holds only while it reads a new file. So gaps come often, and the background write isn't starved during Live, which is when marks pile up. The sweep uses the same 5 s retry. |
+| Not during a cache move | **holds** (not asked) | `cache_admin` is in `IOService.CACHE_OPERATIONS`. `hold_cache()` cancels a running one and starts none, and a cancelled write's marks stay owed. One thing for the record: a mark taken before the move names the old `converted-txy`. Afterwards `open_index` finds nothing there, so the mark is dropped as nothing to write. The cost is a `last_used` up to an hour old at the new place. |
+| Events contract, both sides | **holds** | `AdminResultFields` gains `unwritten: list[list[Any]]` (optional; standard library only). `admin.cache_admin` sends it for `mark_used`, and `FolderCache._on_marks_written` reads it with `.get(…) or ()`. `test_helper_events` passes. |
+| Marks dropped only if unchanged | **holds** | On `done`, an entry is deleted only when `txy_unmarked[mark] == at` sent. `unwritten` entries are taken out of `_mark_sent` first, so they stay owed. An `error` (timeout) or `cancelled` keeps everything. `admin_result` always comes before `done` on the same stdout. |
+| Q~ → Q30.x renames | **comments only** | A word diff of `convert_cli.py`, `io_ops/convert.py`, `HelabMainWindow.py` and `QuitSaveDialog.py` shows only `Q~2`→`Q30.2` and `Q~3`→`Q30.3`. In `admin.py`, `events.py`, `helab_txy.py` and `folder_cache.py` the IDs change in comments and docstrings beside the real changes. The removed `import contextlib` was unused after `mark_used`'s rewrite. |
+| Handoff "A30.4 done" | **accurate** | It matches the code, including the offline choice (left as Tony's) and the proposed `converter.md`, `io-and-browsing.md`, M30.3 and A30.4 lines. |
+
+### Nit-11 (optional): a cancelled background write's `cancelled` goes to FolderCache's listeners
+
+- **Where:** `flush_txy_marks` clears `_mark_background` and then calls `service.cancel(owner)`.
+  `IOService.cancel` emits `cancelled` synchronously.
+- **Why it matters little:** that event no longer matches the background owner, so `_on_event` passes
+  it on through `FolderCache.resultReady`, under a `job is None` request. Every listener filters by
+  owner (`FolderExplorer._io_event`, `SnapshotFileSystemModel._on_event`, `DataRootsTab`,
+  `DataRootDialogs`, `RootDuplicatesWindow`), so it is harmless.
+- **Fix:** cancel first, then clear. `_on_marks_written` takes the `cancelled`, and its
+  `_schedule_marks()` refuses because `_marks_quit` is already set.
+
+### Other notes (no change needed)
+
+- **A missing index:** `mark_used` drops marks whose index `open_index(write=False)` returns None
+  for (missing, newer, damaged, or a DELETE-mode read failing). A busy DELETE-mode reader instead
+  waits its connection timeout and hits the 5 s no-progress limit, so it ends as `error` and the marks
+  stay owed.
+- **Many marks on a busy index:** each waits 500 ms, so more than about 10 can hit the 5 s limit.
+  Then everything stays owed for 10 min. Any writes already made are forward-only. Fine.
+
+### Checks (floor venv, macOS, head `18514ff`)
+
+- Full suite, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8230 passed, 669 skipped, 0 reruns** (2 min 8 s). The tree was clean and HEAD was `18514ff`,
+  before and after the run.
+
+- **Type checks:** `mypy helab/ --strict` (191), `mypy tests --strict` (160) and `mypy helab/ --strict
+  --platform win32` (191) found no issues. `pyright helab tests` and `pyright --pythonplatform Windows
+  helab tests` found 0 errors.
+
+### CI run 40989459638 (head `18514ff`, attempt 1): success, no RERUN
+
+I read every job's log. None has a "rerun reasons" section or a RERUN line.
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123848143631 | 4101 passed |
+| Ubuntu Tests (2/2) | 123848143652 | 4127 passed |
+| macOS Tests (1/2) | 123848143930 | 4103 passed |
+| macOS Tests (2/2) | 123848143570 | 4127 passed |
+| Windows Tests (1/2) | 123848143577 | 4090 passed |
+| Windows Tests (2/2) | 123848143555 | 4111 passed |
+| Ubuntu Converter backends | 123848143609 | 693 passed |
+| macOS Converter backends | 123848143595 | 693 passed |
+| Windows Converter backends | 123848143545 | 692 passed |
+| Detect branch; ubuntu, macos, windows Build | 123848076179; 123848143828, 123848143859, 123848143862 | success |
+
+The compat matrix was skipped (a push). All 13 tests in `test_txy_last_used_quit.py` passed on each OS
+(7 in Tests (1/2), 6 in Tests (2/2)).
+
+## Round 9 review (head `0f69731`, `git diff 18514ff..0f69731` without the merge `b8e1022`)
+
+**Result: 0 open findings, no blocker.** Q23.7 (c) and Nit-11 are as described, the merge changed no
+code of its own, and CI is green with no rerun.
+
+### The merge `b8e1022` changed no code of its own
+
+- No conflict hunks: `git show --cc b8e1022` prints none.
+- Its `helab/` and `tests/` equal dev's tip (`e74a5cf`) plus this branch's A30.4 change, line for line:
+  - the added and removed lines of `git diff e74a5cf b8e1022 -- helab tests` and of `git diff c492242
+    18514ff -- helab tests` are identical, and only hunk offsets and `index` lines differ;
+  - both are 10 files, +241 −35.
+- `e74a5cf` itself adds one findings doc. The merge does bring in Byte Units' code (`c5f99ba` …
+  `bc9375a`), but that had already landed on dev and been reviewed there, not on this floor.
+
+### Q23.7 (c): `max(ONCE_SETTLE_SECONDS, DAMAGED_SECONDS)` against Tony's wording
+
+Tony's wording: "only at 60 s by mtime, not 20 s; Live/`--watch` unchanged". The code
+(`convert.py:508–520`): with `seen` None the limit is `max(ONCE, DAMAGED)` on the mtime age. With
+`seen` given it is `DAMAGED` on `min(mtime age, first-seen age)`, exactly as before.
+
+| Values | `--once` limit | Live / `--watch` | Matches the wording? |
+|---|---|---|---|
+| Real: 60, 20 | 60 s by mtime | 20 s, mtime and first seen | **yes** |
+| `DAMAGED` patched 1e9 (`test_files_that_may_still_be_written_wait`, `test_live_convert.py:167`) | 1e9: never | 1e9 | yes, it's the patch's "not damaged here". With `ONCE` alone, shots 2 and 3 (dated long ago) became damaged: Ledger's reason for `max`. |
+| `DAMAGED` patched 5 (`test_convert_helab.py:367`) | 60 s (that test's `--once` file is now dated `ONCE` + 1 s) | 5 s | yes |
+| `DAMAGED` patched 0 (`test_live_convert.py:332`) | 60 s | 0 | yes (that test is Live) |
+| `ONCE` lowered below 20 (nothing does this) | `DAMAGED`, not `ONCE` | 20 s | outside the wording. `max` keeps "one look is never quicker than two", which is the safer reading; it's in the docstring. |
+
+**In production the change can't be seen.** With `fingerprints.SETTLE_SECONDS` 5 > 0, `--once`
+settles for `max(5, 60)` = 60 s by the same mtime (`convert.py:480–482`, `:564`). So a file under 60 s
+waits as `settling` before its content is read. A file that reaches `unfinished_or_damaged` is
+already ≥ 60 s old and both limits agree: damaged at once, as before.
+
+The new limit decides only when the settle age is 0: tests (`HELAB_SETTLE_SECONDS=0` in conftest) or a
+developer's override. Ledger's note says the same. The boundaries are both `>=` at 60 s, so settle and
+damaged can't disagree.
+
+**Tests:**
+- `test_once_calls_a_file_damaged_only_after_the_once_settle_age`: 30 s waits (`no_final_newline`), 61 s
+  is damaged. It also pins (60, 20).
+- `test_live_and_watch_still_call_a_file_damaged_after_20_s`: with `seen` aged 30 s, the file is damaged.
+- The damaged test's `--once` case is re-dated. Ledger's probe: the old limit fails `30s-waits`.
+
+### Nit-11: closed
+
+`flush_txy_marks` cancels `_mark_background` before clearing it. The synchronous `cancelled` reaches
+`_on_marks_written`, which keeps every mark owed, and its `_schedule_marks()` refuses because
+`_marks_quit` is already set. The takeover test connects to `cache.resultReady` before
+`flush_txy_marks()` and asserts the background owner isn't passed on.
+
+### The handoff addendum
+
+It's accurate. The proposed `converter.md` lines (about 232 and 382) and `DECISIONS_TODO` Q23.7 → (c),
+built, match the code.
+
+### Checks (floor venv, macOS, head `0f69731`)
+
+- **Full suite**, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8258 passed, 669 skipped, 1 rerun** (2 min 9 s). The tree was clean and HEAD was `0f69731`,
+  before and after the run.
+- **The rerun, quoted from the output:** `[gw2] darwin -- Python 3.13.15 …` / `worker 'gw2' crashed while running
+  'tests/test_live_plots.py::test_each_plot_keeps_its_scripts_minimum_size[Scatter3D]'`, with no
+  traceback. It passed on the rerun.
+  - This branch doesn't touch plots.
+  - It is the test in `roadmaps/known-issues.md:96`, which so far names only Windows CI (run
+    40808815122). Widen that entry to a macOS local worker crash too (`agent/txy-index` `0f69731`,
+    2026-10-30).
+
+- **Type checks:** `mypy helab/ --strict` (191), `mypy tests --strict` (160) and `mypy helab/ --strict
+  --platform win32` (191) found no issues. `pyright helab tests` and `pyright --pythonplatform Windows
+  helab tests` found 0 errors.
+
+### CI run 40994921961 (head `0f69731`, attempt 1): success, no RERUN
+
+I read every job's log. None has a "rerun reasons" section or a RERUN line.
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123865772715 | 4111 passed |
+| Ubuntu Tests (2/2) | 123865772580 | 4144 passed |
+| macOS Tests (1/2) | 123865772401 | 4114 passed |
+| macOS Tests (2/2) | 123865772535 | 4144 passed |
+| Windows Tests (1/2) | 123865772519 | 4101 passed |
+| Windows Tests (2/2) | 123865772502 | 4128 passed |
+| Ubuntu Converter backends | 123865772569 | 696 passed |
+| macOS Converter backends | 123865772457 | 696 passed |
+| Windows Converter backends | 123865772414 | 695 passed |
+| Detect branch; ubuntu, macos, windows Build | 123865704593; 123865772393, 123865772463, 123865772402 | success |
+
+The compat matrix was skipped (a push). The new and changed tests (the two Q23.7 tests, three cases,
+and the takeover test) passed on each OS.
+
+## Round 10 review (head `e06d891`, the merge of `origin/dev/v0.0.7` `cb05f27` into `0f69731`)
+
+**Result: 0 open findings, no blocker.** The merge is clean: it changes nothing of Smoke ready's or
+Runner Tools', and the fixture fix has the right cause.
+
+### The merge
+
+- **Against dev, the merge adds only this branch's work.** I compared `git diff -U0 cb05f27 e06d891 --
+  helab tests` with this branch's own work, `git diff -U0 e74a5cf 0f69731 -- helab tests` (`e74a5cf`
+  is the merge base). Hunk headers aside, the two differ only in these lines:
+  - the Q~3 → Q30.3 comment renames in the comments Smoke ready brought: the `if self._mark_flush:`
+    line, the `QUIT_*` kinds' comment and `QuitSaveDialog`'s docstring;
+  - in `tests/test_txy_last_used_quit.py`: the `QApplication` and `QUIT_LAST_USED` imports, the
+    `frozen(qapp)` fixture and its docstring, `quit_entries() == []` beside `quit_saves() == []`, and
+    the four lines that check the quit flush's entry in the takeover test.
+
+  So nothing of Smoke ready's or Runner Tools' changed. Outside `helab/` and `tests/`, the merge
+  touches only this floor's three session files.
+- **The four conflict hunks** (`git show --cc e06d891`): `quit_saves` returns the paths of
+  `quit_entries()`. `quit_entries` adds `QuitSave(QUIT_LAST_USED, TXY_LAST_USED, "writing",
+  self._mark_flush_started)` only while `_mark_flush` is set. `quit_save_started` is Smoke ready's,
+  the earliest start among the entries. `QuitSaveDialog._show` is Smoke ready's. In each, Smoke
+  ready's side is taken with the renamed comment. `_schedule_marks`, `_marks_due` and
+  `_on_marks_written` came in unchanged beside them.
+- **The background write is not a quit entry.** It is submitted straight to `service.submit`
+  (`folder_cache.py:2815`) and kept only in `_mark_background`/`_mark_sent`. `quit_entries` reads
+  none of those, and none of the lists it does read (`_finishing`, `jobs`, `_deferred_saves`,
+  `_pref_writes`, `_constant_writes`, `_result_writes`, `_preset_jobs`) holds that write. The test
+  asserts `quit_entries() == []` while it runs.
+- **The quit flush is a quit entry**, of kind `QUIT_LAST_USED` with its start. The takeover test
+  asserts `(kind, path, state)` and that `started == quit_save_started(TXY_LAST_USED)`, and is not
+  None.
+- **`_wait_for_saves`** (`HelabMainWindow.py:1904`) still calls `cache.flush_txy_marks()` before
+  `quit_saves()`, unchanged.
+- **The takeover's "cancel first" (Nit-11) survived** (`folder_cache.py:2767–2772`). It sets
+  `_marks_quit`, stops `_marks_timer`, then calls `service.cancel(_mark_background)`, and only then
+  clears `_mark_background`/`_mark_sent`. `shutdown` still stops `_marks_timer`.
+
+### The `frozen` fixture: is the cause right? Yes.
+
+- **What the fixture lacked:** `frozen` builds an `IOService` and a `FolderCache` with no
+  `QApplication`. Its tests take no `qtbot`, and so no `qapp`.
+- **Why that fails:** A30.4's tests assert `_marks_timer.isActive()`. My probe, in a fresh
+  interpreter with no application, started a `QTimer` with 600 s:
+  - Without an application, Qt printed "QObject::startTimer: current thread's event dispatcher has
+    already been destroyed". The timer reported `isActive()` False, with `interval()` still
+    600000.
+  - With a `QCoreApplication`, `isActive()` was True.
+- **Why it shows only sometimes:** a test fails whenever it is the first Qt test its xdist worker
+  runs. That depends only on where the tests fall in each worker, so it is deterministic for a given
+  set of tests. That is why it failed all five reruns, and why the merge's new tests from dev could
+  bring it out.
+- **The fix is the right one:** requesting `qapp` (pytest-qt's session application) fixes the cause.
+  The round 1 test that also uses `frozen` needs no timer, which is why the gap went unseen until
+  A30.4.
+
+### Checks (floor venv, macOS, head `e06d891`)
+
+- **Full suite**, `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-review`:
+  **8361 passed, 669 skipped, 0 reruns** (2 min 54 s).
+- **Type checks:**
+  - `mypy helab/ --strict` (194 files), `mypy tests --strict` (167) and `mypy helab/ --strict
+    --platform win32` (194): no issues.
+  - `pyright helab tests` and `pyright --pythonplatform Windows helab tests`: 0 errors.
+
+### CI run 41007355018 (head `e06d891`, attempt 1): success, no RERUN
+
+I read every job's log. None has a RERUN line or a "rerun reasons" section.
+
+| Job | ID | Result |
+|---|---|---|
+| Ubuntu Tests (1/2) | 123905239426 | 4164 passed |
+| Ubuntu Tests (2/2) | 123905239298 | 4194 passed |
+| macOS Tests (1/2) | 123905239436 | 4167 passed |
+| macOS Tests (2/2) | 123905239571 | 4194 passed |
+| Windows Tests (1/2) | 123905239393 | 4152 passed |
+| Windows Tests (2/2) | 123905239342 | 4176 passed |
+| Ubuntu Converter backends | 123905239313 | 696 passed |
+| macOS Converter backends | 123905239353 | 696 passed |
+| Windows Converter backends | 123905239445 | 695 passed |
+| Detect branch; ubuntu, macos, windows Build | 123905171606; 123905239345, 123905239503, 123905239262 | success |
+
+- **The Build jobs:** each logs "mlx/numba/rust: unavailable", the developer-only backends (A9.1),
+  and passes.
+- **The compat matrix** was skipped (a push).
+- **The A30.4 tests that use `frozen`** passed on every OS: the ten-minute test and the takeover
+  test in each Tests (2/2), and the offline/cache-off/foreground test in each Tests (1/2).
+- **Still open from round 9, for landing:** `roadmaps/known-issues.md:95`, the Scatter3D worker
+  crash, still names only Windows CI. Widening it to the macOS local crash from round 9 waits for
+  the landing.

@@ -229,7 +229,7 @@ kind, `fingerprints._clock_ahead`; the app tells the user once per location) is 
 conversion. Content: ends with `\n`, first line on `profile.channel_trigger`. Unfinished files are
 not read again while unchanged (their `seen` entry carries the reason). **Damaged** (Q18.5, `agent/txy-followups`, landed `c718c71`): a raw file unmodified for 20 s
 (`DAMAGED_SECONDS`) both by its mtime and since HeLab first saw that (size, mtime) (a sixth field of
-the `seen` entries; `--once` goes by the mtime alone, Q23.7) that still fails a content check (no final
+the `seen` entries; `--once` goes by the mtime alone and wants 60 s, `ONCE_SETTLE_SECONDS`, as its settle rule does: Q23.7 (c)) that still fails a content check (no final
 newline, off the trigger channel, or no rows, which now waits like the others, Q23.3) is
 `shot_unconvertible` `damaged` with its `problem`: no TXY, one notification per file, skipped while
 unchanged, never holding up later shots. Heartbeats while a shot computes stop after its budget
@@ -311,8 +311,10 @@ at `user_version` 0); 10 s busy timeout, retried where SQLite answers busy at on
 conversion holds one connection for its run. **Readers** (loads, Live checks, `save_held`, Settings ›
 Cache) never create or set aside an index and get no rows on any error; a load that takes a TXY moves
 its folder's `last_used` on at most hourly (`LAST_USED_STEP`, a 200 ms wait), and a use it skips is
-sent as `txy_unmarked`, kept in `FolderCache` memory and written as HeLab quits (Q30.3: one `cache_admin`
-`mark_used` helper, only if newer, a quit save; [live](live.md)). **Damaged** (`SQLITE_CORRUPT`/`NOTADB`)
+sent as `txy_unmarked`, kept in `FolderCache` memory and written in the background about every 10 minutes while any are owed
+(A30.4: one `cache_admin` `mark_used` helper, only if newer; not while the disk cache is off, working
+offline or the foreground works; a busy index's marks, returned as `unwritten`, stay owed) and as HeLab
+quits (Q30.3: a quit save, which takes over from the background write; [live](live.md)). **Damaged** (`SQLITE_CORRUPT`/`NOTADB`)
 or **newer** (`user_version` > 1): a conversion sets it aside as `index-{damaged,newer}-<UTC>-<8 hex>.sqlite`
 (`provenance.SET_ASIDE_PATTERN`, with its `-journal`/`-wal`/`-shm`) and starts a new one; housekeeping
 never removes those (Settings › Cache's Clear removes damaged ones, never a newer HeLab's). An index
@@ -380,7 +382,7 @@ for the folder's date (`PLATE_SWAPS`, `suggested_plates`, Q6.10), never applied.
 
 Headless, dispatched in `helab/main.py` before any Qt (frozen: `HeLab convert …`; on Windows the
 windowed exe has no console, so lines go only to the log). Options: `--once` (one check: files
-unmodified for 60 s), `--profile`, `--backend`, `--output temp|cache|beside` (beside for that run
+unmodified for 60 s, to be read and to be called damaged), `--profile`, `--backend`, `--output temp|cache|beside` (beside for that run
 without the folder's flag, saving none; Q12.4), `--workers`, `--interval`, `--again` (convert even
 current shots). The same `convert_folder` as the helper operation; `--watch`'s first pass only
 records and converts from the second, each pass sending the last summary's lists back. It

@@ -382,8 +382,8 @@ def test_a_raw_file_failing_the_checks_for_20_s_is_damaged_and_holds_nothing_up(
     assert sorted(entry[0] for entry in summary(fourth)["unconvertible"]) == ["d1.txt", "d2.txt", "d3.txt"]
     folder = Path(of(second, "convert_plan")[0]["folder"])
     assert [path.name for path in folder.glob("d_txy_helab_*.txt")] == ["d_txy_helab_m19v1_4.txt"]
-    # Read for the first time past the damaged age: damaged at once.
-    write_raw(source, 6, whole[:-5], mtime=young)
+    # Read for the first time past the damaged age (``--once``: its own, ONCE_SETTLE_SECONDS): damaged at once.
+    write_raw(source, 6, whole[:-5], mtime=time.time() - convert.ONCE_SETTLE_SECONDS - 1)
     once = run(source, request_for(source, tmp_path, shots=[6]))
     assert [(event["shot"], event["problem"]) for event in of(once, "shot_unconvertible")] == [(6, raw.NO_FINAL_NEWLINE)]
     (source / "d6.txt").unlink()
@@ -397,6 +397,36 @@ def test_a_raw_file_failing_the_checks_for_20_s_is_damaged_and_holds_nothing_up(
     sixth = run(source, request)
     assert [event["shot"] for event in of(sixth, "shot_converted")] == [5] and of(sixth, "shot_unconvertible") == []
     assert set(reads) <= {5}
+
+
+@pytest.mark.parametrize("age, damaged", [(30, False), (61, True)], ids=["30s-waits", "61s-damaged"])
+def test_once_calls_a_file_damaged_only_after_the_once_settle_age(
+        source: Path, tmp_path: Path, age: float, damaged: bool) -> None:
+    """Q23.7 (c): ``helab convert --once`` (seen None, one look) has no first seen, so a file failing
+    the checks is damaged only once unmodified for ``ONCE_SETTLE_SECONDS`` (60 s) by its mtime, not
+    ``DAMAGED_SECONDS`` (20 s). (Tests settle at 0 s, so the file is read at once and this rule decides.)"""
+    assert (convert.ONCE_SETTLE_SECONDS, convert.DAMAGED_SECONDS) == (60.0, 20.0)
+    write_raw(source, 1, raw_bytes(10_000, 20_000)[:-5], mtime=time.time() - age)
+    events = run(source, request_for(source, tmp_path))
+    if damaged:
+        assert [(e["shot"], e["reason"], e["problem"]) for e in of(events, "shot_unconvertible")] == [
+            (1, convert.DAMAGED, raw.NO_FINAL_NEWLINE)]
+        assert of(events, "shot_waiting") == []
+    else:
+        assert of(events, "shot_unconvertible") == []
+        assert [(e["shot"], e["reason"]) for e in of(events, "shot_waiting")] == [(1, raw.NO_FINAL_NEWLINE)]
+
+
+def test_live_and_watch_still_call_a_file_damaged_after_20_s(source: Path, tmp_path: Path) -> None:
+    """Q23.7: two looks (``seen``, Live and ``--watch``) keep DAMAGED_SECONDS: a file 30 s old by its
+    mtime and first seen 30 s ago is damaged, though ``--once`` would still wait."""
+    write_raw(source, 1, raw_bytes(10_000, 20_000)[:-5], mtime=time.time() - 30)
+    request = request_for(source, tmp_path, seen=[])
+    first = run(source, request)
+    assert of(first, "shot_unconvertible") == []
+    request["seen"] = aged(summary(first)["waiting"], 30)
+    second = run(source, request)
+    assert [(e["shot"], e["reason"]) for e in of(second, "shot_unconvertible")] == [(1, convert.DAMAGED)]
 
 
 def test_a_file_changed_since_the_previous_check_waits_for_the_next(source: Path, tmp_path: Path) -> None:
@@ -1694,7 +1724,7 @@ def typed(source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.
 def test_a_typed_output_cache_asks_before_writing_a_dont_cache_folder_to_the_cache(
         source: Path, tmp_path: Path, private_store: str, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
         terminal: bool | None, answer: bool | None, output: str, cache: bool) -> None:
-    """Q~2 (Tony): the command line stands for the user, as ``beside`` does (Q12.4). One line names the
+    """Q30.2 (Tony): the command line stands for the user, as ``beside`` does (Q12.4). One line names the
     folder; for a typed ``--output cache`` a terminal asks (no by default), without one it's temp;
     ``cache-forced`` asks nothing. No stdin at all (the windowed Windows app, ``console=False``; terminal
     None: ``_on_terminal`` itself runs) is no terminal (Tern's Low-8)."""

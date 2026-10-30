@@ -321,10 +321,10 @@ From the TXY Index floor's [handoff](sessions/2026-10-29-claude-txy-index/handof
   stops the `-wal` being rebuilt between them; it doesn't make SQLite's lock fair. Cost (Tern): on
   Windows a long-held connection blocks the app helper's set-aside of a damaged index, so the app's
   conversions fail until `helab convert` reopens.
-- **A30.4 Write skipped `last_used` marks in the background every ~10 min** (Q30.3 (c)): the marks
+- [x] **A30.4 Write skipped `last_used` marks in the background every ~10 min** (Q30.3 (c)): the marks
   `FolderCache` keeps (`txy_unmarked`) go out in one `cache_admin` `mark_used` request about every
   10 minutes while any are owed, respecting Work Offline, lane pausing, quit (the quit flush stays)
-  and the cache being off. A short follow-up after `460360b`.
+  and the cache being off. Done on `agent/txy-index` (landed with merge `e06d891`).
 - **A30.5 Settings refuses a temp folder on a network drive or in a synced folder** (Q30.5): the
   cache folder's check (`cache_location.cache_location_problem`) and wording for Settings › General's
   temp folder; an existing such setting kept but warned about once.

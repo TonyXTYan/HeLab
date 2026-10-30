@@ -277,11 +277,12 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   `--output cache-forced` → cache, no question.
 - [ ] **M30.3 Last uses written at quit** (Q30.3): load a converted folder's TXY twice within the hour,
   quit with nothing else saving: the quit window shows briefly and closes by itself; at the next start
-  Settings › Cache shows the second load's time. Wording, Tony's to change: header "Recording when
+  Settings › Cache shows the second load's time. Work more than 10 minutes after the second load,
+  then quit: no quit window (the background write already recorded it). Wording, Tony's to change: header "Recording when
   converted TXY were last used before HeLab quits:" (with other saves: "Saving 1 folder to the disk
   cache and recording when converted TXY were last used before HeLab quits:"); entry "Converted TXY
-  last used — recording when HeLab's converted TXY were last used". The window shows on most quits
-  after working with converted folders (A30.4's background write will make that rarer).
+  last used — recording when HeLab's converted TXY were last used". The window shows on quits within 10
+  minutes of a load that skipped its mark.
 
 ## Data roots (v0.0.5a1, added 2026-10-18)
 

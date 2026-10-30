@@ -20,7 +20,6 @@ source folder's listing).
 """
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass
 import os
 import re
@@ -209,8 +208,8 @@ def find(path: str, options: Mapping[str, Any], key: str, beside: Mapping[int, o
 
 def _mark_used(root: str, name: str) -> None:
     """Move the folder's ``last_used`` on (at most every ``LAST_USED_STEP``); a load never fails for it.
-    A use not written (that step, or the index busy) is sent as ``txy_unmarked``: the app writes it as
-    it quits (Q~3, ``mark_used``)."""
+    A use not written (that step, or the index busy) is sent as ``txy_unmarked``: the app writes it in the
+    background about every 10 minutes and as it quits (Q30.3, A30.4, ``mark_used``)."""
     import sqlite3
     import time
     from helab.convert.provenance import open_index
@@ -229,27 +228,30 @@ def _mark_used(root: str, name: str) -> None:
         infra.emit({"kind": "txy_unmarked", "root": root, "folder": name, "at": now})
 
 
-def mark_used(marks: list[list[Any]]) -> int:
-    """The last uses loads didn't write this session (``txy_unmarked``: [root, folder, at]), written as
-    the app quits (Q~3), each only if newer than the row's; how many were written. Best effort: a
-    missing, newer, damaged or busy index is left as it is (the shot rows never depend on it)."""
+def mark_used(marks: list[list[Any]]) -> list[list[Any]]:
+    """The last uses loads didn't write this session (``txy_unmarked``: [root, folder, at]), written in the
+    background about every 10 minutes (A30.4) and as the app quits (Q30.3), each only if newer than the
+    row's; the marks a busy or failing index left unwritten, to try again. Best effort: a missing, newer or
+    unreadable index is left as it is (the shot rows never depend on it)."""
     import sqlite3
     from helab.convert.provenance import open_index
-    written = 0
+    unwritten: list[list[Any]] = []
     for root in dict.fromkeys(str(mark[0]) for mark in marks):
         index = open_index(root, write=False)
         if index is None:
             continue
         try:
             index.conn.execute("PRAGMA busy_timeout = 500")  # (Quitting waits at most a moment.)
-            for _, folder, at in (mark for mark in marks if mark[0] == root):
-                with contextlib.suppress(sqlite3.Error):
-                    written += index.conn.execute(
-                        "UPDATE folders SET last_used = ? WHERE folder = ? AND last_used < ?",
-                        (float(at), str(folder), float(at))).rowcount
+            for mark in (mark for mark in marks if mark[0] == root):
+                _, folder, at = mark
+                try:
+                    index.conn.execute("UPDATE folders SET last_used = ? WHERE folder = ? AND last_used < ?",
+                                       (float(at), str(folder), float(at)))
+                except sqlite3.Error:
+                    unwritten.append(list(mark))
         finally:
             index.close()
-    return written
+    return unwritten
 
 
 def could_take(source: str, raw: Mapping[int, Any], matlab: Mapping[int, Any],

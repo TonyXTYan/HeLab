@@ -107,3 +107,27 @@ Final runs (after 35b50d0):
   `8225 passed, 669 skipped, 2 warnings in 132.29s`, no RERUN. The five type checks clean.
 - Probes: one row dropped by a writer fails the two-writer test (`149 == 150`); the old `_on_terminal`
   fails the two stdin tests.
+
+## A30.4 (after landing c492242)
+
+- Full suite `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`: 8230 passed, 669 skipped, 2 warnings in 189.88s; no rerun.
+- mypy helab/tests strict, mypy win32: no issues (191, 160, 191 files); pyright and pyright Windows: 0 errors.
+
+## Q23.7 (c) and Nit-11
+
+- First full run, with the `--once` limit `ONCE_SETTLE_SECONDS` alone: 1 failed, 8257 passed, 5 reruns.
+  All 5 reruns were the same deterministic failure, `test_files_that_may_still_be_written_wait` (shots 2
+  and 3 became damaged rather than waiting), a real failure caused by the change, not a flake. Fixed
+  with `max(ONCE_SETTLE_SECONDS, DAMAGED_SECONDS)` (handoff).
+- Full suite after the fix: 8258 passed, 669 skipped, 2 warnings in 126.48s; no rerun.
+- mypy strict helab (191) / tests (160) / win32 (191): no issues; pyright and pyright Windows: 0 errors.
+
+## Merge of origin/dev/v0.0.7 (cb05f27)
+
+- First targeted run (test_quit_confirms, test_txy_last_used_quit, test_live, test_convert_helab, -n 4):
+  1 failed, 134 passed, 5 reruns. All 5 were the same deterministic failure,
+  `test_the_background_write_waits_while_offline_cache_off_or_the_foreground_works`: no QApplication
+  for the `frozen` fixture's QTimer. Fixed by having the fixture request `qapp` (handoff).
+- Those files after the fix: 50 passed (quit_confirms, txy_last_used_quit, live).
+- Full suite: 8361 passed, 669 skipped, 2 warnings in 169.36s; no rerun.
+- mypy strict helab (194) / tests (167) / win32 (194): no issues; pyright and pyright Windows: 0 errors.

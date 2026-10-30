@@ -2,7 +2,7 @@
 
 Live's new shots, a finished load's background save (``disk_cache_pending``), a folder's flags
 or constants still being written, a plot's result being saved (its run's save, or Make room for
-it), presets being written, the converted TXY's last uses loads didn't write (Q~3, its own ~5 s
+it), presets being written, the converted TXY's last uses loads didn't write (Q30.3, its own ~5 s
 no-progress limit) and a conversion still running are finished before HeLab quits. This window lists
 each of them (``FolderCache.quit_entries``) by folder, kind, state and how long it has run, from
 memory, closes by itself when they all end (each stops itself after the usual no-progress timeout), and
@@ -103,7 +103,7 @@ class QuitSaveDialog(QDialog):
         count = len(saved)
         saving = " and ".join(filter(None, (f"{count:,} folder{'' if count == 1 else 's'}" if count else "",
                                             "presets" if PRESETS_SAVING in paths else "")))
-        # (The converted TXY's index may be under the temp folder, not the disk cache: Q~3, Nit-10.)
+        # (The converted TXY's index may be under the temp folder, not the disk cache: Q30.3, Nit-10.)
         parts = [part for part in (
             f"saving {saving} to the disk cache" if saving else "",
             "recording when converted TXY were last used" if TXY_LAST_USED in paths else "",
