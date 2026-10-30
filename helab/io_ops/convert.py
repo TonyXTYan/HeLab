@@ -64,6 +64,7 @@ from __future__ import annotations
 import concurrent.futures
 import contextlib
 import dataclasses
+import errno
 import functools
 import hashlib
 import os
@@ -113,6 +114,33 @@ PARTIAL_MAX_AGE = 3600.0
 # need multiprocessing.freeze_support() first in helab/main.py (there) and a check in the built
 # app (the packaging floor), so it converts in-process until that is done.
 DEFAULT_WORKERS = 1 if getattr(sys, "frozen", False) else max(1, min(4, (os.cpu_count() or 2) // 2))
+# Windows' full-path limit without long paths turned on (MAX_PATH, the terminating NUL included): a
+# path of this many characters or more is refused, as WinError 206 or 3, or a FileNotFoundError
+# (Q23.6: user profiles' 33-character tags make HeLab's names ~56 characters, ~82 while temporary).
+WINDOWS_MAX_PATH = 260
+
+
+def path_too_long(exc: BaseException, path: str, platform: str = sys.platform) -> str | None:
+    """What to tell the user when the OS refused ``path`` (or the name in ``exc``, e.g. the TXY's
+    longer temporary one) for its length: ENAMETOOLONG anywhere; on Windows WinError 206, or WinError
+    3 or FileNotFoundError on a path of WINDOWS_MAX_PATH characters or more. None for any other error
+    (a Windows PC with long paths turned on, or any other OS, may just write it)."""
+    if not isinstance(exc, OSError):
+        return None
+    given = exc.filename
+    given = os.fspath(given) if isinstance(given, (str, os.PathLike)) else ""
+    name = given if isinstance(given, str) and len(given) > len(path) else path
+    winerror = getattr(exc, "winerror", None)
+    windows = platform == "win32"
+    if windows and (winerror == 206 or (winerror == 3 or isinstance(exc, FileNotFoundError))
+                    and len(name) >= WINDOWS_MAX_PATH):
+        return (f"Path too long for Windows ({len(name):,} characters; the limit is {WINDOWS_MAX_PATH - 1} "
+                f"unless long paths are turned on in Windows): {name}. Choose a shorter cache or temp folder "
+                "(Settings), or a shorter folder path")
+    if exc.errno == errno.ENAMETOOLONG:
+        return (f"Path too long for this computer ({len(name):,} characters, or a name over 255): {name}. "
+                "Choose a shorter cache or temp folder (Settings), or a shorter folder path")
+    return None
 
 
 class ConvertRequest(TypedDict):
@@ -580,7 +608,12 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     index: provenance.TxyIndex | None = None
     if todo:
         if not beside:
-            os.makedirs(places["folder"], exist_ok=True)
+            try:
+                os.makedirs(places["folder"], exist_ok=True)
+            except OSError as exc:
+                if (too_long := path_too_long(exc, places["folder"])) is not None:
+                    raise OSError(too_long) from exc  # (The whole folder's error, said plainly.)
+                raise
         _remove_own_partials(path, places["folder"], send)
         index = provenance.open_index(root, write=True, journal=journal_for(os.path.dirname(root)))
     index_path = os.path.join(root, provenance.INDEX_NAME)
@@ -641,6 +674,10 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
                     # Its row goes, unless another conversion has written its own since: then that one stands.
                     with contextlib.suppress(OSError):
                         index.forget(folder_name, written[0])
+                if (too_long := path_too_long(exc, target)) is not None:
+                    refuse(shot, "failed", too_long)  # (Not converted again while unchanged: Q23.6.)
+                    progress()
+                    return
                 if not (beside and isinstance(exc, FileExistsError)):
                     raise
                 # (Another conversion wrote it since the listing; it stays.)

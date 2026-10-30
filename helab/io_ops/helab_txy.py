@@ -345,8 +345,8 @@ def default_record(source: str = "") -> dict[str, Any]:
 # HeLab's own files in a folder there: the TXY of the tagged names, the untagged ones before Q18.4, and the
 # per-shot records and ``folder.json`` of the builds before the index (none read any more, but HeLab's:
 # measured and cleared with the rest), and their leftover temporaries (``io_ops.convert.own_partial``'s).
-_OWN_FILE = re.compile(r"^(?:d_txy_helab_(?:[a-z][a-z0-9]{1,15}_)?(?:0|[1-9][0-9]*)\.(?:txt|txy|json)"
-                       r"|\.d_txy_helab_(?:[a-z][a-z0-9]{1,15}_)?(?:0|[1-9][0-9]*)\.(?:txt|txy|json)\.[0-9a-f]{16}"
+_OWN_FILE = re.compile(r"^(?:d_txy_helab_(?:[a-z][a-z0-9]{1,32}_)?(?:0|[1-9][0-9]*)\.(?:txt|txy|json)"
+                       r"|\.d_txy_helab_(?:[a-z][a-z0-9]{1,32}_)?(?:0|[1-9][0-9]*)\.(?:txt|txy|json)\.[0-9a-f]{16}"
                        r"\.partial|folder\.json|\.folder\.json\.[0-9a-f]{16}\.partial)$", re.ASCII)
 _TXY_SUFFIXES = (".txt", ".txy")
 _FOLDER_RECORD = "folder.json"

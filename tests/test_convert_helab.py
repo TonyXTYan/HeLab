@@ -743,7 +743,7 @@ def test_the_file_kind_is_counted_but_not_loaded() -> None:
     for name in ("d_txy_helab_12.txy", "d_txy_helab_12.txt", "d_txy_helab_m19v1_12.txy", ".d_txy_helab_m19v1_1.txt.ab.partial",
                  "d_txy_helab_m19v1_07.txt", "d_txy_helab_m19v1_\u0661.txt", "d_txy_helab_m19v1_.txt",
                  "d_txy_helab_m_1.txt", "d_txy_helab_M19v1_1.txt", "d_txy_helab_1x_1.txt", "d_txy_helab_m19v1_1_2.txt",
-                 "d_txy_helab_abcdefghijklmnopq_1.txt", "d_txy_helab_m19-v1_1.txt"):
+                 "d_txy_helab_u000000000000000000000000000000000_1.txt", "d_txy_helab_m19-v1_1.txt"):
         assert file_kinds.match(name) is None and not provenance.TXY_PATTERN.match(name), name
     # The file kind and the provenance module agree (the tag a group only in the latter).
     for name in ("d_txy_helab_m19v1_0.txt", "d_txy_helab_abcdefghijklmnop_9.txt"):
