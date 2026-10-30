@@ -214,14 +214,21 @@ def test_convert_watch_converts_a_run_as_it_arrives(watched: Path) -> None:
     left behind when it stops."""
     shots = raws(era("live/raw-20"))
     assert len(shots) == 20
+    # Its log goes to a file, not a pipe nothing reads while it runs: Windows' pipe holds about 4 kB, and a
+    # watcher blocked writing its log converts nothing more (CI 41065417283).
+    log_path = watched.parent / "watch.log"
     previous = signal.signal(signal.SIGINT, signal.default_int_handler)  # (As test_convert_helab's `watching`.)
     try:
-        process = subprocess.Popen([sys.executable, "-m", "helab", "convert", "--watch", str(watched), "--output",
-                                    "beside", "--interval", "0.2"], stderr=subprocess.PIPE, text=True, cwd=ROOT,
-                                   env=dict(os.environ))
+        with log_path.open("w") as log_file:
+            process = subprocess.Popen([sys.executable, "-m", "helab", "convert", "--watch", str(watched), "--output",
+                                        "beside", "--interval", "0.2"], stderr=log_file, text=True, cwd=ROOT,
+                                       env=dict(os.environ))
     finally:
         if previous is not None:
             signal.signal(signal.SIGINT, previous)
+
+    def log_text() -> str:
+        return log_path.read_text(errors="replace")
 
     def converted(shot: int) -> Path:
         return watched / f"d_txy_helab_m19v1_{shot}.txt"
@@ -229,9 +236,9 @@ def test_convert_watch_converts_a_run_as_it_arrives(watched: Path) -> None:
     def wait_for(shot: int) -> None:
         deadline = time.monotonic() + 30
         while not converted(shot).exists() and time.monotonic() < deadline:
-            assert process.poll() is None, process.stderr.read() if process.stderr else ""
+            assert process.poll() is None, log_text()
             time.sleep(0.05)
-        assert converted(shot).exists(), f"shot {shot} not converted in 30 s"
+        assert converted(shot).exists(), f"shot {shot} not converted in 30 s; the watcher's log:\n{log_text()}"
 
     try:
         order = sorted(shots)
@@ -254,7 +261,7 @@ def test_convert_watch_converts_a_run_as_it_arrives(watched: Path) -> None:
         else:
             process.send_signal(signal.SIGINT)
         code = process.wait(20)
-        log = process.stderr.read() if process.stderr else ""
+        log = log_text()
     if sys.platform != "win32":
         assert code == 0, log
         assert "Stopped" in log
