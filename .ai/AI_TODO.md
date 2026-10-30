@@ -124,59 +124,10 @@ Finding numbers refer to the [planning-docs audit](sessions/2026-10-28-claude-do
   `tests/test_helabMainWindow.py` patches only `helab.utils.folder_cache.store_options`; once it
   is called as `folder_cache.store_options()`, drop the exception from `io-and-browsing.md`.
 
-## Building the TXY converter (block 9)
-
-- [x] **A9.1 Remove unused converter backends from the build** (done in `134e2ec`: numpy, cython and the reference ship) (Q9.2): every backend ships while the
-  converter is tested; once the default and the optional fast ones are settled, drop the rest
-  from `requirements.txt`, the lock and `HeLab.spec`, and note the size saved. Input: the stage 2
-  results (`sessions/2026-10-29-claude-txy-bench/results.md`) and Q11.2. Packaging's sizes (macOS app):
-  mlx +234 MB (78 zipped), numba+llvmlite +127 (40), rust +0.48, cython +0.27. Dropping numba means
-  removing it from the lock (or adding it to `excludes`): once it is in the lock, pandas' and scipy's
-  optional imports pack it even without the spec.
-
-## Converter stage 1 (block 10)
-
-From the `agent/txy-reference` handoffs ([builder](sessions/2026-10-29-claude-txy-reference/handoff.md),
-[cross-checker](sessions/2026-10-29-claude-txy-reference/crosscheck/handoff.md)); detail in
-[converter.md](architecture/converter.md).
-
-- [x] **A10.1 Settle checks, with the evidence** (done in stage 4 core, `5cf4652`, landed `775fb1d`;
-  converter.md's settle rules) (stage 4, `agent/txy-helab-core`): 2019-halos d3667
-  shows MATLAB converting a raw file 0.25 s after its last write and losing the end of the shot.
-  Test the settle check with a synthetic half-written file.
-- [x] **A10.2 Backend constraints** (done in the stage 2 landings `d522691`, `32158c2`, `7031bea`,
-  `aecbe68`, `ed35099`) (stage 2, every backend floor): all 39 cases and every sample shot,
-  including the phantom row, `NoRowsError` and stable NaN-last sorts (`kind="stable"`). A split of
-  one shot keeps the global `t_zero`, the first-row skip (first piece only), the whole-file
-  `floor(N/4)` preallocation, the 2023 cuts (only at gaps over 20,000 bins, or before splitting)
-  and one final stable sort by T; test that a split equals the whole on the `phantom_*` and
-  `dead_time_x1` cases.
-- [x] **A10.3 Built-in profiles as JSON files** in the package (stage 4, Q6.11), each tested to load
-  equal to the Python definitions. Done in `475c6a6` (`agent/txy-ui`).
-- [x] **A10.4 Durable HeLab TXY writes** (done in `5cf4652`, landed `775fb1d`; `io_ops/convert.py`)
-  (stage 4): use `txy.write_atomic` (new file with mode
-  `0o666` under the umask, fsync, rename, folder fsync) for `d_txy_helab_<N>.txy`, which matters
-  once they go beside raw files on a share (Q9.7).
-- [x] **A10.5 A conversion with no hits writes an empty HeLab TXY** (stage 4; Q10.3, confirmed by
-  Tony 2026-10-29). Done in `5cf4652` (converter.md, `pipeline`).
-
 ## Converter stage 2 (block 11)
 
 From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-txy-*/handoff.md`).
 
-- [x] **A11.1 Packaging the backends** (done in `7cb168e`; since `134e2ec` only numpy, cython and the
-  reference ship, Q11.2) (stage 4, `agent/txy-packaging`): build cython and rust in CI on
-  all three OSes (MSVC from VS 2022 17.0+, never `/arch:AVX2` with an older toolset; GCC/clang with
-  `-ffp-contract=off`; maturin abi3-py311, no `target-cpu=native` for the Sandy Bridge lab PC), make
-  their tests required there (a missing extension fails, not skips) and check each built kernel
-  equals the reference on `tests/data/convert/`; numba (with llvmlite) in the lock if it ships;
-  mlx's GPU tests only where Metal exists (print `mx.metal.is_available()` first); `hiddenimports`
-  for every `_MODULES` backend and mlx's `collect_*`.
-- [x] **A11.2 In the helper** (done in `5cf4652`, landed `775fb1d`; numba's folder is now under the
-  temp folder, Q18.1, `874fd2b`) (stage 4, `agent/txy-helab-core`): `numba_backend.set_cache_folder(<cache_dir()>/numba)`
-  before first use, and after a cache-folder move restart helpers that loaded the kernels (or accept
-  a stray old folder); a lock in `reconstruct._load`; convert across shots in long-lived processes,
-  no within-shot splitting for the fast backends.
 - **A11.3 A conftest-wide numba cache fixture**: a session-scoped autouse fixture calling
   `numba_backend.set_cache_folder(<session temp>/numba-cache)`, replacing the numba tests' own (which
   would raise if another file's in-process numba test loaded the kernels first on a worker).
@@ -194,14 +145,6 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 - **A12.2 `HeLab.exe convert` on Windows** (`agent/txy-packaging`): the windowed exe has no console;
   check where its output goes, and consider a console launcher (`HeLab-convert.exe`) if the
   acquisition PC needs one.
-- [x] **A12.3 Live sends the summary back** (done in `573c86b`, landed `6454b4a`; `folder_cache.py`'s
-  `convert` payload) (`agent/txy-live`): every `convert_summary`'s lists as
-  `seen`/`done`/`kept`/`skip`, so done shots aren't checked again and unfinished ones aren't read again
-  (`seen` is required).
-- [x] **A12.4 JSON leftovers in `converted-txy/`** (done in Quick Fixes 5, `2b9435a`): conversions remove their own leftover temporary TXY
-  there (over 1 h), but a kill can also leave `.d_txy_helab_<N>.json.<16 hex>.partial` (the record)
-  and `.folder.json.<16 hex>.partial`, which stay for good. Harmless and small; widen the own-folder
-  pattern to HeLab's own JSON names (Gannet, fix round).
 
 ## Quick Fixes 4 (block 13)
 
@@ -226,37 +169,11 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
   `helab_since`, `listed_mtime`, `seen_names`, `identity_root`), so Live tests elsewhere exercise
   what the helper runs (`test_live_convert.py` already does).
 
-## Converter stage 4, packaging (block 16)
-
-- [x] **A16.1 Rust build cache in CI** (moot: rust left CI, A9.1, `134e2ec`): every build job compiles the rust crate from cold (LTO fat,
-  `codegen-units = 1`); if CI time matters, `Swatinem/rust-cache@v2` with `workspaces: native/rust`.
-- [x] **A16.2 The compatibility jobs** (moot: numba left CI, `134e2ec`) (3.11, 3.12, 3.14, unpinned; PR-only, experimental) also build and
-  require cython, rust and numba: watch the first PR run, and make numba conditional there if a
-  Python has no wheel.
-- [x] **A16.3 `native/build.py`'s `--out`/`--prebuilt`** (dropped in `134e2ec`) are no longer used by any workflow (Puffin): drop
-  them, or fix the module docstring that says the test job takes a build job's `--out`.
-
-## Tony's answers on the converter (block 17)
-
-- [x] **A17.1 Warn about raw files with no hits** (Q10.3; done in `62d156e`): the HeLab GUI shows a
-  warning for shots whose conversion found no hits (Folder details and the Live line), with the
-  shot numbers.
-- [x] **A17.2 Two pytest groups per OS in CI** (Q16.2 b; done in `874fd2b`, `ci-test.yml`'s
-  `--test-group`): split the test job into two shards on every OS, keeping the typing-tests-first
-  ordering (Quick Fixes 6); no limit raised.
-
-## Converter follow-ups (block 18)
-
-- [x] **A18.1 Folder status and HeLab's TXY** (Q14.4): merged into A23.1; the question is Q14.4.
-
 ## Caching after the converter (block 19)
 
 **On hold: Tony's go (block 19).** Tony, 2026-10-29: no cache coding until his explicit go, "A19.1
 and A19.2 included"; don't start these without it.
 
-- [x] **A19.1 Settings › Cache shows and clears HeLab's TXY in the temp folder too** (audit I4, I6;
-  in Q26.2's floor, Q27.5, Tony 2026-10-29): `converted_usage` and `clear_converted` over both places.
-  Done on `agent/txy-index` (landed `460360b`).
 - **A19.2 Clear converted TXY vs a running conversion** (audit K4; on hold): `clear_converted` takes
   a fence a conversion checks before each write, or the docs say a running conversion may write
   after it.
@@ -297,15 +214,6 @@ and A19.2 included"; don't start these without it.
   `backends.numba_kernels` as optional only, so a converter module that imports Qt or
   `helab.utils.constants` fails CI; then `converter.md` and AGENTS.md can say it is enforced.
 
-## Byte units by OS (block 26)
-
-- [x] **A26.1 OS-aware byte units** (Q26.1, decided; done on `agent/byte-units`, landed `8bf810f`): `number_format.byte_size(n, kind="disk" |
-  "ram")` and `time_format.byte_rate` SI on macOS/Linux, powers of 1024 labelled KiB/MiB/GiB on
-  Windows; RAM in GiB everywhere; budget defaults and minimums follow (8 GB / 8 GiB disk, 1 GB /
-  1 GiB, RAM 1 GiB); the ~67 calls sorted into disk and RAM; tests for both platforms; AGENTS.md's
-  units rule, `cache-store.md` and `settings.md` updated. Not cache code; a floor now, in v0.0.7
-  (Tony, 2026-10-29: "do now").
-
 ## Converted-TXY index (block 30)
 
 From the TXY Index floor's [handoff](sessions/2026-10-29-claude-txy-index/handoff.md) (landed `460360b`).
@@ -321,10 +229,6 @@ From the TXY Index floor's [handoff](sessions/2026-10-29-claude-txy-index/handof
   stops the `-wal` being rebuilt between them; it doesn't make SQLite's lock fair. Cost (Tern): on
   Windows a long-held connection blocks the app helper's set-aside of a damaged index, so the app's
   conversions fail until `helab convert` reopens.
-- [x] **A30.4 Write skipped `last_used` marks in the background every ~10 min** (Q30.3 (c)): the marks
-  `FolderCache` keeps (`txy_unmarked`) go out in one `cache_admin` `mark_used` request about every
-  10 minutes while any are owed, respecting Work Offline, lane pausing, quit (the quit flush stays)
-  and the cache being off. Done on `agent/txy-index` (landed with merge `e06d891`).
 - **A30.5 Settings refuses a temp folder on a network drive or in a synced folder** (Q30.5): the
   cache folder's check (`cache_location.cache_location_problem`) and wording for Settings › General's
   temp folder; an existing such setting kept but warned about once.
@@ -334,20 +238,6 @@ From the TXY Index floor's [handoff](sessions/2026-10-29-claude-txy-index/handof
 - **A32.1 `result_cache.LARGE_RESULT_BYTES` by OS** (optional): the 50 MB threshold could follow the
   disk unit like the log thresholds, if Tony wants every threshold by OS
   ([handoff](sessions/2026-10-29-claude-byte-units/handoff.md)).
-
-## Provisional UI pass (block 33)
-
-From the [findings](sessions/2026-10-30-claude-ui-provisional-0.0.7/findings.md); in the UI polish
-floor (Q33.6). All four done on `agent/ui-polish` (landed `c104502`).
-
-- [x] **A33.1** Tab out of a plot setting opens the next row's editor (an empty wide box until the
-  next click); Tab should commit and stop, like Return after Smoke ready.
-- [x] **A33.2** Offline, Folder details says "Loaded from cache · not checked yet" beside "checked,
-  unchanged"; make the two agree with the summary's "not checked (offline)".
-- [x] **A33.3** Settings › General labels the temp folder "DIR_TEMPS:" (the constant's name); word it
-  like the cache folder's row.
-- [x] **A33.4** After a plot floats, the settings panel's Float button floats whichever plot the panel
-  names, not the one just floated; make it act on (or show) the right plot.
 
 ## Smoke ready (block 34)
 

@@ -17,23 +17,19 @@ cover are lab validation, and don't gate a release (Tony, 2026-10-28: Q1.1).
 
 ## Release smoke pass
 
-**v0.0.6a1 (2026-10-28):** the Mac pass ran by computer use
-([results](sessions/2026-10-28-claude-smoke-mac/results.md)): all passed except M1.3 (skipped,
-no run acquiring) and M1.7's plots, which need Tony's look. Tony released on it and on his own
-use (Q6.1). The lab PC pass and M1.3 Live are the first checks of v0.0.7.
+**v0.0.7a1 (released 2026-10-31, TonyXTYan/HeLab#10):** the Mac pass ran in part on `6dec236` by
+computer use with the [runbook](sessions/2026-10-30-claude-smoke-handoff/runbook.md)
+([results](sessions/2026-10-30-claude-smoke-final-mac/results.md)): M1.1, M1.2-1 and M1.2-3, M1.6-1,
+M1.6-2 and M1.6-4 passed; M1.7's 13 DLD plots all drew (the physics is Tony's to review); M1.4-1 is to
+review. Its one bug, the plot settings table's Value column off the right edge in a narrow panel, was
+fixed before the release (`42a82b0`). Tony released without waiting for the rest (2026-10-31), so these
+are open for v0.0.8:
+- on a Mac: M1.4-2 to M1.4-4, M1.5, M1.6-3, M1.8, M1.9 and M36.1–M36.4; by hand, the plot/settings
+  splitter drags and two newly floated plots opening offset (Q33.3). M1.3 (nothing acquiring) and M1.10
+  were skipped;
+- the lab PC pass (M1.1–M1.10 on Windows), with M1.3, Live during an acquisition.
 
-**v0.0.7:** the converter step is M1.9 (Q24.3, "live convert and plot update"); M1.10 checks two
-versions on one Mac (block 27).
-
-**v0.0.7, Mac, partial (2026-10-30, on 6dec236):** run by computer use with the
-[runbook](sessions/2026-10-30-claude-smoke-handoff/runbook.md)
-([results](sessions/2026-10-30-claude-smoke-final-mac/results.md)). M1.1, M1.2 (cached), M1.6 (offline) and
-M1.7 (all 13 DLD plots) pass; M1.4-1 partly. Its one bug, the plot settings table's Value column off the right
-edge in a narrow panel, is fixed on Ground. Still to run: M1.4-2 to 4, M1.5, M1.6-3, M1.8, M1.9, M36.1–M36.4,
-and by hand: the plot/settings splitter drags, and two newly floated plots open offset (Q33.3). Skipped: M1.3
-(nothing acquiring), M1.10. Then the lab PC pass.
-
-These checks gate a release (Tony, 2026-10-28: Q1.1; amended for v0.0.6a1 by Q6.1, above). Run the pass once
+These checks gate a release (Tony, 2026-10-28: Q1.1; amended for v0.0.6a1 by Q6.1, and for v0.0.7a1 on 2026-10-31, above). Run the pass once
 on a Mac and once on a lab PC (Windows), on the release candidate. Steps marked **Lab PC**
 matter most there. Each machine takes about 45 min, and step 3 needs a run acquiring.
 
@@ -200,29 +196,13 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
 
 ## Post-2025 plates, in the lab (added 2026-10-29, block 25)
 
-- [x] **M25.1 Corner cabling** (Tony, 2026-10-29: it was the cable swap; handled as a 180° detector
-  orientation from July 2026, Q25.1). Was: what changed between 2026-06-27 and 2026-07-21 in the
-  anode/amplifier/CFD/TDC chain? x1↔x2 and y1↔y2 are swapped since then (Q25.1).
 - [ ] **M25.2 TDC input 7:** what is connected, is it enabled, at what threshold, and did anything
   move there in 2025 (Q25.2)?
-- [x] **M25.3 The second converter** (Tony: not an issue at the moment). Was: which program on the TDC PC writes `d_txy_forc` besides
-  AutoConvert (the front panel?) (Q25.3).
 - [ ] **M25.5 The bursts (Q25.5):** a scope on input 7 and the x1-end amplifier together; a ~10 min
   run with the MCP HV off (bursts gone: the detector or its HV; still there: outside pickup), then
   a few HV settings; inspect the x1 end's feedthrough, cable and amplifier.
 - [ ] **M25.4 A calibration run for the 2025 plates:** a free-space halo with ≥100 halo atoms per
   shot, raw files kept, ideally with the MCP pick-off on channel 4 (absolute time sums).
-
-## Maestri floor hooks (added 2026-10-28)
-
-- [x] **M8.1 Update the floor setup hooks in the Maestri app** to match
-  [maestri-setup.md §4](maestri-setup.md#4-floor-setup-hook) (the hooks live only in the app, so the guide is
-  their record): hook 1 now refuses a `venv` that resolves outside the floor; hook 5b is new
-  (`HELAB_TEST_SETTINGS_FILE`, Q2.5); hook 7 initialises only `legacy/tdc_autoconverter`, without
-  `--recursive`. Then create a test floor and check `.ai/local/floor-env.sh` has four lines. Done
-  2026-10-29: the third test floor got all hooks (own venv, four `floor-env.sh` lines, HeLab
-  opening the floor's settings file, no stale bytecode, the submodule), and teardown removed its
-  folders.
 
 ## TXY converter (added 2026-10-29)
 
@@ -237,12 +217,6 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   `sessions/2026-10-29-claude-txy-bench/bench.py --mode serial` and `processes-warm` at x2 and x4 on
   a copy of the sample set. Shows whether one core there keeps up with gigabit (Q6.9). Optional:
   repeat the Mac's x12/x16 rows with Safari closed.
-- [x] **M11.2 A CI-built rust (or cython) wheel on a lab PC**: superseded by M16.1 (cython only, since
-  rust no longer ships).
-- [x] **M11.3 Keep the MATLAB 2023 reference outputs**: the 32 raw/TXY pairs from the TXY Reference
-  floor's `.ai/temp/txy/matlab-2023/` are in the test data's `reference/matlab-2023/` (Q31.4, tag
-  `v1`, 2026-10-30; raw files checked against the sample set), and CI converts them byte for byte
-  (`tests/test_convert_testdata.py`). The floor can go.
 
 - [ ] **M12.1 The converter on the lab share** (Tony, at the acquisition PC): run `helab convert
   --watch <a copy of a run folder> --output temp` while files arrive (or copy them in one by one),
@@ -275,9 +249,7 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   read"; a plot's TXY row has the source and profile combos; HeLab only + plates-2022 loads its own
   data and the source line says `TXY: HeLab only (p22v1)`.
 - [ ] **M23.2 The launch folder**: set one, restart: only its tab opens, Live and auto-convert start,
-  the left panel collapses; Live off brings it back. In a real HeLab session (also M18.1).
-- [x] **M18.1 Start-at-launch in the running app** (Q15.1): merged into M23.2 (one launch folder
-  since Q18.3).
+  the left panel collapses; Live off brings it back. In a real HeLab session (it covers the old M18.1, Q15.1).
 - [ ] **M23.3 Damaged raw files on the acquisition PC**: a deliberately truncated raw file is reported
   damaged after ~20 s with one notification; later shots convert.
 
@@ -372,7 +344,6 @@ real experiment data without deciding where its top should be.
 - [ ] The TDC converter and the lab MATLAB scripts ignore `.helab-root`.
 - [ ] Before using this build: `store-v3` starts empty. On each lab PC, move the old
   `store-v2` folder to the Trash when upgrading (Tony, 2026-10-28: Q1.5).
-
 
 - [ ] In the full app on `/Volumes/dld_output`, exercise cache-first display,
   two-step browse and names-only Refresh. Confirm reselecting a RAM-held folder
@@ -497,12 +468,6 @@ real experiment data without deciding where its top should be.
   time-left estimate (settles within a few seconds, stays steady, excludes
   paused time) and the short status bar. Added 2026-10-09.
 
-- [x] Confirm `/Volumes/dld_output`'s `st_dev` changes across mounts. A read-only
-  comparison of saved identities with the mounted folders found hundreds of
-  device-only differences; the cache no longer uses those IDs for status
-  validity ([investigation](sessions/2026-10-15-codex-status-remount/notes.md)).
-- [x] Moving `store-v2` to the Trash before the account-independent SMB-key build: replaced by
-  the `store-v3` item under [Data roots](#data-roots-v005a1-added-2026-10-18) (Q1.5, A1.1).
 - [ ] Restart the native GUI with `/Volumes/dld_output` mounted: after one
   completed check has saved share-keyed records, saved status icons and
   blocked-scan badges should remain across a remount, changed folder mtimes
@@ -772,9 +737,6 @@ tested offscreen only. Check on native macOS (and once on a Windows lab PC):
   `HeLab-macos.zip` is ~300 MB and holds only `HeLab.app`, unzip it in Finder and
   open the app (right-click › Open for the ad-hoc signature)
   ([build size step 1](../roadmaps/build-size.md#steps-cheapest-first)).
-- [x] Record the required Python 3.13 suite/type-check and build results for the
-  release commit. This is validation evidence, not a new testing feature. Done for v0.0.6a1
-  by A1.5 (dropped from AI_TODO at the v0.0.6a1 tidy-up, `125d4b3`).
 - [ ] Observe hover-menu tests in CI: real timers have approximately 200 ms of
   slack and may flake on slow machines. If a failure is reproducible, add a
   concrete test-reliability item to `roadmaps/known-issues.md` with logs (A1.6).
