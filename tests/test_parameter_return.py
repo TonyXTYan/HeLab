@@ -6,6 +6,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+import pytest
 from PyQt6.QtCore import Qt
 from pytestqt.qtbot import QtBot
 
@@ -96,6 +97,7 @@ def test_a_choice_is_taken_as_picked_and_return_closes_it(qtbot: QtBot) -> None:
     assert param.value() == "b" and item.displayLabel.text() == "b"
 
 
+@pytest.mark.no_auto_data_root  # RAM only: nothing left saving at quit (test_debug_runner_menu.py).
 def test_the_value_taken_by_return_is_the_one_the_plot_runs_with(
         window: HelabMainWindow, qtbot: QtBot, tmp_path: Path) -> None:  # noqa: F811
     load(window, qtbot, run_folder(tmp_path, shots=3))

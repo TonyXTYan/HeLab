@@ -458,3 +458,121 @@ First-parent commits: 4de24be (L1, Nits) and fef81e1 (merge of dev/v0.0.7 b9be66
 
 No open findings. Q~4 (the convert wait, as built) and the rewording of known-issues:81 remain with
 CoCo and Tony.
+
+---
+
+# Round 5: Tony's additions (fef81e1..4620adc)
+
+First-parent commits: 5a15c0d (my round 4 notes), 8c1b81d (merge of e74a5cf, docs only: no change
+under `helab/` or `tests/`), and 4620adc:
+- Debug › Save Window Screenshot to Temp Folder (Q~1);
+- Debug › Show Folder Tab and Close Folder Tab (Q~3);
+- `debug_*` IDs on the runner's menu items;
+- tests, and the handoff's Q~1–Q~4 recorded as decided.
+
+## Checks run
+
+- **Full suite** on 4620adc (detached worktree), `-n 4 --reruns 5 --reruns-delay 1`: **8303 passed, 669
+  skipped, no RERUN.**
+- **CI run 40995895223** (head 4620adc): completed, success, every job green, **one RERUN**.
+
+  | Job | Result |
+  |---|---|
+  | macOS Tests (1/2) 123868892217 | 4137 passed |
+  | macOS Tests (2/2) 123868892267 | 4166 passed |
+  | Ubuntu Tests (1/2) 123868892381 | 4134 passed |
+  | Ubuntu Tests (2/2) 123868892299 | 4166 passed |
+  | Windows Tests (1/2) 123868892493 | 4124 passed |
+  | Windows Tests (2/2) 123868892347 | 4151 passed, **1 rerun** (R5-1) |
+  | Converter backends 123868892189 / 123868892353 / 123868892373 | success |
+  | The three Builds | success |
+
+  ```
+  RERUN tests/test_debug_runner_menu.py::test_show_and_close_folder_tab
+  E       pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+  tests\test_debug_runner_menu.py:45: TimeoutError
+  ```
+
+## The new Debug items: correct
+
+- **Show Folder Tab and Close Folder Tab** are filled on `aboutToShow` from memory (the tab widget's
+  explorers and their titles).
+  - Each item finds its tab where it is now (`indexOf`, so moved tabs work) and does nothing if the
+    tab has closed (`sip.isdeleted`).
+  - Show uses `setCurrentIndex`, as a click on the tab does. Close emits `tabCloseRequested`, the
+    signal the tab's × sends, so the tab closes through the same path.
+  - Item IDs come from the tab's number (`debug_show_folder_tab_<n>`, `debug_close_folder_tab_<n>`),
+    never from its title. None of these items captures its sender, so the GC problem from round 2
+    can't recur here.
+- **Save Window Screenshot to Temp Folder** targets the same window as Save Window Screenshot…, opens
+  no dialog, and writes to `<temp>/screenshots/helab-<window>-<time>.png`, adding `-2`, `-3` … when the
+  name is taken. It logs the path and shows it in the status bar. It writes only to HeLab's temp folder.
+- **IDs:** the runner's actions are `debug_save_screenshot`, `debug_save_screenshot_temp` and
+  `debug_dump_state`; the plot items are `debug_show_plot_tab_<plot number>` and
+  `debug_close_plot_tab_<plot number>`.
+
+## R5-1 (Low, open): the RERUN in `test_show_and_close_folder_tab`
+
+**What failed:** `tests/test_debug_runner_menu.py:45`, the `window` fixture's teardown, waits up to 30 s
+for `made._closing` after `made.close()`. The test body itself passed: the CI line "PASSED" at
+03:16:59 is the call phase.
+
+**Why teardown waits:** the body loads a synthetic folder in a second tab, then closes that tab, so the
+load's background save to the disk cache is usually still running. I checked locally: in **all 40 runs
+whose state I logged, `quit_entries()` still held `QuitSave('save', …/run, 'writing', …)` when the body
+ended**. So `close()` opens the quit window, and teardown finishes only when that save ends.
+
+The other tests in this file keep their window open longer (plots run), so their saves have ended by
+teardown. **This test's teardown alone depends on a disk-cache save finishing within 30 s**, on a
+Windows runner that took 9:52 for its half of the suite.
+
+**Not reproduced locally:** 184 runs in parallel on macOS (`-n 8`) passed; one early run had an error
+I couldn't see. The worker's log line "GUI stalled for 32.03s" (03:17:00) doesn't settle it: "GUI
+stalled" lines appear in 10 of the 30 CI test-job logs I downloaded across rounds 1–5 (up to 183 s), from a
+window's watchdog while no event loop runs.
+
+**Fix (test only):** before the body ends, wait for the save the load started:
+`qtbot.waitUntil(lambda: not get_folder_cache(get_io_service()).quit_saves(), timeout=60_000)`.
+Then teardown's `close()` quits at once, as in the other tests. Or close the tab before the load's
+save can start. If it stays as is, the RERUN goes into known-issues with this explanation.
+
+## R5-2 (Low): the temp-folder screenshot test can't pass on a rerun
+
+`test_screenshot_to_the_temp_folder_asks_nothing` freezes the clock at 09:15:00 and writes to the
+worker's `DIR_TEMPS/screenshots`. That folder is one `mkdtemp` per worker (conftest:45), shared by
+every test the worker runs, and a rerun runs in the same worker. If the test ever fails once, its
+rerun finds the first attempt's `…-091500.png` and `-2.png`, gets `-2` and `-3`, and fails again. The
+test passes today, but a rerun can't recover it. Fix: point the test at its own folder with
+`monkeypatch.setattr(module, "DIR_TEMPS", str(tmp_path))` (HelabMainWindow imports `DIR_TEMPS` by
+value).
+
+## A~4: Beacon's local worker crash in `test_every_script_and_each_library`
+
+**Explained well enough to land, as a known issue.**
+- The crash is a SIGTRAP from a Chromium check failing on a QtWebEngineCore thread, outside Python
+  and HeLab.
+- It belongs with the existing Plotly worker crashes (known-issues around 96–114). Those include
+  `test_plot_backends.py`'s single Plotly pane (Counts per shot), so it isn't specific to this test.
+- A~4 adds the mechanism those entries lacked. The CI runs of this test so far (rounds 2–5, three OSes
+  each) passed with no RERUN.
+
+**Does the test open more web views than it needs?** I counted live `QWebEngineView`s after each
+step (scratch copy of the test):
+- 1 after Basic plots' 3D scatter;
+- 2 after the DLD port's 3D scatter (`helab.scatter_3d` and `helab.dld.scatter_3d` are different
+  scripts, so "every script once" holds);
+- **3 at most**, after Counts per shot in Plotly. Matplotlib adds none.
+
+**Does it leave one alive?** No. The three are deleted at teardown; conftest's `delete_left_widgets`
+fails any test that leaves a web view alive, and this test passes.
+
+**Optional Nit:** closing each web-view plot right after walking it would bring the peak to 1. The
+side-by-side ID check (`plot_<n>.` prefixes) stays covered by the PyQtGraph plots and the per-Library
+step. Since a single Plotly pane can also crash this way (above), this would reduce exposure, not
+remove it.
+
+## Verdict (round 5)
+
+The code is ready. **R5-1 is open:** a test-only fix, or a known-issues entry with the explanation
+above. The landing rule needs every RERUN explained or in known-issues, and its cause here is
+probable, not proven. R5-2 is a one-line test fix. A~4 goes to known-issues as Beacon proposes.

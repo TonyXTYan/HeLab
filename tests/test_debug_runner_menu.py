@@ -20,6 +20,11 @@ from helab.views.FolderExplorer import FolderExplorer
 from helab.views.HelabMainWindow import HelabMainWindow
 from helab.views.SettingsDialog import SettingsDialog
 
+# Folders here have no data root: RAM only, so no disk cache or result save is left for a quit to
+# wait for when a test ends (a quit waiting on one timed out once on Windows CI: handoff A~5).
+# Nothing here checks caching.
+pytestmark = pytest.mark.no_auto_data_root
+
 
 def run_folder(root: Path, shots: int = 3) -> Path:
     """A synthetic TXY folder, settled (modified a minute ago)."""
@@ -234,9 +239,13 @@ def test_a_plot_tabs_close_button_closes_that_plot_when_clicked(
 
 def test_show_and_close_folder_tab(window: HelabMainWindow, qtbot: QtBot, tmp_path: Path) -> None:
     """Debug › Show Folder Tab and Close Folder Tab (Q~3): each folder tab by its title, with IDs from
-    the tab's number; showing one is a click on its tab, closing one its ×."""
+    the tab's number; showing one is a click on its tab, closing one its ×. The folder has no data
+    root, so nothing of it is saved: the tab's closing leaves nothing for quitting to wait for."""
+    from helab.utils.folder_cache import get_folder_cache
+    from helab.utils.io_service import get_io_service
     first = window.tab_widget.widget(0)
-    load(window, qtbot, run_folder(tmp_path))
+    run = run_folder(tmp_path)
+    load(window, qtbot, run)
     second = window.tab_widget.currentWidget()
     assert isinstance(first, FolderExplorer) and isinstance(second, FolderExplorer)
     shown = submenu(window, "Show Folder Tab")
@@ -253,10 +262,17 @@ def test_show_and_close_folder_tab(window: HelabMainWindow, qtbot: QtBot, tmp_pa
     items(closing)[titles[1]].trigger()
     assert window.tab_widget.count() == 1 and window.tab_widget.widget(0) is first and second.closed
     assert list(items(submenu(window, "Close Folder Tab"))) == [titles[0]]
+    cache = get_folder_cache(get_io_service())
+    assert not [entry for entry in cache.quit_entries() if entry.path == str(run)]
+    try:  # (Nothing left for the teardown's quit to wait for: Wren's round 5, R5-1.)
+        qtbot.waitUntil(lambda: not cache.quit_saves(), timeout=60_000)
+    except Exception as error:
+        raise AssertionError(f"Still saving: {cache.quit_entries()}") from error
 
 
 def test_screenshot_to_the_temp_folder_asks_nothing(
-        window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture) -> None:
+        window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture,
+        tmp_path: Path) -> None:
     """Debug › Save Window Screenshot to Temp Folder (Q~1): no dialog; ``helab-<window>-<time>.png`` in the
     temp folder's screenshots, a second one in the same second ``-2``; logged and in the status bar."""
     import logging
@@ -272,12 +288,12 @@ def test_screenshot_to_the_temp_folder_asks_nothing(
             return cls(2026, 10, 30, 9, 15, 0)
 
     monkeypatch.setattr(module, "datetime", Frozen)
+    monkeypatch.setattr(module, "DIR_TEMPS", str(tmp_path))  # The test's own: a rerun finds no file of its first run.
     with caplog.at_level(logging.INFO):
         window.action_screenshot_temp.trigger()
         second = window.save_window_screenshot_to_temp()
     from helab.utils.accessible import id_part
-    from helab.utils.constants import DIR_TEMPS
-    folder = os.path.join(DIR_TEMPS, "screenshots")
+    folder = os.path.join(str(tmp_path), "screenshots")
     first = os.path.join(folder, f"helab-{id_part(window.windowTitle()).lower()[:40]}-20261030-091500.png")
     assert os.path.isfile(first) and second == first[:-4] + "-2.png" and os.path.isfile(second)
     assert not QImage(first).isNull() and f"Screenshot saved: {first}" in caplog.text

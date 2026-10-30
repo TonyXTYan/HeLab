@@ -39,7 +39,7 @@ import ast
 import os
 import time
 from pathlib import Path
-from typing import Callable, Iterable, Iterator
+from typing import TYPE_CHECKING, Callable, Iterable, Iterator
 
 import pytest
 from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before any QApplication: the main window)
@@ -53,6 +53,9 @@ from pytestqt.qtbot import QtBot
 from helab.utils.folder_cache import FolderCache, get_folder_cache
 from helab.utils.io_service import IORequest, IOService, get_io_service
 from helab.utils.settings_store import app_settings
+
+if TYPE_CHECKING:
+    from helab.views.plots.script_tree import TreePanelWidget
 
 HELAB = Path(__file__).resolve().parent.parent / "helab"
 # The packages whose widget classes the guard lists: HeLab's windows, and the plots' widgets.
@@ -192,11 +195,15 @@ COVERED: dict[str, str] = {}
 SKIPPED: dict[str, str] = {}
 
 
+def covered_by(test: str) -> list[str]:
+    """The classes ``test`` says it opens (``covers``)."""
+    return [name for name, case in COVERED.items() if case == test]
+
+
 def covers(*names: str) -> Callable[[Callable[..., None]], Callable[..., None]]:
     def mark(test: Callable[..., None]) -> Callable[..., None]:
         for name in names:
             COVERED[name] = test.__name__
-        test.covers = names  # type: ignore[attr-defined]
         return test
     return mark
 
@@ -243,6 +250,7 @@ def script_button(window: QWidget, name: str) -> QPushButton:
     raise AssertionError(f"No script {name!r} in {window.panel_right_bottom_script_selector.group_selector.currentText()}")
 
 
+@pytest.mark.no_auto_data_root  # RAM only: no save left for the quit to wait for (handoff A~5).
 @covers("HelabMainWindow", "FolderTabWidget", "FolderExplorer", "FolderDetailsPanel", "LoadBar", "CentralHint",
         "ClickableLabel", "ElidedLabel", "HoverMenuToolButton", "TreePanelWidget", "PlotSettingsPanel", "PresetBar",
         "TxySourceRow", "AnalysisDock", "FloatingSettings", "SettingsToggle", "ReleasedPlot", "PlotPicture")
@@ -287,7 +295,7 @@ def test_the_main_window_with_a_folder_and_plots(qtbot: QtBot, tmp_path: Path) -
         walk(window, "with a floating plot")
     finally:
         quit_window(qtbot, window)
-    walk.check(test_the_main_window_with_a_folder_and_plots.covers)  # type: ignore[attr-defined]
+    walk.check(covered_by("test_the_main_window_with_a_folder_and_plots"))
 
 
 
@@ -301,6 +309,18 @@ def wait_for_plots(qtbot: QtBot, window: QWidget, count: int) -> None:
                             for instance in scripts.instances()), timeout=120_000)
 
 
+def close_web_views(scripts: TreePanelWidget) -> int:
+    """Close the open plots drawn in a web view (Plotly) once walked, so no more than one is ever open
+    (each is a Chromium renderer; Wren's round 5). How many closed."""
+    from PyQt6.QtWebEngineWidgets import QWebEngineView
+    docks = [instance.dock_widget for instance in scripts.instances() if instance.dock_widget is not None]
+    closing = [dock for dock in docks if dock.findChild(QWebEngineView) is not None]
+    for dock in closing:
+        dock.close()
+    return len(closing)
+
+
+@pytest.mark.no_auto_data_root  # RAM only: no save left for the quit to wait for (handoff A~5).
 @covers("PlotlyPane", "MatplotlibPane", "UnitSpinBox", "CommitTextEdit", "PositionPlot", "DensityPlot", "ReleasePlot",
         "SpectrumPlot", "CountsPlot", "FractionsPlot", "HistogramsWidget", "HotSpotsPlot",
         "ShotTimesWidget", "TrendsWidget", "VelocityWidget")
@@ -338,6 +358,7 @@ def test_every_script_and_each_library(qtbot: QtBot, tmp_path: Path) -> None:
                         opened += 1
                         wait_for_plots(qtbot, window, opened)
                         walk(window, f"{scripts.group_selector.currentText()} › {button.accessibleName()}")
+                        opened -= close_web_views(scripts)
         for instance in scripts.instances():
             dock = instance.dock_widget
             assert dock is not None
@@ -356,9 +377,10 @@ def test_every_script_and_each_library(qtbot: QtBot, tmp_path: Path) -> None:
                             and instance.shown is not None, timeout=60_000)
             qtbot.wait(50)
             walk(window, f"Counts per shot in {library}")
+            opened -= close_web_views(scripts)
     finally:
         quit_window(qtbot, window)
-    walk.check(test_every_script_and_each_library.covers)  # type: ignore[attr-defined]
+    walk.check(covered_by("test_every_script_and_each_library"))
 
 
 def settled(qtbot: QtBot, service: IOService) -> None:
@@ -388,7 +410,7 @@ def test_settings_and_each_of_its_tabs(qtbot: QtBot) -> None:
         editor.reject()
     finally:
         dialog.reject()
-    walk.check(test_settings_and_each_of_its_tabs.covers)  # type: ignore[attr-defined]
+    walk.check(covered_by("test_settings_and_each_of_its_tabs"))
 
 
 def sighting(cache: FolderCache, path: str) -> None:
