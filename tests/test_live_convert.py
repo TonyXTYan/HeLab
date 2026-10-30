@@ -387,6 +387,28 @@ def test_a_file_unconvertible_under_one_profile_is_tried_under_another(
     explorer.close_cleanup()
 
 
+def test_a_file_waiting_off_one_profiles_trigger_converts_under_another(
+        qtbot: QtBot, service: IOService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Codex 4425610377: why a file looked unfinished is the profile's (its trigger channel): under another
+    profile it is read again, not kept waiting (and so damaged, then skipped)."""
+    monkeypatch.setattr(convert, "DAMAGED_SECONDS", 1e9)
+    explorer, path = watching_raw_folder(qtbot, tmp_path)
+    cycle(qtbot, explorer, path, tmp_path)
+    write_raw(Path(path), 4, raw_bytes(10_000, trigger=6))  # (matlab-2019's trigger is channel 5.)
+    reasons = [event["reason"] for _ in range(2) for event in of(cycle(qtbot, explorer, path, tmp_path)[1],
+                                                                  "shot_waiting") if event["shot"] == 4]
+    assert reasons[-1] == "not_trigger_first"
+    explorer.model.cache.set_convert_profile(MATLAB_2019.replace(channel_trigger=6))
+    request, sent = cycle(qtbot, explorer, path, tmp_path)
+    assert [event["shot"] for event in of(sent, "shot_converted")] == [4]
+    # Seen at the previous check with this size and date, it was read at once (the two looks still count),
+    # its old reason gone and when it was first seen kept (the damaged clock).
+    [seen] = request.payload["seen"]
+    assert seen[0] == "d4.txt" and seen[3:5] == ["", ""] and isinstance(seen[5], float)
+    explorer.stop_live(save=False)
+    explorer.close_cleanup()
+
+
 def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService) -> None:
     cache = folder_cache.get_folder_cache(service)
     path = FolderCache.key("/data/run")
@@ -410,7 +432,8 @@ def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService) -> N
     # again under the corrected one.
     assert payload["profile"] == MATLAB_2023_LAB_EDIT.to_dict() and "done" not in payload and "kept" not in payload
     assert payload["backend"] == "reference" and "skip" not in payload
-    assert payload["seen"]
+    # Nor why a waiting file looked unfinished (Codex 4425610377); when it was seen so still holds.
+    assert payload["seen"] == [["d2.txt", 5, 2, "", ""]]
     cache.cancel("t")
 
 
