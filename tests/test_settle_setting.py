@@ -23,7 +23,7 @@ from helab.utils.io_service import FOREGROUND, IORequest, IOService
 from helab.utils.settings_defaults import SETTLE_SECONDS_SETTING, setting_default
 from helab.views.HelabMainWindow import HelabMainWindow
 from helab.views.SettingsDialog import SettingsDialog, read_settle_seconds
-from tests.test_helper_dispatch import HANDLERS, ROUTES, helper_state, send  # noqa: F401  (a fixture)
+from test_helper_dispatch import HANDLERS, ROUTES, helper_state, send  # noqa: F401  (a fixture)
 
 
 @pytest.fixture

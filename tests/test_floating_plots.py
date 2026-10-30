@@ -10,7 +10,7 @@ from PyQt6.QtCore import QPoint, QRect, QSize
 from PyQt6.QtWidgets import QLineEdit
 
 from helab.views.plots.dock import AnalysisDock
-from tests.test_plot_settings_panel import Plots, plots  # noqa: F401  (the fixture)
+from test_plot_settings_panel import Plots, plots  # noqa: F401  (the fixture)
 
 
 def available(dock: AnalysisDock) -> QRect:

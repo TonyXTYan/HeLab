@@ -14,7 +14,7 @@ from helab.utils.settings_defaults import MAIN_SPLIT_SETTING, read_setting
 from helab.utils.settings_store import app_settings
 from helab.views.FolderExplorer import FolderExplorer
 from helab.views.HelabMainWindow import HelabMainWindow
-from tests.test_debug_runner_menu import load, plot, run_folder
+from test_debug_runner_menu import load, plot, run_folder
 
 pytestmark = pytest.mark.no_auto_data_root
 
@@ -48,7 +48,9 @@ def test_the_default_split_gives_the_plots_the_room_and_a_plot_keeps_it(
     plot(window, qtbot, "Counts per shot")
     plot(window, qtbot, "T, X, Y histograms")
     qtbot.wait(50)
-    assert window.splitter.sizes() == [left, middle, right]  # No plot setting widens the settings panel.
+    after = window.splitter.sizes()
+    # The folder panel keeps its width, and no plot setting widens the settings panel past ~320 px (Q33.2).
+    assert after[0] == left and abs(after[2] - 320) <= 20 and after[1] >= middle - 20
 
 
 def test_a_wider_window_widens_the_plots_only(window: HelabMainWindow, qtbot: QtBot) -> None:
