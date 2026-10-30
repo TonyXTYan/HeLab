@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Lab camera</title>
+<style>
+:root{--bg:#111;--fg:#ddd;--dim:#888;--ok:#50c850;--off:#ffa028;--unknown:#aaa;--line:#333}
+body{margin:0;background:var(--bg);color:var(--fg);font:13px/1.35 -apple-system,system-ui,sans-serif}
+#view{position:relative;max-width:1280px;margin:0 auto}
+#view img{display:block;width:100%;height:auto}
+#view canvas{position:absolute;inset:0;width:100%;height:100%;cursor:crosshair;display:none}
+main{max-width:1280px;margin:0 auto;padding:6px 10px}
+.bar{display:flex;gap:12px;flex-wrap:wrap;align-items:center;color:var(--dim);margin:4px 0}
+.bar b{color:var(--fg)}
+button{background:#222;color:var(--fg);border:1px solid #444;border-radius:4px;padding:2px 8px;font:inherit;cursor:pointer}
+button:hover{border-color:#777}
+table{border-collapse:collapse;width:100%}
+td,th{border-bottom:1px solid var(--line);padding:3px 6px;text-align:left;vertical-align:top}
+th{color:var(--dim);font-weight:normal}
+.ok{color:var(--ok)}.off{color:var(--off)}.unknown{color:var(--unknown)}
+.values{color:var(--dim);font-family:ui-monospace,monospace;font-size:12px;word-break:break-all}
+#log{height:260px;overflow:auto;background:#000;border:1px solid var(--line);padding:4px;font:12px ui-monospace,monospace;white-space:pre-wrap}
+.WARNING{color:var(--off)}.ERROR,.CRITICAL{color:#f55}.DEBUG{color:#777}
+#msg{color:var(--ok)}
+</style></head><body>
+<div id="view"><img id="stream" src="stream" alt="Overlay stream"><canvas id="draw"></canvas></div>
+<main>
+  <div class="bar">
+    <span>Source: <b id="src">…</b></span>
+    <span>Alignment: <b id="align">…</b></span>
+    <span>Timing: <b id="timing">…</b></span>
+  </div>
+  <table><thead><tr><th>Instrument</th><th>Status</th><th>Reading</th><th>Sure</th><th>Details</th><th></th></tr></thead>
+    <tbody id="rows"></tbody></table>
+  <div class="bar">
+    <button id="ref" title="Use the current frame as the one boxes are drawn on; later frames are matched to it">Set reference frame</button>
+    <a href="raw.jpg" target="_blank"><button>Camera frame</button></a>
+    <a href="readings.csv" target="_blank"><button>Today's readings (CSV)</button></a>
+    <span id="msg"></span>
+  </div>
+  <div class="bar">
+    <span>Log</span>
+    <label><input type="checkbox" id="debug"> debug lines</label>
+    <label><input type="checkbox" id="pause"> pause</label>
+  </div>
+  <div id="log"></div>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? "").replace(/[&<>]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;"}[c]));
+let editing = null;
+const img = $("stream"), canvas = $("draw"), ctx = canvas.getContext("2d");
+img.onerror = () => setTimeout(() => { img.src = "stream?" + Date.now(); }, 2000);
+
+function say(text) { $("msg").textContent = text; setTimeout(() => { $("msg").textContent = ""; }, 5000); }
+
+async function post(path, body) {
+  const r = await fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+  const j = await r.json(); say(j.message || j.error);
+}
+$("ref").onclick = () => post("api/reference");
+
+function frameXY(ev) {
+  const r = canvas.getBoundingClientRect();
+  return [(ev.clientX - r.left) * img.naturalWidth / r.width, (ev.clientY - r.top) * img.naturalHeight / r.height];
+}
+// Editing a region: click its four corners (top-left, top-right, bottom-right, bottom-left), or drag a rectangle.
+let clicks = [], down = null;
+function edit(name) {
+  editing = name; clicks = []; down = null; canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+  canvas.style.display = "block";
+  say(`${name}: click its 4 corners (top-left, top-right, bottom-right, bottom-left) or drag a rectangle; Esc cancels`);
+}
+function sketch(points, closed) {
+  ctx.clearRect(0, 0, canvas.width, canvas.height); ctx.strokeStyle = "#f0f"; ctx.fillStyle = "#f0f"; ctx.lineWidth = 2;
+  ctx.beginPath(); points.forEach(([x, y], i) => i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)); if (closed) ctx.closePath(); ctx.stroke();
+  points.forEach(([x, y]) => ctx.fillRect(x - 2, y - 2, 4, 4));
+}
+function finish(corners) {
+  canvas.style.display = "none"; ctx.clearRect(0, 0, canvas.width, canvas.height);
+  post("api/region", {name: editing, corners: corners.map(p => p.map(v => Math.round(v * 10) / 10))});
+  editing = null; clicks = []; down = null;
+}
+canvas.onmousedown = ev => { down = frameXY(ev); };
+canvas.onmousemove = ev => {
+  const p = frameXY(ev);
+  if (down && Math.hypot(p[0] - down[0], p[1] - down[1]) > 5) {
+    sketch([down, [p[0], down[1]], p, [down[0], p[1]]], true);
+  } else if (clicks.length) sketch([...clicks, p], false);
+};
+canvas.onmouseup = ev => {
+  const p = frameXY(ev), d = down; down = null;
+  if (d && Math.hypot(p[0] - d[0], p[1] - d[1]) > 5) {
+    const [x0, x1] = [Math.min(d[0], p[0]), Math.max(d[0], p[0])], [y0, y1] = [Math.min(d[1], p[1]), Math.max(d[1], p[1])];
+    return finish([[x0, y0], [x1, y0], [x1, y1], [x0, y1]]);
+  }
+  clicks.push(p); sketch(clicks, clicks.length === 4);
+  if (clicks.length === 4) finish(clicks);
+};
+document.onkeydown = ev => { if (ev.key === "Escape") { canvas.style.display = "none"; editing = null; clicks = []; down = null; } };
+
+async function refresh() {
+  try {
+    const s = await (await fetch("state.json")).json();
+    const src = s.source;
+    $("src").textContent = src.connected ? `connected, frame ${src.last_frame_age ?? "–"} s old` : `not connected: ${src.error}`;
+    $("src").className = src.connected ? "ok" : "off";
+    const a = s.alignment;
+    $("align").textContent = a.ok ? `${a.inliers} matches, shift ${a.shift.join(", ")} px${a.note ? " · " + a.note : ""}` : a.note;
+    $("align").className = a.ok ? (a.note.startsWith("camera moved") ? "off" : "ok") : "off";
+    const t = s.timings_ms;
+    $("timing").textContent = `analysis ${t.analysis_ms ?? "–"} ms, decode ${t.decode_ms ?? "–"} ms, draw ${t.draw_ms ?? "–"} ms`;
+    $("rows").innerHTML = Object.entries(s.instruments).map(([name, i]) => {
+      const r = i.reading || {status: "unknown", text: "waiting…", values: {}, confidence: 0, note: ""};
+      const age = r.at ? Math.round(s.now - r.at) : null;
+      const values = Object.entries(r.values || {}).map(([k, v]) => `${k}=${v}`).join("  ");
+      return `<tr><td>${esc(i.label)}<br><span class="values">${name} · ${i.kind}</span></td>
+        <td class="${r.status}">${r.status}</td><td>${esc(r.text)}${age > 5 ? ` <span class="values">(${age} s ago)</span>` : ""}</td>
+        <td>${Math.round((r.confidence || 0) * 100)}%</td>
+        <td class="values">${esc(values)}${r.note ? "<br>" + esc(r.note) : ""}<br>corners ${i.corners.map(p => p.map(Math.round).join(",")).join(" ")}</td>
+        <td><button onclick="edit('${name}')">Edit region</button></td></tr>`;
+    }).join("");
+  } catch (e) { $("src").textContent = "labcam server not answering"; $("src").className = "off"; }
+}
+let logSeq = 0;
+async function pollLog() {
+  if ($("pause").checked) return;
+  try {
+    const lines = await (await fetch("log?after=" + logSeq)).json();
+    const box = $("log"), atEnd = box.scrollTop + box.clientHeight >= box.scrollHeight - 5;
+    for (const [seq, line] of lines) {
+      logSeq = seq;
+      const level = (line.match(/ (DEBUG|INFO|WARNING|ERROR|CRITICAL) /) || [])[1] || "INFO";
+      if (level === "DEBUG" && !$("debug").checked) continue;
+      const div = document.createElement("div"); div.className = level; div.textContent = line; box.appendChild(div);
+    }
+    while (box.childNodes.length > 1000) box.removeChild(box.firstChild);
+    if (atEnd) box.scrollTop = box.scrollHeight;
+  } catch (e) {}
+}
+setInterval(refresh, 1000); setInterval(pollLog, 1000); refresh(); pollLog();
+</script>
+</body></html>

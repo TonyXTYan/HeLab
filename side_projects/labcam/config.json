@@ -1,0 +1,51 @@
+{
+  "source": "http://CAMERA-HOST:8081/stream",
+  "mirror": true,
+  "analysis_hz": 2.0,
+  "stream_fps": 5.0,
+  "jpeg_quality": 80,
+  "instruments": {
+    "left_top": {
+      "kind": "trace",
+      "label": "Left top scope",
+      "corners": [[282, 293], [350, 309], [350, 368], [282, 343]],
+      "tolerance": 0.15
+    },
+    "left_middle": {
+      "kind": "trace",
+      "label": "Left middle scope",
+      "corners": [[243, 440], [308, 451], [308, 501], [244, 490]],
+      "tolerance": 0.15
+    },
+    "wavemeter": {
+      "kind": "wavemeter",
+      "label": "Wavemeter",
+      "field": "main",
+      "corners": [[673, 3], [743, 10], [743, 25], [673, 19]]
+    },
+    "wavemeter_power": {
+      "kind": "wavemeter",
+      "label": "Power",
+      "field": "power",
+      "corners": [[758, 11], [817, 19], [817, 33], [758, 26]]
+    },
+    "lockin": {
+      "kind": "needle",
+      "label": "Lock-in needle",
+      "corners": [[770, 90], [850, 100], [850, 140], [770, 129]],
+      "tolerance": 0.2
+    },
+    "scope_dot": {
+      "kind": "dot",
+      "label": "Scope dot",
+      "corners": [[654, 306], [755, 326], [752, 395], [647, 381]],
+      "still_px": 2.0
+    },
+    "people": {
+      "kind": "motion",
+      "label": "People",
+      "box": [0, 0, 1280, 720],
+      "min_area": 0.004
+    }
+  }
+}

@@ -1,0 +1,7 @@
+.venv/
+logs/
+data/
+reference.jpg
+config.local.json
+*.egg-info/
+tests/*.jpg
