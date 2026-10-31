@@ -233,7 +233,7 @@ def test_keep_reads_records_and_results_through_from_store_v3(tmp_path: Path) ->
         assert mine is not None and not mine.legacy and mine.exact and mine.row["computed_at"] == 2.0
         old = v4.find_result(RUN, "old", "f1").value
         assert old is not None and old.legacy and old.exact  # (Exact in v3 beats outdated in v4.)
-        assert v4.result_counts([RUN])[RUN].count == 4
+        assert v4.result_counts([RUN])[RUN].count == 3  # (v4's k1 and k3, and v3's old: C2-4.)
     assert files(caches / "store-v3") == before
 
 
@@ -482,3 +482,55 @@ def test_an_invalid_machine_id_file_is_replaced_never_recursed_on(tmp_path: Path
     made = store_v4.machine_id(str(app))
     assert len(made) == 32 and all(c in "0123456789abcdef" for c in made)
     assert (app / store_v4.MACHINE_FILE).read_text().strip() == made == store_v4.machine_id(str(app))
+
+
+@pytest.mark.no_auto_data_root
+@pytest.mark.parametrize("removal", ["folder's records", "every summary", "the root's cached data", "a None save",
+                                     "a purge by age", "the folder's results", "every result", "the root's analysis",
+                                     "a results purge by age"])
+def test_keep_never_brings_back_what_store_v4_removed(tmp_path: Path, removal: str) -> None:
+    """C2-1 (Assay): once store-v4 has removed a kind for a key (its generation, the key's epoch, its root's,
+    a None save, a purge by age), store-v3's row for it isn't read through any more."""
+    caches = tmp_path / "caches"
+    v3_with_state(caches)
+    with CacheStore(str(caches / "store-v4")) as v4:
+        assert v4.read_record("summaries", RUN).found and v4.find_result(RUN, "k1", "f1").found
+        records = removal in ("folder's records", "every summary", "the root's cached data", "a None save",
+                              "a purge by age")
+        if removal == "folder's records":
+            v4.remove(("summaries",), [RUN])
+        elif removal == "every summary":
+            v4.remove(("summaries",))
+        elif removal == "the root's cached data":
+            v4.clear_root(A)
+        elif removal == "a None save":
+            v4.save_record("summaries", RUN, None, v4.guard([RUN], ("summaries",)))
+        elif removal == "a purge by age":
+            v4.purge_records(time.time() + 60)
+        elif removal == "the folder's results":
+            v4.remove_results([RUN])
+        elif removal == "every result":
+            v4.remove_results()
+        elif removal == "the root's analysis":
+            v4.remove_results(root=A)
+        else:
+            v4.remove_results(cutoff=time.time() + 60)
+        if records:
+            assert v4.read_record("summaries", RUN).missing
+            assert v4.find_result(RUN, "k1", "f1").found  # (Results are another kind.)
+        else:
+            assert v4.find_result(RUN, "k1", "f1").missing and v4.find_result(RUN, "x", "f1").missing
+            assert v4.result_counts([RUN])[RUN].count == 0
+            assert v4.read_record("summaries", RUN).found
+
+
+@pytest.mark.no_auto_data_root
+def test_keep_counts_a_v3_result_once_and_not_when_store_v4_has_its_lookup(tmp_path: Path) -> None:
+    """C2-4 (Assay): the folder's count is what can be found: v4's rows, and v3's of lookups v4 lacks."""
+    caches = tmp_path / "caches"
+    v3_with_state(caches)
+    with CacheStore(str(caches / "store-v4")) as v4:
+        assert v4.result_counts([RUN])[RUN].count == 2
+        save_result(v4, RUN, "k1", computed_at=2.0)  # (Shadows v3's k1.)
+        count = v4.result_counts([RUN])[RUN]
+        assert count.count == 2 and count.bytes == len(b"result k1") + len(b"result old")

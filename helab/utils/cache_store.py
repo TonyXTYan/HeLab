@@ -169,6 +169,11 @@ def _results_root_epoch(key: str) -> str | None:
     return f"root-results-clear://{key[7:].partition('/')[0]}" if key.startswith("root://") else None
 
 
+# A ``folder_epochs`` row store-v4 writes when a save deletes a record (``<prefix><kind>:<key>``): no guard
+# reads it; it only stops store-v3's row being read through again (C2-1).
+_LEGACY_HIDDEN = "legacy-hidden:"
+
+
 def _results_epoch(key: str) -> str:
     """The ``folder_epochs`` row a removal of one folder's results bumps (``results:<key>``): a
     dataset removal of the folder bumps the folder's own row, which result saves don't check."""
@@ -698,6 +703,41 @@ class CacheStore:
                 with contextlib.suppress(LegacyUnavailable):
                     self._legacy = LegacyStore(self.legacy_root)
         return self._legacy
+
+    def _legacy_hidden(self, kind: str, key: str) -> bool:
+        """Whether store-v4 has removed ``kind`` (a record kind, or ``results``) for ``key`` since it was
+        made, so store-v3's row must not be read through (C2-1): the kind's generation, the key's epoch
+        or its root's moved, or a save deleted the row (a tombstone, ``_LEGACY_HIDDEN``). (Inside a
+        transaction.)"""
+        meta = self._meta()
+        results = kind == "results"
+        if int(meta.get("gen_results" if results else f"gen_{kind}", 0)):
+            return True
+        epoch = _results_epoch(key) if results else store_v4.epoch_key(self.layout, kind, key)
+        root = _results_root_epoch(key) if results else _root_epoch(key)
+        return bool(self._epoch(epoch) or (root is not None and self._epoch(root))
+                    or self._epoch(f"{_LEGACY_HIDDEN}{kind}:{key}"))
+
+    def _legacy_purged(self, kind: str) -> tuple[float | None, bool]:
+        """The latest purge by age of ``kind`` in store-v4 (its cutoff; and for histories whether it took
+        those with failures): store-v3's rows from before it are hidden too."""
+        found = self._meta().get("legacy_purged")
+        entry = found.get(kind) if isinstance(found, dict) else None
+        if not isinstance(entry, list) or len(entry) != 2:
+            return None, False
+        return float(entry[0]), bool(entry[1])
+
+    def _note_purge(self, kind: str, cutoff: float, include_failures: bool = False) -> None:
+        """Record a purge by age (inside its transaction) while store-v3 may be read through."""
+        if self.layout < store_v4.LAYOUT:
+            return
+        found = self._meta().get("legacy_purged")
+        purged = dict(found) if isinstance(found, dict) else {}
+        before, failures = self._legacy_purged(kind)
+        if before is None or cutoff >= before:
+            purged[kind] = [cutoff, include_failures or (failures and before == cutoff)]
+            self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_purged', ?)",
+                               (_dumps(purged),))
 
     def _maker_id(self) -> str:
         """In store-v4, this session's maker row (written inside the caller's write transaction) and
@@ -1309,11 +1349,17 @@ class CacheStore:
         legacy = self._kept_legacy() if missing else None
         unread: Read[dict[str, Any]] | None = None
         if legacy is not None:
-            # Keep (Q22.3): what store-v4 has no row for, store-v3 may (read only).
+            # Keep (Q22.3): what store-v4 has no row for and never removed (C2-1), store-v3 may have.
             try:
-                rows.update(legacy.records(table, missing))
+                with self.transaction(write=False):
+                    missing = [key for key in missing if not self._legacy_hidden(kind, key)]
+                    before, failures = self._legacy_purged(kind)
+                rows.update(legacy.records(table, missing, before=before,
+                                           keep_failures=kind == "histories" and not failures))
             except LegacyUnavailable as exc:
                 unread = _error(f"Disk cache could not be read: {exc}")  # (Never "nothing saved".)
+            except sqlite3.Error as exc:
+                unread = _error(f"Disk cache could not be read: {exc}")
         result: dict[str, Read[dict[str, Any]]] = {}
         for path in unique:
             key = self._path_key(path)
@@ -1372,6 +1418,10 @@ class CacheStore:
                     self._check(guard, kind, path)
                     if record is None:
                         self._conn.execute(f"DELETE FROM {table} WHERE path = ?", (path,))
+                        if self.layout >= store_v4.LAYOUT:  # (store-v3's row isn't read through after it: C2-1.)
+                            self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT "
+                                               "(path) DO UPDATE SET epoch = epoch + 1",
+                                               (f"{_LEGACY_HIDDEN}{kind}:{path}",))
                     elif kind == "summaries":
                         self._conn.execute(
                             "INSERT OR REPLACE INTO folder_summaries (path, record, identity, saved_at) "
@@ -2164,8 +2214,11 @@ class CacheStore:
         return _error("Cached result file is missing")  # (Not reached.)
 
     def _legacy_result(self, legacy: LegacyStore, key: str, where: str, args: tuple[Any, ...]) -> ResultRow | None:
-        """``_result_row`` of store-v3 (Keep), its path given as this store shows it."""
-        row = legacy.result_row(key, where, args)
+        """``_result_row`` of store-v3 (Keep), its path given as this store shows it; none for a key
+        store-v4 removed results of (C2-1), nor one older than v4's last purge by age."""
+        if self._legacy_hidden("results", key):
+            return None
+        row = legacy.result_row(key, where, args, since=self._legacy_purged("results")[0])
         if row is None:
             return None
         return ResultRow(result_id=str(row[0]), path=self._source_path(str(row[1])), lookup=str(row[2]),
@@ -2188,11 +2241,18 @@ class CacheStore:
                 counts[str(key)] = ResultCount(int(count), int(size), self.store_id, counts[str(key)].writes)
         legacy = self._kept_legacy()
         if legacy is not None:
-            # Keep (Q22.3): store-v3's results of these folders count too (read through, not copied).
+            # Keep (Q22.3): store-v3's results of these folders count too (read through, not copied):
+            # those that can be found, so not a lookup v4 has (C2-4) nor any of a key v4 removed (C2-1).
+            readable = [key for key in stored if not self._legacy_hidden("results", key)]
             with contextlib.suppress(LegacyUnavailable):
-                for key, (count, size) in legacy.result_counts(stored).items():
+                found = legacy.result_lookups(readable, since=self._legacy_purged("results")[0])
+                for key, rows in found.items():
                     have = counts[key]
-                    counts[key] = ResultCount(have.count + count, have.bytes + size, self.store_id, have.writes)
+                    mine = {str(lookup) for (lookup,) in self._conn.execute(
+                        "SELECT lookup FROM results WHERE path = ?", (key,))}
+                    extra = [size for lookup, size in rows if lookup not in mine]
+                    counts[key] = ResultCount(have.count + len(extra), have.bytes + sum(extra), self.store_id,
+                                              have.writes)
         return counts
 
     def result_counts(self, paths: Sequence[str]) -> dict[str, ResultCount]:
@@ -2241,6 +2301,7 @@ class CacheStore:
                                        "DO UPDATE SET epoch = epoch + 1", (_results_root_epoch(top),))
                 elif cutoff is not None:
                     where, args = " WHERE last_used < ?", (cutoff,)
+                    self._note_purge("results", cutoff)
                 elif paths is not None:
                     keys = tuple(dict.fromkeys(self._path_key(path) for path in paths))
                     where, args = f" WHERE path IN ({','.join('?' * len(keys)) or 'NULL'})", keys
@@ -2507,6 +2568,7 @@ class CacheStore:
                 for kind, query in _RECORD_PURGES.items():
                     if kind == "histories" and not include_failures:
                         query += " AND json_array_length(record, '$.failures') = 0"
+                    self._note_purge(kind, cutoff, include_failures)
                     paths = [path for (path,) in self._conn.execute(query, (cutoff,))]
                     if paths:
                         removals.append(self.remove((kind,), paths, _stored_keys=True))

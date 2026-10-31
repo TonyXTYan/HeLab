@@ -120,29 +120,40 @@ class LegacyStore:
         except sqlite3.Error as exc:
             raise LegacyUnavailable(f"store-v3's {table} can't be read ({exc})") from exc
 
-    def records(self, table: str, keys: Sequence[str]) -> dict[str, str]:
-        """``table``'s ``record`` text by key, for the keys it has."""
+    def records(self, table: str, keys: Sequence[str], *, before: float | None = None,
+                keep_failures: bool = False) -> dict[str, str]:
+        """``table``'s ``record`` text by key, for the keys it has; with ``before``, not those saved
+        before it (a purge by age in the store reading through), but with ``keep_failures`` a scan
+        history with failures all the same (as that purge kept them)."""
         if not self.has(table):
             return {}
         found: dict[str, str] = {}
+        since = ""
+        if before is not None:
+            since = " AND (saved_at >= ?" + (" OR json_array_length(record, '$.failures') > 0)" if keep_failures
+                                             else ")")
         try:
             for start in range(0, len(keys), 500):
                 chunk = list(keys[start:start + 500])
                 found.update((str(key), str(record)) for key, record in self._conn.execute(
-                    f"SELECT path, record FROM {table} WHERE path IN ({','.join('?' * len(chunk))})", chunk))
+                    f"SELECT path, record FROM {table} WHERE path IN ({','.join('?' * len(chunk))}){since}",
+                    [*chunk, *(() if before is None else (before,))]))
         except sqlite3.Error as exc:
             raise LegacyUnavailable(f"store-v3's {table} can't be read ({exc})") from exc
         return found
 
-    def result_row(self, key: str, where: str, args: tuple[Any, ...]) -> tuple[Any, ...] | None:
-        """The newest ``results`` row of ``key`` matching ``where`` (as ``CacheStore._result_row``)."""
+    def result_row(self, key: str, where: str, args: tuple[Any, ...], *,
+                   since: float | None = None) -> tuple[Any, ...] | None:
+        """The newest ``results`` row of ``key`` matching ``where`` (as ``CacheStore._result_row``); with
+        ``since``, only one shown since then (a purge by age in the store reading through)."""
         if not self.has("results"):
             return None
+        used = "" if since is None else " AND last_used >= ?"
         try:
             row = self._conn.execute(
                 "SELECT result_id, path, lookup, family, analysis_id, action, record, file, bytes, computed_at, "
-                f"saved_at, last_used FROM results WHERE path = ? AND {where} ORDER BY computed_at DESC LIMIT 1",
-                (key, *args)).fetchone()
+                f"saved_at, last_used FROM results WHERE path = ? AND {where}{used} ORDER BY computed_at DESC LIMIT 1",
+                (key, *args, *(() if since is None else (since,)))).fetchone()
         except sqlite3.Error as exc:
             raise LegacyUnavailable(f"store-v3's results can't be read ({exc})") from exc
         return None if row is None else tuple(row)
@@ -159,6 +170,23 @@ class LegacyStore:
                         f"SELECT path, COUNT(*), COALESCE(SUM(bytes), 0) FROM results "
                         f"WHERE path IN ({','.join('?' * len(chunk))}) GROUP BY path", chunk):
                     found[str(key)] = (int(count), int(size))
+        except sqlite3.Error as exc:
+            raise LegacyUnavailable(f"store-v3's results can't be read ({exc})") from exc
+        return found
+
+    def result_lookups(self, keys: Sequence[str], *, since: float | None = None) -> dict[str, list[tuple[str, int]]]:
+        """Each key's saved results in v3: (lookup, bytes) each; with ``since``, those shown since then."""
+        if not self.has("results"):
+            return {}
+        found: dict[str, list[tuple[str, int]]] = {}
+        used = "" if since is None else " AND last_used >= ?"
+        try:
+            for start in range(0, len(keys), 500):
+                chunk = list(keys[start:start + 500])
+                for key, lookup, size in self._conn.execute(
+                        f"SELECT path, lookup, bytes FROM results WHERE path IN ({','.join('?' * len(chunk))}){used}",
+                        [*chunk, *(() if since is None else (since,))]):
+                    found.setdefault(str(key), []).append((str(lookup), int(size)))
         except sqlite3.Error as exc:
             raise LegacyUnavailable(f"store-v3's results can't be read ({exc})") from exc
         return found
