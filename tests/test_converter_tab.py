@@ -18,7 +18,7 @@ from helab.analysis.dataset_view import build_view
 from helab.convert.profile import BUILTIN_PROFILES, MATLAB_2019, DetectorProfile
 from helab.convert.user_profiles import ProfileLibrary
 from helab.convert import provenance
-from helab.io_ops import helab_txy
+from helab.io_ops import convert, helab_txy
 from helab.io_ops.admin import cache_admin
 from helab.utils import constants
 from helab.utils.folder_cache import Dataset, store_options
@@ -204,6 +204,10 @@ def test_the_helper_measures_and_clears_converted_txy(tmp_path: Path) -> None:
     # An old build's leftover temporary folder.json: HeLab's too (so its folder can go); look-alikes stay.
     leftover = converted_folder(root, "d" * 24, {".folder.json.0123456789abcdef.partial": b"half",
                                                   "folder.json": b"{}"})
+    old = time.time() - convert.PARTIAL_MAX_AGE - 60
+    os.utime(leftover / ".folder.json.0123456789abcdef.partial", (old, old))
+    # A conversion's temporary TXY being written now (under an hour old): Clear leaves it (A~1, S0-1).
+    writing = converted_folder(root, "e" * 24, {".d_txy_helab_m19v1_4.txt.0123456789abcdef.partial": b"writing"})
     (gone / ".folder.json.0123456789abcdeF.partial").write_bytes(b"theirs")
     os.symlink(one / "d_txy_helab_m19v1_1.txt", gone / "d_txy_helab_m19v1_9.txt")
     aside = Path(root) / "index-damaged-20261029T120000Z-0123abcd.sqlite"
@@ -211,7 +215,7 @@ def test_the_helper_measures_and_clears_converted_txy(tmp_path: Path) -> None:
     (Path(root) / "index-notes.sqlite").write_bytes(b"theirs")
     index_bytes = os.path.getsize(Path(root) / provenance.INDEX_NAME)
     assert helab_txy.converted_usage(root) == {
-        "files": 2, "bytes": 10 + 2 + 2 + 2 + 2 + 5 + 2 + 2 + 4 + 2 + 7 + index_bytes, "folders": 4, "last_used": 200.0,
+        "files": 2, "bytes": 10 + 2 + 2 + 2 + 2 + 5 + 2 + 2 + 4 + 2 + 7 + 7 + index_bytes, "folders": 5, "last_used": 200.0,
         "newer": 0, "clearable": 7, "clearable_bytes": 10 + 2 + 5 + 2 + 4 + 2 + 7}  # (What Clear removes, below.)
     assert helab_txy.converted_usage(str(tmp_path / "none")) == {
         "files": 0, "bytes": 0, "folders": 0, "last_used": None, "newer": 0, "clearable": 0, "clearable_bytes": 0}
@@ -220,11 +224,13 @@ def test_the_helper_measures_and_clears_converted_txy(tmp_path: Path) -> None:
     after = helab_txy.converted_usage(root)
     assert (after["files"], after["clearable"], after["clearable_bytes"]) == (0, 0, 0) and after["bytes"] > 0
     assert not leftover.exists()
+    assert os.listdir(writing) == [".d_txy_helab_m19v1_4.txt.0123456789abcdef.partial"]
     assert sorted(os.listdir(one)) == ["folder.json", "notes.txt"]  # Another's file stays, so its folder too.
     assert sorted(os.listdir(beside)) == ["d_txy_helab_m19v1_2.json", "folder.json"]  # A beside TXY's record stays.
     assert sorted(os.listdir(gone)) == [".folder.json.0123456789abcdeF.partial", "d_txy_helab_m19v1_9.txt",
                                         "folder.json"]  # A link is never followed or removed; a look-alike stays.
-    assert sorted(os.listdir(root)) == ["a" * 24, "b" * 24, "c" * 24, "index-notes.sqlite", provenance.INDEX_NAME]
+    assert sorted(os.listdir(root)) == ["a" * 24, "b" * 24, "c" * 24, "e" * 24, "index-notes.sqlite",
+                                        provenance.INDEX_NAME]
     # The removed TXY's row and its folder's row go; the beside TXY's row and folder stay.
     with provenance.open_index(root, write=False) as index:  # type: ignore[union-attr]
         assert [row[0] for row in index.folders()] == ["b" * 24]

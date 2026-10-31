@@ -51,8 +51,10 @@ CoCo's three points and the `after_rename` question:
    runs right after `os.replace`/`_rename_new` and before `_fsync_folder`. **Busy past `BUSY_SECONDS`**
    (10 s): `hold` raises `IndexUnavailable` with nothing held; `write_atomic` removes the temporary; the
    row is forgotten (or, if that is busy too, left matching no TXY on disk, so the shot is converted
-   again); the exception fails the conversion as any index write it can't make does today, and the app
-   tries again. The TXY already there is untouched (no rename happened): never a lost TXY. Test:
+   again); the exception fails the conversion as any index write it can't make does today. A manual run or
+   `--once` is then simply run again; **in Live, a failed conversion stops auto-convert until the user
+   presses Retry** (`explorer_live.py`'s `convert.error`), as any conversion error does today. The TXY
+   already there is untouched (no rename happened): never a lost TXY. Test:
    `test_a_busy_lock_for_the_rename_fails_the_conversion_and_loses_no_txy`.
 3. **Clear between pin and rename, both orders**: `test_a_clear_between_the_row_and_the_rename`
    (`before the lock`: refused, no TXY, no row, shot 2 waits unread; `while the rename holds it`: the
@@ -73,11 +75,15 @@ Gaps left (documented in `clear_converted`'s docstring):
   Cache). Only the base's first conversion since the index (Q26.2), between its start and its first
   `open_index(write=True)` (the listing), can still write after such a Clear.
 - A **damaged or busy** index isn't fenced (Clear can't write it); a **newer** HeLab's isn't ours.
-- **Clear removes in-flight temporaries** (`_OWN_FILE` matches `.d_txy_helab_…partial` of any age). A
-  conversion that started before the Clear now treats that as `cleared`; one that started *after* the
-  Clear's token, while the Clear is still removing, can have its temporary removed and fail that shot's
-  write (FileNotFoundError, the conversion fails and is tried again). Pre-existing, very small window.
-  Proposed A~1 below.
+- ~~Clear removes in-flight temporaries~~ **Fixed (S0-1, A~1, commit after `64280e0`):** Clear used to remove
+  every `_OWN_FILE` partial of any age, so a conversion that started *after* the Clear's token, while the
+  Clear was still removing, could lose its temporary: the rename raised `FileNotFoundError`, the conversion
+  ended in an error, and in Live that stopped auto-convert until Retry (Assay's S0-1). Clear now leaves
+  temporaries under `convert.PARTIAL_MAX_AGE` (1 h), as housekeeping does, and Settings › Cache's clearable
+  count skips them too (`helab_txy._young_partial`). A conversion that started *before* the Clear never
+  renames anyway (the fence). Tests: `test_a_clear_still_running_leaves_a_later_conversions_temporary_alone`
+  (fails without the fix with that `FileNotFoundError`) and `test_the_helper_measures_and_clears_converted_txy`
+  (a young temporary kept, an old one removed).
 
 ### cache-5
 
@@ -107,6 +113,8 @@ no `unclosed database`; the same on the old `test_cache_switch.py` shows the lea
 - **cache-store.md**, "Tables added within store-v3" (cache-6): "…and its re-key of a nested root leaves the
   subtree's constants (0.0.5) and converter flags (0.0.6) behind, and a 0.0.6 HeLab's Clear folder
   preferences leaves `write_beside` on."
+- **cache-store.md** and the converter's Clear (S0-1): Clear converted TXY "removes … their leftover temporaries
+  once over an hour old" (a younger one may be a conversion's write in progress).
 - **cache-store.md**, "Converted TXY in the cache folder" (A19.2): add "Clear fences conversions already
   running (A19.2): it first sets a new token in the index's `fence` table, and a conversion that started
   before writes no TXY after it (its shots wait as `cleared` and convert at the next check); a base with
@@ -117,6 +125,9 @@ no `unclosed database`; the same on the old `test_cache_switch.py` shows the lea
 
 ## Follow-ups (provisional)
 
-- **A~1** Clear converted TXY skips temporaries younger than `PARTIAL_MAX_AGE` (1 h) like housekeeping
-  does, so it never removes a running conversion's in-flight file (today it removes every
-  `_OWN_FILE` partial). Small; changes what Clear's inventory calls clearable.
+- ~~A~1~~ done in stage 0 (S0-1, above).
+- **known-issues** (S0-2, Assay; `explorer_live.py`, I/O Fixes' file, not fixed here): "Live's line counts
+  shots waiting with reason `cleared` (A19.2: Clear converted TXY ran during that conversion) as stuck until
+  the next check, and their tooltip ends 'A waiting file is checked again only when it changes', which is
+  wrong for `cleared`: the next check converts them. Transient (one check interval). Fix: add `cleared` to
+  `explorer_live.CONVERT_SETTLING`."

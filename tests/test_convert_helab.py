@@ -523,6 +523,39 @@ def test_a_clear_between_the_row_and_the_rename(source: Path, tmp_path: Path, mo
     assert 2 in [event["shot"] for event in of(later, "shot_converted")]
 
 
+def test_a_clear_still_running_leaves_a_later_conversions_temporary_alone(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """S0-1 (Assay): a conversion that starts after a Clear set its token, while the Clear is still
+    removing, isn't broken mid-write: Clear leaves temporaries under ``PARTIAL_MAX_AGE`` (A~1), so the
+    TXY is written and Live's auto-convert goes on. (Before, Clear took the temporary, the rename raised
+    FileNotFoundError while the token was the conversion's own, and the conversion ended in an error.)"""
+    for shot in (1, 2):
+        write_raw(source, shot, raw_bytes(10_000 * shot))
+    run(source, request_for(source, tmp_path, shots=[1]))  # (The base's index exists, as after any conversion.)
+    base = temp_base(tmp_path)
+    fence_of, record = provenance.fence_of, provenance.TxyIndex.record
+    set_fence = provenance.TxyIndex.set_fence
+
+    def after_the_clears_token(root: str) -> str:
+        with provenance.open_index(root, write=True) as index:
+            set_fence(index, time.time())  # (The Clear's first step, just before this conversion starts.)
+        return fence_of(root)
+
+    def clear_meanwhile(self: provenance.TxyIndex, *args: Any, **kwargs: Any) -> None:
+        # The rest of that Clear runs while this conversion's temporary is on disk (its token is set).
+        monkeypatch.setattr(provenance.TxyIndex, "set_fence", lambda index, now: "")
+        helab_txy.clear_converted(base)
+        monkeypatch.setattr(provenance.TxyIndex, "set_fence", set_fence)
+        record(self, *args, **kwargs)
+    monkeypatch.setattr(provenance, "fence_of", after_the_clears_token)
+    monkeypatch.setattr(provenance.TxyIndex, "record", clear_meanwhile)
+    events = run(source, request_for(source, tmp_path, shots=[2]))
+    monkeypatch.undo()
+    [converted] = of(events, "shot_converted")
+    assert converted["shot"] == 2 and Path(converted["txy"]).exists() and reasons(events) == {}
+    assert not (Path(converted["txy"]).parent / provenance.txy_name("m19v1", 1)).exists()  # (Cleared.)
+
+
 def test_a_busy_lock_for_the_rename_fails_the_conversion_and_loses_no_txy(
         source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The rename's lock busy past ``BUSY_SECONDS``: ``IndexUnavailable`` as for any index write, and

@@ -23,6 +23,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import os
 import re
+import time
 from typing import Any, Mapping
 
 from helab.io_ops.events import ConvertedSummaryField, ConvertedUsageField
@@ -393,12 +394,25 @@ def _index_files(root: str) -> tuple[list[os.DirEntry[str]], list[os.DirEntry[st
     return ours, newer
 
 
-def _cleared(entries: list[os.DirEntry[str]]) -> list[os.DirEntry[str]]:
-    """Of a folder's own files (``_OWN_FILE``), those Clear removes: all but ``folder.json`` and an old
-    record whose TXY isn't here (a beside TXY's: its provenance). (``folder.json`` goes too when the
-    folder is left with it alone.)"""
+def _young_partial(entry: os.DirEntry[str], now: float) -> bool:
+    """A temporary file (``….partial``) modified within ``convert.PARTIAL_MAX_AGE`` (1 h): a conversion may
+    be writing it now, so Clear leaves it, as housekeeping does (A~1; a Clear that removed it broke that
+    write, which stopped Live's auto-convert)."""
+    from helab.io_ops.convert import PARTIAL_MAX_AGE
+    if not entry.name.endswith(".partial"):
+        return False
+    try:
+        return now - entry.stat(follow_symlinks=False).st_mtime < PARTIAL_MAX_AGE
+    except OSError:
+        return True  # (Gone or unreadable now: not ours to remove.)
+
+
+def _cleared(entries: list[os.DirEntry[str]], now: float) -> list[os.DirEntry[str]]:
+    """Of a folder's own files (``_OWN_FILE``), those Clear removes: all but ``folder.json``, an old
+    record whose TXY isn't here (a beside TXY's: its provenance) and a temporary file under an hour old
+    (``_young_partial``). (``folder.json`` goes too when the folder is left with it alone.)"""
     here = {entry.name for entry in entries}
-    return [entry for entry in entries if entry.name != _FOLDER_RECORD and not (
+    return [entry for entry in entries if entry.name != _FOLDER_RECORD and not _young_partial(entry, now) and not (
         entry.name.endswith(".json") and not {entry.name[:-len(".json")] + suffix for suffix in _TXY_SUFFIXES} & here)]
 
 
@@ -422,6 +436,7 @@ def converted_usage(root: str) -> ConvertedUsageField:
     usage: ConvertedUsageField = {"files": 0, "bytes": 0, "folders": 0, "last_used": None, "newer": 0,
                                   "clearable": 0, "clearable_bytes": 0}
     last_used: dict[str, float] = {}
+    now = time.time()
     index = open_index(root, write=False)
     if index is not None:
         try:
@@ -451,7 +466,7 @@ def converted_usage(root: str) -> ConvertedUsageField:
             sizes = {entry.name: entry.stat(follow_symlinks=False).st_size for entry in own}
         except OSError:
             continue
-        cleared = _cleared(own)
+        cleared = _cleared(own, now)
         if set(names) - {entry.name for entry in cleared} == {_FOLDER_RECORD}:
             cleared.append(names[_FOLDER_RECORD])  # (Left alone in its folder, it goes with it.)
         usage["bytes"] += sum(sizes.values())
@@ -483,8 +498,8 @@ def converted_summary(roots: Mapping[str, str]) -> ConvertedSummaryField:
 def clear_converted(root: str) -> dict[str, int]:
     """Remove HeLab's TXY under ``root`` (the user asked, Settings → Cache): each folder's TXY with their
     rows in the index (only rows naming the very file removed), old builds' records and their leftover
-    temporaries, damaged indexes set aside, never a file of another name or a link. Rows of TXY written
-    beside the raw files stay (the only account of how they were made), and so does the index; an old
+    temporaries once over an hour old (a younger one may be a conversion's write in progress), damaged
+    indexes set aside, never a file of another name or a link. Rows of TXY written beside the raw files stay (the only account of how they were made), and so does the index; an old
     record whose TXY isn't here (beside) stays too, and a folder left with its ``folder.json`` alone
     goes. A newer HeLab's index (``user_version`` above ``SCHEMA``, or set aside as ``index-newer-…``) is
     left as it is, its rows too: not ours to clear.
@@ -499,14 +514,14 @@ def clear_converted(root: str) -> dict[str, int]:
     if not os.path.isdir(root):
         return removed
     import sqlite3
-    import time
+    now = time.time()
     index: TxyIndex | None = None
     forgot = False
     if index_schema(root) == SCHEMA:
         from helab.io_ops.convert import journal_for
         with contextlib.suppress(IndexUnavailable):
             index = open_index(root, write=True, journal=journal_for(os.path.dirname(root)))
-            index.set_fence(time.time())
+            index.set_fence(now)
     try:
         folders = [entry.path for entry in os.scandir(root) if entry.is_dir(follow_symlinks=False)]
     except (FileNotFoundError, NotADirectoryError):
@@ -519,7 +534,7 @@ def clear_converted(root: str) -> dict[str, int]:
             except OSError:
                 continue
             gone: list[tuple[str, int, int]] = []
-            for entry in _cleared(entries):
+            for entry in _cleared(entries, now):
                 name = entry.name
                 try:
                     info = entry.stat(follow_symlinks=False)
