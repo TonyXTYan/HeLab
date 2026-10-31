@@ -487,21 +487,30 @@ def clear_converted(root: str) -> dict[str, int]:
     beside the raw files stay (the only account of how they were made), and so does the index; an old
     record whose TXY isn't here (beside) stays too, and a folder left with its ``folder.json`` alone
     goes. A newer HeLab's index (``user_version`` above ``SCHEMA``, or set aside as ``index-newer-…``) is
-    left as it is, its rows too: not ours to clear."""
+    left as it is, its rows too: not ours to clear.
+
+    First of all it sets the index's Clear fence (``TxyIndex.set_fence``, A19.2), so a conversion
+    already running writes no TXY after it: one it renamed before is found and removed here. Without
+    an index of this schema to fence (none yet: a conversion making the base's first one may still
+    write; damaged, busy, or a newer HeLab's) it removes as before, unfenced; no index is made for it."""
     import contextlib
     from helab.convert.provenance import IndexUnavailable, SCHEMA, TXY_PATTERN, TxyIndex, index_schema, open_index
     removed = {"files": 0, "bytes": 0}
-    try:
-        folders = [entry.path for entry in os.scandir(root) if entry.is_dir(follow_symlinks=False)]
-    except (FileNotFoundError, NotADirectoryError):
+    if not os.path.isdir(root):
         return removed
     import sqlite3
+    import time
     index: TxyIndex | None = None
     forgot = False
     if index_schema(root) == SCHEMA:
         from helab.io_ops.convert import journal_for
         with contextlib.suppress(IndexUnavailable):
             index = open_index(root, write=True, journal=journal_for(os.path.dirname(root)))
+            index.set_fence(time.time())
+    try:
+        folders = [entry.path for entry in os.scandir(root) if entry.is_dir(follow_symlinks=False)]
+    except (FileNotFoundError, NotADirectoryError):
+        folders = []
     try:
         for folder in folders:
             try:

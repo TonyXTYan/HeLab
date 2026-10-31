@@ -964,8 +964,9 @@ class ShotWaitingEvent(TypedDict):
     """A raw file not converted yet: it may still be being written (``reason``: ``settling``,
     ``changed``, ``no_final_newline``, ``not_trigger_first``, ``no_rows``; damaged once unmodified for
     20 s), is dated ahead of this computer's
-    clock (``future``, with ``clock_skew`` for the folder) or couldn't be read now
-    (``read_failed``). Nothing was written; it is looked at again by a later conversion."""
+    clock (``future``, with ``clock_skew`` for the folder), couldn't be read now
+    (``read_failed``), or HeLab's converted TXY were cleared while this conversion ran (``cleared``,
+    A19.2: the Clear fence). Nothing was written; it is looked at again by a later conversion."""
     kind: Literal["shot_waiting"]
     path: str
     shot: int

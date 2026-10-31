@@ -94,7 +94,11 @@ def write_txy(path: str | os.PathLike[str], hits: Hits) -> None:
 
 
 def write_atomic(path: str | os.PathLike[str], data: bytes, *, replace: bool = True,
-                 before_rename: Callable[[os.stat_result], None] | None = None) -> None:
+                 before_rename: Callable[[os.stat_result], None] | None = None,
+                 after_rename: Callable[[], None] | None = None) -> None:
+    # ``after_rename`` runs right after the rename, before the folder's fsync (a converter lets go of
+    # the index lock it held across the rename alone, A19.2). Should it raise, the file is in place
+    # and stays; the error is raised and the folder isn't fsynced.
     target = Path(path)
     for _ in range(100):
         temporary = target.with_name(partial_name(target.name, secrets.token_hex(_TOKEN_BYTES)))
@@ -116,6 +120,8 @@ def write_atomic(path: str | os.PathLike[str], data: bytes, *, replace: bool = T
             os.replace(temporary, target)
         else:
             _rename_new(temporary, target)
+        if after_rename is not None:
+            after_rename()
     except BaseException:
         Path(temporary).unlink(missing_ok=True)
         raise
