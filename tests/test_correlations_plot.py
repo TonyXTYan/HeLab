@@ -275,6 +275,21 @@ def test_one_resample_runs_two() -> None:
     assert result.result is not None and result.result.se_method == "shot bootstrap"
 
 
+def test_another_load_s_live_run_keeps_no_box() -> None:
+    """plots-3: the kept box and detection are keyed by the data (``DatasetView.chain_key``), as
+    Velocity distributions' are: a Live run on another load of the folder (same signature) crops again."""
+    velocities = thermal_velocities(3, shots=13, events=300)
+    view = txy_view(velocities[:12])
+    values = {"corr_range": 0.4 * SCALE, "corr_window": 0.05 * SCALE, "n_boot": 2}
+    data_of(run(view, values, owner="live-chain"))
+    later = view.with_shots({13: to_txy(velocities[12])}, {13: (13, 1_300, 8_000)})
+    assert data_of(run(later, values, owner="live-chain", live=True)).box_kept
+    again = txy_view(velocities)
+    assert again.signature == later.signature and again.chain_key != later.chain_key
+    assert not data_of(run(again, values, owner="live-chain", live=True)).box_kept
+    SCRIPT.plot_closed("Plot", "live-chain", again.identity.source_path)
+
+
 def test_live_adds_a_shot_without_counting_the_old_ones_again(monkeypatch: pytest.MonkeyPatch) -> None:
     velocities = thermal_velocities(3, shots=13, events=300)
     view = txy_view(velocities[:12])

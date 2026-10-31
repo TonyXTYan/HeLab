@@ -140,6 +140,13 @@ class DatasetView:
     def key(self) -> ViewKey:
         return ViewKey(self.identity, self.revision)
 
+    @property
+    def chain_key(self) -> list[str]:
+        """Which data this view's chain is, for what a plot keeps across Live's reruns (plots-3): its
+        TXY source and choice, its chain and the profile hashes of its HeLab shots."""
+        hashes = sorted({origin.removeprefix(txy_sources.HELAB_ORIGIN) for origin in self.origins.values()})
+        return [self.identity.source, self.txy_choice, self.identity.chain, *hashes]
+
     @cached_property
     def held(self) -> Held:
         """What this revision holds (``Held``), as a ``Dataset`` of the same data has it (``held_of``)."""

@@ -14,7 +14,7 @@ from PyQt6.QtWidgets import QLabel
 from helab.analysis import constant_layers
 from helab.analysis.parameters import effective
 from helab.analysis.physics import DEFAULTS, TABLE, ResolvedConstants, resolve
-from helab.analysis.dataset_view import DatasetView, build_view
+from helab.analysis.dataset_view import DatasetView, build_view, revise
 from helab.analysis.results import AnalysisContext, AnalysisResult
 from helab.analysis.velocity import RECOIL_WAVELENGTH, arrival_time, recoil_velocity, txy_to_velocity, valid_velocities
 from helab.scripts import dld
@@ -48,6 +48,12 @@ def cloud(rng: np.random.Generator, count: int, mean: tuple[float, float, float]
 def view_of(clouds: list[tuple[tuple[float, float, float], int]], shots: int = 4, seed: int = 0,
             origin: tuple[float, float] = ORIGIN) -> DatasetView:
     """Shots of clouds, each (mean velocity, events per shot)."""
+    return build_view(dataset_of(clouds, shots, seed, origin))
+
+
+def dataset_of(clouds: list[tuple[tuple[float, float, float], int]], shots: int = 4, seed: int = 0,
+               origin: tuple[float, float] = ORIGIN) -> Dataset:
+    """``view_of``'s data as a loaded dataset (the same seed gives the same first shots)."""
     rng = np.random.default_rng(seed)
     data = {}
     for shot in range(1, shots + 1):
@@ -55,7 +61,7 @@ def view_of(clouds: list[tuple[tuple[float, float, float], int]], shots: int = 4
             else np.empty((0, 3))
         data[shot] = events[np.argsort(events[:, 0])]
     prints = [[shot, 100 + shot, 1_700_000_000_000_000_000 + shot] for shot in data]
-    return build_view(Dataset(PATH, "sig-velocity", data, {"fingerprint": prints}, 0))
+    return Dataset(PATH, "sig-velocity", data, {"fingerprint": prints}, 0)
 
 
 def run(view: DatasetView, values: dict[str, Any] | None = None, folder: dict[str, float] | None = None,
@@ -341,9 +347,11 @@ def test_valid_velocities_are_txy_to_velocity_s_valid_rows() -> None:
 
 def test_a_live_rerun_keeps_the_detection_and_view_range_until_a_run_you_start() -> None:
     owner = "plot-live-test"
-    first = run(view_of([((0.0, 0.0, 0.0), 1000)], seed=11), {"keep_percent": 99.0}, owner=owner)
+    first_view = view_of([((0.0, 0.0, 0.0), 1000)], seed=11)
+    first = run(first_view, {"keep_percent": 99.0}, owner=owner)
     assert first.data.kept_from == 0 and first.data.release_source == "detected"
-    later_view = view_of([((0.0, 0.0, 0.0), 1000)], shots=6, seed=11)
+    later_view = revise(first_view, dataset_of([((0.0, 0.0, 0.0), 1000)], shots=6, seed=11))
+    assert later_view.revision == 2 and later_view.added_shots == (5, 6)
     later = run(later_view, {"keep_percent": 99.0}, owner=owner, live=True)
     assert later.data.kept_from == first.input.revision and later.data.detection is first.data.detection
     assert later.data.box is first.data.box and later.found["reuse"] == {"kept_from": later.data.kept_from}
@@ -356,6 +364,30 @@ def test_a_live_rerun_keeps_the_detection_and_view_range_until_a_run_you_start()
     assert run(later_view, {"keep_percent": 99.0}, owner="another", live=True).data.kept_from == 0
     SCRIPT.plot_closed("Plot", owner, PATH)
     assert run(later_view, {"keep_percent": 99.0}, owner=owner, live=True).data.kept_from == 0
+
+
+def test_another_profile_s_or_load_s_next_live_run_detects_again() -> None:
+    """plots-3: what a Live rerun keeps is keyed by the data (``DatasetView.chain_key``): after the
+    tab's TXY choice changes (another profile, e.g. recalibrated X/Y) or a fresh load of the folder
+    (one signature for both), the next Live run detects t_r and crops again."""
+    owner = "plot-live-profile"
+    clouds = [((0.0, 0.0, 0.0), 1000)]
+    first_view = view_of(clouds, seed=14)
+    first = run(first_view, {"keep_percent": 99.0}, owner=owner)
+    later_view = revise(first_view, dataset_of(clouds, shots=5, seed=14))
+    assert run(later_view, {"keep_percent": 99.0}, owner=owner, live=True).data.kept_from == first.input.revision
+    loaded = dataset_of(clouds, shots=6, seed=14)
+    other = Dataset(PATH, loaded.signature, loaded.data, {**loaded.metadata, "txy": {
+        "source": "helab-only", "profile_tag": "p22v1", "origins": {str(shot): "helab:p22" for shot in loaded.data}}}, 0)
+    profile_view = revise(later_view, other)
+    assert profile_view.revision == 1 and profile_view.chain_key != later_view.chain_key
+    assert profile_view.chain_key[-1] == "p22"
+    rerun = run(profile_view, {"keep_percent": 99.0}, owner=owner, live=True)
+    assert rerun.data.kept_from == 0 and rerun.data.detection is not first.data.detection
+    fresh = view_of(clouds, shots=6, seed=14)
+    assert fresh.signature == later_view.signature
+    assert run(fresh, {"keep_percent": 99.0}, owner=owner, live=True).data.kept_from == 0
+    SCRIPT.plot_closed("Plot", owner, PATH)
 
 
 def test_the_origin_s_background_note_stays_in_the_record() -> None:

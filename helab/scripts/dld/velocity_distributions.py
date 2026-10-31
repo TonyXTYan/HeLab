@@ -530,8 +530,9 @@ KEPT = KeptRuns()
 
 
 def kept_key(context: AnalysisContext, constants: ResolvedConstants) -> str:
-    """The folder, every setting and the constants a Live rerun's kept steps must match."""
-    return json.dumps([context.view.identity.source_path, context.view.identity.root_key,
+    """The folder, its data (``DatasetView.chain_key``: another load, TXY choice or profile finds its
+    own), every setting and the constants a Live rerun's kept steps must match."""
+    return json.dumps([context.view.identity.source_path, context.view.identity.root_key, context.view.chain_key,
                        dict(context.parameters), constants.as_record(CONSTANT_KEYS)], sort_keys=True, default=repr)
 
 
@@ -736,7 +737,7 @@ class VelocityDistributions(DatasetAnalysis):
             return data
         context.check()
         # A Live rerun keeps the detection and the auto-crop box of this plot's last run when the
-        # folder, settings and constants are the same (``KeptRuns``); any other run finds its own.
+        # folder's data, settings and constants are the same (``KeptRuns``); any other run finds its own.
         key = kept_key(context, constants)
         kept = KEPT.get(context.owner, key) if context.live else None
         # t_r: the layers' (by hand, or a saved arrival − this run's t_f), else detected here; the
