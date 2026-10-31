@@ -555,3 +555,25 @@ def test_a_root_forgotten_before_a_retried_import_isnt_brought_back(tmp_path: Pa
     with CacheStore(str(caches / "store-v4")) as v4:
         assert "imported_v3" in v4._meta() and v4.read_prefs([FLAGGED])[FLAGGED].found  # (The rest came.)
         assert v4.root_at(location) is None
+
+
+@pytest.mark.no_auto_data_root
+@pytest.mark.parametrize("method", [RENAME, COPY])
+def test_with_the_switch_off_a_leftover_store_v4_is_only_a_passenger_in_a_move(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str) -> None:
+    """C2-6 (Assay): told the live layout (3), a move keys on store-v3, checkpoints it as today, and carries
+    a developer's leftover store-v4 along, verified; recovery follows store-v3's id."""
+    caches, app, target = tmp_path / "caches", tmp_path / "app", tmp_path / "moved" / "caches"
+    v3_id = v3_with_state(caches)
+    with CacheStore(str(caches / "store-v4")) as v4:
+        save(v4)
+        v4_id = v4.store_id
+    monkeypatch.setattr(cache_move, "same_disk", lambda source, target: method == RENAME)
+    record = cache_move.start(str(caches), str(target), str(app), method, layout=3)
+    assert record["store_id"] == v3_id and record["primary"] == "store-v3"
+    assert record["store_ids"] == {"store-v4": v4_id, "store-v3": v3_id}
+    record = cache_move.move(record, str(app), lambda done, total: None, lambda: False)
+    assert cache_move.valid_at(str(target), v3_id, record["primary"])
+    assert not cache_move.valid_at(str(target), v3_id)  # (Without it, the newest store is the primary.)
+    # (A copy keeps its source until the cleanup after the cutover; a rename moved it.)
+    assert cache_move.store_at(record) == (str(target) if method == RENAME else str(caches))

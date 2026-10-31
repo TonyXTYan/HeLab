@@ -297,7 +297,9 @@ def _cache_move_step(mover: Any, action: str, app_dir: str, move: dict[str, Any]
         # Only this move's record: a later move's is never touched.
         return record is not None and record.get("id") == move.get("id")
     if action == "move":
-        record = mover.start(move["from"], move["to"], app_dir, move["method"], move.get("id", ""))
+        # (``layout``: the live store's, so it is the move's primary: C2-6. The app sends it.)
+        record = mover.start(move["from"], move["to"], app_dir, move["method"], move.get("id", ""),
+                             move.get("layout"))
         last = [0.0]
 
         def progress(done: int, total: int) -> None:

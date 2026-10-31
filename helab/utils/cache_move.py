@@ -131,9 +131,17 @@ def _database(cache_dir: str, dirname: str) -> str:
     return os.path.join(cache_dir, dirname, "records.sqlite")
 
 
-def primary(cache_dir: str) -> str:
-    """The folder name of the newest store in ``cache_dir`` (store-v3 when there is none)."""
-    return next((name for name, _ in STORES if os.path.isfile(_database(cache_dir, name))), STORE_DIRNAME)
+def primary(cache_dir: str, name: str | None = None) -> str:
+    """The folder name of the primary store in ``cache_dir``: ``name`` (the live store's, when the move
+    was told it: C2-6) if it is there, else the newest store there (store-v3 when there is none)."""
+    if name is not None and os.path.isfile(_database(cache_dir, name)):
+        return name
+    return next((found for found, _ in STORES if os.path.isfile(_database(cache_dir, found))), STORE_DIRNAME)
+
+
+def dirname_for(layout: int | None) -> str | None:
+    """The store folder of a layout (``cache_store.live_layout()``), None when not given or unknown."""
+    return next((name for name, found in STORES if found == layout), None)
 
 
 def _connect_read_only(cache_dir: str, dirname: str | None = None) -> sqlite3.Connection | None:
@@ -150,13 +158,15 @@ def _connect_read_only(cache_dir: str, dirname: str | None = None) -> sqlite3.Co
     return conn
 
 
-def _passenger(cache_dir: str, dirname: str) -> bool:
-    """store-v3 beside a store-v4: read only through ``LegacyStore`` (caching v2), never checkpointed."""
-    return dirname == STORE_DIRNAME and os.path.isfile(_database(cache_dir, store_v4.DIRNAME))
+def _passenger(cache_dir: str, dirname: str, name: str | None = None) -> bool:
+    """store-v3 beside a primary store-v4: read only through ``LegacyStore`` (caching v2), never
+    checkpointed. (With the switch off, store-v3 is the primary, and a store-v4 left from a developer's
+    run is the one carried along.)"""
+    return dirname == STORE_DIRNAME and primary(cache_dir, name) != STORE_DIRNAME
 
 
-def _store_id(cache_dir: str, dirname: str, layout: int) -> str | None:
-    if _passenger(cache_dir, dirname):
+def _store_id(cache_dir: str, dirname: str, layout: int, name: str | None = None) -> str | None:
+    if _passenger(cache_dir, dirname, name):
         from helab.utils.legacy_store import LegacyStore, LegacyUnavailable
         try:
             with LegacyStore(os.path.join(cache_dir, dirname)) as legacy:
@@ -184,32 +194,32 @@ def store_ids_at(cache_dir: str) -> dict[str, str]:
     return {name: found for name, layout in STORES if (found := _store_id(cache_dir, name, layout)) is not None}
 
 
-def store_id_at(cache_dir: str) -> str | None:
+def store_id_at(cache_dir: str, name: str | None = None) -> str | None:
     """The ``store_id`` of the primary store in ``cache_dir`` if it holds one with its layout, else None."""
-    name = primary(cache_dir)
-    return _store_id(cache_dir, name, dict(STORES)[name])
+    chosen = primary(cache_dir, name)
+    return _store_id(cache_dir, chosen, dict(STORES)[chosen], name)
 
 
-def valid_at(cache_dir: str, store_id: str) -> bool:
-    return store_id_at(cache_dir) == store_id
+def valid_at(cache_dir: str, store_id: str, name: str | None = None) -> bool:
+    return store_id_at(cache_dir, name) == store_id
 
 
-def verify(cache_dir: str, store_id: str, store_ids: dict[str, str] | None = None) -> str:
+def verify(cache_dir: str, store_id: str, store_ids: dict[str, str] | None = None, name: str | None = None) -> str:
     """Why the copy in ``cache_dir`` isn't the cache ``store_id`` (its primary store's), or "" if it is:
     each store (the primary; and every one ``store_ids`` names, from the move's record) has a database
     passing ``integrity_check``, with the same id and layout, and every file its rows name exists with
     its recorded size."""
-    wanted = {primary(cache_dir): store_id, **(store_ids or {})}
-    for name, expected in wanted.items():
-        problem = _verify_store(cache_dir, name, expected)
+    wanted = {primary(cache_dir, name): store_id, **(store_ids or {})}
+    for dirname, expected in wanted.items():
+        problem = _verify_store(cache_dir, dirname, expected, name)
         if problem:
             return problem
     return ""
 
 
-def _verify_store(cache_dir: str, dirname: str, store_id: str) -> str:
+def _verify_store(cache_dir: str, dirname: str, store_id: str, name: str | None = None) -> str:
     files: list[tuple[str, int]]
-    if _passenger(cache_dir, dirname):
+    if _passenger(cache_dir, dirname, name):
         from helab.utils.legacy_store import LegacyStore, LegacyUnavailable
         try:
             with LegacyStore(os.path.join(cache_dir, dirname)) as legacy:
@@ -218,7 +228,7 @@ def _verify_store(cache_dir: str, dirname: str, store_id: str) -> str:
                 files = legacy.named_files()
         except LegacyUnavailable as exc:
             return f"the copied database can't be read ({exc})"
-        return _check_files(cache_dir, dirname, store_id, files)
+        return _check_files(cache_dir, dirname, store_id, files, name)
     try:
         conn = _connect_read_only(cache_dir, dirname)
         if conn is None:
@@ -238,11 +248,12 @@ def _verify_store(cache_dir: str, dirname: str, store_id: str) -> str:
             conn.close()
     except sqlite3.Error as exc:
         return f"the copied database can't be read ({exc})"
-    return _check_files(cache_dir, dirname, store_id, files)
+    return _check_files(cache_dir, dirname, store_id, files, name)
 
 
-def _check_files(cache_dir: str, dirname: str, store_id: str, files: list[tuple[str, int]]) -> str:
-    if _store_id(cache_dir, dirname, dict(STORES)[dirname]) != store_id:
+def _check_files(cache_dir: str, dirname: str, store_id: str, files: list[tuple[str, int]],
+                 name: str | None = None) -> str:
+    if _store_id(cache_dir, dirname, dict(STORES)[dirname], name) != store_id:
         return "the copied database is not the same cache"
     root = os.path.join(cache_dir, dirname)
     datasets = os.path.join(root, "datasets")
@@ -256,17 +267,23 @@ def _check_files(cache_dir: str, dirname: str, store_id: str, files: list[tuple[
     return ""
 
 
+def _primary(record: dict[str, Any]) -> str | None:
+    """The move's primary store folder (a record from before C2-6 has none: the newest there)."""
+    found = record.get("primary")
+    return found if isinstance(found, str) and found in dict(STORES) else None
+
+
 def _record_ids(record: dict[str, Any]) -> dict[str, str] | None:
     """The move's other stores' ids (a record from before two stores has none)."""
     found = record.get("store_ids")
     return {str(k): str(v) for k, v in found.items()} if isinstance(found, dict) else None
 
 
-def checkpoint(cache_dir: str) -> None:
+def checkpoint(cache_dir: str, name: str | None = None) -> None:
     """Write everything committed into the primary store's ``records.sqlite`` and empty the WAL, so
     the copy needs no ``-wal`` file. Every helper has stopped, so nothing else holds it. (An older
     store beside it is copied as it stands, its ``-wal`` included: never written from here.)"""
-    database = _database(cache_dir, primary(cache_dir))
+    database = _database(cache_dir, primary(cache_dir, name))
     if not os.path.isfile(database):
         return
     try:
@@ -387,18 +404,22 @@ def owned(path: str, record: dict[str, Any]) -> bool:
     return bool(record.get("id")) and os.path.isfile(os.path.join(path, marker_name(str(record["id"]))))
 
 
-def start(source: str, target: str, app_dir: str, method: str, move_id: str = "") -> dict[str, Any]:
+def start(source: str, target: str, app_dir: str, method: str, move_id: str = "",
+          layout: int | None = None) -> dict[str, Any]:
     """Record the move before touching anything; the store's id tells the folders apart later,
     and ``id`` this move from any other (a later move's record is never touched)."""
     if read_record(app_dir) is not None:
         raise MoveError("an earlier cache move hasn't finished (restart HeLab to finish it)")
-    store_id = store_id_at(source)
+    # The live store is the primary when the caller says which (``cache_store.live_layout()``, C2-6).
+    name = primary(source, dirname_for(layout))
+    store_id = store_id_at(source, name)
     if store_id is None:
         raise MoveError("the current cache folder has no readable cache to move")
     if os.path.exists(target) and (not os.path.isdir(target) or os.listdir(target)):
         raise MoveError(f"'{os.path.basename(os.path.normpath(target))}' isn't empty anymore")
     record = {"from": source, "to": target, "method": method, "step": "started", "store_id": store_id,
-              "store_ids": store_ids_at(source), "id": move_id or os.urandom(8).hex(), "staging": staging_path(target)}
+              "store_ids": store_ids_at(source), "primary": name, "id": move_id or os.urandom(8).hex(),
+              "staging": staging_path(target)}
     write_record(app_dir, record)
     return record
 
@@ -432,7 +453,7 @@ def move(record: dict[str, Any], app_dir: str, progress: Callable[[int, int], No
         raise MoveError(f"a folder is in the way ({staging}); delete it and try again") from None
     with open(os.path.join(staging, marker_name(str(record["id"]))), "w", encoding="utf-8"):
         pass
-    checkpoint(source)
+    checkpoint(source, _primary(record))
     _copy_tree(source, staging, progress, cancelled)
     # The copy takes the target's name only if the target is still empty (or absent).
     try:
@@ -448,7 +469,7 @@ def move(record: dict[str, Any], app_dir: str, progress: Callable[[int, int], No
     crash("copied")
     if cancelled():
         raise MoveCancelled()
-    problem = verify(target, record["store_id"], _record_ids(record))
+    problem = verify(target, record["store_id"], _record_ids(record), _primary(record))
     if problem:
         raise MoveError(f"The copy failed verification: {problem}.")
     crash("verify")
@@ -491,7 +512,8 @@ def abort(app_dir: str, record: dict[str, Any], *, before_cutover: bool = False)
         return []  # After the cutover: never undone.
     left: list[str] = []
     if record["method"] == RENAME:
-        if not valid_at(record["from"], record["store_id"]) and valid_at(record["to"], record["store_id"]):
+        if (not valid_at(record["from"], record["store_id"], _primary(record))
+                and valid_at(record["to"], record["store_id"], _primary(record))):
             try:
                 os.rename(record["to"], record["from"])
             except OSError:
@@ -518,7 +540,7 @@ def _remove_copy(record: dict[str, Any]) -> list[str]:
 def store_at(record: dict[str, Any]) -> str:
     """Which of the move's folders holds the store now ("" if neither)."""
     for path in (record["from"], record["to"]):
-        if valid_at(path, record["store_id"]):
+        if valid_at(path, record["store_id"], _primary(record)):
             return str(path)
     return ""
 
@@ -593,7 +615,7 @@ def usable_after_recovery(app_dir: str, setting: str) -> bool:
     """Whether HeLab may open the cache the setting names: no move is left to recover, or the
     setting already names the move's store (e.g. only a partial copy is left to delete)."""
     record = read_record(app_dir)
-    return record is None or valid_at(setting, record["store_id"])
+    return record is None or valid_at(setting, record["store_id"], _primary(record))
 
 
 def recover(app_dir: str, read_setting: Callable[[], str], write_setting: Callable[[str], bool],
@@ -606,8 +628,8 @@ def recover(app_dir: str, read_setting: Callable[[], str], write_setting: Callab
     source, target, store_id = record["from"], record["to"], record["store_id"]
     # A folder that is now somewhere the cache can't work (e.g. made a link into a synced
     # folder) is never opened, used or trusted: as if it held no store.
-    at_from = not cache_location.cache_location_problem(source) and valid_at(source, store_id)
-    at_to = not cache_location.cache_location_problem(target) and valid_at(target, store_id)
+    at_from = not cache_location.cache_location_problem(source) and valid_at(source, store_id, _primary(record))
+    at_to = not cache_location.cache_location_problem(target) and valid_at(target, store_id, _primary(record))
 
     def use(path: str) -> bool:
         return read_setting() == path or write_setting(path)
