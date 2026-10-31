@@ -6,6 +6,7 @@ import logging
 from pathlib import Path
 import subprocess
 import sys
+import threading
 import time
 from typing import Any
 
@@ -16,21 +17,39 @@ from pytestqt.qtbot import QtBot
 from helab.utils.io_service import IORequest, IOService
 
 
-def test_writing_held_data_out_counts_as_progress(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("another", [False, True], ids=["alone", "another thread starts a process meanwhile"])
+def test_writing_held_data_out_counts_as_progress(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+                                                  another: bool) -> None:
     """A Live save writes the data held in RAM to the helper's folder before the helper starts; a
-    dump slower than the no-progress time must not retire the save before its helper runs."""
+    dump slower than the no-progress time must not retire the save before its helper runs.
+
+    Only this request's start is counted: ``subprocess.Popen`` is patched for the whole process, and a
+    process another thread starts meanwhile (an earlier test's helper, still starting) goes to the real
+    one. Counting it too was Windows CI's "assert (2 == 1)": two starts about 1 ms apart (known-issues)."""
     service = IOService()
     service.timer.stop()
     request = IORequest("tab", 0, "/data", "load", {"save_memory": True}, service.NO_PROGRESS_TIMEOUT,
                         arrays={1: np.zeros(3), 2: np.zeros(3)})
     request.last_activity = time.monotonic()
+    ours, real_popen = threading.current_thread(), subprocess.Popen
+    others: list[int] = []
+
+    def other_start() -> None:
+        with subprocess.Popen([sys.executable, "-c", "pass"]) as process:
+            others.append(process.wait())
 
     def slow_save(*args: Any, **kwargs: Any) -> None:
         request.last_activity -= service.NO_PROGRESS_TIMEOUT  # As if each array took that long.
+        if another and not others:
+            thread = threading.Thread(target=other_start)
+            thread.start()
+            thread.join()
 
     idle_at_start: list[float] = []
 
-    def popen(*args: Any, **kwargs: Any) -> None:
+    def popen(*args: Any, **kwargs: Any) -> Any:
+        if threading.current_thread() is not ours:
+            return real_popen(*args, **kwargs)  # (Not this request's: ``_run`` runs on the test's thread here.)
         idle_at_start.append(time.monotonic() - request.last_activity)
         raise OSError("not started in this test")
 
@@ -38,6 +57,7 @@ def test_writing_held_data_out_counts_as_progress(qtbot: QtBot, monkeypatch: pyt
     monkeypatch.setattr("helab.utils.io_service.subprocess.Popen", popen)
     service._run(request)
     assert len(idle_at_start) == 1 and idle_at_start[0] < request.timeout
+    assert others == ([0] if another else [])
     service.shutdown()
 
 
