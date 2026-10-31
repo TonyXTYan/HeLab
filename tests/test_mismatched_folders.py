@@ -158,9 +158,10 @@ def test_quitting_starts_none_of_the_loads_and_scans_the_hold_held(
     found(cache, "/1")
     found(cache, "/2")
     assert service.mismatch_hold
+    held = {cache.key("/held-load"), cache.key("/held-scan")}  # (As FolderCache keys them: on Windows with a drive.)
     assert cache.submit("other", 0, "/held-load", "load", {})
     assert cache.submit("bulk", 0, "/held-scan", "scan", {"scan_manual": True}, force=True)
-    assert {r.path for r in service.pending} >= {"/held-load", "/held-scan"} and not service.active
+    assert {r.path for r in service.pending} >= held and not service.active
     started: list[str] = []
     service.resultReady.connect(lambda request, event: started.append(request.path)
                                 if event["kind"] == "started" else None)
