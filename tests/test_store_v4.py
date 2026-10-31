@@ -577,3 +577,21 @@ def test_with_the_switch_off_a_leftover_store_v4_is_only_a_passenger_in_a_move(
     assert not cache_move.valid_at(str(target), v3_id)  # (Without it, the newest store is the primary.)
     # (A copy keeps its source until the cleanup after the cutover; a rename moved it.)
     assert cache_move.store_at(record) == (str(target) if method == RENAME else str(caches))
+
+
+@pytest.mark.no_auto_data_root
+def test_a_later_purge_keeping_failures_doesnt_bring_back_a_v3_history_an_earlier_one_hid(tmp_path: Path) -> None:
+    """C2-7 (Assay): purges by age keep two cutoffs per kind, the latest and the latest that took failures."""
+    caches = tmp_path / "caches"
+    v3_with_state(caches)
+    history = {"version": 1, "failures": [{"x": 1}], "starts": {}, "sequence": 1, "blocked": True}
+    with CacheStore(str(caches / "store-v3")) as v3:
+        v3.save_record("histories", OTHER, history, v3.guard([OTHER], ("histories",)), saved_at=50.0)
+        v3.save_record("histories", FLAGGED, history, v3.guard([FLAGGED], ("histories",)), saved_at=150.0)
+    with CacheStore(str(caches / "store-v4")) as v4:
+        assert v4.read_record("histories", OTHER).found
+        v4.purge_records(100.0, include_failures=True)
+        assert v4.read_record("histories", OTHER).missing and v4.read_record("histories", FLAGGED).found
+        v4.purge_records(200.0)  # (Keeps failures.)
+        assert v4.read_record("histories", OTHER).missing  # (Hidden by the first: stays hidden.)
+        assert v4.read_record("histories", FLAGGED).found  # (Failures, after the first purge: kept.)

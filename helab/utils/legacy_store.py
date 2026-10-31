@@ -121,23 +121,29 @@ class LegacyStore:
             raise LegacyUnavailable(f"store-v3's {table} can't be read ({exc})") from exc
 
     def records(self, table: str, keys: Sequence[str], *, before: float | None = None,
-                keep_failures: bool = False) -> dict[str, str]:
-        """``table``'s ``record`` text by key, for the keys it has; with ``before``, not those saved
-        before it (a purge by age in the store reading through), but with ``keep_failures`` a scan
-        history with failures all the same (as that purge kept them)."""
+                failures_before: float | None = None) -> dict[str, str]:
+        """``table``'s ``record`` text by key, for the keys it has; with ``before``, not those saved before
+        it (a purge by age in the store reading through), except a scan history with failures saved since
+        ``failures_before`` (the latest purge that took those; None: none did, so every one stays)."""
         if not self.has(table):
             return {}
         found: dict[str, str] = {}
         since = ""
+        args: tuple[float, ...] = ()
         if before is not None:
-            since = " AND (saved_at >= ?" + (" OR json_array_length(record, '$.failures') > 0)" if keep_failures
-                                             else ")")
+            failed = "json_array_length(record, '$.failures') > 0"
+            if table != "scan_histories":
+                since, args = " AND saved_at >= ?", (before,)
+            elif failures_before is None:
+                since, args = f" AND (saved_at >= ? OR {failed})", (before,)
+            else:
+                since, args = f" AND (saved_at >= ? OR ({failed} AND saved_at >= ?))", (before, failures_before)
         try:
             for start in range(0, len(keys), 500):
                 chunk = list(keys[start:start + 500])
                 found.update((str(key), str(record)) for key, record in self._conn.execute(
                     f"SELECT path, record FROM {table} WHERE path IN ({','.join('?' * len(chunk))}){since}",
-                    [*chunk, *(() if before is None else (before,))]))
+                    [*chunk, *args]))
         except sqlite3.Error as exc:
             raise LegacyUnavailable(f"store-v3's {table} can't be read ({exc})") from exc
         return found

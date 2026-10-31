@@ -826,26 +826,30 @@ class CacheStore:
         return bool(self._epoch(epoch) or (root is not None and self._epoch(root))
                     or self._epoch(f"{_LEGACY_HIDDEN}{kind}:{key}"))
 
-    def _legacy_purged(self, kind: str) -> tuple[float | None, bool]:
-        """The latest purge by age of ``kind`` in store-v4 (its cutoff; and for histories whether it took
-        those with failures): store-v3's rows from before it are hidden too."""
+    def _legacy_purged(self, kind: str) -> tuple[float | None, float | None]:
+        """The purges by age of ``kind`` in store-v4: the latest cutoff, and the latest of those that took
+        scan histories with failures too (C2-7); store-v3's rows from before them are hidden too."""
         found = self._meta().get("legacy_purged")
         entry = found.get(kind) if isinstance(found, dict) else None
-        if not isinstance(entry, list) or len(entry) != 2:
-            return None, False
-        return float(entry[0]), bool(entry[1])
+        if not isinstance(entry, list) or len(entry) != 2 or not isinstance(entry[0], (int, float)):
+            return None, None
+        failures = entry[1]
+        return float(entry[0]), float(failures) if isinstance(failures, (int, float)) and not isinstance(
+            failures, bool) else None
 
     def _note_purge(self, kind: str, cutoff: float, include_failures: bool = False) -> None:
-        """Record a purge by age (inside its transaction) while store-v3 may be read through."""
+        """Record a purge by age (inside its transaction) while store-v3 may be read through: each of the
+        two cutoffs only ever grows."""
         if self.layout < store_v4.LAYOUT:
             return
         found = self._meta().get("legacy_purged")
         purged = dict(found) if isinstance(found, dict) else {}
         before, failures = self._legacy_purged(kind)
-        if before is None or cutoff >= before:
-            purged[kind] = [cutoff, include_failures or (failures and before == cutoff)]
-            self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_purged', ?)",
-                               (_dumps(purged),))
+        latest = cutoff if before is None else max(before, cutoff)
+        if include_failures:
+            failures = cutoff if failures is None else max(failures, cutoff)
+        purged[kind] = [latest, failures]
+        self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_purged', ?)", (_dumps(purged),))
 
     def _maker_id(self) -> str:
         """In store-v4, this session's maker row (written inside the caller's write transaction) and
@@ -1467,7 +1471,7 @@ class CacheStore:
                     missing = [key for key in missing if not self._legacy_hidden(kind, key)]
                     before, failures = self._legacy_purged(kind)
                 rows.update(legacy.records(table, missing, before=before,
-                                           keep_failures=kind == "histories" and not failures))
+                                           failures_before=failures if kind == "histories" else before))
             except LegacyUnavailable as exc:
                 unread = _error(f"Disk cache could not be read: {exc}")  # (Never "nothing saved".)
             except sqlite3.Error as exc:
