@@ -6,6 +6,7 @@ stores, read as none from a read-only one without it; RAM only while the cache f
 all and Reset all settings; ``quit_saves`` waits for their writes."""
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import sqlite3
@@ -98,7 +99,7 @@ def without_presets(directory: Path, *, layout: int | None = None) -> None:
 
 
 def tables(directory: Path) -> set[str]:
-    with sqlite3.connect(directory / "records.sqlite") as conn:
+    with contextlib.closing(sqlite3.connect(directory / "records.sqlite")) as conn, conn:
         return {str(found[0]) for found in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
 
 

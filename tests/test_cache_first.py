@@ -1,6 +1,7 @@
 """Cached data shows at once from the local disk cache; the folder check follows."""
 from __future__ import annotations
 
+import contextlib
 import math
 import os
 from pathlib import Path
@@ -629,12 +630,12 @@ def test_a_cache_saved_without_file_names_gains_them_and_then_takes_the_quick_ch
     source = source_folder(tmp_path)
     first = loaded(run_load(source, tmp_path))
     database = next((tmp_path / "disk-cache").rglob("records.sqlite"))
-    with sqlite3.connect(database) as connection:  # As saved before names were kept.
+    with contextlib.closing(sqlite3.connect(database)) as connection, connection:  # As saved before names were kept.
         connection.execute("UPDATE datasets SET info = json_remove(info, '$.names')")
     memory = [list(entry) for entry in first["fingerprint"]]
     check = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"]))
     assert not check.get("unchanged")  # One full check: it lists the folder...
-    with sqlite3.connect(database) as connection:
+    with contextlib.closing(sqlite3.connect(database)) as connection, connection:
         info = json.loads(connection.execute("SELECT info FROM datasets").fetchone()[0])
     assert info["names"] == ["d_txy_forc1.txt", "d_txy_forc2.txt"]  # ...and records the names.
     with monkeypatch.context() as patched:
@@ -656,7 +657,7 @@ def test_a_full_check_finding_the_cache_complete_brings_the_quick_check_back(
     first = loaded(run_load(source, tmp_path))
     database = next((tmp_path / "disk-cache").rglob("records.sqlite"))
     now = time.time()
-    with sqlite3.connect(database) as connection:  # Cached a while ago...
+    with contextlib.closing(sqlite3.connect(database)) as connection, connection:  # Cached a while ago...
         connection.execute("UPDATE datasets SET info = json_set(info, '$.snapshot_at', ?, '$.unsettled', 1)",
                            (now - 100,))
     (source / ".DS_Store").write_text("")  # ...and the folder modified since, with no TXY change.
@@ -664,7 +665,7 @@ def test_a_full_check_finding_the_cache_complete_brings_the_quick_check_back(
     memory = [list(entry) for entry in first["fingerprint"]]
     check = loaded(run_load(source, tmp_path, memory=memory, base_signature=first["signature"]))
     assert not check.get("unchanged") and check["load_counts"]["read"] == 0
-    with sqlite3.connect(database) as connection:
+    with contextlib.closing(sqlite3.connect(database)) as connection, connection:
         info = json.loads(connection.execute("SELECT info FROM datasets").fetchone()[0])
     assert now - 50 < info["snapshot_at"] <= time.time() and info["unsettled"] == 0
     with monkeypatch.context() as patched:

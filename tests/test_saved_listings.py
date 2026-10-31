@@ -5,6 +5,7 @@ the source folder. Stores from before listings gain the table when opened, and l
 Clear, purges by age, a root's Clear cached data… and a nested root's re-key."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -254,7 +255,8 @@ def test_a_nested_roots_rekey_moves_its_listings(tmp_path: Path) -> None:
 @pytest.mark.no_auto_data_root
 def test_an_older_store_gains_the_listings_table_when_opened(tmp_path: Path) -> None:
     directory = old_store(tmp_path / "store")
-    with sqlite3.connect(directory / "records.sqlite") as conn:  # (As before C2: no gen_listings.)
+    # (As before C2: no gen_listings.)
+    with contextlib.closing(sqlite3.connect(directory / "records.sqlite")) as conn, conn:
         conn.execute("DELETE FROM meta WHERE key = 'gen_listings'")
     assert "listings" not in schema(directory)[0]
     with CacheStore(str(directory)) as store:

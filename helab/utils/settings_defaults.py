@@ -66,6 +66,8 @@ REOPEN_PLOTS_SETTING = "reopen_plots_at_start"
 OPEN_PLOTS_SETTING = "open_plots"
 # The main window's folder and settings panels' widths, the plots taking the rest (Q33.2).
 MAIN_SPLIT_SETTING = "main_window_split"
+# Caching v2's store (Q28.3): developers only, off until stage 2 and Tony's go; no Settings control.
+STORE_V4_SETTING = "store_v4"
 
 def default_disk_budget(platform: str | None = None) -> int:
     """8 GB on macOS and Linux, 8 GiB on Windows (Q22.7, Q26.1): disk units follow the OS
@@ -157,6 +159,9 @@ SETTINGS: tuple[Setting, ...] = (
             "The main window's folder panel and plot settings panel widths in logical pixels, \"<folders>,<settings>\", "
             "saved as HeLab quits; the plots take the rest of the window. Folders 80 to 4000, settings 250 to 4000; "
             "otherwise the default (Q33.2)."),
+    Setting(STORE_V4_SETTING, bool, False,
+            "Developers only until caching v2 stage 2 (Q28.3): keep the disk cache in store-v4 (caching v2) "
+            "instead of store-v3. Read once when HeLab starts; no Settings control."),
 )
 
 # Keys under a prefix: Settings → Lab parameters saves only the lab constants the user set,

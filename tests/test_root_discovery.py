@@ -1,6 +1,7 @@
 """D2 helper discovery and root-keyed cache behavior on fake shares."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -57,7 +58,7 @@ def test_listing_discovers_marker_and_uses_root_key(tmp_path: Path,
         assert store._path_key(str(run)) == f"root://{identifier}/run"
         store.save_record("summaries", str(run), {"saved": True},
                           store.guard([str(run)], ["summaries"]))
-    with sqlite3.connect(Path(options(tmp_path)["directory"]) / "records.sqlite") as conn:
+    with contextlib.closing(sqlite3.connect(Path(options(tmp_path)["directory"]) / "records.sqlite")) as conn, conn:
         assert conn.execute("SELECT path FROM folder_summaries").fetchone()[0] == (
             f"root://{identifier}/run")
 

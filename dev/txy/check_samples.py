@@ -1,7 +1,7 @@
 """Convert sample shots and check them byte for byte against a reference TXY.
 
     python dev/txy/check_samples.py [--positions even|odd|all] [--profile …] [--backend …]
-        [--reference-dir DIR] [--json OUT]
+        [--reference-dir DIR] [--via-layer] [--json OUT]
 
 The reference is MATLAB's ``d_txy_forc<N>.txt`` in the sample set (SHA-256 checked), or, with
 ``--reference-dir``, ``DIR/<set>/d_txy_forc<N>.txt`` (MATLAB run on copies, e.g. by
@@ -9,6 +9,10 @@ The reference is MATLAB's ``d_txy_forc<N>.txt`` in the sample set (SHA-256 check
 each mismatch's first differing line. A mismatch listed in ``reference_exceptions.py`` (for the
 sample set's own references) counts as explained only when its proof holds again; exits 1 on any
 other mismatch.
+
+``--via-layer`` converts each shot from caching v2's raw layer instead of its text (encoded, packed,
+read back and decoded in memory: nothing is written, the samples stay read-only), so a run proves the
+layer gives the same TXY as the file.
 """
 from __future__ import annotations
 
@@ -24,7 +28,8 @@ guard()
 
 from reference_exceptions import EXCEPTIONS  # noqa: E402
 
-from helab.convert.check import FAULT_KINDS as KINDS, CheckResult, check_txy, prove_fault  # noqa: E402
+from helab.convert.check import (  # noqa: E402
+    FAULT_KINDS as KINDS, CheckResult, check_txy, convert_via_layer, prove_fault)
 from helab.convert.pipeline import convert_raw  # noqa: E402
 from helab.convert.profile import builtin_profile  # noqa: E402
 from helab.convert.reconstruct import NoRowsError  # noqa: E402
@@ -35,6 +40,8 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sample_arguments(parser)
     parser.add_argument("--reference-dir", type=Path)
+    parser.add_argument("--via-layer", action="store_true",
+                        help="convert from the raw layer (in memory) instead of the raw text")
     parser.add_argument("--json", type=Path, help="write the results here")
     args = parser.parse_args()
     profile = builtin_profile(args.profile)
@@ -57,7 +64,7 @@ def main() -> int:
             path = args.reference_dir / shot.set_name / f"d_txy_forc{shot.shot}.txt"
             reference = path.read_bytes() if path.exists() else None
         try:
-            ours = convert_raw(raw, profile, args.backend)
+            ours = (convert_via_layer if args.via_layer else convert_raw)(raw, profile, args.backend)
         except NoRowsError:
             ours = None
         result = check_txy(ours, reference)
@@ -73,7 +80,7 @@ def main() -> int:
         elif exception is not None:
             print(f"  {shot.label}: listed as an exception but identical; remove it from reference_exceptions.py")
     print(f"\nprofile {profile.name} ({profile.content_hash()[:12]}), backend {args.backend}, "
-          f"positions {args.positions}")
+          f"positions {args.positions}" + (", via the raw layer" if args.via_layer else ""))
     print("(cut: MATLAB read a half-written raw file; variant: re-converted by another MATLAB variant; "
           "empty: no hits, the reference a 0-byte file from another wrapper; each proved again above)")
     print(f"{'set':32} {'shots':>5} {'identical':>9} " + " ".join(f"{kind:>7}" for kind in KINDS) + f" {'differ':>6}")
@@ -99,6 +106,7 @@ def main() -> int:
         args.json.parent.mkdir(parents=True, exist_ok=True)
         args.json.write_text(json.dumps({
             "profile": profile.name, "profile_hash": profile.content_hash(), "backend": args.backend,
+            "via_layer": args.via_layer,
             "positions": args.positions,
             "sets": {name: [{"shot": shot, "identical": r.identical, "ours_hits": r.ours_hits,
                              "reference_hits": r.reference_hits, "line": r.line, "ours_line": r.ours_line,

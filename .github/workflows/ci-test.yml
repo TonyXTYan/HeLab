@@ -109,10 +109,11 @@ jobs:
             source venv/bin/activate
           fi
           # The converter's tests that run a backend (each backend's own, the helper's, the
-          # within-shot split and the test data's, which go through every available one; the unshipped ones skip); the reader, writer,
+          # within-shot split and the test data's, which go through every available one; the unshipped ones skip; and the
+          # raw layer's, which converts from it with every available one); the reader, writer,
           # profile and reference tests use none and run in the main job.
           pytest tests/test_convert_backend_*.py tests/test_convert_required_backends.py \
-            tests/test_convert_helab.py tests/test_convert_split.py tests/test_convert_testdata.py \
+            tests/test_convert_helab.py tests/test_convert_split.py tests/test_convert_testdata.py tests/test_raw_layer.py \
             -n 4 -rR --reruns 5 --reruns-delay 5 --timeout=120 --timeout-method=thread
 
   test:

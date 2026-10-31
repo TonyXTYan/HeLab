@@ -1,4 +1,5 @@
-"""The ``dir_caches`` setting, written as a cache move's cutover needs it (roadmap S9).
+"""The ``dir_caches`` setting, written as a cache move's cutover needs it (roadmap S9), and caching
+v2's store switch (``store_v4_enabled``, Q28.3).
 
 QtCore only: the startup recovery helper writes it too, without a QApplication.
 """
@@ -8,7 +9,7 @@ from typing import Any
 
 from PyQt6.QtCore import QSettings
 
-from helab.utils.settings_defaults import DIR_CACHES_SETTING, read_setting
+from helab.utils.settings_defaults import DIR_CACHES_SETTING, STORE_V4_SETTING, read_setting
 
 
 def write_cache_setting(settings: QSettings, path: str) -> bool:
@@ -17,6 +18,11 @@ def write_cache_setting(settings: QSettings, path: str) -> bool:
     settings.sync()
     return (settings.status() == QSettings.Status.NoError
             and read_setting(settings, DIR_CACHES_SETTING, typed=True) == path)
+
+
+def store_v4_enabled(settings: QSettings) -> bool:
+    """Caching v2's switch (Q28.3): the disk cache lives in store-v4. Off unless set by hand."""
+    return bool(read_setting(settings, STORE_V4_SETTING, typed=True))
 
 
 def settings_spec(settings: QSettings) -> dict[str, Any]:

@@ -38,6 +38,17 @@ journal instead (``DELETE``; ``io_ops.convert.journal_for``). Its ``-wal``/``-sh
 SQLite's own: never housekeeping's, counted with the index's bytes, never removed by Clear; the last
 connection to close checkpoints the ``-wal`` into the index and removes both.
 
+**The Clear fence** (A19.2). Settings › Cache's Clear (``io_ops.helab_txy.clear_converted``) first
+sets a new random token in the index's ``fence`` table (``TxyIndex.set_fence``), then removes. A
+conversion into the cache or temp folder reads the token when it starts (``fence_of``) and, for each
+TXY, checks it in the row's transaction (``record(fence=…)``) and again in a ``BEGIN IMMEDIATE`` it
+holds across the rename alone (``hold``, ``release``): a Clear that set its token before either check
+rejects the write (``Cleared``: the temporary file goes, its row is forgotten, the shot waits and is
+converted at the next check), and one that set it after has to wait for the rename, so it finds the
+TXY and removes it. The table was added within schema 1 (``user_version`` stays 1, so HeLab 0.0.7a1
+reads and writes the index as before, and neither sets nor checks the token): an additive change keeps
+the version. TXY written beside the raw files aren't fenced: Clear never removes them.
+
 ``stale`` says why a TXY no longer stands for its raw file and the profile asked for (no row, the
 raw file or the TXY changed, another profile hash), so a shot is converted again when a profile
 improves. Profiles with one hash convert every file alike, so the backend and the profile's name and
@@ -134,6 +145,12 @@ class Provenance:
 _FIELDS = tuple(field.name for field in fields(Provenance))
 _SQL_TYPES = {"int": "INTEGER", "bool": "INTEGER", "float": "REAL", "str": "TEXT"}
 _TYPES: dict[str, type | tuple[type, ...]] = {"int": int, "bool": int, "float": (int, float), "str": str}
+# The Clear fence (A19.2), added within schema 1: one row, the token the last Clear set, and when.
+# Made by the first Clear of an index without it; read as no token while it isn't there.
+FENCE_TABLE = ("CREATE TABLE IF NOT EXISTS fence (one INTEGER PRIMARY KEY CHECK (one = 1), token TEXT NOT NULL,"
+               " cleared_at REAL NOT NULL)")
+# The token of an index no Clear has fenced (or of none: missing, unreadable).
+NO_FENCE = ""
 _TABLES = (
     # HeLab's folder for a source folder (``io_ops.convert.folder_for``), by its name: which source it
     # stands for (updated when it moved), its TXY's bytes (beside ones aren't there), when last used.
@@ -142,6 +159,7 @@ _TABLES = (
     "CREATE TABLE shots (folder TEXT NOT NULL, "
     + ", ".join(f"{field.name} {_SQL_TYPES[str(field.type)]} NOT NULL" for field in fields(Provenance))
     + ", PRIMARY KEY (folder, profile_tag, shot))",
+    FENCE_TABLE,
 )
 
 
@@ -165,6 +183,11 @@ def stale(record: Provenance | None, *, raw_size: int, raw_mtime_ns: int, profil
 class IndexUnavailable(OSError):
     """The index can't be written now (busy past the timeout, the disk, permissions): a conversion
     then fails as a failed TXY write does, and is tried again."""
+
+
+class Cleared(Exception):
+    """A Clear of HeLab's TXY set a new fence token since this conversion started: the TXY isn't
+    renamed into place (nor its row kept), and the shot is converted again by a later conversion."""
 
 
 def damaged(error: sqlite3.Error) -> bool:
@@ -241,6 +264,7 @@ class TxyIndex:
         # ``journal``: the mode a replacement is made in if this one is found damaged (its base's).
         self.conn, self.path, self.journal = conn, path, journal
         self.root = os.path.dirname(path)
+        self._held = False
 
     def close(self) -> None:
         self.conn.close()
@@ -269,6 +293,21 @@ class TxyIndex:
                 found[(record.profile_tag, record.shot)] = record
         return found
 
+    def fence(self) -> str:
+        """The token the last Clear set (``NO_FENCE``: none, or an index without the table). Its
+        errors are the caller's."""
+        try:
+            row = self.conn.execute("SELECT token FROM fence WHERE one = 1").fetchone()
+        except sqlite3.OperationalError as error:
+            if "no such table" in str(error):
+                return NO_FENCE
+            raise
+        return NO_FENCE if row is None else str(row[0])
+
+    def _check_fence(self, fence: str) -> None:
+        if self.fence() != fence:
+            raise Cleared("HeLab's converted TXY were cleared while this conversion ran")
+
     def folders(self) -> list[tuple[str, str, str, int, float]]:
         """Every folder's (name, key, source, bytes, last used)."""
         return [(str(row[0]), str(row[1]), str(row[2]), int(row[3]), float(row[4])) for row in self.conn.execute(
@@ -276,13 +315,14 @@ class TxyIndex:
 
     # Writes: each a short transaction.
 
-    def _write(self, statements: list[tuple[str, tuple[Any, ...]]]) -> int:
+    def _write(self, statements: list[tuple[str, tuple[Any, ...]]], fence: str | None = None) -> int:
         """Run ``statements`` in one ``BEGIN IMMEDIATE`` transaction; returns the first's rows changed.
-        A damaged index is set aside and the statements run once more in a new one; any other
-        failure is ``IndexUnavailable``."""
+        With ``fence``, only while the index's token is still that one (else ``Cleared``, nothing
+        written). A damaged index is set aside and the statements run once more in a new one (whose
+        token is none: a fenced write then fails as ``Cleared``); any other failure is ``IndexUnavailable``."""
         for attempt in range(2):
             try:
-                return _patient(self.conn, lambda: self._transaction(statements))
+                return _patient(self.conn, lambda: self._transaction(statements, fence))
             except sqlite3.Error as error:
                 if attempt or not damaged(error):
                     raise IndexUnavailable(f"HeLab's TXY index couldn't be written ({error})") from error
@@ -294,10 +334,12 @@ class TxyIndex:
             self.conn = open_index(self.root, write=True, journal=self.journal).conn
         raise AssertionError("unreachable")
 
-    def _transaction(self, statements: list[tuple[str, tuple[Any, ...]]]) -> int:
+    def _transaction(self, statements: list[tuple[str, tuple[Any, ...]]], fence: str | None = None) -> int:
         changed = -1
         self.conn.execute("BEGIN IMMEDIATE")
         try:
+            if fence is not None:
+                self._check_fence(fence)
             for statement, arguments in statements:
                 count = self.conn.execute(statement, arguments).rowcount
                 changed = count if changed < 0 else changed
@@ -314,9 +356,11 @@ class TxyIndex:
         return ("UPDATE folders SET bytes = (SELECT coalesce(sum(txy_size), 0) FROM shots"
                 " WHERE folder = ?1 AND output != 'beside') WHERE folder = ?1", (folder,))
 
-    def record(self, folder: str, key: str, source: str, record: Provenance, now: float) -> None:
+    def record(self, folder: str, key: str, source: str, record: Provenance, now: float, *,
+               fence: str | None = None) -> None:
         """Write ``record`` (replacing the shot's row of its tag) and the folder's row: its source
-        and key as this conversion saw them, its bytes, used now."""
+        and key as this conversion saw them, its bytes, used now. With ``fence`` (the token when the
+        conversion started), only while no Clear has set another since (else ``Cleared``)."""
         columns = ", ".join(_FIELDS)
         self._write([
             ("INSERT INTO folders (folder, key, source, bytes, last_used) VALUES (?, ?, ?, 0, ?)"
@@ -324,7 +368,7 @@ class TxyIndex:
              " last_used = excluded.last_used", (folder, key, source, now)),
             (f"INSERT OR REPLACE INTO shots (folder, {columns}) VALUES ({', '.join('?' * (len(_FIELDS) + 1))})",
              (folder, *astuple(record))),
-            self._bytes(folder)])
+            self._bytes(folder)], fence)
 
     def forget(self, folder: str, record: Provenance) -> bool:
         """Remove ``record``'s row if it is still this one (its TXY's SHA-256 and mtime): another
@@ -344,6 +388,46 @@ class TxyIndex:
         self._write([*statements, self._bytes(folder),
                      ("DELETE FROM folders WHERE folder = ?1 AND NOT EXISTS (SELECT 1 FROM shots WHERE folder = ?1)",
                       (folder,))])
+
+    def set_fence(self, now: float) -> str:
+        """A Clear's first step: a new token (making the table in an index without it), so every
+        conversion started before it writes no TXY from here on; returns it."""
+        token = secrets.token_hex(8)
+        self._write([(FENCE_TABLE, ()),
+                     ("INSERT OR REPLACE INTO fence (one, token, cleared_at) VALUES (1, ?, ?)", (token, now))])
+        return token
+
+    def hold(self, fence: str) -> None:
+        """Take the index's write lock and keep it, while the token is still ``fence`` (else
+        ``Cleared``, the lock let go): a conversion's TXY is renamed into place under it, so a Clear's
+        ``set_fence`` comes either before (and this refuses) or after the rename (and the Clear finds
+        the file). Hold it for the rename alone, then ``release``. Busy past ``BUSY_SECONDS``:
+        ``IndexUnavailable``, nothing held."""
+        if self._held:
+            raise RuntimeError("The index's write lock is already held")
+
+        def take() -> None:
+            self.conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._check_fence(fence)
+            except BaseException:
+                with contextlib.suppress(sqlite3.Error):
+                    self.conn.execute("ROLLBACK")
+                raise
+        try:
+            _patient(self.conn, take)
+        except sqlite3.Error as error:
+            raise IndexUnavailable(f"HeLab's TXY index couldn't be locked ({error})") from error
+        self._held = True
+
+    def release(self) -> None:
+        """Let go of the lock ``hold`` took (nothing was written under it); nothing when none is held."""
+        if not self._held:
+            return
+        self._held = False
+        if self.conn.in_transaction:
+            with contextlib.suppress(sqlite3.Error):
+                self.conn.execute("ROLLBACK")
 
     def vacuum(self) -> None:
         """Give the file back the space of rows removed (SQLite reuses it otherwise, but never shrinks
@@ -468,6 +552,21 @@ def read_shots(root: str, folder: str, *, tag: str = "", shots: Iterable[int] | 
         return {}
     index.close()
     return rows
+
+
+def fence_of(root: str) -> str:
+    """The fence token of the index in ``root`` when a conversion starts (``NO_FENCE`` when there is
+    none or it can't be read: a token set meanwhile, or found later, then refuses its writes, which
+    only means its shots convert again)."""
+    index = open_index(root, write=False)
+    if index is None:
+        return NO_FENCE
+    try:
+        return index.fence()
+    except sqlite3.Error:
+        return NO_FENCE
+    finally:
+        index.close()
 
 
 def index_schema(root: str) -> int | None:

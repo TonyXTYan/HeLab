@@ -17,6 +17,10 @@ raw file, so a listed exception is never just taken on trust:
 - ``empty``: no hits, and the reference is a 0-byte file from a wrapper that writes empty files;
   our profile writes no file, and with ``write_empty_txy`` on we write exactly 0 bytes.
 
+``convert_via_layer`` converts through caching v2's raw layer (``raw_layer``: encoded, packed as a
+``.hlb``, read back and decoded, all in memory), for the sample checker's ``--via-layer``: its output
+must equal ``convert_raw``'s byte for byte.
+
 Qt-free; standard library and NumPy only.
 """
 from __future__ import annotations
@@ -26,7 +30,8 @@ from typing import Any
 
 from helab.convert.pipeline import convert_raw
 from helab.convert.profile import DetectorProfile
-from helab.convert.reconstruct import DEFAULT_BACKEND, NoRowsError
+from helab.convert.reconstruct import DEFAULT_BACKEND, NoRowsError, reconstruct
+from helab.convert.txy import format_txy
 
 ENDED = "(ended)"
 NO_FINAL_NEWLINE = " (no final newline)"
@@ -92,6 +97,16 @@ def prove_fault(fault: ReferenceFault, raw: bytes, reference: bytes, profile: De
         return check_txy(_convert(raw, profile.replace(**fault.changes), backend), reference).identical
     return (reference == b"" and _convert(raw, profile.replace(write_empty_txy=False), backend) is None
             and _convert(raw, profile.replace(write_empty_txy=True), backend) == b"")
+
+
+def convert_via_layer(data: bytes, profile: DetectorProfile, backend: str = DEFAULT_BACKEND) -> bytes | None:
+    """``convert_raw`` of the raw file's layer instead of its text: nothing is written anywhere."""
+    from helab.convert import raw_layer
+    layer, _ = raw_layer.from_hlb(raw_layer.to_hlb(raw_layer.encode(data)))
+    hits = reconstruct(raw_layer.decode(layer), profile, backend)
+    if hits.shape[0] == 0 and not profile.write_empty_txy:
+        return None
+    return format_txy(hits)
 
 
 def _convert(data: bytes, profile: DetectorProfile, backend: str) -> bytes | None:

@@ -10,7 +10,8 @@ from helab.io_ops import helab_txy, stores
 from helab.io_ops.events import AdminResultFields
 from helab.io_ops.infra import Emit, Heartbeat, emit
 from helab.io_ops.markers import _location_path, _root_rows
-from helab.io_ops.stores import (_cache_info, _deadline, _removed_event, _results_removed_event, _store_fields,
+from helab.io_ops.stores import (_cache_info, _deadline, _raw_removed_event, _removal_events, _removed_event,
+                                 _results_removed_event, _store_fields,
                                  _usage)
 
 
@@ -23,7 +24,7 @@ UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs",
                  "convert_prefs", "clear_prefs", "clear_converted_txy", "mark_used",
                  "constants", "presets", "forget_root", "root_same", "clear_root", "clear_results",
-                 "clear_root_results", "adopt_result", "discard_result", "identity")
+                 "clear_root_results", "adopt_result", "discard_result", "identity", "clear_raw")
 
 
 def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
@@ -35,7 +36,7 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     """
     from dataclasses import asdict
     from helab.utils.cache_store import (
-        KINDS, CacheStore, SaveRejected, StoreError, StoreReadOnly, remove_old_caches,
+        KINDS, CacheStore, Kind, SaveRejected, StoreError, StoreReadOnly, remove_old_caches,
     )
     if action not in ADMIN_ACTIONS:
         raise ValueError(f"Unknown cache action: {action}")
@@ -53,8 +54,9 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     if action == "sweep":
         old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
     # A constants or converter-flag write trusts only the volume hints this session verified, like the other local
-    # writes keyed by a source folder (scan history, subfolder status); the other actions name
-    # no source folder.
+    # writes keyed by a source folder (scan history, subfolder status). ``prefs`` (the folder flags)
+    # names a source folder too but trusts every hint, by design (cache-store.md: "flags still trust
+    # every hint"); the other actions name no source folder.
     verified_volumes = params.get("verified_volumes") if action in ("constants", "convert_prefs") else None
     with stores._cache_store(root, local_lane=True, verified_volumes=verified_volumes,
                              offline=bool(cache_options.get("offline"))) as store:
@@ -92,11 +94,17 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                   "still_open": len(swept.still_open), "next_deadline": swept.next_deadline, **_usage(store)})
             return
         elif action == "clear":
-            kinds = tuple(params.get("kinds") or KINDS)
-            unknown = set(kinds) - set(KINDS)
+            # (Kind ``raw``: store-v4's raw layers, cleared with everything when no kinds are named.)
+            asked = tuple(params.get("kinds") or (*KINDS, "raw"))
+            unknown = set(asked) - set(KINDS) - {"raw"}
             if unknown:
                 raise ValueError(f"Unknown cache kinds: {sorted(unknown)}")
-            send(_removed_event(store.remove(kinds)))
+            kinds: tuple[Kind, ...] = tuple(kind for kind in KINDS if kind in asked)
+            if kinds:
+                send(_removed_event(store.remove(kinds)))
+            if "raw" in asked and store.layout >= 4:
+                raw = store.remove_raw()
+                send(_raw_removed_event(None, raw.rows, raw.bytes))
         elif action == "purge":
             cutoff = float(params["cutoff"])
             if params["what"] == "results":
@@ -130,7 +138,8 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 result.update({"adopted": False, "rejected": rejection.reason, "message": str(rejection)})
             else:
                 if adopted.removal is not None:
-                    send(_removed_event(adopted.removal))
+                    for event in _removal_events(adopted.removal):
+                        send(event)
                 result.update({"adopted": adopted.adopted, "path": adopted.path, "bytes": adopted.bytes,
                                "room": None if adopted.room is None else asdict(adopted.room)})
                 if adopted.adopted:
@@ -147,7 +156,8 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 float(params.get("set_at") or time.time()), remove_cached=bool(params.get("remove_cached")))
             send({"kind": "folder_prefs", "path": path, "prefs": saved})
             if flag_removal is not None:
-                send(_removed_event(flag_removal))
+                for event in _removal_events(flag_removal):  # (store-v4: its raw layers too, C2-9.)
+                    send(event)
         elif action == "convert_prefs":
             # The converter's flags for one folder (``write_beside``, Q9.7): set when given, newest
             # choice wins; without it, read. A folder without a data root has none (an error).
@@ -211,10 +221,18 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             result["forgotten"] = location
             if path:
                 send({"kind": "root_changed", "path": path, "location": location, "reason": "forgotten"})
+        elif action == "clear_raw":
+            # The user asked (Settings › Cache's Clear raw pulses, confirmed): every folder's raw layers, or
+            # these folders' (``paths``); store-v4 only. Fenced: a batch being saved can't bring them back.
+            paths = params.get("paths")
+            raw = store.remove_raw(None if paths is None else [str(path) for path in paths])
+            send(_raw_removed_event(raw.paths, raw.rows, raw.bytes))
+            result.update({"raw": raw.rows, "bytes": raw.bytes})
         elif action == "clear_root":
             # Everything cached below one data root on this computer but its saved results (Clear
             # cached analysis, Tony 2026-10-22); roots, flags and marker stay.
-            send(_removed_event(store.clear_root(str(params["uuid"]))))
+            for event in _removal_events(store.clear_root(str(params["uuid"]))):
+                send(event)
         elif action == "clear_root_results":
             # A data root's Clear cached analysis: its saved results only (R2).
             cleared = store.remove_results(root=str(params["uuid"]))
@@ -296,7 +314,9 @@ def _cache_move_step(mover: Any, action: str, app_dir: str, move: dict[str, Any]
         # Only this move's record: a later move's is never touched.
         return record is not None and record.get("id") == move.get("id")
     if action == "move":
-        record = mover.start(move["from"], move["to"], app_dir, move["method"], move.get("id", ""))
+        # (``layout``: the live store's, so it is the move's primary: C2-6. The app sends it.)
+        record = mover.start(move["from"], move["to"], app_dir, move["method"], move.get("id", ""),
+                             move.get("layout"))
         last = [0.0]
 
         def progress(done: int, total: int) -> None:

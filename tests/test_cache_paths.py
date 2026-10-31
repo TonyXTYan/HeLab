@@ -1,6 +1,7 @@
 """Mounted SMB shares keep their cache identity when macOS renumbers volumes."""
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 import sqlite3
 import sys
@@ -12,7 +13,7 @@ import pytest
 
 from helab.utils import cache_paths
 from helab.utils.cache_paths import CachePaths, Mount, UnresolvedRemotePath, _smb_source
-from helab.utils.cache_store import CacheStore, DatasetRecord, Kind
+from helab.utils.cache_store import CacheStore, DatasetRecord, Kind, SaveRejected
 
 RECORD_KINDS: tuple[Kind, ...] = ("summaries", "histories", "subtrees")
 # macOS mount sources carry the SMB account (//user@host/share); on Windows that shape is a
@@ -61,7 +62,7 @@ def test_share_keys_survive_suffix_swap_and_isolate_all_cache_kinds(tmp_path: Pa
         pending_guard = store.start_dataset_job(c_before)
         pending_file = store.write_dataset_file(b"new cached bytes")
         pending_id = store.add_pending(c_before, pending_file, record, pending_guard, "over_budget")
-        with sqlite3.connect(store.database) as conn:
+        with contextlib.closing(sqlite3.connect(store.database)) as conn, conn:
             assert conn.execute("SELECT path FROM datasets").fetchone()[0] == first.key(c_before)
 
     with opened(root, later) as store:
@@ -122,7 +123,7 @@ def test_guard_from_old_share_cannot_save_history_to_reused_mount_path(tmp_path:
     with opened(root, mounts("-1", "-2")) as store:
         guard = store.guard([path], ("histories",))
     with opened(root, mounts("-2", "-1")) as store:
-        with pytest.raises(ValueError, match="save guard doesn't cover"):
+        with pytest.raises(SaveRejected, match="data root changed"):
             store.save_record("histories", path, {"blocked": True}, guard)
         assert store.read_record("histories", path).missing
 
@@ -141,7 +142,7 @@ def test_purge_uses_stored_key_after_share_mounts_at_literal_path(tmp_path: Path
         store.save_record("summaries", path, {"owner": "mounted"}, guard)
         store.purge_records(time.time() - 1800)
         assert store.read_record("summaries", path).value == {"owner": "mounted"}
-        with sqlite3.connect(store.database) as conn:
+        with contextlib.closing(sqlite3.connect(store.database)) as conn, conn:
             keys = {key for (key,) in conn.execute("SELECT path FROM folder_summaries")}
         assert keys == {mounts("-1", "-2").key(path)}
 
@@ -253,7 +254,7 @@ def test_helper_listing_uses_root_key_and_returns_source_path(
     root = str(tmp_path / "store-v2")
     with stores._cache_store(root, [str(child)]) as store:
         store.set_prefs(str(child), True, True, time.time())
-        with sqlite3.connect(store.database) as conn:
+        with contextlib.closing(sqlite3.connect(store.database)) as conn, conn:
             root_record = store.root_at("smb://example-server/share")
             assert root_record is not None
             assert conn.execute("SELECT path FROM folder_prefs").fetchone()[0] == (

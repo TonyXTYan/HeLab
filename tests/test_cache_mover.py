@@ -676,3 +676,18 @@ def test_a_real_move_with_real_helpers(qtbot: QtBot, tmp_path: Path) -> None:
         mover.detach()
         service.shutdown()
         time.sleep(0.1)
+
+
+@pytest.mark.parametrize("layout", [3, 4])
+def test_the_move_names_the_live_stores_layout(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+                                               layout: int) -> None:
+    """C2-6 (Assay): the move's helper is told which store is live (``cache_store.live_layout()``), so that
+    store is the move's primary even when another layout's store is in the folder too."""
+    from helab.utils import cache_store
+    cache_store._reset_live_layout(layout)
+    run = Run(qtbot, monkeypatch, tmp_path)
+    try:
+        assert run.checked().payload["move"]["layout"] == layout
+    finally:
+        run.close()
+        cache_store._reset_live_layout()

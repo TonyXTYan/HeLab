@@ -1,6 +1,7 @@
 """D1: marker identities and an isolated root-keyed store, without runtime wiring."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -87,7 +88,7 @@ def test_nested_markers_nearest_wins_and_store_uses_root_keys(tmp_path: Path) ->
         store.save_record("summaries", outer_run, {"root": "outer"}, guard)
         store.save_record("summaries", inner_run, {"root": "inner"}, guard)
         assert store.read_record("summaries", inner_run).value == {"root": "inner"}
-        with sqlite3.connect(store.database) as conn:
+        with contextlib.closing(sqlite3.connect(store.database)) as conn, conn:
             assert {row[0] for row in conn.execute("SELECT path FROM folder_summaries")} == {
                 f"root://{first.uuid}/other/run", f"root://{second.uuid}/run"}
 
@@ -127,7 +128,7 @@ def test_no_marker_refuses_reads_and_writes(tmp_path: Path) -> None:
             store.read_record("summaries", source)
         with pytest.raises((NoDataRoot, UnresolvedRemotePath)):
             store.guard([source], ["summaries"])
-        with sqlite3.connect(store.database) as conn:
+        with contextlib.closing(sqlite3.connect(store.database)) as conn, conn:
             assert conn.execute("SELECT COUNT(*) FROM folder_summaries").fetchone()[0] == 0
             assert conn.execute("SELECT COUNT(*) FROM folder_epochs").fetchone()[0] == 0
 
@@ -259,7 +260,7 @@ def test_old_store_is_preserved_and_not_opened_as_root_store(tmp_path: Path) -> 
         store.save_record("summaries", "old", {"old": True},
                           store.guard(["old"], ["summaries"]))
         database = store.database
-    with sqlite3.connect(database) as conn:
+    with contextlib.closing(sqlite3.connect(database)) as conn, conn:
         conn.execute("UPDATE meta SET value='2' WHERE key='layout_version'")
     with pytest.raises(StoreError, match="unsupported layout version"):
         CacheStore(str(old), root_mode=True)

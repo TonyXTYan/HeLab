@@ -268,6 +268,47 @@ def test_a_nested_roots_rekey_moves_results(tmp_path: Path) -> None:
 
 
 @pytest.mark.no_auto_data_root
+def test_a_save_whose_guard_names_a_rekeyed_folder_is_rejected_and_its_file_retired(tmp_path: Path) -> None:
+    """cache-5: a nested root found between a job's guard and its save re-keys the folder; the save
+    (a result's, a dataset's, a pending one's) is a clean rejection, not a raw error, and its
+    published file is retired at once rather than left for the orphan sweep."""
+    old, new = f"root://{A}/inner/run", f"root://{B}/run"
+    with CacheStore(str(tmp_path / "store")) as store:
+        result_guard, dataset_guard = store.start_result_job(old), store.start_dataset_job(old)
+        store.rekey_subtree(f"root://{A}/inner", f"root://{B}")
+        result_file = store.write_result_file(packed())
+        with pytest.raises(SaveRejected) as result:
+            store.save_result(new, "k1", "f1", {}, result_file, result_guard, analysis_id="a", action="Plot",
+                              computed_at=1.0)
+        record: DatasetRecord = {"ram_bytes": 1, "rows": 1, "shots": 1, "fingerprint": [], "problematic": [],
+                                 "info": {}}
+        dataset_file = store.write_dataset_file(b"data")
+        with pytest.raises(SaveRejected) as saved:
+            store.save_dataset(new, dataset_file, record, dataset_guard)
+        pending_file = store.write_dataset_file(b"pending")
+        with pytest.raises(SaveRejected) as pending:
+            store.add_pending(new, pending_file, record, dataset_guard, "over_budget")
+        for rejection in (result, saved, pending):
+            assert rejection.value.reason == "cleared" and str(rejection.value) == cache_store.REKEYED
+        retired = {row[0] for row in store._conn.execute("SELECT file FROM retired_files")}
+        assert {result_file, dataset_file, pending_file} <= retired
+        assert store.find_result(new, "k1").missing and store.read_dataset_row(new).missing
+
+
+def test_the_helpers_result_save_after_a_rekey_is_not_saved_not_an_error(tmp_path: Path) -> None:
+    """cache-5 through ``result_save``: the plot gets ``result_not_saved`` (reason "cleared"), not a
+    helper error with the store's internal text."""
+    folder = tmp_path / "data" / "run"
+    folder.mkdir(parents=True)
+    cache = options(tmp_path)
+    guard = find(tmp_path, folder, cache)[-1]["guard"]
+    guard = {**guard, "epochs": {f"results:root://{B}/elsewhere": 0}}  # (Names another key than the folder's.)
+    refused = save_through_helper(tmp_path, folder, cache, guard)[-1]
+    assert refused["kind"] == "result_not_saved" and refused["reason"] == "cleared"
+    assert refused["message"] == cache_store.REKEYED
+
+
+@pytest.mark.no_auto_data_root
 def test_root_usage_and_inventory_show_results_apart(tmp_path: Path) -> None:
     with CacheStore(str(tmp_path / "store")) as store:
         dataset(store)

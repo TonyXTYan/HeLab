@@ -32,6 +32,7 @@ from helab.utils import cache_move
 from helab.utils.accessible import identify, identify_buttons
 from helab.utils.cache_locks import FileLock, lock_for_move
 from helab.utils.cache_setting import write_cache_setting
+from helab.utils.cache_store import live_layout
 from helab.utils.constants import app_folder, cache_dir, set_cache_dir
 from helab.utils.settings_defaults import DIR_CACHES_SETTING
 from helab.utils.folder_cache import FolderCache
@@ -112,8 +113,9 @@ class CacheMover(QObject):
         """Each step is its own request (a new generation: the previous one may not have exited
         yet). ``after_move``: the move's own key, so it starts only once the stopped move
         helper's exit is confirmed (a retry never runs beside the attempt it replaces)."""
+        # (``layout``: the live store's, so the move keys on it even beside another layout's: C2-6.)
         move = {"action": action, "from": self.source, "to": self.target, "app_dir": self.app_dir,
-                "method": self.method, "id": self.move_id, "token": self.move_id, **extra}
+                "method": self.method, "id": self.move_id, "token": self.move_id, "layout": live_layout(), **extra}
         if not after_move:
             self._generation += 1
         if action == "move":

@@ -14,18 +14,22 @@ and the reasons behind them: ``roadmaps/cache-storage-and-settings.md``.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 from dataclasses import dataclass, field
 import json
 import math
 import os
 import pathlib
 import sqlite3
+import stat
 import time
 from typing import (Any, Callable, Generator, Generic, Iterable, Literal, Mapping, NotRequired, Sequence, TypeVar,
                     TypedDict, cast)
 import uuid
 
 from helab.io_ops.events import PresetRowFields, ResultCountField, UsageFields
+from helab.utils import store_v4
+from helab.utils.legacy_store import LegacyStore, LegacyUnavailable
 
 LAYOUT_VERSION = 3
 STORE_DIRNAME = "store-v3"
@@ -166,6 +170,20 @@ def _results_root_epoch(key: str) -> str | None:
     return f"root-results-clear://{key[7:].partition('/')[0]}" if key.startswith("root://") else None
 
 
+# A ``folder_epochs`` row store-v4 writes when a save deletes a record (``<prefix><kind>:<key>``): no guard
+# reads it; it only stops store-v3's row being read through again (C2-1).
+_LEGACY_HIDDEN = "legacy-hidden:"
+
+
+def _raw_epoch(key: str) -> str:
+    """The ``folder_epochs`` row a removal of one folder's raw layers bumps (``raw:<key>``, store-v4)."""
+    return f"raw:{key}"
+
+
+_RAW_COLUMNS = ("path, shot, name, size, mtime_ns, sha256, parser, encoding, facts, pulses, file, bytes, seen_at, "
+                "gone_at, maker, job_seq, saved_at, last_used")
+
+
 def _results_epoch(key: str) -> str:
     """The ``folder_epochs`` row a removal of one folder's results bumps (``results:<key>``): a
     dataset removal of the folder bumps the folder's own row, which result saves don't check."""
@@ -181,6 +199,9 @@ class StoreReadOnly(StoreError):
 
 
 NOT_CACHED = "Not cached: your choice"
+# A save whose guard names another key than the folder's now (a nested root re-keyed it, or a mount
+# path resolves to another share): rejected as "cleared", never re-guarded under the new key.
+REKEYED = "The folder's data root changed before saving completed"
 
 
 class SaveRejected(Exception):
@@ -267,11 +288,17 @@ class DatasetInfo(TypedDict):
 
 @dataclass(frozen=True)
 class Removal:
-    """What one removal did. ``paths`` is None for a removal by kind (every path)."""
+    """What one removal did. ``paths`` is None for a removal by kind (every path). In store-v4 it may
+    also take raw layers (Make room, a root's Clear): their folders (``raw_paths``; ``only_copy_paths``
+    for those whose raw files were gone at the last look) and bytes."""
     kinds: tuple[Kind, ...]
     paths: tuple[str, ...] | None
     datasets: int = 0
     dataset_bytes: int = 0
+    raw_paths: tuple[str, ...] = ()
+    only_copy_paths: tuple[str, ...] = ()
+    raw_rows: int = 0
+    raw_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -306,10 +333,12 @@ class ResultRow(TypedDict):
 
 @dataclass(frozen=True)
 class ResultFound:
-    """A saved result found: its row and data file's bytes; ``exact`` False for an outdated one."""
+    """A saved result found: its row and data file's bytes; ``exact`` False for an outdated one;
+    ``legacy``: read from store-v3 under Keep (store-v4 had none; its ``result_id`` is v3's)."""
     row: ResultRow
     data: bytes
     exact: bool
+    legacy: bool = False
 
 
 @dataclass(frozen=True)
@@ -400,13 +429,108 @@ class SaveResult:
 
 @dataclass(frozen=True)
 class RoomPlan:
-    """What Make room removes for a pending save: other folders' datasets, least recently used first."""
+    """What Make room removes for a pending save: other folders' datasets, least recently used first;
+    in store-v4 then other folders' raw layers whose files were still there, then those that are the
+    only copy (D8). ``bytes`` is the datasets'; ``raw_bytes`` the raw layers'."""
     paths: tuple[str, ...]
     bytes: int
     oldest_last_used: float | None
     newest_last_used: float | None
     # False: the folder alone is bigger than the budget, so nothing can make room.
     possible: bool
+    raw_paths: tuple[str, ...] = ()
+    only_copy_paths: tuple[str, ...] = ()
+    raw_bytes: int = 0
+
+    @property
+    def items(self) -> tuple[str, ...]:
+        """Everything the plan removes, as ``adopt_pending``'s ``expected_room`` names it: a folder's
+        dataset by its path, its raw layer as ``raw:<path>``, an only copy as ``raw-only:<path>``."""
+        return room_items(self.paths, self.raw_paths, self.only_copy_paths)
+
+
+def room_items(paths: Sequence[str], raw_paths: Sequence[str] = (), only_copy: Sequence[str] = ()) -> tuple[str, ...]:
+    return (*paths, *(RAW_ITEM + path for path in raw_paths), *(ONLY_COPY_ITEM + path for path in only_copy))
+
+
+RAW_ITEM, ONLY_COPY_ITEM = "raw:", "raw-only:"
+
+
+@dataclass(frozen=True)
+class RawEntry:
+    """One raw file's layer to save (``write_raw_file`` published its ``.hlb``): its shot and name, the
+    fingerprint and SHA-256 of the bytes read, the parser and encoding, the facts and pulse count."""
+    shot: int
+    name: str
+    size: int
+    mtime_ns: int
+    sha256: str
+    parser: int
+    encoding: str
+    facts: Mapping[str, Any]
+    pulses: int
+    file: str
+    # When its file was read (this computer's clock): the evidence the file was there then (C2-10).
+    # None: the save's time.
+    read_at: float | None = None
+
+
+@dataclass(frozen=True)
+class RawRow:
+    """A ``raw_layers`` row."""
+    path: str
+    shot: int
+    name: str
+    size: int
+    mtime_ns: int
+    sha256: str
+    parser: int
+    encoding: str
+    facts: dict[str, Any]
+    pulses: int
+    file: str
+    bytes: int
+    seen_at: float
+    gone_at: float | None
+    maker: str
+    job_seq: int
+    saved_at: float
+    last_used: float
+
+
+@dataclass(frozen=True)
+class RawOverwrite:
+    """A raw file overwritten in place since HeLab cached it (Q22.5, Q28.6): the shot, its file's name,
+    and the old and new (size, mtime_ns, sha256)."""
+    shot: int
+    name: str
+    old: tuple[int, int, str]
+    new: tuple[int, int, str]
+
+
+@dataclass(frozen=True)
+class RawSave:
+    """One raw batch's save: the shots ``saved`` (new or replaced), ``kept`` (the same file already
+    cached), ``refused`` (a job that listed the folder later saved another version), ``overwritten``
+    (raw files changed in place), or nothing at all when it didn't fit (``reason`` ``over_budget``:
+    never a pending save, T~1). With usage after it, in the store's write order."""
+    saved: tuple[int, ...]
+    kept: tuple[int, ...]
+    refused: tuple[int, ...]
+    overwritten: tuple[RawOverwrite, ...]
+    reason: str
+    bytes: int
+    usage: int
+    usage_seq: int
+    budget: int | None
+
+
+@dataclass(frozen=True)
+class RawRemoval:
+    """What a removal of raw layers did: the folders (None: every one), rows and bytes."""
+    paths: tuple[str, ...] | None
+    rows: int
+    bytes: int
 
 
 @dataclass(frozen=True)
@@ -429,8 +553,43 @@ class Sweep:
     next_deadline: float | None = None
 
 
+# The live store's layout in this process (caching v2's switch, Q28.3): read once, at the first
+# ``store_root``, from the ``store_v4`` settings row; never again, so a running HeLab never changes
+# store under its helpers. Helpers never read it: they open the folder they are sent.
+_live_layout: int | None = None
+
+
+def live_layout() -> int:
+    global _live_layout
+    if _live_layout is None:
+        from helab.utils.cache_setting import store_v4_enabled
+        from helab.utils.settings_store import app_settings
+        _live_layout = store_v4.LAYOUT if store_v4_enabled(app_settings()) else LAYOUT_VERSION
+    return _live_layout
+
+
+def _reset_live_layout(layout: int | None = None) -> None:
+    """Tests: the layout the next ``store_root`` uses (None: read the setting again)."""
+    global _live_layout
+    _live_layout = layout
+
+
 def store_root(caches_dir: str) -> str:
-    return os.path.join(caches_dir, STORE_DIRNAME)
+    """The live store's folder in the cache folder: store-v3, or store-v4 with the switch on. Under v4
+    this process's session maker goes into its environment first, for the helpers it starts."""
+    layout = live_layout()
+    if layout >= store_v4.LAYOUT:
+        store_v4.session_maker()
+    return store_root_for(caches_dir, layout)
+
+
+def store_root_for(caches_dir: str, layout: int) -> str:
+    return os.path.join(caches_dir, store_v4.DIRNAME if layout >= store_v4.LAYOUT else STORE_DIRNAME)
+
+
+def layout_of(root: str) -> int:
+    """A store folder's layout, from its name: ``store-v4`` is layout 4, anything else 3."""
+    return store_v4.LAYOUT if os.path.basename(os.path.normpath(root)) == store_v4.DIRNAME else LAYOUT_VERSION
 
 
 def remove_old_caches(caches_dir: str, progress: Callable[[], None] = lambda: None) -> list[str]:
@@ -501,7 +660,7 @@ class CacheStore:
     def __init__(self, root: str, *, busy_timeout: float | None = None,
                  path_key: Callable[[str], str] | None = None,
                  source_path: Callable[[str], str] | None = None,
-                 root_mode: bool = False) -> None:
+                 root_mode: bool = False, maker: dict[str, Any] | None = None) -> None:
         busy_timeout = BUSY_TIMEOUT if busy_timeout is None else busy_timeout
         self._busy_timeout = busy_timeout
         self.root = root
@@ -510,9 +669,15 @@ class CacheStore:
         self._location_key: Callable[[str], str] = lambda path: path
         # A root location's folder on this computer now, or the location itself if not mounted.
         self._location_source: Callable[[str], str] = lambda location: location
-        self._expected_layout = ROOT_LAYOUT_VERSION if root_mode else LAYOUT_VERSION
+        # The layout is the folder's: store-v3 or store-v4 (caching v2, ``store_v4``).
+        self.layout = layout_of(root)
+        self._expected_layout = self.layout
         self._root_mode = root_mode
+        self._maker = maker
+        self._legacy: LegacyStore | None = None
+        self._legacy_tried = False
         self.datasets_dir = os.path.join(root, "datasets")
+        self.raw_dir = os.path.join(root, store_v4.RAW_DIRNAME)
         self.results_dir = os.path.join(root, RESULTS_DIRNAME)
         self.database = os.path.join(root, "records.sqlite")
         self.read_only = False
@@ -569,15 +734,20 @@ class CacheStore:
             probe = self._connect(busy_timeout, read_only=True)
             try:
                 version = _layout_version(probe)
+                # (A store-v4 of a newer format: read, never rewritten.)
+                newer_format = version == store_v4.LAYOUT and _store_format(probe) > store_v4.FORMAT
             finally:
                 probe.close()
-            if version is not None and version > self._expected_layout:
+            if version is not None and version > self._expected_layout or (
+                    version == self._expected_layout and newer_format):
                 self.read_only = True
                 return self._connect(busy_timeout, read_only=True)
             if version is not None and version < self._expected_layout:
                 raise sqlite3.DatabaseError(f"unsupported layout version {version}")
         os.makedirs(self.datasets_dir, exist_ok=True)
         os.makedirs(self.results_dir, exist_ok=True)
+        if self.layout >= store_v4.LAYOUT:
+            os.makedirs(self.raw_dir, exist_ok=True)
         conn = self._connect(busy_timeout, read_only=False)
         try:
             if _layout_version(conn) is None:
@@ -590,9 +760,13 @@ class CacheStore:
                     for statement in ROOT_SCHEMA.split(";"):
                         if statement.strip():
                             conn.execute(statement)
+                    if self.layout >= store_v4.LAYOUT:
+                        for statement in store_v4.SCHEMA:
+                            conn.execute(statement)
                     defaults: dict[str, object] = {
                         "layout_version": self._expected_layout, "store_id": uuid.uuid4().hex, "created_at": time.time(),
-                        **{f"gen_{kind}": 0 for kind in KINDS}, "gen_results": 0}
+                        **{f"gen_{kind}": 0 for kind in KINDS}, "gen_results": 0,
+                        **(store_v4.META_DEFAULTS if self.layout >= store_v4.LAYOUT else {})}
                     # Another helper may have created it meanwhile: keep its values.
                     conn.executemany("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
                                      [(key, _dumps(value)) for key, value in defaults.items()])
@@ -604,13 +778,90 @@ class CacheStore:
             if version != self._expected_layout:
                 raise sqlite3.DatabaseError(f"unsupported layout version {version}")
             _migrate(conn)
+            if self.layout >= store_v4.LAYOUT:
+                store_v4.migrate(conn)
+                # The user's own state in store-v3, once (Q22.4; v3 read only, through LegacyStore).
+                store_v4.import_legacy(conn, self.legacy_root, time.time())
         except BaseException:
             conn.close()
             raise
         return conn
 
     def close(self) -> None:
+        if self._legacy is not None:
+            self._legacy.close()
+            self._legacy = None
         self._conn.close()
+
+    # store-v3 beside a store-v4 (caching v2): read only, through LegacyStore alone.
+
+    @property
+    def legacy_root(self) -> str:
+        from helab.utils.legacy_store import legacy_root
+        return legacy_root(self.root)
+
+    def _kept_legacy(self) -> LegacyStore | None:
+        """store-v3, read only, while it is kept (Keep, or not answered yet: Q22.3); None under v3
+        itself, after Ignore or Clear, or when there is none or it can't be read now."""
+        if self.layout < store_v4.LAYOUT:
+            return None
+        if store_v4.legacy_choice(self._meta()) not in (None, "keep"):
+            return None
+        if self._legacy is None and not self._legacy_tried:
+            self._legacy_tried = True
+            from helab.utils.legacy_store import present
+            if present(self.legacy_root):
+                with contextlib.suppress(LegacyUnavailable):
+                    self._legacy = LegacyStore(self.legacy_root)
+        return self._legacy
+
+    def _legacy_hidden(self, kind: str, key: str) -> bool:
+        """Whether store-v4 has removed ``kind`` (a record kind, or ``results``) for ``key`` since it was
+        made, so store-v3's row must not be read through (C2-1): the kind's generation, the key's epoch
+        or its root's moved, or a save deleted the row (a tombstone, ``_LEGACY_HIDDEN``). (Inside a
+        transaction.)"""
+        meta = self._meta()
+        results = kind == "results"
+        if int(meta.get("gen_results" if results else f"gen_{kind}", 0)):
+            return True
+        epoch = _results_epoch(key) if results else store_v4.epoch_key(self.layout, kind, key)
+        root = _results_root_epoch(key) if results else _root_epoch(key)
+        return bool(self._epoch(epoch) or (root is not None and self._epoch(root))
+                    or self._epoch(f"{_LEGACY_HIDDEN}{kind}:{key}"))
+
+    def _legacy_purged(self, kind: str) -> tuple[float | None, float | None]:
+        """The purges by age of ``kind`` in store-v4: the latest cutoff, and the latest of those that took
+        scan histories with failures too (C2-7); store-v3's rows from before them are hidden too."""
+        found = self._meta().get("legacy_purged")
+        entry = found.get(kind) if isinstance(found, dict) else None
+        if not isinstance(entry, list) or len(entry) != 2 or not isinstance(entry[0], (int, float)):
+            return None, None
+        failures = entry[1]
+        return float(entry[0]), float(failures) if isinstance(failures, (int, float)) and not isinstance(
+            failures, bool) else None
+
+    def _note_purge(self, kind: str, cutoff: float, include_failures: bool = False) -> None:
+        """Record a purge by age (inside its transaction) while store-v3 may be read through: each of the
+        two cutoffs only ever grows."""
+        if self.layout < store_v4.LAYOUT:
+            return
+        found = self._meta().get("legacy_purged")
+        purged = dict(found) if isinstance(found, dict) else {}
+        before, failures = self._legacy_purged(kind)
+        latest = cutoff if before is None else max(before, cutoff)
+        if include_failures:
+            failures = cutoff if failures is None else max(failures, cutoff)
+        purged[kind] = [latest, failures]
+        self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_purged', ?)", (_dumps(purged),))
+
+    def _maker_id(self) -> str:
+        """In store-v4, this session's maker row (written inside the caller's write transaction) and
+        its id; "" in store-v3, which keeps none."""
+        if self.layout < store_v4.LAYOUT:
+            return ""
+        if self._maker is None:
+            self._maker = store_v4.session_maker()
+        return store_v4.ensure_maker(self._conn, self._maker)
 
     def __enter__(self) -> CacheStore:
         return self
@@ -695,6 +946,8 @@ class CacheStore:
         """A listing saw that this folder no longer contains its marker."""
         with self.transaction():
             self._conn.execute("DELETE FROM roots WHERE location=?", (location,))
+            if self.layout >= store_v4.LAYOUT:
+                store_v4.note_forgotten(self._conn, [location])  # (Not brought back by a later import: C2-5.)
 
     def forget_root_tree(self, locations: list[str], identifier: str) -> list[str]:
         """Its marker was deleted: forget these locations of ``identifier`` and its locations below
@@ -705,6 +958,8 @@ class CacheStore:
             gone = [location for location in rows if any(
                 location == top or location.startswith(top.rstrip("/") + "/") for top in locations)]
             self._conn.executemany("DELETE FROM roots WHERE location=?", [(location,) for location in gone])
+            if self.layout >= store_v4.LAYOUT:
+                store_v4.note_forgotten(self._conn, gone)  # (Not brought back by a later import: C2-5.)
         return gone
 
     def confirm_root(self, location: str, identifier: str) -> bool:
@@ -947,6 +1202,13 @@ class CacheStore:
                 self._conn.execute("INSERT OR REPLACE INTO folder_prefs (path, no_cache, no_auto_load, set_at) "
                                    "VALUES (?, ?, ?, ?)", (path, int(no_cache), int(no_auto_load), set_at))
                 removal = self.remove(("datasets",), [path], _stored_keys=True) if remove_cached and no_cache else None
+                if removal is not None and self.layout >= store_v4.LAYOUT:
+                    # store-v4: its raw layers whose files were seen go too; an only copy stays, since nothing
+                    # named it to the user (C2-9, Q22.6; step 6's dialog may name and offer them).
+                    keys, count, size = self._remove_raw_rows(" WHERE path = ? AND gone_at IS NULL", (path,),
+                                                              time.time())
+                    removal = dataclasses.replace(removal, raw_paths=tuple(self._source_path(key) for key in keys),
+                                                  raw_rows=count, raw_bytes=size)
                 return {"no_cache": no_cache, "no_auto_load": no_auto_load, "set_at": set_at}, removal
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
@@ -1127,7 +1389,7 @@ class CacheStore:
         try:
             with self.transaction(write=False):
                 meta = self._meta()
-                epochs = {path: self._epoch(path) for path in paths}
+                epochs = {key: self._epoch(key) for path in paths for key in self._epoch_keys(kinds, path)}
                 epochs.update({root: self._epoch(root) for path in paths if (root := _root_epoch(path))})
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be read: {exc}") from exc
@@ -1148,6 +1410,7 @@ class CacheStore:
                 epoch, job_seq = self._conn.execute(
                     "SELECT epoch, job_seq FROM folder_epochs WHERE path = ?", (path,)).fetchone()
                 epochs = {path: int(epoch)}
+                epochs.update({key: self._epoch(key) for key in self._epoch_keys(kinds, path)})
                 if root := _root_epoch(path):
                     epochs[root] = self._epoch(root)
                 meta = self._meta()
@@ -1155,22 +1418,30 @@ class CacheStore:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
         return SaveGuard({kind: int(meta[f"gen_{kind}"]) for kind in kinds}, epochs, int(job_seq))
 
+    def _epoch_keys(self, kinds: Iterable[Kind], path: str) -> list[str]:
+        """The ``folder_epochs`` rows ``kinds`` of ``path`` use: the folder's own in store-v3, and per kind
+        for records in store-v4 (cache-2: ``store_v4.epoch_key``)."""
+        return list(dict.fromkeys(store_v4.epoch_key(self.layout, kind, path) for kind in kinds))
+
     def _epoch(self, path: str) -> int:
         row = self._conn.execute("SELECT epoch FROM folder_epochs WHERE path = ?", (path,)).fetchone()
         return int(row[0]) if row else 0
 
     def _guard_holds(self, guard: SaveGuard, kind: Kind, path: str) -> bool:
-        if kind not in guard.generations or path not in guard.epochs:
+        epoch = store_v4.epoch_key(self.layout, kind, path)
+        if kind not in guard.generations or epoch not in guard.epochs:
             # A delayed write may have re-resolved a local mount path to a
-            # different SMB share. Never replace the original keyed guard with
-            # a fresh one: that would let the old outcome write to the new share.
-            raise ValueError(f"The save guard doesn't cover {kind} for {path}")
+            # different SMB share, or a nested root re-keyed the folder since the
+            # guard was taken. Never replace the original keyed guard with a fresh
+            # one: that would let the old outcome write under the new key. Rejected
+            # like a Clear, so a published file is retired at once (cache-5).
+            raise SaveRejected("cleared", REKEYED)
         meta = self._meta()
         # A data root's Clear cached data bumps its root epoch: a guard taken before it (or one
         # without it) no longer holds for any folder below that root.
         root = _root_epoch(path)
         return (int(meta[f"gen_{kind}"]) == guard.generations[kind]
-                and self._epoch(path) == guard.epochs[path]
+                and self._epoch(epoch) == guard.epochs[epoch]
                 and (root is None or self._epoch(root) == guard.epochs.get(root, 0)))
 
     def _check(self, guard: SaveGuard, kind: Kind, path: str) -> None:
@@ -1200,19 +1471,35 @@ class CacheStore:
         except (sqlite3.Error, StoreError) as exc:
             failure = _error(f"Disk cache could not be read: {exc}")
             return {path: failure for path in unique}
+        missing = [key for key in keys if key not in rows]
+        legacy = self._kept_legacy() if missing else None
+        unread: Read[dict[str, Any]] | None = None
+        if legacy is not None:
+            # Keep (Q22.3): what store-v4 has no row for and never removed (C2-1), store-v3 may have.
+            try:
+                with self.transaction(write=False):
+                    missing = [key for key in missing if not self._legacy_hidden(kind, key)]
+                    before, failures = self._legacy_purged(kind)
+                rows.update(legacy.records(table, missing, before=before,
+                                           failures_before=failures if kind == "histories" else before))
+            except LegacyUnavailable as exc:
+                unread = _error(f"Disk cache could not be read: {exc}")  # (Never "nothing saved".)
+            except sqlite3.Error as exc:
+                unread = _error(f"Disk cache could not be read: {exc}")
         result: dict[str, Read[dict[str, Any]]] = {}
         for path in unique:
             key = self._path_key(path)
-            if key not in rows:
-                result[path] = _missing()
-                continue
-            try:
-                value = json.loads(rows[key])
-            except ValueError as exc:
-                result[path] = _error(f"Saved {kind} record is unreadable: {exc}")
-                continue
-            result[path] = _found(value) if isinstance(value, dict) else _error(f"Saved {kind} record is not an object")
+            result[path] = (self._record_answer(kind, rows[key]) if key in rows
+                            else unread if unread is not None else _missing())
         return result
+
+    @staticmethod
+    def _record_answer(kind: Kind, text: str) -> Read[dict[str, Any]]:
+        try:
+            value = json.loads(text)
+        except ValueError as exc:
+            return _error(f"Saved {kind} record is unreadable: {exc}")
+        return _found(value) if isinstance(value, dict) else _error(f"Saved {kind} record is not an object")
 
     def save_record(self, kind: Kind, path: str, record: Mapping[str, Any] | None, guard: SaveGuard, *,
                     saved_at: float | None = None) -> None:
@@ -1257,6 +1544,10 @@ class CacheStore:
                     self._check(guard, kind, path)
                     if record is None:
                         self._conn.execute(f"DELETE FROM {table} WHERE path = ?", (path,))
+                        if self.layout >= store_v4.LAYOUT:  # (store-v3's row isn't read through after it: C2-1.)
+                            self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT "
+                                               "(path) DO UPDATE SET epoch = epoch + 1",
+                                               (f"{_LEGACY_HIDDEN}{kind}:{path}",))
                     elif kind == "summaries":
                         self._conn.execute(
                             "INSERT OR REPLACE INTO folder_summaries (path, record, identity, saved_at) "
@@ -1389,6 +1680,8 @@ class CacheStore:
             (path, file, size, int(record["ram_bytes"]), int(record["rows"]), int(record["shots"]),
              _dumps(record["fingerprint"]), _dumps(record["problematic"]), _dumps(info), now, job_seq,
              _dumps(record.get("raw_times", []))))
+        if self.layout >= store_v4.LAYOUT:  # (Which session made it, Q28.4.)
+            self._conn.execute("UPDATE datasets SET maker = ? WHERE path = ?", (self._maker_id(), path))
         if previous and previous[0] != file:
             self._retire(previous[0], now)
 
@@ -1510,8 +1803,25 @@ class CacheStore:
                     if self._live() <= budget:
                         break
                     removed.append(self.remove(("datasets",), [other], _stored_keys=True))
+                # store-v4 (D8): then other folders' raw layers whose files were there at the last look
+                # (re-readable from the share), least recently used folder first; then only copies.
+                for only_copy in (False, True) if self.layout >= store_v4.LAYOUT else ():
+                    gone = "IS NOT NULL" if only_copy else "IS NULL"
+                    for (other,) in self._conn.execute(
+                            f"SELECT path FROM raw_layers WHERE gone_at {gone} AND path != ? GROUP BY path "
+                            "ORDER BY MAX(last_used), path", (path,)).fetchall():
+                        if self._live() <= budget:
+                            break
+                        keys, count, size = self._remove_raw_rows(f" WHERE path = ? AND gone_at {gone}", (other,),
+                                                                  time.time())
+                        folder = (self._source_path(str(other)),)
+                        removed.append(Removal((), (), raw_paths=() if only_copy else folder,
+                                               only_copy_paths=folder if only_copy else (), raw_rows=count,
+                                               raw_bytes=size))
             fits = budget is None or self._live() <= budget
-            planned = {other for item in removed for other in item.paths or ()}
+            planned = set(room_items([other for item in removed for other in item.paths or ()],
+                                     [other for item in removed for other in item.raw_paths],
+                                     [other for item in removed for other in item.only_copy_paths]))
             if expected is not None and make_room and planned != set(expected):
                 fits = False  # Not what the user agreed to remove: nothing is.
         except BaseException:
@@ -1523,7 +1833,10 @@ class CacheStore:
         self._conn.execute("RELEASE adopt_fit")
         removal = None if not removed else Removal(
             ("datasets",), tuple(other for item in removed for other in item.paths or ()),
-            sum(item.datasets for item in removed), sum(item.dataset_bytes for item in removed))
+            sum(item.datasets for item in removed), sum(item.dataset_bytes for item in removed),
+            tuple(other for item in removed for other in item.raw_paths),
+            tuple(other for item in removed for other in item.only_copy_paths),
+            sum(item.raw_rows for item in removed), sum(item.raw_bytes for item in removed))
         return fits, removal
 
     def _room_plan(self, pending_id: str, budget: int) -> RoomPlan:
@@ -1534,8 +1847,12 @@ class CacheStore:
         # mounted path. Match stored rows through the display mapping, never re-key it.
         used = [] if not paths else [float(last_used) for key, last_used in self._conn.execute(
             "SELECT path, last_used FROM datasets") if self._source_path(str(key)) in paths]
-        return RoomPlan(paths, 0 if removal is None or not fits else removal.dataset_bytes,
-                        min(used, default=None), max(used, default=None), fits)
+        planned = removal is not None and fits
+        return RoomPlan(paths, removal.dataset_bytes if planned and removal else 0,
+                        min(used, default=None), max(used, default=None), fits,
+                        removal.raw_paths if planned and removal else (),
+                        removal.only_copy_paths if planned and removal else (),
+                        removal.raw_bytes if planned and removal else 0)
 
     def room_plan(self, pending_id: str, budget: int) -> RoomPlan:
         """What Make room would remove for a pending save: least recently used other
@@ -1703,6 +2020,8 @@ class CacheStore:
         """A file the store names: a dataset file, or a result file (``results/<name>``)."""
         if file.startswith(RESULTS_DIRNAME + "/"):
             return os.path.join(self.results_dir, file[len(RESULTS_DIRNAME) + 1:])
+        if file.startswith(store_v4.RAW_DIRNAME + "/"):
+            return os.path.join(self.raw_dir, file[len(store_v4.RAW_DIRNAME) + 1:])
         return os.path.join(self.datasets_dir, file)
 
     def start_result_job(self, path: str) -> SaveGuard:
@@ -1727,7 +2046,7 @@ class CacheStore:
     def _check_result_guard(self, guard: SaveGuard, key: str) -> None:
         folder, root = _results_epoch(key), _results_root_epoch(key)
         if "results" not in guard.generations or folder not in guard.epochs:
-            raise ValueError(f"The save guard doesn't cover results for {key}")
+            raise SaveRejected("cleared", REKEYED)  # (As ``_guard_holds``.)
         if (int(self._meta()["gen_results"]) != guard.generations["results"]
                 or self._epoch(folder) != guard.epochs[folder]
                 or (root is not None and self._epoch(root) != guard.epochs.get(root, 0))):
@@ -1815,6 +2134,8 @@ class CacheStore:
             "record = excluded.record, file = excluded.file, bytes = excluded.bytes, "
             "computed_at = excluded.computed_at, saved_at = excluded.saved_at, last_used = excluded.last_used",
             (result_id, key, lookup, family, analysis_id, action, record, file, size, computed_at, now, now))
+        if self.layout >= store_v4.LAYOUT:  # (Which session made it, Q28.4.)
+            self._conn.execute("UPDATE results SET maker = ? WHERE result_id = ?", (self._maker_id(), result_id))
         return None if previous is None else str(previous[0]), result_id
 
     def _insert_pending_result(self, key: str, lookup: str, family: str, analysis_id: str, action: str, label: str,
@@ -1862,10 +2183,8 @@ class CacheStore:
                 try:
                     self._check_result_guard(guard, path)
                     self._check_cacheable(path)
-                except SaveRejected as rejected:
+                except SaveRejected as rejected:  # (Its guard may name the folder's old key: ``REKEYED``.)
                     rejection = rejected
-                except ValueError:  # (Its guard names the folder's old key: a nested root re-keyed it since.)
-                    rejection = SaveRejected("cleared", "The folder's data root changed before saving completed")
                 if rejection is not None:
                     self._retire(file, now)
                     self._conn.execute("DELETE FROM pending_results WHERE pending_id = ?", (pending_id,))
@@ -2017,17 +2336,26 @@ class CacheStore:
         if not self._results_table:
             return _missing()  # (A read-only store without results: none saved.)
         for attempt in range(2):
+            legacy: LegacyStore | None = None
             try:
                 with self.transaction(write=False):
                     row = self._result_row(key, "lookup = ?", (lookup,))
                     exact = row is not None
+                    if row is None and (legacy := self._kept_legacy()) is not None:
+                        # Keep (Q22.3): an exact match in store-v3 before an outdated one here.
+                        row = self._legacy_result(legacy, key, "lookup = ?", (lookup,))
+                        exact = row is not None
                     if row is None and family:
-                        row = self._result_row(key, "family = ? AND lookup <> ?", (family, lookup))
-            except (sqlite3.Error, StoreError, ValueError) as exc:
+                        row, legacy = self._result_row(key, "family = ? AND lookup <> ?", (family, lookup)), None
+                        if row is None and (legacy := self._kept_legacy()) is not None:
+                            row = self._legacy_result(legacy, key, "family = ? AND lookup <> ?", (family, lookup))
+            except (sqlite3.Error, StoreError, ValueError, LegacyUnavailable) as exc:
                 return _error(f"Disk cache could not be read: {exc}")
             if row is None:
                 return _missing()
             try:
+                if legacy is not None:
+                    return _found(ResultFound(row, legacy.read_file(row["file"]), exact, legacy=True))
                 with open(self._store_file(row["file"]), "rb") as handle:
                     return _found(ResultFound(row, handle.read(), exact))
             except FileNotFoundError:
@@ -2036,6 +2364,19 @@ class CacheStore:
             except OSError as exc:
                 return _error(f"Cached result file could not be read: {exc}")
         return _error("Cached result file is missing")  # (Not reached.)
+
+    def _legacy_result(self, legacy: LegacyStore, key: str, where: str, args: tuple[Any, ...]) -> ResultRow | None:
+        """``_result_row`` of store-v3 (Keep), its path given as this store shows it; none for a key
+        store-v4 removed results of (C2-1), nor one older than v4's last purge by age."""
+        if self._legacy_hidden("results", key):
+            return None
+        row = legacy.result_row(key, where, args, since=self._legacy_purged("results")[0])
+        if row is None:
+            return None
+        return ResultRow(result_id=str(row[0]), path=self._source_path(str(row[1])), lookup=str(row[2]),
+                         family=str(row[3]), analysis_id=str(row[4]), action=str(row[5]), record=json.loads(row[6]),
+                         file=str(row[7]), bytes=int(row[8]), computed_at=float(row[9]), saved_at=float(row[10]),
+                         last_used=float(row[11]))
 
     def _folder_results(self, keys: Sequence[str]) -> dict[str, ResultCount]:
         """Each folder's saved results (count and files' bytes; zero if none), as of this
@@ -2050,6 +2391,20 @@ class CacheStore:
                     f"SELECT path, COUNT(*), COALESCE(SUM(bytes), 0) FROM results "
                     f"WHERE path IN ({','.join('?' * len(chunk))}) GROUP BY path", chunk):
                 counts[str(key)] = ResultCount(int(count), int(size), self.store_id, counts[str(key)].writes)
+        legacy = self._kept_legacy()
+        if legacy is not None:
+            # Keep (Q22.3): store-v3's results of these folders count too (read through, not copied):
+            # those that can be found, so not a lookup v4 has (C2-4) nor any of a key v4 removed (C2-1).
+            readable = [key for key in stored if not self._legacy_hidden("results", key)]
+            with contextlib.suppress(LegacyUnavailable):
+                found = legacy.result_lookups(readable, since=self._legacy_purged("results")[0])
+                for key, rows in found.items():
+                    have = counts[key]
+                    mine = {str(lookup) for (lookup,) in self._conn.execute(
+                        "SELECT lookup FROM results WHERE path = ?", (key,))}
+                    extra = [size for lookup, size in rows if lookup not in mine]
+                    counts[key] = ResultCount(have.count + len(extra), have.bytes + sum(extra), self.store_id,
+                                              have.writes)
         return counts
 
     def result_counts(self, paths: Sequence[str]) -> dict[str, ResultCount]:
@@ -2098,6 +2453,7 @@ class CacheStore:
                                        "DO UPDATE SET epoch = epoch + 1", (_results_root_epoch(top),))
                 elif cutoff is not None:
                     where, args = " WHERE last_used < ?", (cutoff,)
+                    self._note_purge("results", cutoff)
                 elif paths is not None:
                     keys = tuple(dict.fromkeys(self._path_key(path) for path in paths))
                     where, args = f" WHERE path IN ({','.join('?' * len(keys)) or 'NULL'})", keys
@@ -2137,6 +2493,294 @@ class CacheStore:
         everything = root is None and cutoff is None and paths is None
         return ResultRemoval(None if everything else tuple(self._source_path(path) for path in folders),
                              len(rows), sum(int(size) for _, _, size in rows), root)
+
+    # Raw layers (store-v4, caching v2 stage 1): one row per raw file, its pulses in ``raw/<uuid>.hlb``.
+
+    def _needs_v4(self) -> None:
+        if self.layout < store_v4.LAYOUT:
+            raise StoreError("Raw layers are kept only in store-v4")
+
+    def write_raw_file(self, packed: bytes) -> str:
+        """Publish a raw layer's ``.hlb`` under its final name (``raw/<name>``); no row names it yet (a
+        killed writer's file is an orphan the sweep deletes after an hour, the existing rule)."""
+        self._needs_v4()
+        if self.read_only:
+            raise StoreReadOnly("This disk cache was written by a newer HeLab and is read-only")
+        name = uuid.uuid4().hex
+        temporary = os.path.join(self.raw_dir, f"tmp-{name}")
+        final = f"{name}.hlb"
+        try:
+            os.makedirs(self.raw_dir, exist_ok=True)
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o666)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(packed)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, os.path.join(self.raw_dir, final))
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                os.remove(temporary)
+            raise StoreError(f"Cached raw layer could not be written: {exc}") from exc
+        _fsync_dir(self.raw_dir)
+        return f"{store_v4.RAW_DIRNAME}/{final}"
+
+    def start_raw_job(self, path: str) -> SaveGuard:
+        """A guard for a job that may save ``path``'s raw layers: ``gen_raw``, the folder's ``raw:``
+        epoch and its root's, and the folder's next ``job_seq`` (shared with its dataset saves, so a
+        later listing's version wins whichever job saved it)."""
+        self._needs_v4()
+        key = self._path_key(path)
+        try:
+            with self.transaction():
+                self._conn.execute("INSERT INTO folder_epochs (path, job_seq) VALUES (?, 1) "
+                                   "ON CONFLICT (path) DO UPDATE SET job_seq = job_seq + 1", (key,))
+                (job_seq,) = self._conn.execute("SELECT job_seq FROM folder_epochs WHERE path = ?", (key,)).fetchone()
+                epochs = {_raw_epoch(key): self._epoch(_raw_epoch(key))}
+                if root := _root_epoch(key):
+                    epochs[root] = self._epoch(root)
+                generation = int(self._meta()["gen_raw"])
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return SaveGuard({"raw": generation}, epochs, int(job_seq))
+
+    def _check_raw_guard(self, guard: SaveGuard, key: str) -> None:
+        epoch, root = _raw_epoch(key), _root_epoch(key)
+        if "raw" not in guard.generations or epoch not in guard.epochs:
+            raise SaveRejected("cleared", REKEYED)  # (As ``_guard_holds``.)
+        if (int(self._meta()["gen_raw"]) != guard.generations["raw"] or self._epoch(epoch) != guard.epochs[epoch]
+                or (root is not None and self._epoch(root) != guard.epochs.get(root, 0))):
+            raise SaveRejected("cleared", "Raw pulses were cleared before saving completed")
+
+    def save_raw_batch(self, path: str, entries: Sequence[RawEntry], guard: SaveGuard, *,
+                       budget: int | None = None, budget_set_at: float | None = None,
+                       now: float | None = None) -> RawSave:
+        """Save one batch of a folder's raw layers (``raw_fill``, a conversion) in one transaction with
+        one fit check, if ``guard`` holds and the folder may be cached. A shot already cached from the
+        same file (fingerprint and parser) is kept (seen now); one cached from another version of the
+        file is replaced only by a job that started later (``job_seq``), and named in ``overwritten``
+        when the file changed in place; the replaced files are retired. A batch that doesn't fit the
+        budget saves nothing and never waits for an answer (T~1): its files are retired. A rejected
+        batch raises :class:`SaveRejected` and retires its files."""
+        self._needs_v4()
+        key = self._path_key(path)
+        now = time.time() if now is None else now
+        files = [entry.file for entry in entries]
+        sizes = {entry.file: self._size(entry.file) for entry in entries}
+        saved: list[int] = []
+        kept: list[int] = []
+        refused: list[int] = []
+        overwritten: list[RawOverwrite] = []
+        unused: list[str] = []
+        retired: list[str] = []
+        try:
+            with self.transaction():
+                self._check_raw_guard(guard, key)
+                self._check_cacheable(key)
+                budget = self._active_budget(budget, budget_set_at)
+                self._conn.execute("SAVEPOINT raw_fit")
+                maker = self._maker_id()
+                for entry in entries:
+                    row = self._conn.execute(
+                        "SELECT size, mtime_ns, sha256, parser, file, job_seq, gone_at FROM raw_layers "
+                        "WHERE path = ? AND shot = ?", (key, entry.shot)).fetchone()
+                    read_at = now if entry.read_at is None else entry.read_at
+                    if row is not None and (int(row[0]), int(row[1]), int(row[3])) == (
+                            entry.size, entry.mtime_ns, entry.parser):
+                        # (Seen when read: it clears an only-copy mark only if newer than it, C2-10.)
+                        self._conn.execute(
+                            "UPDATE raw_layers SET seen_at = MAX(seen_at, ?), last_used = ?, "
+                            "gone_at = CASE WHEN gone_at IS NOT NULL AND gone_at >= ? THEN gone_at END "
+                            "WHERE path = ? AND shot = ?", (read_at, now, read_at, key, entry.shot))
+                        kept.append(entry.shot)
+                        unused.append(entry.file)
+                        continue
+                    if row is not None and int(row[5]) > guard.job_seq:
+                        refused.append(entry.shot)  # (A job that listed the folder later saved its version.)
+                        unused.append(entry.file)
+                        continue
+                    # A listing at or after this batch read the file found the shot gone: still the only
+                    # copy (C2-11); one before the read is outdated by it.
+                    gone_at = (float(row[6]) if row is not None and row[6] is not None and float(row[6]) >= read_at
+                               else None)
+                    if row is not None:
+                        retired.append(str(row[4]))
+                        if (int(row[0]), int(row[1])) != (entry.size, entry.mtime_ns):
+                            overwritten.append(RawOverwrite(
+                                entry.shot, entry.name, (int(row[0]), int(row[1]), str(row[2])),
+                                (entry.size, entry.mtime_ns, entry.sha256)))
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO raw_layers (path, shot, name, size, mtime_ns, sha256, parser, "
+                        "encoding, facts, pulses, file, bytes, seen_at, gone_at, maker, job_seq, saved_at, last_used) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                        (key, entry.shot, entry.name, entry.size, entry.mtime_ns, entry.sha256, entry.parser,
+                         entry.encoding, _dumps(dict(entry.facts)), entry.pulses, entry.file, sizes[entry.file],
+                         read_at, gone_at, maker, guard.job_seq, now, now))
+                    saved.append(entry.shot)
+                usage, writes = self._live(), self._writes()
+                if budget is not None and usage > budget and saved:
+                    self._conn.execute("ROLLBACK TO raw_fit")
+                    self._conn.execute("RELEASE raw_fit")
+                    for file in files:
+                        self._retire(file, now)
+                    return RawSave((), (), (), (), "over_budget", sum(sizes.values()), self._live(), self._writes(),
+                                   budget)
+                self._conn.execute("RELEASE raw_fit")
+                for file in (*unused, *retired):
+                    self._retire(file, now)
+        except SaveRejected as rejection:
+            raise self._reject_raw_files(files, rejection) from None
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return RawSave(tuple(saved), tuple(kept), tuple(refused), tuple(overwritten), "",
+                       sum(sizes[entry.file] for entry in entries if entry.shot in saved), usage, writes, budget)
+
+    def _reject_raw_files(self, files: Sequence[str], rejection: SaveRejected) -> SaveRejected:
+        """Retire a rejected batch's files, in their own transaction (never one a row names)."""
+        with contextlib.suppress(sqlite3.Error, StoreError):
+            with self.transaction():
+                now = time.time()
+                for file in files:
+                    if self._conn.execute("SELECT 1 FROM raw_layers WHERE file = ?", (file,)).fetchone() is None:
+                        self._retire(file, now)
+        return rejection
+
+    def mark_raw_seen(self, path: str, present: Mapping[int, tuple[int, int]], seen_at: float) -> tuple[int, int]:
+        """A full listing of ``path`` found these raw files (shot: (size, mtime_ns)): rows of the same
+        fingerprint are seen now; rows whose shot it didn't find get ``gone_at`` (their layer is then the
+        only copy HeLab knows of: kept, Q22.6; Make room lists it last). (seen, gone) counts."""
+        self._needs_v4()
+        key = self._path_key(path)
+        seen = gone = 0
+        try:
+            with self.transaction():
+                # Each mark goes by when its evidence was taken, so an older listing landing late can't
+                # undo a newer one (C2-10): seen clears gone only if newer than it; gone needs a listing newer
+                # than the last sighting.
+                for shot, size, mtime_ns in self._conn.execute(
+                        "SELECT shot, size, mtime_ns FROM raw_layers WHERE path = ?", (key,)).fetchall():
+                    if present.get(int(shot)) == (int(size), int(mtime_ns)):
+                        self._conn.execute(
+                            "UPDATE raw_layers SET seen_at = MAX(seen_at, ?), "
+                            "gone_at = CASE WHEN gone_at IS NOT NULL AND gone_at >= ? THEN gone_at END "
+                            "WHERE path = ? AND shot = ?", (seen_at, seen_at, key, shot))
+                        seen += 1
+                    elif int(shot) not in present:
+                        gone += self._conn.execute(
+                            "UPDATE raw_layers SET gone_at = COALESCE(gone_at, ?) WHERE path = ? AND shot = ? "
+                            "AND seen_at < ?", (seen_at, key, shot, seen_at)).rowcount
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return seen, gone
+
+    def raw_rows(self, path: str) -> Read[dict[int, RawRow]]:
+        """``path``'s raw layer rows by shot (a ``raw_fill`` resumes from them)."""
+        if self.layout < store_v4.LAYOUT:
+            return _missing()
+        key = self._path_key(path)
+        try:
+            with self.transaction(write=False):
+                found = {int(row[1]): self._raw_row(row) for row in self._conn.execute(
+                    f"SELECT {_RAW_COLUMNS} FROM raw_layers WHERE path = ?", (key,))}
+        except (sqlite3.Error, StoreError, ValueError) as exc:
+            return _error(f"Disk cache could not be read: {exc}")
+        return _found(found)
+
+    def _raw_row(self, row: Sequence[Any]) -> RawRow:
+        return RawRow(self._source_path(str(row[0])), int(row[1]), str(row[2]), int(row[3]), int(row[4]), str(row[5]),
+                      int(row[6]), str(row[7]), json.loads(row[8]), int(row[9]), str(row[10]), int(row[11]),
+                      float(row[12]), None if row[13] is None else float(row[13]), str(row[14]), int(row[15]),
+                      float(row[16]), float(row[17]))
+
+    def read_raw(self, path: str, shot: int) -> Read[tuple[RawRow, bytes]]:
+        """A shot's raw layer row and its ``.hlb`` bytes; a file replaced meanwhile is looked up once more."""
+        if self.layout < store_v4.LAYOUT:
+            return _missing()
+        key = self._path_key(path)
+        for attempt in range(2):
+            try:
+                with self.transaction(write=False):
+                    row = self._conn.execute(f"SELECT {_RAW_COLUMNS} FROM raw_layers WHERE path = ? AND shot = ?",
+                                             (key, shot)).fetchone()
+            except (sqlite3.Error, StoreError) as exc:
+                return _error(f"Disk cache could not be read: {exc}")
+            if row is None:
+                return _missing()
+            found = self._raw_row(row)
+            try:
+                with open(self._store_file(found.file), "rb") as handle:
+                    return _found((found, handle.read()))
+            except FileNotFoundError:
+                if attempt:
+                    return _error("Cached raw layer file is missing")
+            except OSError as exc:
+                return _error(f"Cached raw layer file could not be read: {exc}")
+        return _error("Cached raw layer file is missing")  # (Not reached.)
+
+    def _remove_raw_rows(self, where: str, args: Sequence[Any], now: float) -> tuple[list[str], int, int]:
+        """Delete the raw rows ``where`` selects (inside a transaction), retire their files and bump each
+        folder's ``raw:`` epoch: (folder keys, rows, bytes)."""
+        found = self._conn.execute(f"SELECT path, file, bytes FROM raw_layers{where}", tuple(args)).fetchall()
+        for _, file, _ in found:
+            self._retire(str(file), now)
+        self._conn.execute(f"DELETE FROM raw_layers{where}", tuple(args))
+        keys = sorted({str(key) for key, _, _ in found})
+        for key in keys:
+            self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
+                               "DO UPDATE SET epoch = epoch + 1", (_raw_epoch(key),))
+        return keys, len(found), sum(int(size) for _, _, size in found)
+
+    def remove_raw(self, paths: Iterable[str] | None = None) -> RawRemoval:
+        """Clear raw pulses (the user asked: Settings › Cache, Clear all): every folder's (bumping
+        ``gen_raw``) or these folders' (each one's ``raw:`` epoch), so a batch already being saved can't
+        bring them back. Files are retired; nothing else is touched."""
+        if self.layout < store_v4.LAYOUT:
+            return RawRemoval(None if paths is None else (), 0, 0)
+        now = time.time()
+        try:
+            with self.transaction():
+                if paths is None:
+                    self._conn.execute("UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) "
+                                       "WHERE key = 'gen_raw'")
+                    _, count, size = self._remove_raw_rows("", (), now)
+                    return RawRemoval(None, count, size)
+                keys = list(dict.fromkeys(self._path_key(path) for path in paths))
+                for key in keys:  # (A folder with no rows is fenced too: a batch may be on its way.)
+                    self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
+                                       "DO UPDATE SET epoch = epoch + 1", (_raw_epoch(key),))
+                _, count, size = self._remove_raw_rows(
+                    f" WHERE path IN ({','.join('?' * len(keys)) or 'NULL'})", keys, now)
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return RawRemoval(tuple(self._source_path(key) for key in keys), count, size)
+
+    def _raw_summary(self) -> dict[str, Any]:
+        """store-v4's raw layers for Settings › Cache (inside a transaction): rows, bytes, folders, the
+        rows whose raw files were gone at the last look (``only_copy``), when one was last used."""
+        if self.layout < store_v4.LAYOUT:
+            return {"count": 0, "bytes": 0, "folders": 0, "only_copy": 0, "only_copy_bytes": 0, "last_used": None}
+        count, size, folders, last = self._conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(bytes), 0), COUNT(DISTINCT path), MAX(last_used) FROM raw_layers").fetchone()
+        only, only_bytes = self._conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM raw_layers WHERE gone_at IS NOT NULL").fetchone()
+        return {"count": int(count), "bytes": int(size), "folders": int(folders), "only_copy": int(only),
+                "only_copy_bytes": int(only_bytes), "last_used": None if last is None else float(last)}
+
+    def _raw_live(self) -> int:
+        if self.layout < store_v4.LAYOUT:
+            return 0
+        return int(self._conn.execute("SELECT COALESCE(SUM(bytes), 0) FROM raw_layers").fetchone()[0])
+
+    def _legacy_counted(self) -> int:
+        """store-v3's live bytes while it is kept (Keep, or not answered: D9), as last measured
+        (``meta.legacy_bytes``, ``measure_legacy``); 0 under v3, after Ignore or Clear, or with none."""
+        if self.layout < store_v4.LAYOUT:
+            return 0
+        meta = self._meta()
+        measured = meta.get("legacy_bytes")
+        if store_v4.legacy_choice(meta) not in (None, "keep") or not isinstance(measured, dict):
+            return 0
+        from helab.utils.legacy_store import present
+        return int(measured.get("bytes", 0)) if present(self.legacy_root) else 0
 
     # Removals and cleanup
 
@@ -2186,7 +2830,14 @@ class CacheStore:
                                     (top, len(top) + 1, top + "/"))})
                 self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) "
                                    "ON CONFLICT (path) DO UPDATE SET epoch = epoch + 1", (_root_epoch(top),))
-                return self.remove(KINDS, paths, _stored_keys=True)
+                removal = self.remove(KINDS, paths, _stored_keys=True)
+                if self.layout < store_v4.LAYOUT:
+                    return removal
+                # store-v4: its raw layers are cached data too (the root epoch fences their saves).
+                keys, count, size = self._remove_raw_rows(" WHERE path = ? OR substr(path, 1, ?) = ?",
+                                                          (top, len(top) + 1, top + "/"), time.time())
+                return dataclasses.replace(removal, raw_paths=tuple(self._source_path(key) for key in keys),
+                                           raw_rows=count, raw_bytes=size)
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
 
@@ -2227,8 +2878,10 @@ class CacheStore:
                         self._conn.execute("UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) "
                                            "WHERE key = ?", (f"gen_{kind}",))
                 for path in selected or ():
-                    self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) "
-                                       "ON CONFLICT (path) DO UPDATE SET epoch = epoch + 1", (path,))
+                    # (One row per folder in store-v3; in store-v4 only the kinds removed: cache-2.)
+                    for key in self._epoch_keys(kinds, path):
+                        self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) "
+                                           "ON CONFLICT (path) DO UPDATE SET epoch = epoch + 1", (key,))
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
         return Removal(kinds, None if selected is None else tuple(self._source_path(path) for path in selected),
@@ -2254,7 +2907,9 @@ class CacheStore:
         if self._pending_results:  # (Nor a result waiting for the user's answer.)
             pending += self._conn.execute("SELECT COALESCE(SUM(LENGTH(record) + LENGTH(guard)), 0) "
                                           "FROM pending_results").fetchone()[0]
-        return int(datasets) + self._result_files() + max(0, self._records_bytes() - int(pending))
+        # (store-v4: its raw layers, and store-v3's bytes while it is kept, D9.)
+        return (int(datasets) + self._result_files() + self._raw_live() + self._legacy_counted()
+                + max(0, self._records_bytes() - int(pending)))
 
     def _result_files(self) -> int:
         if not self._results_table:
@@ -2362,6 +3017,7 @@ class CacheStore:
                 for kind, query in _RECORD_PURGES.items():
                     if kind == "histories" and not include_failures:
                         query += " AND json_array_length(record, '$.failures') = 0"
+                    self._note_purge(kind, cutoff, include_failures)
                     paths = [path for (path,) in self._conn.execute(query, (cutoff,))]
                     if paths:
                         removals.append(self.remove((kind,), paths, _stored_keys=True))
@@ -2402,7 +3058,9 @@ class CacheStore:
                 result_bytes = self._results_live()
                 pending_results = self.pending_result_rows()
                 live, writes = self._live(), self._writes()
-                records_bytes = live - sum(size for _, size in dataset_ages) - self._result_files()
+                raw = self._raw_summary()
+                records_bytes = (live - sum(size for _, size in dataset_ages) - self._result_files() - raw["bytes"]
+                                 - self._legacy_counted())
                 no_cache, no_auto_load = self._conn.execute(
                     "SELECT COALESCE(SUM(no_cache), 0), COALESCE(SUM(no_auto_load), 0) FROM folder_prefs").fetchone()
                 prefs = {"no_cache": int(no_cache), "no_auto_load": int(no_auto_load)}
@@ -2414,7 +3072,11 @@ class CacheStore:
             raise StoreError(f"Disk cache could not be read: {exc}") from exc
         retired_bytes = sum(self._size_or_zero(file) for file in retired)
         orphans = [name for name in self._listed_files() if name not in known]
+        legacy = self.measure_legacy() if self.layout >= store_v4.LAYOUT else None
         return {
+            **({"legacy": legacy, "raw": raw, "older_stores": older_stores(os.path.dirname(os.path.abspath(self.root)),
+                                                                          self.layout)}
+               if legacy is not None else {}),
             "layout_version": self.layout_version, "store_id": self.store_id, "read_only": self.read_only,
             "root": self.root, "usage": live, "budget": budget, "records_bytes": records_bytes,
             "datasets": {"count": len(dataset_ages), "bytes": sum(size for _, size in dataset_ages),
@@ -2432,6 +3094,33 @@ class CacheStore:
             "ages": ages, "next_deadline": deadline, "checked_at": time.time(),
             **Usage(live, self.store_id, writes).event()}
 
+    def measure_legacy(self) -> dict[str, Any]:
+        """store-v3 beside this store-v4, for Settings › Cache and the budget under Keep (gap 8): whether
+        it is there, the choice, and its size. Kept (Keep, or not answered): its live bytes measured
+        through ``LegacyStore`` and recorded in ``meta.legacy_bytes`` with its write count (fit checks
+        read that, never v3). After Ignore: the folder's bytes on disk, v3 not opened."""
+        from helab.utils.legacy_store import present
+        choice = store_v4.legacy_choice(self._meta())
+        found: dict[str, Any] = {"present": present(self.legacy_root), "choice": choice, "bytes": 0}
+        if not found["present"]:
+            return found
+        legacy = self._kept_legacy()
+        if legacy is None:
+            found["bytes"] = _folder_bytes(self.legacy_root)
+            found["counted"] = False
+            return found
+        try:
+            measured = {"bytes": legacy.live_bytes(), "writes": legacy.writes(), "measured_at": time.time(),
+                        "v3_store_id": legacy.store_id}
+        except LegacyUnavailable as exc:
+            return {**found, "error": str(exc)}
+        if not self.read_only:
+            with contextlib.suppress(sqlite3.Error, StoreError):
+                with self.transaction():
+                    self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_bytes', ?)",
+                                       (_dumps(measured),))
+        return {**found, "bytes": measured["bytes"], "store_id": legacy.store_id, "counted": True}
+
     def _size_or_zero(self, file: str) -> int:
         try:
             return os.path.getsize(self._store_file(file))
@@ -2447,13 +3136,18 @@ class CacheStore:
             known.update(str(file) for (file,) in self._conn.execute("SELECT file FROM results"))
         if self._pending_results:
             known.update(str(file) for (file,) in self._conn.execute("SELECT file FROM pending_results"))
+        if self.layout >= store_v4.LAYOUT:
+            known.update(str(file) for (file,) in self._conn.execute("SELECT file FROM raw_layers"))
         return known
 
     def _listed_files(self) -> list[str]:
         """The files in ``datasets/`` and ``results/``, by the names rows give them ([] for a folder
         that can't be listed: leftovers are only tidied up, the next sweep tries again)."""
         names: list[str] = []
-        for folder, prefix in ((self.datasets_dir, ""), (self.results_dir, RESULTS_DIRNAME + "/")):
+        folders = [(self.datasets_dir, ""), (self.results_dir, RESULTS_DIRNAME + "/")]
+        if self.layout >= store_v4.LAYOUT:  # (store-v4's raw layers: the same orphan rule.)
+            folders.append((self.raw_dir, store_v4.RAW_DIRNAME + "/"))
+        for folder, prefix in folders:
             try:
                 names += [prefix + name for name in os.listdir(folder)
                           if not (prefix == "" and name == RESULTS_DIRNAME)]
@@ -2650,6 +3344,38 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except BaseException:
         conn.execute("ROLLBACK")
         raise
+
+
+def older_stores(caches_dir: str, layout: int) -> list[dict[str, Any]]:
+    """The stores of older layouts in the cache folder (store-v3 now; any ``store-v<N>`` below this one
+    later), each with its folder's bytes on disk: what Make room's "Clear old stores…" offers (Q28.5),
+    asked first. Nothing is opened."""
+    found: list[dict[str, Any]] = []
+    with contextlib.suppress(OSError):
+        for entry in sorted(os.scandir(caches_dir), key=lambda item: item.name):
+            name = entry.name
+            if (entry.is_dir(follow_symlinks=False) and name.startswith("store-v") and name[7:].isdigit()
+                    and int(name[7:]) < layout):
+                found.append({"name": name, "layout": int(name[7:]), "path": entry.path,
+                              "bytes": _folder_bytes(entry.path)})
+    return found
+
+
+def _folder_bytes(folder: str) -> int:
+    """Bytes of the regular files under ``folder`` (links aren't followed)."""
+    total = 0
+    for top, _, names in os.walk(folder):
+        for name in names:
+            with contextlib.suppress(OSError):
+                info = os.lstat(os.path.join(top, name))
+                total += info.st_size if stat.S_ISREG(info.st_mode) else 0
+    return total
+
+
+def _store_format(conn: sqlite3.Connection) -> int:
+    """A store-v4's ``meta.format`` (1 when not set)."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'format'").fetchone()
+    return 1 if row is None else int(json.loads(row[0]))
 
 
 def _layout_version(conn: sqlite3.Connection) -> int | None:

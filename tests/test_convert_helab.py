@@ -219,6 +219,30 @@ def test_write_atomic_calls_before_rename_with_the_files_stat(tmp_path: Path) ->
     assert target.read_bytes() == b"new\n" and [path.name for path in folder.iterdir()] == [target.name]
 
 
+def test_write_atomic_calls_after_rename_between_the_rename_and_the_folders_fsync(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A19.2: ``after_rename`` (a converter lets go of the index's lock there) runs once the file is in
+    place and before the folder's fsync; without it nothing changes. Raising, the file stays."""
+    folder = tmp_path / "out"
+    folder.mkdir()
+    target = folder / "d_txy_helab_m19v1_1.txt"
+    order: list[str] = []
+    monkeypatch.setattr(txy, "_fsync_folder", lambda folder: order.append("fsync"))
+    txy.write_atomic(target, b"new\n")
+    assert target.read_bytes() == b"new\n" and order == ["fsync"]
+    order.clear()
+    txy.write_atomic(target, b"again\n", before_rename=lambda info: order.append("before"),
+                     after_rename=lambda: order.append("after: " + target.read_text().strip()))
+    assert order == ["before", "after: again", "fsync"]
+    order.clear()
+
+    def raises() -> None:
+        raise RuntimeError("after the rename")
+    with pytest.raises(RuntimeError, match="after the rename"):
+        txy.write_atomic(target, b"third\n", after_rename=raises)
+    assert target.read_bytes() == b"third\n" and order == [] and [path.name for path in folder.iterdir()] == [target.name]
+
+
 def test_write_atomic_without_replace_never_touches_an_existing_file(tmp_path: Path) -> None:
     target = tmp_path / "d_txy_helab_m19v1_1.txt"
     txy.write_atomic(target, b"new\n", replace=False)
@@ -409,6 +433,183 @@ def test_done_shots_whose_txy_went_convert_again(source: Path, tmp_path: Path, p
     elsewhere = again(cleared, "temp")
     assert sorted(event["shot"] for event in of(elsewhere, "shot_converted")) == [1, 2]
     assert of(again(elsewhere, "temp"), "shot_converted") == []
+
+
+# The Clear fence (A19.2): Settings › Cache's Clear never leaves a TXY a running conversion wrote.
+
+def temp_base(tmp_path: Path) -> str:
+    """The temp folder's ``converted-txy`` (``request_for``'s destination)."""
+    return str(tmp_path / "temps" / convert.FOLDER_NAME)
+
+
+def reasons(events: list[dict[str, Any]]) -> dict[int, str]:
+    return {event["shot"]: event["reason"] for event in of(events, "shot_waiting")}
+
+
+def test_a_clear_after_a_conversion_started_refuses_its_rows_and_its_shots_wait(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The fence moved before the row: nothing is written, the shot waits (``cleared``) and so does every
+    shot after it, unread; the next check converts them."""
+    write_raw(source, 1, raw_bytes(10_000))
+    assert [event["shot"] for event in of(run(source, request_for(source, tmp_path)), "shot_converted")] == [1]
+    for shot in (2, 3):
+        write_raw(source, shot, raw_bytes(10_000 * shot))
+    fence_of = provenance.fence_of
+
+    def then_cleared(root: str) -> str:
+        token = fence_of(root)
+        helab_txy.clear_converted(root)  # (The user clears just after the conversion started.)
+        return token
+    monkeypatch.setattr(provenance, "fence_of", then_cleared)
+    events = run(source, request_for(source, tmp_path, shots=[2, 3]))
+    monkeypatch.undo()
+    folder = of(events, "convert_plan")[0]["folder"]
+    assert of(events, "shot_converted") == [] and reasons(events) == {2: convert.CLEARED, 3: convert.CLEARED}
+    assert summary(events)["converted"] == 0 and of(events, "convert_progress")[-1]["raw_bytes"] == 0  # (Unread.)
+    assert not os.path.isdir(folder) or os.listdir(folder) == []  # (Shot 1's TXY cleared; none written after.)
+    assert index_rows(folder) == {}
+    assert provenance.read_shots(temp_base(tmp_path), os.path.basename(folder)) == {}
+    later = run(source, request_for(source, tmp_path, seen=summary(events)["waiting"], shots=[2, 3]))
+    assert sorted(event["shot"] for event in of(later, "shot_converted")) == [2, 3]
+
+
+@pytest.mark.parametrize("order", ["before the lock", "while the rename holds it"])
+def test_a_clear_between_the_row_and_the_rename(source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                order: str) -> None:
+    """CoCo's case: the Clear lands after the shot's row is written. Before the rename's lock: the
+    rename is refused (no TXY, the row forgotten). While the lock is held: the Clear waits for the
+    rename and then removes the TXY with its row. Either way nothing is left, and the next shot waits
+    unread."""
+    for shot in (1, 2):
+        write_raw(source, shot, raw_bytes(10_000 * shot))
+    base = temp_base(tmp_path)
+    hold, release = provenance.TxyIndex.hold, provenance.TxyIndex.release
+    clearing: list[threading.Thread] = []
+    cleared: list[bool] = []
+
+    def then_clear(self: provenance.TxyIndex, fence: str) -> None:
+        if cleared:
+            return hold(self, fence)
+        cleared.append(True)
+        if order == "before the lock":
+            helab_txy.clear_converted(base)
+            return hold(self, fence)  # (Refused: Cleared.)
+        hold(self, fence)
+        clear = threading.Thread(target=helab_txy.clear_converted, args=(base,), daemon=True)
+        clearing.append(clear)
+        clear.start()
+        time.sleep(0.5)
+        # Held off by the lock: its token isn't set until the rename is done.
+        assert clear.is_alive() and provenance.fence_of(base) == fence
+        return None
+
+    def then_done(self: provenance.TxyIndex) -> None:
+        release(self)
+        while clearing:  # (The Clear then runs to its end before the next shot.)
+            clearing.pop().join(30)
+    monkeypatch.setattr(provenance.TxyIndex, "hold", then_clear)
+    monkeypatch.setattr(provenance.TxyIndex, "release", then_done)
+    events = run(source, request_for(source, tmp_path))
+    monkeypatch.undo()
+    assert cleared and not clearing
+    folder = of(events, "convert_plan")[0]["folder"]
+    converted = [event["shot"] for event in of(events, "shot_converted")]
+    assert converted == ([] if order == "before the lock" else [1])
+    assert reasons(events) == ({1: convert.CLEARED, 2: convert.CLEARED} if order == "before the lock"
+                               else {2: convert.CLEARED})
+    assert not os.path.isdir(folder) or os.listdir(folder) == []
+    assert index_rows(folder) == {}
+    later = run(source, request_for(source, tmp_path, seen=summary(events)["waiting"]))
+    assert 2 in [event["shot"] for event in of(later, "shot_converted")]
+
+
+def test_a_clear_still_running_leaves_a_later_conversions_temporary_alone(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """S0-1 (Assay): a conversion that starts after a Clear set its token, while the Clear is still
+    removing, isn't broken mid-write: Clear leaves temporaries under ``PARTIAL_MAX_AGE`` (A~1), so the
+    TXY is written and Live's auto-convert goes on. (Before, Clear took the temporary, the rename raised
+    FileNotFoundError while the token was the conversion's own, and the conversion ended in an error.)"""
+    for shot in (1, 2):
+        write_raw(source, shot, raw_bytes(10_000 * shot))
+    run(source, request_for(source, tmp_path, shots=[1]))  # (The base's index exists, as after any conversion.)
+    base = temp_base(tmp_path)
+    fence_of, record = provenance.fence_of, provenance.TxyIndex.record
+    set_fence = provenance.TxyIndex.set_fence
+
+    def after_the_clears_token(root: str) -> str:
+        with provenance.open_index(root, write=True) as index:
+            set_fence(index, time.time())  # (The Clear's first step, just before this conversion starts.)
+        return fence_of(root)
+
+    def clear_meanwhile(self: provenance.TxyIndex, *args: Any, **kwargs: Any) -> None:
+        # The rest of that Clear runs while this conversion's temporary is on disk (its token is set).
+        monkeypatch.setattr(provenance.TxyIndex, "set_fence", lambda index, now: "")
+        helab_txy.clear_converted(base)
+        monkeypatch.setattr(provenance.TxyIndex, "set_fence", set_fence)
+        record(self, *args, **kwargs)
+    monkeypatch.setattr(provenance, "fence_of", after_the_clears_token)
+    monkeypatch.setattr(provenance.TxyIndex, "record", clear_meanwhile)
+    events = run(source, request_for(source, tmp_path, shots=[2]))
+    monkeypatch.undo()
+    [converted] = of(events, "shot_converted")
+    assert converted["shot"] == 2 and Path(converted["txy"]).exists() and reasons(events) == {}
+    assert not (Path(converted["txy"]).parent / provenance.txy_name("m19v1", 1)).exists()  # (Cleared.)
+
+
+def test_a_busy_lock_for_the_rename_fails_the_conversion_and_loses_no_txy(
+        source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The rename's lock busy past ``BUSY_SECONDS``: ``IndexUnavailable`` as for any index write, and
+    the conversion is tried again. The TXY already there stays as it was, no temporary is left, and
+    the row (if it couldn't be forgotten) matches no TXY: the shot converts again."""
+    write_raw(source, 1, raw_bytes(10_000))
+    [first] = of(run(source, request_for(source, tmp_path)), "shot_converted")
+    before = Path(first["txy"]).read_bytes()
+    age(Path(first["txy"]), 600)
+    base = temp_base(tmp_path)
+    record = provenance.TxyIndex.record
+    holder: list[sqlite3.Connection] = []
+
+    def then_busy(self: provenance.TxyIndex, *args: Any, **kwargs: Any) -> None:
+        record(self, *args, **kwargs)
+        other = sqlite3.connect(os.path.join(base, provenance.INDEX_NAME), isolation_level=None)
+        other.execute("BEGIN IMMEDIATE")  # (Another process's write, past the timeout.)
+        holder.append(other)
+    monkeypatch.setattr(provenance.TxyIndex, "record", then_busy)
+    monkeypatch.setattr(provenance, "BUSY_SECONDS", 0.3)
+    try:
+        with pytest.raises(provenance.IndexUnavailable, match="couldn't be locked"):
+            run(source, request_for(source, tmp_path, redo="always"))
+    finally:
+        for other in holder:
+            other.close()
+    monkeypatch.undo()
+    assert Path(first["txy"]).read_bytes() == before
+    assert [path.name for path in Path(first["txy"]).parent.iterdir()] == [Path(first["txy"]).name]
+    assert [event["shot"] for event in of(run(source, request_for(source, tmp_path)), "shot_converted")] == [1]
+
+
+def test_the_fence_table_is_added_within_schema_1(tmp_path: Path) -> None:
+    """An additive table keeps ``user_version`` 1 (convert-3: HeLab 0.0.7a1 sets a newer index aside):
+    an index made before it reads as never cleared, and its first Clear adds the table."""
+    root = str(tmp_path / "converted-txy")
+    with provenance.open_index(root, write=True) as index:
+        index.conn.execute("DROP TABLE fence")  # (As 0.0.7a1 made it.)
+        assert index.fence() == provenance.NO_FENCE == provenance.fence_of(root)
+        index.record("f", "", "/src", provenance_record(), 1.0, fence=provenance.NO_FENCE)
+        token = index.set_fence(2.0)
+        assert token != provenance.NO_FENCE and index.fence() == token == provenance.fence_of(root)
+        with pytest.raises(provenance.Cleared):
+            index.record("f", "", "/src", provenance_record(shot=2), 3.0, fence=provenance.NO_FENCE)
+        with pytest.raises(provenance.Cleared):
+            index.hold(provenance.NO_FENCE)
+        assert not index.conn.in_transaction
+        index.hold(token)
+        assert index.conn.in_transaction
+        index.release()
+        assert not index.conn.in_transaction
+        index.release()  # (Nothing held: nothing.)
+    assert provenance.index_schema(root) == provenance.SCHEMA == 1
+    assert set(index_rows(Path(root) / "f")) == {(provenance_record().profile_tag, provenance_record().shot)}
 
 
 def test_files_that_may_still_be_written_wait(source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -1102,11 +1303,12 @@ def test_a_write_killed_after_its_row_is_converted_again(source: Path, tmp_path:
         request = request_for(source, tmp_path, redo="always")
     original = txy.write_atomic
 
-    def killed(path: Any, data: bytes, *, replace: bool = True, before_rename: Any = None) -> None:
+    def killed(path: Any, data: bytes, *, replace: bool = True, before_rename: Any = None,
+               after_rename: Any = None) -> None:
         def then_killed(info: os.stat_result) -> None:
             before_rename(info)
             raise KeyboardInterrupt  # (Killed between the row and the rename.)
-        original(path, data, replace=replace, before_rename=then_killed)
+        original(path, data, replace=replace, before_rename=then_killed, after_rename=after_rename)
     monkeypatch.setattr(txy, "write_atomic", killed)
     monkeypatch.setattr(provenance.TxyIndex, "forget", lambda *args: False)  # (A kill runs no clean-up.)
     with pytest.raises(KeyboardInterrupt):
@@ -1129,15 +1331,24 @@ def test_a_failed_write_removes_its_row_only_if_still_its_own(source: Path, tmp_
     original = txy.write_atomic
     theirs = provenance_record(shot=1, txy_name="d_txy_helab_m19v1_1.txt", txy_sha256="theirs")
 
-    def failing(path: Any, data: bytes, *, replace: bool = True, before_rename: Any = None) -> None:
+    def failing(path: Any, data: bytes, *, replace: bool = True, before_rename: Any = None,
+                after_rename: Any = None) -> None:
         def then_fail(info: os.stat_result) -> None:
             before_rename(info)
-            if overtaken:  # Another conversion writes its own row meanwhile: it stands.
-                with provenance.open_index(str(folder.parent), write=True) as index:
-                    index.record(folder.name, "", str(source), theirs, 1.0)
             raise OSError(28, "No space left on device")
-        original(path, data, replace=replace, before_rename=then_fail)
+        original(path, data, replace=replace, before_rename=then_fail, after_rename=after_rename)
+    release = provenance.TxyIndex.release
+
+    def then_theirs(self: provenance.TxyIndex) -> None:
+        """Another conversion's row lands meanwhile: once the failed write let go of the index's lock
+        (A19.2), before it forgets its row. It stands."""
+        held = self._held
+        release(self)
+        if held and overtaken:
+            with provenance.open_index(str(folder.parent), write=True) as index:
+                index.record(folder.name, "", str(source), theirs, 1.0)
     monkeypatch.setattr(txy, "write_atomic", failing)
+    monkeypatch.setattr(provenance.TxyIndex, "release", then_theirs)
     for overtaken in (False, True):
         with pytest.raises(OSError, match="No space"):
             run(source, request_for(source, tmp_path))
@@ -1393,7 +1604,8 @@ def test_a_lost_beside_race_leaves_the_other_conversions_record(source: Path, tm
     original = txy.write_atomic
     rival_row = True
 
-    def raced(path: Any, data: bytes, *, replace: bool = True, before_rename: Any = None) -> None:
+    def raced(path: Any, data: bytes, *, replace: bool = True, before_rename: Any = None,
+              after_rename: Any = None) -> None:
         def then_theirs(info: os.stat_result) -> None:
             before_rename(info)
             # The other conversion: its row and then its TXY land between ours.
@@ -1401,7 +1613,7 @@ def test_a_lost_beside_race_leaves_the_other_conversions_record(source: Path, tm
                 with provenance.open_index(str(folder.parent), write=True) as index:
                     index.record(folder.name, "", str(source), theirs, 1.0)
             Path(path).write_bytes(b"the other conversion's\n")
-        original(path, data, replace=replace, before_rename=then_theirs)
+        original(path, data, replace=replace, before_rename=then_theirs, after_rename=after_rename)
     monkeypatch.setattr(txy, "write_atomic", raced)
     events = run(source, request)
     assert [event["shot"] for event in of(events, "shot_kept")] == [1]

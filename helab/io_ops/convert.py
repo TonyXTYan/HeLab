@@ -48,6 +48,14 @@ and path (its ``folders`` row, updated when the folder moved) and holds the shot
 conversion there removes its leftover temporary TXY the same way, and old builds' JSON
 temporaries (``own_partial()``).
 
+**Clear fence** (A19.2). A conversion into the cache or temp folder reads the index's fence token
+when it starts (``provenance.fence_of``); each TXY's row is written only while it is unchanged, and the
+rename is made under the index's write lock with the token checked again (``TxyIndex.hold``), so
+Settings › Cache's Clear (which sets a new token before it removes anything) never leaves a TXY this
+conversion wrote: one refused waits (``shot_waiting``, reason ``cleared``), and so does every shot after it,
+unread; a later conversion converts them. Beside the raw files nothing is fenced (Clear never removes
+those TXY).
+
 **Processes.** Reads, writes and every source-folder call stay in this process (traced, guarded
 and paused like the other helpers'). With ``workers`` > 1, conversions run across shots in a pool
 of spawned processes (4–8 give 3–5×, the NumPy floor measured), or, for one large shot, its pieces
@@ -110,6 +118,9 @@ COMPUTE_RATE = 10**6
 # timeout 20s"; raw files arrive about one per 30 s).
 DAMAGED_SECONDS = 20.0
 DAMAGED = "damaged"
+# A shot's ``shot_waiting`` reason when HeLab's TXY were cleared while this conversion ran (A19.2).
+CLEARED = "cleared"
+CLEARED_TEXT = "HeLab's converted TXY were cleared while this conversion ran: converted again at the next check"
 # Leftover temporary TXY of a killed beside write: removed once this old, by a beside conversion.
 PARTIAL_MAX_AGE = 3600.0
 # Workers when the request doesn't say: across shots in processes. A frozen app's spawned workers
@@ -440,6 +451,7 @@ class _Pool:
 
 def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> None:
     from helab._version import __version__
+    import sqlite3
     from helab.convert import provenance, raw, txy
     from helab.convert.pipeline import APP_BACKEND, convert_shot
     from helab.convert.profile import DetectorProfile
@@ -449,6 +461,10 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     profile = DetectorProfile.from_dict(request["profile"])
     backend = str(request.get("backend") or APP_BACKEND)
     places = _places(path, request)
+    # The Clear fence's token now (A19.2), before anything is listed: a Clear from here on refuses
+    # this conversion's writes. (Beside: none; Clear never removes those TXY.)
+    fence = None if places["output"] == "beside" else provenance.fence_of(os.path.dirname(places["folder"]))
+    cleared = False
     numba_folder = ""
     if backend == "numba":
         # Its compiled code goes in HeLab's temp folder (Q18.1): numba no longer ships (Q11.2), so
@@ -646,10 +662,22 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
             send({"kind": "convert_progress", "path": path, "done": handled, "todo": len(todo),
                   "converted": converted, "raw_bytes": raw_bytes})
 
+    def fenced() -> bool:
+        """A Clear has set another fence token since this conversion started (False when unread now:
+        each write checks it again)."""
+        if fence is None or index is None:
+            return False
+        try:
+            return index.fence() != fence
+        except sqlite3.Error:
+            return False
+
     def finish(shot: _Shot, data: bytes, read_seconds: float, result: Converted | BaseException) -> None:
-        nonlocal converted, handled
+        nonlocal converted, handled, cleared
         handled += 1
-        if isinstance(result, NoRowsError):
+        if cleared:
+            wait(shot, CLEARED, CLEARED_TEXT)
+        elif isinstance(result, NoRowsError):
             refuse(shot, raw.NO_ROWS, f"The raw file has no rows: {result}")
         elif isinstance(result, BaseException):
             refuse(shot, "failed", f"Conversion failed: {type(result).__name__}: {result}")
@@ -678,18 +706,33 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
                 row matches no TXY there, so the shot is converted again."""
                 assert index is not None
                 pinned = dataclasses.replace(record, txy_size=info.st_size, txy_mtime_ns=info.st_mtime_ns)
-                index.record(folder_name, places["key"], path, pinned, time.time())
+                index.record(folder_name, places["key"], path, pinned, time.time(), fence=fence)
                 written.append(pinned)
+                if fence is not None:
+                    # The rename alone under the index's lock, the token checked again: a Clear's comes
+                    # before (refused here) or after it (and finds the TXY).
+                    index.hold(fence)
 
+            assert index is not None
             if beside:
                 _guard(target)
             try:
-                txy.write_atomic(target, result.txy, replace=not beside, before_rename=pin)
+                try:
+                    txy.write_atomic(target, result.txy, replace=not beside, before_rename=pin,
+                                     after_rename=index.release)
+                finally:
+                    index.release()  # (Refused or failed before the rename: let go all the same.)
             except BaseException as exc:
                 if written:
                     # Its row goes, unless another conversion has written its own since: then that one stands.
                     with contextlib.suppress(OSError):
                         index.forget(folder_name, written[0])
+                if isinstance(exc, provenance.Cleared) or (isinstance(exc, FileNotFoundError) and fenced()):
+                    # (Refused by the fence; or a Clear meanwhile took this write's temporary file.)
+                    cleared = True
+                    wait(shot, CLEARED, CLEARED_TEXT)
+                    progress()
+                    return
                 if (too_long := path_too_long(exc, target)) is not None:
                     refuse(shot, "failed", too_long)  # (Not converted again while unchanged: Q23.6.)
                     progress()
@@ -717,7 +760,12 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
 
     def read(shot: _Shot) -> tuple[bytes, float] | None:
         """The shot's bytes and read time, or None when it waits (sent here)."""
-        nonlocal handled, raw_bytes
+        nonlocal handled, raw_bytes, cleared
+        cleared = cleared or fenced()
+        if cleared:
+            handled += 1
+            wait(shot, CLEARED, CLEARED_TEXT)
+            return None
         read_started = time.perf_counter()
         reader = Heartbeat(send, "reading")
         try:
