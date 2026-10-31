@@ -559,6 +559,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.job_id = ""
         self.follow.end(time.monotonic())
         view, self._job_view = self._job_view, None
+        # The run an outdated saved result waited for has ended (failed, cancelled or not shown): it stays.
+        self._cache_note = self._cache_note.removesuffix(RERUNNING)
         if self.released is not None:
             self.released.set_state("")  # A reload's run ended; a failure shows in the amber line.
         if result.state == "cancelled":
@@ -594,7 +596,6 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if self.shown is not None:
                 # The last plot stays; the error shows above it until a run succeeds.
                 self.error = f"rev {result.input.revision} failed: {error} · showing rev {self.shown.input.revision}"
-                self._cache_note = self._cache_note.removesuffix(RERUNNING)  # An outdated saved result stays.
                 self._still_released()
                 self._show_follow()
                 self._follow_next()

@@ -283,9 +283,11 @@ def test_a_changed_script_or_data_shows_the_saved_result_outdated_until_the_run_
     close(window)
 
 
-def test_a_failed_rerun_beside_an_outdated_saved_result_says_it_no_longer_reruns(
-        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """The area review's nit: the amber line kept "…is outdated: rerunning" beside the failure."""
+@pytest.mark.parametrize("end", ["failed", "cancelled"])
+def test_a_rerun_beside_an_outdated_saved_result_that_ends_unshown_says_it_no_longer_reruns(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, end: str) -> None:
+    """The area review's nit: the amber line kept "…is outdated: rerunning" after the rerun failed, or
+    was cancelled (Optic's R-3; a pinned one ends at the same line of ``_finished``)."""
     window = make_window(qtbot, cache, tmp_path, monkeypatch)
     first = open_plot(window, qtbot, folder_view(tmp_path), Costly())
     qtbot.waitUntil(lambda: saved(first), timeout=WAIT)
@@ -294,9 +296,16 @@ def test_a_failed_rerun_beside_an_outdated_saved_result_says_it_no_longer_reruns
     second = open_plot(window, qtbot, folder_view(tmp_path, changed=2), script)
     qtbot.waitUntil(lambda: second.shown is not None, timeout=WAIT)
     assert "is outdated (data changed (1 shot changed)): rerunning" in label(second, "plot_error")
-    script.fail = True
+    if end == "failed":
+        script.fail = True
+    else:
+        second._cancel_run()
     script.go.set()
-    qtbot.waitUntil(lambda: not second.job_id and "failed: no totals" in label(second, "plot_error"), timeout=WAIT)
+    qtbot.waitUntil(lambda: not second.job_id, timeout=WAIT)
+    if end == "failed":
+        qtbot.waitUntil(lambda: "failed: no totals" in label(second, "plot_error"), timeout=WAIT)
+    else:
+        assert second.status_label.text() == "Cancelled"
     line = label(second, "plot_error")
     assert "rerunning" not in line and "is outdated (data changed (1 shot changed))" in line
     assert cast(AnalysisResult, second.shown).source == FROM_DISK

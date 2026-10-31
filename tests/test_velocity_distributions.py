@@ -376,6 +376,12 @@ def test_another_profile_s_or_load_s_next_live_run_detects_again() -> None:
     first = run(first_view, {"keep_percent": 99.0}, owner=owner)
     later_view = revise(first_view, dataset_of(clouds, shots=5, seed=14))
     assert run(later_view, {"keep_percent": 99.0}, owner=owner, live=True).data.kept_from == first.input.revision
+    # A fresh load of the same choice: only its chain tells it from what the plot kept.
+    fresh = view_of(clouds, shots=6, seed=14)
+    assert fresh.signature == later_view.signature and fresh.txy_choice == later_view.txy_choice
+    assert fresh.chain_key != later_view.chain_key and fresh.chain_key[3:] == later_view.chain_key[3:]
+    assert run(fresh, {"keep_percent": 99.0}, owner=owner, live=True).data.kept_from == 0
+    # Another profile's TXY of the same shots (the plot's kept steps are the fresh load's now).
     loaded = dataset_of(clouds, shots=6, seed=14)
     other = Dataset(PATH, loaded.signature, loaded.data, {**loaded.metadata, "txy": {
         "source": "helab-only", "profile_tag": "p22v1", "origins": {str(shot): "helab:p22" for shot in loaded.data}}}, 0)
@@ -384,9 +390,6 @@ def test_another_profile_s_or_load_s_next_live_run_detects_again() -> None:
     assert profile_view.chain_key[-1] == "p22"
     rerun = run(profile_view, {"keep_percent": 99.0}, owner=owner, live=True)
     assert rerun.data.kept_from == 0 and rerun.data.detection is not first.data.detection
-    fresh = view_of(clouds, shots=6, seed=14)
-    assert fresh.signature == later_view.signature
-    assert run(fresh, {"keep_percent": 99.0}, owner=owner, live=True).data.kept_from == 0
     SCRIPT.plot_closed("Plot", owner, PATH)
 
 

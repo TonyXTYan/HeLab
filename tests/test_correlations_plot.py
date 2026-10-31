@@ -290,6 +290,23 @@ def test_another_load_s_live_run_keeps_no_box() -> None:
     SCRIPT.plot_closed("Plot", "live-chain", again.identity.source_path)
 
 
+def test_another_load_keeps_no_detection() -> None:
+    """plots-3 (Optic's R-2): the kept t_r detection is keyed by the data too: a run on another load of
+    the folder (same signature, same events) detects again rather than keeping the last one."""
+    velocities = thermal_velocities(3, shots=12, events=300)
+    values = {"corr_range": 0.4 * SCALE, "corr_window": 0.05 * SCALE, "n_boot": 2, "keep_percent": 100.0}
+    first = data_of(run(txy_view(velocities), values, owner="live-detect", folder={}))
+    assert first.release_how == "detected"  # No release time in the folder: detected.
+    view = txy_view(velocities)
+    later = view.with_shots({}, {})  # A revision of that chain: the same data, kept.
+    data_of(run(view, values, owner="live-detect", folder={}))
+    assert data_of(run(later, values, owner="live-detect", folder={})).release_how == "detected, kept"
+    again = txy_view(velocities)
+    assert again.signature == later.signature and again.chain_key != later.chain_key
+    assert data_of(run(again, values, owner="live-detect", folder={})).release_how == "detected"
+    SCRIPT.plot_closed("Plot", "live-detect", again.identity.source_path)
+
+
 def test_live_adds_a_shot_without_counting_the_old_ones_again(monkeypatch: pytest.MonkeyPatch) -> None:
     velocities = thermal_velocities(3, shots=13, events=300)
     view = txy_view(velocities[:12])
