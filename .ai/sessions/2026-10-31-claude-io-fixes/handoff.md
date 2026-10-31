@@ -70,6 +70,19 @@ A mid-point full run (at `10a9c3c`) found one mypy error in the A39.2 code: 4 fa
 20 reruns were those four `test_typing` tests failing on that one deterministic error (5 reruns each); no flaky
 test. Fixed in `f945f69`.
 
+## Review fixes (Probe, review of `5457ccd`: 2 Low)
+
+- **IO-R1** (`af5a205`): `cancel_for_quit` lifted the hold before its cancel loop, so the held loads and scans
+  started helpers that were stopped at once. The hold is now lifted after the loop. Test:
+  `test_mismatched_folders.py::test_quitting_starts_none_of_the_loads_and_scans_the_hold_held`, which fails
+  before (both held requests started).
+- **IO-R2** (`00de809`): `converted` marked every `helab_rereads` shot, including a HeLab-held shot read again
+  from MATLAB's TXY after its HeLab TXY was cleared. It now needs `origins.get(shot)`. Test:
+  `test_txy_sources.py::test_a_helab_held_shot_read_again_from_matlabs_isnt_called_converted`, which fails before.
+- **io-5's full rewrite on a signature-only change** (Probe's note): confirming the row with the new signature
+  isn't possible outside `cache_store.py`. Only `CacheStore.confirm_dataset` updates a row's `info`, and it takes
+  no signature. Proposed as A~3 below rather than changed here.
+
 ## The RERUN Rivet saw (CI 41158349537, macOS Tests 2/2, on base code)
 
 `test_live_convert.py::test_a_converted_shot_asks_for_lives_next_check` failed once at `:231` (`'' == 'check'`). My
@@ -130,6 +143,12 @@ this lands.
   data and keeps the shot known-unreadable. This was already so for HeLab-held shots converted again. HeLab writes
   TXY by temporary name and rename, so it is unlikely. Keeping the held data until a readable TXY is read would be
   safer.
+- **A~3 (cache area).** A signature-only change rewrites the whole dataset (io-5): every cached shot is unpacked
+  and packed again, though no TXY is read. Smaller: `CacheStore.confirm_dataset(..., signature=None)` merges a
+  given signature into `info`. In `loading.load`, a cache whole but for the signature then takes the confirm
+  branch with `signature=summary["signature"]` and needs neither the dataset nor a rewrite. It is a few lines in
+  `cache_store.py` (no schema change: `info` is JSON) and one branch in `loading.py`. Best done with
+  caching v2's store work, or after this floor lands.
 - **M~1.** At the lab, with Live and auto-convert on under HeLab priority and MATLAB's converter also running, check:
   shots first read from MATLAB's TXY switch to HeLab's within two checks of their conversion; no "changed after it
   was read" note appears on the Live line; the log has one INFO line per switched shot.
