@@ -185,3 +185,102 @@ I tested an export of `c3c40c5` (`git archive`, with `testdata` and `legacy/tdc_
   quoted above).
 
 On fix diffs I re-check only the fixes, their tests and the type checks of the touched files.
+
+## Re-check of the fixes (`bdbd2bc..6a89c5d`; `d207b61` not included)
+
+**Open findings: 2 new Nits (C2-7, C2-8), each a narrow gap left by a fix. C2-1 to C2-5 are fixed. C2-6 is fixed
+in `cache_move`, but takes effect only once the app sends the layout (CoCo's call: see below).**
+
+**Fails without its fix.** For each fix commit I exported that commit, put back its `helab/` files from its parent,
+and ran the tests it added. Each test failed without its fix and passed with it:
+
+| Finding | Commit | Without the fix | With it |
+|---|---|---|---|
+| C2-2 | `471a980` (`hlb.py`) | 5 failed | 5 passed |
+| C2-3 | `6d53159` (`store_v4.py`) | 4 failed (`RecursionError`) | 4 passed |
+| C2-1, C2-4 | `9d5889c` (`cache_store.py`, `legacy_store.py`) | 10 failed | 10 passed |
+| C2-5 | `47a6723` (`cache_store.py`, `store_v4.py`) | 1 failed | 1 passed |
+| C2-6 | `0551343` (`admin.py`, `cache_move.py`) | 2 failed | 2 passed |
+
+**C2-2: fixed.** A header CRC32 sits after the length (offset 12; the header starts at 16), and is checked before
+the JSON is parsed. Chunks must fill the body in the order listed, with no gap, overlap or trailing byte. The
+damage set gains a flipped header byte, a wrong CRC, a gap, an overlap and trailing bytes. My `first_channel` 5 → 7
+case is now an error. The addendum's §5 diagram is updated.
+
+**C2-3: fixed.**
+- An invalid or empty file is replaced by a new id, atomically: a temporary file, then `os.replace`.
+- A missing one is made with `os.link`, so two first starts agree.
+- No recursion; any OS error gives `""`.
+- Observation, not a finding: the new file gets the default mode (umask), not addendum §4's 0600. Its contents are
+  a random id, so this matters little; the addendum's text could say so.
+
+**C2-1, C2-4: fixed.**
+- v3 is read through only for a key and kind v4 never removed: the kind's generation, the key's epoch
+  (`results:` for results), its root's epoch, or a `legacy-hidden:<kind>:<key>` tombstone written by a `None`
+  save.
+- Purges by age record their cutoff (`meta.legacy_purged`).
+- The checks run inside the read transactions.
+- The tombstone rows match no guard key, so no save is affected.
+- Counts add only v3 lookups that v4 lacks, and none for a removed key; the step-4 test's 4 is now 3.
+- One narrow gap remains: C2-7.
+
+**C2-5: fixed for data roots** (`meta.forgotten_before_import`). The commit says flags are "only set, never
+deleted". That's true, but Clear folder preferences turns them off only in the rows v4 already has, which leaves
+C2-8.
+
+**C2-6: fixed in the owned code.**
+- `start(..., layout=)` records `primary`.
+- `checkpoint`, `verify`, `valid_at`, `store_at`, `usable_after_recovery` and `recover` all use it.
+- A record without it behaves as before.
+- But `CacheMover` (an `app` file) doesn't send the layout yet, so until that one-line change lands, a move with the
+  switch off and a leftover `store-v4` still picks v4 as primary. The handoff proposes the change.
+- **CoCo's call:** close C2-6 on that proposal, or keep it open until `CacheMover` sends `live_layout()`. Either way
+  only a developer with a leftover v4 can hit it, and the data stays safe: both stores are verified.
+
+**Handoff:** the fix table is accurate, and S0-2's proposed fix is corrected (leave `cleared` out of `stuck()`).
+
+### C2-7 · Nit · A later purge that keeps failures brings back v3 histories with failures that an earlier purge hid
+
+- `helab/utils/cache_store.py:721-741` (`_legacy_purged`, `_note_purge`: one cutoff and one flag per kind);
+  `helab/utils/legacy_store.py:123` (`records(..., keep_failures=)`).
+- **Scenario.**
+  1. Keep is on, and v3 holds a scan history with failures, saved at 50.
+  2. The user purges records at cutoff 100, failures included. The history is hidden. Good.
+  3. A later purge by age at cutoff 200 keeps failures (the default). `_note_purge` replaces the entry with
+     `[200, False]`, and `records(before=200, keep_failures=True)` lets every v3 history with failures through.
+  4. The history from step 1 is back. A history with failures blocks automatic scans of that folder again.
+- **Fix.** Keep two cutoffs per kind: the latest, and the latest of a purge that took failures. Hide v3 histories
+  with failures saved before the second.
+- **How verified.** Scratch test (`.ai/temp/assay/test_zz_cp2fix.py`, run on code identical to `6a89c5d`): after
+  the first purge `read_record` is missing; after the second it returns `{'failures': [{'x': 1}]}`.
+
+### C2-8 · Nit · A Clear folder preferences made before a retried import is undone by that import
+
+- `helab/utils/store_v4.py:200-240` (`import_legacy`: `INSERT OR IGNORE` of `folder_prefs`/`convert_prefs`);
+  `cache_store.clear_prefs` turns off only the rows v4 has, and records `prefs_cleared_at`, which is checked on
+  writes only.
+- **Scenario.**
+  1. v3 can't be read when v4 is created, so the import is pending.
+  2. In v4, the user clears folder preferences (every flag off).
+  3. At the next writable open, the import adds v3's rows that v4 lacks, Don't cache on included, with their old
+     `set_at`. The flag the user just turned off is on again.
+
+  Same class as C2-5, which fixed only `roots`. Rare: it needs v3 to be unreadable at v4's creation.
+- **Fix.** In the import, import a `folder_prefs`/`convert_prefs` row with `set_at <= prefs_cleared_at` with its
+  flags off, or skip it.
+- **How verified.** Same scratch file: after `clear_prefs(100)` and the retried import, `read_prefs(FLAGGED)` gives
+  `{'no_cache': True, …, 'set_at': 10.0}`.
+
+**Checks (re-check).** On an export of `6a89c5d`:
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-assay` (the full suite, every touched test
+  included): **8719 passed, 673 skipped, 3 failed, 15 rerun in 153.63 s.**
+  - All 3 failures and all 15 RERUNs are the same three git-provenance tests as before, failing because the export
+    has no `.git` (5 reruns each).
+  - Those three pass in the floor checkout: **3 passed, no RERUN**. Neither they nor `build_info.py` changed since
+    `6a89c5d`.
+  - No other RERUN.
+- `mypy helab/ --strict` (199 files), `mypy tests --strict` (178), `--platform win32`: no issues.
+- `pyright helab tests` and `--pythonplatform Windows` (code identical to `6a89c5d`): 0 errors.
+- The fails-without-fix table above, and the C2-7 and C2-8 scratch tests.
+
+On the C2-7 and C2-8 fixes (and C2-6's wiring, if it lands here) I'll re-check only those diffs.
