@@ -220,8 +220,19 @@ Assay's notes for later steps:
   layers although it says "Removes everything in the disk cache"; with the raw row, Clear all includes `raw`. Make
   room's dialog names `only_copy_paths`.
 - **Step 5's `raw_fill`:** publish each `.hlb` just before its batch's save (an unsaved file is an orphan the sweep
-  deletes after an hour; a paused job could pass that). `trim` (a lowered
-budget) still removes datasets only (A~4: give it Make room's order).
+  deletes after an hour; a paused job could pass that).
+- **Step 5's `raw_fill` passes `RawEntry.read_at`** (when it read each file), or C2-10/C2-11's ordering falls back to
+  the save's time (Assay, pass 4).
+
+Assay's pass 4 (`3c239a9`), both fixed with a test that fails first:
+- **C2-11 Nit** (`0579fa1`): a replacing raw batch carries `gone_at` when a listing at or after its `read_at` found
+  the shot gone.
+- **C2-12 Nit** (`3f98958`, test-only): the via-layer test refuses file opens on its own thread only.
+
+Not changed: `trim` (a lowered budget) still removes datasets only (A~4: give it Make room's order).
+
+Checks at `3f98958`: **8746 passed, 672 skipped, 2 warnings in 134.48s; no RERUN**; mypy (also win32) and pyright
+(also Windows) clean. Log: `.ai/temp/step4/suite-c2d.log`.
 
 ## Proposed doc changes (for the Coordinator)
 
