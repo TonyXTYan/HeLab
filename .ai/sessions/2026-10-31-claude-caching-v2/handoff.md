@@ -245,6 +245,38 @@ Checks at `3f98958`: **8746 passed, 672 skipped, 2 warnings in 134.48s; no RERUN
   `export` to npz/mat/csv, read-only; one dispatch line in `helab/main.py`, to ask CoCo).
 - Next: CoCo's word to merge `dev/v0.0.8`, then step 5's `folder_cache.py` part.
 
+## Step 5 (after checkpoint 2 landed; `dev/v0.0.8` merged at `f5fe405`)
+
+| Commit | What |
+|---|---|
+| `34ec22c` | cache-1: a data root's change of identity drops its folder flags and `write_beside` in RAM (`_root_prefs_gone`, beside `_root_constants_gone`'s three callers) |
+| `fc25864` | `raw_fill` (helper operation), raw rows from conversions, Q28.6's notice, the Folder details line |
+
+Files outside the owned paths, each approved by CoCo: `helab/io_helper.py` (dispatch, `SOURCE_OPERATIONS`,
+`CACHE_ONLY`), `helab/utils/io_service.py` (`PAUSABLE`, `CACHE_OPERATIONS`, `LABELS`, `NOUNS`), `helab/utils/events.py`
+(`RAW_OVERWRITTEN`), `helab/views/FolderDetailsPanel.py` (the amber Problems line; **Rivet's A39.4 edits that area
+on Ground: merge `dev/v0.0.8` after Rivet pushes, before the next checkpoint push**).
+
+- **raw_fill** runs on the background lane: pausable, refused offline, held during a cache move, and labelled
+  "Cache raw pulses". It holds its slot until its exit is confirmed (`IOService`'s rule, unchanged). Its timeout is
+  `NO_PROGRESS_TIMEOUT`, fed by heartbeats while it lists, reads and encodes. At most one per folder is queued or
+  running (owner `raw_fill:<path>`, `IOService`'s dedup); a folder asked again, or one that yielded (`more`), is
+  queued again when its run ends, at the back of the lane. It is never retried after an error until the next save
+  asks.
+- It is **triggered** by a valid `cache_saved`: Load, auto-load, presets' and reopened plots' loads, and Live's
+  saves. Conversions save their own raw rows instead (`convert._RawRows`: cache or beside output, a data root,
+  store-v4, online). Never for listings or scans, a Don't cache folder, without a data root, or in store-v3.
+- **Q28.6:** a desktop notification once per shot per session, a log warning naming the folder, and Folder details'
+  Problems line in amber ("N raw file(s) overwritten since cached", the files in its tooltip).
+- Not built: the Folder details line comes from `FolderCache.raw_overwrites`, which lasts the session only (as
+  Tony asked: once per shot per session).
+
+Proposed docs (CoCo's request): **`io-and-browsing.md`**, lanes: "`raw_fill` (caching v2, store-v4 only) runs on a
+background lane, pausable and refused offline, one per folder (`FolderCache.schedule_raw_fill` after a valid
+`cache_saved`); it yields after about 30 s of work and is queued again at the back, so scans and Live's saves never
+wait behind a large folder." **`cache-store.md`**: `raw_fill`, its batches and `read_at`, conversions' raw rows,
+Q28.6's notice. **`converter.md`**: a conversion in store-v4 saves its shots' raw layers.
+
 ## Proposed doc changes (for the Coordinator)
 
 - **known-issues** (cache-4): replace the `test_cache_switch.py` leak entry with: "Fixed on
