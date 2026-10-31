@@ -70,6 +70,23 @@ A mid-point full run (at `10a9c3c`) found one mypy error in the A39.2 code: 4 fa
 20 reruns were those four `test_typing` tests failing on that one deterministic error (5 reruns each); no flaky
 test. Fixed in `f945f69`.
 
+## The RERUN Rivet saw (CI 41158349537, macOS Tests 2/2, on base code)
+
+`test_live_convert.py::test_a_converted_shot_asks_for_lives_next_check` failed once at `:231` (`'' == 'check'`). My
+fixes don't touch that path: `_live_tick` and `_convert_tick` are unchanged since `0571ff2`. **Cause: a race in the
+test, not the app.**
+- `watching_raw_folder` leaves the first conversion queued.
+- Each later tick that comes at least `live_interval` after the last conversion ended queues a conversion with its
+  check.
+- When two ticks in a row are late (a loaded runner), `cycle` answers a check queued with a conversion it doesn't
+  run. The test then reaches `:230` with a conversion already queued and no check out yet: the wait succeeds at
+  once, and the assert fails.
+
+Reproduced 3/3 with `live_interval = 0`, where every tick finds the interval over. Fixed in the test: it waits for
+the conversion *and* a check, and runs with both intervals (0.02 and 0), so the late-tick order is covered for
+good. 5/5 runs pass in both. The app does what the test means in both orders. No known-issues line is needed once
+this lands.
+
 ## Proposed doc changes (for the Coordinator)
 
 **`.ai/architecture/io-and-browsing.md`**, the cache-first paragraph:
