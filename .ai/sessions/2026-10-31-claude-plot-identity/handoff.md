@@ -56,6 +56,21 @@ plots-4 and both nits. plots-2 is out of scope (Q39.1, A39.3). Base `0571ff2`; n
    saved result) is left on purpose: that result's data isn't the run's view, and with plots-1 its
    source line already says "Showing previously loaded data" (`dataSourceHeld` None).
 
+## Review (Optic, [review.md](review.md), `0d00b13`): 5 Low findings, all fixed
+
+- **R-1** (`a76ba3c`): the velocity test's fresh-load leg passed with the chain token blanked; it now runs
+  right after the kept rerun on a load of the same choice, so only the chain tells them apart.
+- **R-2** (`a76ba3c`): `test_correlations_plot.py::test_another_load_keeps_no_detection`: Correlations'
+  kept t_r detection ("detected, kept") isn't kept for another load.
+- **R-3** (`a76ba3c`): a cancelled rerun, or one not shown because Follow Live went off, kept ": rerunning"
+  beside an outdated saved result; `_finished` now drops it once for every run that ends (test: failed
+  and cancelled).
+- **R-4**: the known-issues rewording below (lines 61-66).
+- **R-5** (`a76ba3c`): `shot_trends`' 143-character comment line wrapped.
+
+Each changed test was run with its fix taken out and failed (the chain token blanked; `chain_key` out of
+`detection_key`; the `_finished` line removed).
+
 ## Files
 
 | File | Change |
@@ -127,8 +142,8 @@ Logs kept whole in `.ai/temp/plot-identity/` (gitignored): `suite.log`, `suite2.
   fingerprints and origins, `DatasetView.held` / `held_of`; by shot numbers for a plot with its own TXY
   choice), else "Showing previously loaded data"; a plot following Live is always the former."
 - **`plots-and-scripts.md`, Visualization**, the Dash sentence: "(`127.0.0.1:8050` preferred; another
-  free port when it's in use, or held on all addresses by another program, which macOS would otherwise
-  let HeLab share: `DashServer._listened_on_all`, plots-4)".
+  free port when it's in use, or held on all addresses by another program, which macOS and Windows would
+  otherwise let HeLab share: `DashServer._listened_on_all`, plots-4)".
 - **`live.md`, Plots following Live**: after "`revise` makes it the next revision of the folder's view":
   "; a dataset that isn't one (another load, TXY choice or profile, or shots gone) starts another chain
   (`ViewIdentity.chain`), which its plots run on once whatever their revision and Rerun every N".
@@ -146,6 +161,12 @@ Logs kept whole in `.ai/temp/plot-identity/` (gitignored): `suite.log`, `suite2.
     gets its port back after a restart (TIME_WAIT)."
   - Another occurrence of `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`'s
     worker crash: Windows CI run 41158691080, Tests 2/2 (job 124411181934), passed on retry.
+  - Reword (Optic's R-4) the item at lines 61-66 ("When a tab's shown data is dropped while it is
+    shown…"), whose last sentence describes the label by signature. From "Since plotting," on: "Since
+    plotting, a plot whose data differs from the tab's (its shots, their files and origins:
+    `DatasetView.held` / `held_of`, plots-1; by shot numbers for a plot with its own TXY choice) says
+    "Showing previously loaded data" (`_update_plot_source_label`); not checked: a cache clear (which
+    keeps the tab's dataset, so the label stays) and the tab's own arrays (2026-10-28)."
 
 ## Provisional items
 
