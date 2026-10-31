@@ -69,10 +69,14 @@ Tony in Chat, 2026-10-31, on what needs him (block 39):
 - **Reviewers** (Tony "ok"): one Reviewer per floor, at landing; it checks again only once every finding is
   fixed, and then reads only the fix diff; wide reviews (several areas, or Codex on the PR) only at
   release milestones; a re-review is the same Reviewer, never a new set.
-- **Q39.2 TXY and shares** (Tony; details proposed, to confirm): writing TXY to a share gets an explicit
+- **Q39.2 TXY and shares** (Tony; the details below confirmed, "39.2 ok") (A39.5): writing TXY to a share gets an explicit
   warning, since auto-convert should run where the data is local (the acquisition PC). A share folder with
   no TXY of any kind offers to convert into HeLab's cache or temp folder (recommended), says the converter
   should run on the machine that owns the data, and still lets the user convert beside on the share.
+  As built: the beside setting and `helab convert --output beside` on a share warn once per folder (the
+  user confirms); a share folder without TXY offers "Convert to HeLab's cache (recommended)" or temp in
+  Folder details, with "Convert beside on the share…" behind the warning; Live's auto-convert on a share
+  is allowed with the same one-time warning.
 - **Q38.3 yes**, plus counts per converter: Folder details says "N left out (TXY source)" for shots a TXY
   source leaves out, keeping "removed" for files really gone, and shows how many TXY of each kind the
   folder has, MATLAB's and each HeLab profile tag's (Tony: "and we can show status of how many txy of each

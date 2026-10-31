@@ -323,6 +323,13 @@ review of PR #10, six rounds).
   `d_txy_forc` and each HeLab tag's `d_txy_helab_<tag>_` (e.g. "TXY: 120 MATLAB · 118 p19v1"; detail in
   the tooltip).
 
+- **A39.5 TXY and shares** (Q39.2, Tony 2026-10-31; the converter and I/O areas): writing TXY beside the
+  raw files on a share (`helab/utils/cache_location.py` and the data roots' share detection) warns once
+  per folder that conversion belongs on the machine that owns the data, the user confirming: the folder's
+  beside setting, `helab convert --output beside`, and Live's auto-convert. A share folder with no TXY of
+  any kind offers in Folder details to convert into HeLab's cache (recommended) or temp folder, says the
+  converter should run on the acquisition PC, and keeps "Convert beside on the share…" behind the warning.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:
