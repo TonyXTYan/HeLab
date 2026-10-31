@@ -5,7 +5,9 @@ from dataclasses import dataclass
 import hashlib
 import json
 from pathlib import Path
+import posixpath
 import re
+import stat
 import subprocess
 from typing import Protocol, cast
 from urllib.parse import quote
@@ -120,9 +122,20 @@ def validate_archives(artifacts: dict[str, Path], tag: str, commit: str) -> dict
     result: dict[str, Fingerprint] = {}
     for name, path in artifacts.items():
         with zipfile.ZipFile(path) as archive:
-            stamps = [item for item in archive.namelist() if item.endswith("/helab/_build_info.json")]
+            entries = [item for item in archive.infolist() if item.filename.endswith("/helab/_build_info.json")]
+            # The macOS zip keeps the app's symlinks: since the cython kernel ships, PyInstaller makes
+            # Contents/Frameworks/helab a folder whose data files link to Contents/Resources. A link's
+            # entry holds its target's path, which must be another stamp here; the files are checked.
+            links = [item for item in entries if stat.S_ISLNK(item.external_attr >> 16)]
+            stamps = [item for item in entries if item not in links]
             if not stamps:
                 raise ValueError(f"{name} has no packaged build stamp")
+            names = set(archive.namelist())
+            for link in links:
+                target = posixpath.normpath(posixpath.join(posixpath.dirname(link.filename),
+                                                           archive.read(link).decode()))
+                if target not in names or not target.endswith("/helab/_build_info.json"):
+                    raise ValueError(f"{name}'s build stamp {link.filename} links outside the stamps")
             for stamp in stamps:
                 data = _object(json.loads(archive.read(stamp)))
                 if data.get("version") != tag.removeprefix("v") or data.get("commit") != commit or data.get("dirty") is not False:

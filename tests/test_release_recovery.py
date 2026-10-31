@@ -166,6 +166,41 @@ def test_commit_collision_refuses_any_release_mutation(tmp_path: Path, wrong_tag
     assert api.creations == api.body_updates == 0 and not api.uploads and not api.deleted
 
 
+def add_link(archive: Path, name: str, target: str) -> None:
+    """A symlink entry as ``zip -y`` stores one (the macOS zip keeps HeLab.app's links)."""
+    info = zipfile.ZipInfo(name)
+    info.external_attr = (0o120755 << 16)
+    with zipfile.ZipFile(archive, "a") as stream:
+        stream.writestr(info, target)
+
+
+def test_a_stamp_linked_to_the_packaged_one_is_checked_through_it(tmp_path: Path) -> None:
+    # 0.0.7a1's macOS zip (run 41110274554): Contents/Frameworks/helab/_build_info.json links to
+    # Contents/Resources/helab/_build_info.json, and reading the link as JSON stopped the release.
+    files = archives(tmp_path)
+    add_link(files[ASSET_NAMES[0]], "HeLab/Frameworks/helab/_build_info.json", "../../_internal/helab/_build_info.json")
+    assert set(validate_archives(files, TAG, SHA)) == set(ASSET_NAMES)
+
+
+@pytest.mark.parametrize("target", ["../../payload.txt", "../../_internal/helab/missing/_build_info.json"])
+def test_a_linked_stamp_must_lead_to_a_packaged_stamp(tmp_path: Path, target: str) -> None:
+    files = archives(tmp_path)
+    add_link(files[ASSET_NAMES[0]], "HeLab/Frameworks/helab/_build_info.json", target)
+    with pytest.raises(ValueError, match="links outside the stamps"):
+        validate_archives(files, TAG, SHA)
+
+
+def test_an_archive_with_only_a_linked_stamp_has_none(tmp_path: Path) -> None:
+    files = archives(tmp_path)
+    only_link = tmp_path / "only-link.zip"
+    with zipfile.ZipFile(only_link, "w") as archive:
+        archive.writestr("HeLab/payload.txt", "first")
+    add_link(only_link, "HeLab/Frameworks/helab/_build_info.json", "../../payload.txt")
+    files[ASSET_NAMES[0]] = only_link
+    with pytest.raises(ValueError, match="no packaged build stamp"):
+        validate_archives(files, TAG, SHA)
+
+
 @pytest.mark.parametrize("commit,dirty", [(LATER_SHA, False), (SHA, True)])
 def test_wrong_commit_or_dirty_archives_are_rejected_before_mutation(tmp_path: Path, commit: str, dirty: bool) -> None:
     api = MemoryReleases()

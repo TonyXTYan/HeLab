@@ -242,14 +242,17 @@ Bugs, gaps and flaky tests, open and recently fixed: [known issues](known-issues
 
 ## Done
 
-v0.0.7a1 (`main` `e03c32a`, TonyXTYan/HeLab#10, 2026-10-31; tag `v0.0.7a1` once `main`'s CI makes it;
+v0.0.7a1 (`main` `e03c32a`, TonyXTYan/HeLab#10, 2026-10-31; no tag or GitHub release, see below;
 open checks under Now):
 
 - [x] Release v0.0.7 (Q9.9: converter stages 1, 2 and 4 plus the smoke pass): the version bump to the
   pre-release `0.0.7a1` on the PR branch, the PR squash-merged to `main` (`e03c32a`), `dev/v0.0.8`
   cut from it (Q27.3). The Mac smoke pass ran in part on `6dec236`
   ([results](../.ai/sessions/2026-10-30-claude-smoke-final-mac/results.md)); the rest is open under
-  Now. Publishing the draft and HeBECANU are Tony's (2026-10-31).
+  Now. Main's release job stopped before tagging (run 41110274554: the macOS zip's build stamp is
+  now a symlink, which the check read as JSON; [known issues](known-issues.md#fixed)), so 0.0.7a1 has
+  no tag and no draft. Tony, 2026-10-31: no hotfix to `main`; the fix is on `dev/v0.0.8`, and v0.0.8's
+  release is the first with zips. HeBECANU waits (Q1.4.1).
 - [x] The TXY converter port, stages 1, 2 and 4 (Q6.12; [plan](txy-converter.md)): HeLab converts raw
   `d<N>.txt` to `d_txy_helab_<tag>_<N>.txt` byte for byte as MATLAB's `tdc_autoconverter`
   (`matlab-2019`: 303 of the 309 sample shots, the other 6 proved reference faults). Stage 1, the

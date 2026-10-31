@@ -298,6 +298,14 @@ review of PR #10, six rounds).
   "damaged" while it stays unconvertible, even when a later profile fails it for another reason; on a new
   summary it could keep only names whose current message starts with `DAMAGED_TEXT`.
 
+## The release check (block 39)
+
+- **A39.1 Check release archives on PR builds** (CI; Ground or a floor): `main`'s release job is the only
+  place `release_draft --validate-only` runs, so 0.0.7a1's linked macOS build stamp showed only after the
+  merge (run 41110274554; [known issues](../roadmaps/known-issues.md#fixed)). Run the archive check (the
+  stamps, without the tag and the draft) on each PR's three builds against its build commit, so a
+  packaging change that breaks it fails the PR.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

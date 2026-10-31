@@ -248,5 +248,16 @@ crashed" on CI with no traceback is usually CI's 120 s timeout, whose stacks
 
 ## Fixed
 
-Landed in `dev/v0.0.8`: none yet (`dev/v0.0.7`'s were dropped at the v0.0.7a1 tidy-up; their
-release-notes lines are in TonyXTYan/HeLab#10).
+Landed in `dev/v0.0.8` (`dev/v0.0.7`'s were dropped at the v0.0.7a1 tidy-up; their release-notes
+lines are in TonyXTYan/HeLab#10):
+
+- [x] **0.0.7a1 got no tag and no draft** (2026-10-31): `main`'s "Tag tested main commit and create draft
+  release" (run 41110274554, job 124257980580) stopped in `release_draft --validate-only` with a
+  `JSONDecodeError`. Every entry ending in `/helab/_build_info.json` was read as JSON, and in the macOS
+  zip `Contents/Frameworks/helab/_build_info.json` is now a symlink (`zip -y` stores its target's path):
+  the shipped cython kernel makes PyInstaller keep `Frameworks/helab/` a folder and link its data files
+  to `Contents/Resources/`. The packaged stamp was right (0.0.7a1, `e03c32a`, clean). PR CI never runs
+  this step. Fixed on `dev/v0.0.8`: a linked stamp is followed and must lead to another stamp
+  (`tests/test_release_recovery.py`; the old check fails and the new one passes on that run's macOS
+  zip). Tony chose no hotfix to `main` (2026-10-31): v0.0.8's release is the first with zips. Running
+  `release_draft --validate-only` on PR builds would have shown it before the merge (A39.1).

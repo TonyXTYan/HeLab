@@ -66,7 +66,11 @@ release; tag pushes do not
 trigger releases. `python -m helab.release` validates/selects the version in CI.
 `python -m helab.release_draft` validates archives and resumes draft uploads; GitHub lists
 a draft under tag `untagged-<hash>`, so `get_release` also matches a draft by its name
-(`release_name`: "Automated Release <tag>"), and two such matches raise. API
+(`release_name`: "Automated Release <tag>"), and two such matches raise. Each archive needs a regular
+`helab/_build_info.json` with the release's version and commit, built clean; a stamp stored as a
+symlink is followed and must lead to another stamp (the macOS zip keeps HeLab.app's links, and since
+the cython kernel ships, `Contents/Frameworks/helab/` links its data files to `Contents/Resources/`;
+0.0.7a1's release job stopped on one, run 41110274554). API
 errors fail selection; they never mean "no release". Only authenticated main runs
 query release state. Build jobs may target an older tagged SHA during recovery;
 the normal test jobs still check the current workflow commit, and recovery builds
