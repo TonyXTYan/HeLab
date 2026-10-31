@@ -419,10 +419,13 @@ def test_a_revision_or_reload_never_crosses_sources() -> None:
     restored = restore(plain, dataset({"2": "helab:h"}))
     assert restored.kept == (1,) and restored.changed == (2,)
     assert restore(plain, dataset({}, source="matlab-priority")).changed == (1, 2)
-    # The two priority sources share the identity (their origins tell their data apart), but a view of one
-    # is never revised by, or restored from, the other's data (Q18.2), nor another profile's.
+    # The two priority sources share the identity's source, "" (their origins tell their data apart), but a
+    # view of one is never revised by, or restored from, the other's data (Q18.2), nor another profile's:
+    # each load is its own chain (plots-1).
     other = build_view(dataset({}, source="matlab-priority"))
-    assert other.identity == plain.identity and other.txy_choice != plain.txy_choice
+    assert other.identity.source == plain.identity.source == "" and other.txy_choice != plain.txy_choice
+    assert other.identity != plain.identity and other.identity.chain != plain.identity.chain
+    assert "txy_source" not in AnalysisResult.of(context(other), "completed").reuse_key()
     assert revise(plain, dataset({}, source="matlab-priority")).revision == 1
     assert revise(plain, dataset({}, tag="m23v1")).revision == 1
     assert restore(plain, dataset({}, tag="m23v1")).changed == (1, 2)

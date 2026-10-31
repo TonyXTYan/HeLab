@@ -77,7 +77,8 @@ def policy_of(values: Mapping[str, Any], default: LivePolicy) -> LivePolicy:
 
 def newer(view: DatasetView, than: DatasetView) -> bool:
     """Whether ``view`` is later data of the folder than ``than``: a later revision of the same
-    input, or another input of it (e.g. data loaded again before Live started)."""
+    input, or another input of it (another view chain, ``ViewIdentity.chain``: data loaded again,
+    another TXY choice or profile), whatever its revision."""
     if view.identity == than.identity:
         return view.revision > than.revision
     return view is not than

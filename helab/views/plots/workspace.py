@@ -9,6 +9,7 @@ the status bar's notices, Settings, and whether the window is closing."""
 from __future__ import annotations
 
 import os
+from dataclasses import replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Callable, List, Optional
 
@@ -17,7 +18,7 @@ from PyQt6.QtWidgets import QDockWidget, QLabel, QMainWindow, QMessageBox, QSize
 
 from helab.analysis.budget import RamBudget
 from helab.analysis.budget_core import DIALOG_SHARE, RELEASE_SHARE, WARN_SHARE
-from helab.analysis.dataset_view import DatasetView, view_of
+from helab.analysis.dataset_view import DatasetView, Held, held_of, view_of
 from helab.analysis.live_feed import LiveFeed
 from helab.analysis.results import DISK_CACHED, FROM_DISK, AnalysisResult
 from helab.utils.accessible import identify, identify_buttons
@@ -181,7 +182,7 @@ class PlotWorkspace:
         if dataset is None or content is None:
             return
         dock.setProperty("dataSourcePath", dataset.path)
-        dock.setProperty("dataSourceSignature", dataset.signature)
+        dock.setProperty("dataSourceHeld", held_of(dataset))
         PlotWorkspace._wrap_plot(dock, content)
         PlotWorkspace._update_plot_source_label(dock, explorer)
 
@@ -212,14 +213,17 @@ class PlotWorkspace:
         return view_of(dataset, current.model.cache.root_of(dataset.path))
 
     def set_plot_result(self, dock: QDockWidget, content: QWidget, result: AnalysisResult,
-                        parameters_text: str = "", record_text: str = "", selection_text: str = "") -> None:
+                        parameters_text: str = "", record_text: str = "", selection_text: str = "",
+                        view: DatasetView | None = None, own_choice: bool = False) -> None:
         """Show an analysis result in its dock, with two source lines: the input folder and
         revision, which shots (``selection_text``) and the analysis with its version; then the
         settings in short form (``parameters_text``). The full record (every parameter,
-        ``record_text``) is in the tooltip."""
+        ``record_text``) is in the tooltip. ``view``: the data the result ran on (None: not the
+        folder's data as any tab shows it, e.g. an outdated saved result's); ``own_choice``: of the
+        plot's own TXY choice, not the tab's (the source line then compares shot numbers)."""
         identity = result.input.identity
         dock.setProperty("dataSourcePath", identity.source_path)
-        dock.setProperty("dataSourceSignature", result.input_signature or identity.signature)
+        dock.setProperty("dataSourceHeld", replace(view.held, own=own_choice) if view is not None else None)
         dock.setProperty("plotSourceRevision", f"rev {result.input.revision}")
         dock.setProperty("plotSourceDetail", " · ".join(filter(None, (
             selection_text, result.analysis.short(), PlotWorkspace._cached_text(result, bool(dock.property("plotReuse")))))))
@@ -299,13 +303,14 @@ class PlotWorkspace:
         label = dock.findChild(QLabel, "plot_data_source")
         if label is None:
             return
-        node = explorer.model.nodes.get(explorer.selected_path_globally) if explorer is not None else None
-        # A names-only listing has no signature; the explorer compares shot lists then. A plot
+        # The plot's data is the tab's when it holds the same shots, by fingerprint and origin (not by
+        # signature: every load of a folder without MATLAB TXY has the same one; plots-1). A plot
         # following Live is the folder's data, catching up as its line says.
+        shown = explorer.displayed_dataset if explorer is not None else None
+        held = dock.property("dataSourceHeld")
         current = bool(dock.property("plotFollowing")) or (
-            explorer is not None and path == explorer.selected_path_globally and node is not None
-            and (not node.signature or dock.property("dataSourceSignature") == node.signature)
-            and explorer.folder_opened_path == path)
+            explorer is not None and path == explorer.selected_path_globally and explorer.folder_opened_path == path
+            and shown is not None and shown.path == path and isinstance(held, Held) and held.shown_in(shown))
         prefix = "Data source" if current else "Showing previously loaded data"
         parts = [dock.property(name) for name in ("plotSourceRevision", "plotFollow", "plotSourceDetail")]
         settings = dock.property("plotSourceSettings")

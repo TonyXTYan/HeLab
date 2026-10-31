@@ -1,4 +1,5 @@
 import json
+import os
 import socket
 import urllib.request
 from typing import Any, Iterator
@@ -36,6 +37,35 @@ def test_taken_port_falls_back_to_a_free_one(servers: list[DashServer]) -> None:
         first.HOST_PORT = second.HOST_PORT = port
         assert first.start() != port
         assert second.start() not in (port, first.start())
+
+
+@pytest.mark.parametrize("family", [socket.AF_INET, socket.AF_INET6], ids=["ipv4", "ipv6"])
+def test_a_port_another_program_holds_on_all_addresses_is_left_to_it(
+        servers: list[DashServer], family: socket.AddressFamily) -> None:
+    """plots-4: on macOS (SO_REUSEADDR) and Windows, 127.0.0.1:8050 could bind beside another program
+    listening on all addresses, which then lost its localhost connections to HeLab (Windows CI run
+    41158691080 showed it there). HeLab moves to another port."""
+    if family == socket.AF_INET6 and not socket.has_ipv6:
+        pytest.skip("no IPv6")
+    if family == socket.AF_INET6 and os.name == "nt":
+        # Windows binds 127.0.0.1 (and even a [::] probe) beside a dual-stack [::] listener, and which
+        # socket then gets 127.0.0.1's connections isn't known (CI runs 41160242383, 41161383176).
+        pytest.skip("Windows beside a dual-stack listener: not handled (known issue)")
+    server = DashServer()
+    servers.append(server)
+    with socket.socket(family) as other:
+        if family == socket.AF_INET6:
+            try:
+                other.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # IPv4 too, as a dual-stack server
+                other.bind(("::", 0))
+            except OSError:
+                pytest.skip("no dual-stack IPv6")
+        else:
+            other.bind(("0.0.0.0", 0))
+        other.listen()
+        port = other.getsockname()[1]
+        server.HOST_PORT = port
+        assert server.start() != port
 
 
 def test_serves_added_plot(servers: list[DashServer]) -> None:

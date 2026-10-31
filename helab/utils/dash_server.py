@@ -131,6 +131,8 @@ class DashServer:
     def _bind(self) -> socket.socket:
         """Listen on HOST_PORT, or on any free port if it is in use (e.g. by another HeLab)."""
         for port in (self.HOST_PORT, 0):
+            if port and self._listened_on_all(port):
+                continue
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             if os.name != "nt":
                 # On Windows SO_REUSEADDR would let us share a port another program is using.
@@ -145,6 +147,24 @@ class DashServer:
                 continue
             return sock
         raise AssertionError("unreachable")
+
+    @staticmethod
+    def _listened_on_all(port: int) -> bool:
+        """Whether another socket holds ``port`` on all addresses (IPv4's, or IPv6's taking IPv4 too).
+        macOS (with SO_REUSEADDR) and Windows (without) bind HOST_NAME beside it, which then takes its
+        connections to 127.0.0.1 (plots-4). Found by binding the wildcard address as HeLab binds its own
+        (SO_REUSEADDR off Windows, where it would share the port): connections in TIME_WAIT don't refuse
+        that (on Linux a listener on HOST_NAME does, whose port can't be shared anyway). Nothing is sent."""
+        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            if os.name != "nt":
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            probe.bind(("0.0.0.0", port))
+        except OSError:
+            return True
+        finally:
+            probe.close()
+        return False
 
     def start(self) -> int:
         """Start the server if it isn't running, and return its port."""

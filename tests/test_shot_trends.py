@@ -3,6 +3,7 @@ threshold edges), moving mean ± SD, low-count flags, the opt-in low-count notif
 Live through ``helab.utils.events``, and per-shot reuse across Live's revisions."""
 from __future__ import annotations
 
+import hashlib
 import math
 import time
 from types import SimpleNamespace
@@ -37,6 +38,8 @@ from helab.views.explorer_live import LiveController
 PATH = "/data/root/run_T"
 SCRIPT = ShotTrends()
 NS = 1_000_000_000
+# A folder's datasets all have its MATLAB TXY's signature: this one without any (plots-1).
+SIGNATURE = hashlib.sha256(b"[]").hexdigest()
 T0, SIGMA_T = 0.4, 2e-3  # s
 X0, SIGMA_X = 1e-3, 3e-3  # m
 
@@ -61,7 +64,7 @@ def dataset(data: dict[int, np.ndarray], path: str = PATH, raw: Optional[dict[in
         "source": "updated", "loaded_at": time.time()}
     if raw:
         metadata["raw_times"] = [[shot, int(when * NS)] for shot, when in raw.items()]
-    return Dataset(path, f"sig-{max(data) if data else 0}", dict(data), metadata, 0)
+    return Dataset(path, SIGNATURE, dict(data), metadata, 0)
 
 
 def context(view: DatasetView, values: Optional[dict[str, Any]] = None, owner: str = "") -> AnalysisContext:
@@ -415,6 +418,32 @@ def test_a_low_newest_shot_live_added_notifies_once(qtbot: QtBot, notifier: Fake
     feed.stop(PATH)
     assert not events.hub().is_live(PATH)
     assert len(fake.sent) == 1
+
+
+def test_a_new_chain_notifies_from_its_second_revision(notifier: FakeNotifier) -> None:
+    """plots-1: a fresh load of a folder without MATLAB TXY has the old one's signature; its
+    revisions notify from its second on, not only once they pass the revision the plot drew."""
+    fake = notifier
+    feed = LiveFeed()
+    path = "/data/root/run_chain"
+    feed._latest[path] = cast(DatasetView, None)  # Live watches the folder (its views aren't needed).
+    shots = {shot: shot_events(shot, 400) for shot in range(1, 6)}
+    view = build_view(dataset(shots, path))
+    shot_trends.notify_low(result_of(view, NOTIFY, owner="chain"))
+    for shot in (6, 7, 8):
+        shots[shot] = shot_events(shot, 400)
+        view = revise(view, dataset(dict(shots), path))
+        assert shot_trends.notify_low(result_of(view, NOTIFY, owner="chain")) is None
+    assert view.revision == 4
+    fresh = build_view(dataset(dict(shots), path))  # Live starts again on a new load.
+    assert fresh.revision == 1 and fresh.signature == view.signature
+    assert shot_trends.notify_low(result_of(fresh, NOTIFY, owner="chain")) is None  # Its first drawing.
+    shots[9] = shot_events(9, 10)
+    later = revise(fresh, dataset(dict(shots), path))
+    assert later.revision == 2
+    event = shot_trends.notify_low(result_of(later, NOTIFY, owner="chain"))
+    assert event is not None and len(fake.sent) == 1 and fake.sent[0][1].startswith("Shot 9 of run_chain")
+    feed.stop(path)
 
 
 def test_each_low_shot_notifies_with_no_time_limit(notifier: FakeNotifier) -> None:
