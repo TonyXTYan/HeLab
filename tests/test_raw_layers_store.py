@@ -5,6 +5,7 @@ order (datasets, raw layers seen, only copies: D8); Clear; the sweep's orphan ru
 admin's ``clear_raw``; store-v3's bytes counted while kept (D9). Temp stores only."""
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 import os
@@ -277,3 +278,23 @@ def test_store_v3s_bytes_count_while_kept_and_older_stores_are_listed(tmp_path: 
     [older] = older_stores(str(caches), 4)
     assert older["name"] == "store-v3" and older["layout"] == 3 and older["bytes"] >= 50_000
     assert older_stores(str(caches), 3) == [] and room_items(["p"], ["q"], ["r"]) == ("p", "raw:q", "raw-only:r")
+
+
+def test_an_older_listing_or_batch_landing_late_never_clears_the_only_copy_mark(tmp_path: Path) -> None:
+    """C2-10 (Assay): the gone and seen marks go by when the evidence was taken (a listing's time, the time
+    a batch's file was read), so a slower, older one landing later can't undo a newer one."""
+    with v4(tmp_path) as store:
+        made = entry(store, 1)
+        store.save_raw_batch(RUN, [dataclasses.replace(made, read_at=50.0)], store.start_raw_job(RUN), now=60.0)
+        present = {1: (made.size, made.mtime_ns)}
+        store.mark_raw_seen(RUN, {}, 200.0)  # (A listing at 200: the file is gone.)
+        assert (store.raw_rows(RUN).value or {})[1].gone_at == 200.0
+        store.mark_raw_seen(RUN, present, 100.0)  # (A listing that started at 100, landing late.)
+        again = dataclasses.replace(entry(store, 1), read_at=150.0)  # (A batch that read it at 150.)
+        assert store.save_raw_batch(RUN, [again], store.start_raw_job(RUN), now=400.0).kept == (1,)
+        assert (store.raw_rows(RUN).value or {})[1].gone_at == 200.0  # (Still the only copy.)
+        store.mark_raw_seen(RUN, present, 300.0)  # (Seen again, later: back.)
+        row = (store.raw_rows(RUN).value or {})[1]
+        assert (row.gone_at, row.seen_at) == (None, 300.0)
+        store.mark_raw_seen(RUN, {}, 250.0)  # (An older listing that missed it: not gone.)
+        assert (store.raw_rows(RUN).value or {})[1].gone_at is None

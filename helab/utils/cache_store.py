@@ -470,6 +470,9 @@ class RawEntry:
     facts: Mapping[str, Any]
     pulses: int
     file: str
+    # When its file was read (this computer's clock): the evidence the file was there then (C2-10).
+    # None: the save's time.
+    read_at: float | None = None
 
 
 @dataclass(frozen=True)
@@ -2573,10 +2576,14 @@ class CacheStore:
                     row = self._conn.execute(
                         "SELECT size, mtime_ns, sha256, parser, file, job_seq FROM raw_layers "
                         "WHERE path = ? AND shot = ?", (key, entry.shot)).fetchone()
+                    read_at = now if entry.read_at is None else entry.read_at
                     if row is not None and (int(row[0]), int(row[1]), int(row[3])) == (
                             entry.size, entry.mtime_ns, entry.parser):
-                        self._conn.execute("UPDATE raw_layers SET seen_at = ?, gone_at = NULL, last_used = ? "
-                                           "WHERE path = ? AND shot = ?", (now, now, key, entry.shot))
+                        # (Seen when read: it clears an only-copy mark only if newer than it, C2-10.)
+                        self._conn.execute(
+                            "UPDATE raw_layers SET seen_at = MAX(seen_at, ?), last_used = ?, "
+                            "gone_at = CASE WHEN gone_at IS NOT NULL AND gone_at >= ? THEN gone_at END "
+                            "WHERE path = ? AND shot = ?", (read_at, now, read_at, key, entry.shot))
                         kept.append(entry.shot)
                         unused.append(entry.file)
                         continue
@@ -2595,8 +2602,8 @@ class CacheStore:
                         "encoding, facts, pulses, file, bytes, seen_at, gone_at, maker, job_seq, saved_at, last_used) "
                         "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
                         (key, entry.shot, entry.name, entry.size, entry.mtime_ns, entry.sha256, entry.parser,
-                         entry.encoding, _dumps(dict(entry.facts)), entry.pulses, entry.file, sizes[entry.file], now,
-                         maker, guard.job_seq, now, now))
+                         entry.encoding, _dumps(dict(entry.facts)), entry.pulses, entry.file, sizes[entry.file],
+                         read_at, maker, guard.job_seq, now, now))
                     saved.append(entry.shot)
                 usage, writes = self._live(), self._writes()
                 if budget is not None and usage > budget and saved:
@@ -2635,16 +2642,21 @@ class CacheStore:
         seen = gone = 0
         try:
             with self.transaction():
+                # Each mark goes by when its evidence was taken, so an older listing landing late can't
+                # undo a newer one (C2-10): seen clears gone only if newer than it; gone needs a listing newer
+                # than the last sighting.
                 for shot, size, mtime_ns in self._conn.execute(
                         "SELECT shot, size, mtime_ns FROM raw_layers WHERE path = ?", (key,)).fetchall():
                     if present.get(int(shot)) == (int(size), int(mtime_ns)):
-                        self._conn.execute("UPDATE raw_layers SET seen_at = MAX(seen_at, ?), gone_at = NULL "
-                                           "WHERE path = ? AND shot = ?", (seen_at, key, shot))
+                        self._conn.execute(
+                            "UPDATE raw_layers SET seen_at = MAX(seen_at, ?), "
+                            "gone_at = CASE WHEN gone_at IS NOT NULL AND gone_at >= ? THEN gone_at END "
+                            "WHERE path = ? AND shot = ?", (seen_at, seen_at, key, shot))
                         seen += 1
                     elif int(shot) not in present:
-                        self._conn.execute("UPDATE raw_layers SET gone_at = COALESCE(gone_at, ?) "
-                                           "WHERE path = ? AND shot = ?", (seen_at, key, shot))
-                        gone += 1
+                        gone += self._conn.execute(
+                            "UPDATE raw_layers SET gone_at = COALESCE(gone_at, ?) WHERE path = ? AND shot = ? "
+                            "AND seen_at < ?", (seen_at, key, shot, seen_at)).rowcount
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
         return seen, gone
