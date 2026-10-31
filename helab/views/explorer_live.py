@@ -583,7 +583,11 @@ class LiveController:
         session.seconds = event.get("live_seconds")
         session.since = event.get("live_since")  # (A save's listing doesn't say: the next check lists.)
         session.unsettled = int(event.get("unsettled_files", 0))
-        session.listed, session.listed_at = True, time.monotonic()
+        session.listed = True
+        if event.get("live_listed"):
+            # A check's listing; a save's isn't Live's (it reports no ``live_listed_mtime``), so it doesn't put
+            # off the listing at least once a minute (``LIVE_LIST_SECONDS``).
+            session.listed_at = time.monotonic()
         self._live_observed(session, event)
         if event.get("disk_cache_pending"):
             # Saved with this result (a save, or another tab's load the check joined).

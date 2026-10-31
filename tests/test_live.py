@@ -501,6 +501,32 @@ def test_the_save_at_live_off_reads_a_recently_read_shot_again_and_saves_it(
     explorer.close_cleanup()
 
 
+def test_a_live_save_doesnt_put_off_lives_minute_listing(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
+) -> None:
+    """The area review's fourth unverified note (io.md): a save's ``loaded`` reset ``listed_at`` but kept
+    ``listed_mtime``, so the pending-file path could go on up to a minute longer without a listing. Only a
+    check's listing (``live_listed``) counts."""
+    path = str(run)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    cache = explorer.model.cache
+    assert explorer.start_live()
+    for shot, age in ((3, 60), (4, 50)):
+        write_shot(run, shot)
+        age_folder(run, age)
+        checks(qtbot, explorer, path, tmp_path)
+    session = explorer.live
+    assert session is not None and session.unsaved == {3, 4}
+    save = next_request(qtbot, explorer, path)
+    assert save.payload.get("save_memory")
+    session.listed_at -= 30  # The last check's listing, half a minute ago.
+    listed_at = session.listed_at
+    replay(cache, path, tmp_path)
+    qtbot.waitUntil(lambda: not session.saving)
+    assert session.listed_at == listed_at
+    explorer.close_cleanup()
+
+
 def test_a_shot_read_again_from_helabs_txy_converted_since_is_no_warning(
     qtbot: QtBot, service: IOService, run: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture,
 ) -> None:
