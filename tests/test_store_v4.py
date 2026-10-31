@@ -595,3 +595,26 @@ def test_a_later_purge_keeping_failures_doesnt_bring_back_a_v3_history_an_earlie
         v4.purge_records(200.0)  # (Keeps failures.)
         assert v4.read_record("histories", OTHER).missing  # (Hidden by the first: stays hidden.)
         assert v4.read_record("histories", FLAGGED).found  # (Failures, after the first purge: kept.)
+
+
+@pytest.mark.no_auto_data_root
+def test_a_clear_folder_preferences_before_a_retried_import_isnt_undone(tmp_path: Path,
+                                                                       monkeypatch: pytest.MonkeyPatch) -> None:
+    """C2-8 (Assay): v3's flags set before a v4 Clear folder preferences come in off; later ones as set."""
+    caches = tmp_path / "caches"
+    v3_with_state(caches)  # (FLAGGED: Don't cache at 10, write beside at 11.)
+    with CacheStore(str(caches / "store-v3")) as v3:
+        v3.set_prefs(OTHER, False, True, 500.0)  # (After the Clear below.)
+
+    def unreadable(self: LegacyStore, root: str) -> None:
+        raise LegacyUnavailable("busy")
+    monkeypatch.setattr(LegacyStore, "__init__", unreadable)
+    with CacheStore(str(caches / "store-v4")) as v4:
+        v4.clear_prefs(100.0)
+    monkeypatch.undo()
+    with CacheStore(str(caches / "store-v4")) as v4:
+        assert "imported_v3" in v4._meta()
+        flagged = v4.read_prefs([FLAGGED])[FLAGGED].value or {}
+        assert (flagged.get("no_cache"), flagged.get("no_auto_load")) == (False, False)
+        assert not (v4.read_convert_prefs([FLAGGED])[FLAGGED].value or {}).get("write_beside")
+        assert v4.read_prefs([OTHER])[OTHER].value == {"no_cache": False, "no_auto_load": True, "set_at": 500.0}

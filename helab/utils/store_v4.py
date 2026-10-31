@@ -226,6 +226,15 @@ def import_legacy(conn: sqlite3.Connection, legacy_root: str, now: float) -> boo
             forgotten = _forgotten(conn)
             if forgotten:  # (Columns: location first.)
                 rows["roots"] = [row for row in rows.get("roots", []) if row[0] not in forgotten]
+            cleared = _prefs_cleared_at(conn)
+            if cleared is not None:
+                # A Clear folder preferences in v4 before this import (C2-8): flags set before it come in
+                # off, dated at the Clear, as clear_prefs leaves the rows it turns off.
+                rows["folder_prefs"] = [(path, 0, 0, cleared) if float(set_at) <= cleared else
+                                        (path, no_cache, no_auto_load, set_at)
+                                        for path, no_cache, no_auto_load, set_at in rows.get("folder_prefs", [])]
+                rows["convert_prefs"] = [(path, 0, cleared) if float(set_at) <= cleared else (path, beside, set_at)
+                                         for path, beside, set_at in rows.get("convert_prefs", [])]
             for table, found in rows.items():
                 columns = IMPORTED[table]
                 conn.executemany(f"INSERT OR IGNORE INTO {table} ({', '.join(columns)}) "
@@ -244,9 +253,9 @@ def import_legacy(conn: sqlite3.Connection, legacy_root: str, now: float) -> boo
 
 def note_forgotten(conn: sqlite3.Connection, locations: list[str]) -> None:
     """Data roots forgotten in store-v4 before store-v3's import has run (inside the forget's
-    transaction): the import, retried later, leaves them forgotten (C2-5). The user's other state can't
-    come back that way: flags, constants and presets are never deleted, only set, and a row v4 has
-    stays (``INSERT OR IGNORE``)."""
+    transaction): the import, retried later, leaves them forgotten (C2-5). The user's other state isn't
+    deleted, only set, and a row v4 has stays (``INSERT OR IGNORE``); a Clear folder preferences before
+    the import is honoured by the import itself (C2-8)."""
     if not locations or _imported(conn):
         return
     row = conn.execute("SELECT value FROM meta WHERE key = 'forgotten_before_import'").fetchone()
@@ -260,6 +269,15 @@ def _forgotten(conn: sqlite3.Connection) -> set[str]:
     row = conn.execute("SELECT value FROM meta WHERE key = 'forgotten_before_import'").fetchone()
     found = json.loads(row[0]) if row is not None else []
     return {str(location) for location in found} if isinstance(found, list) else set()
+
+
+def _prefs_cleared_at(conn: sqlite3.Connection) -> float | None:
+    """When store-v4's Clear folder preferences last ran (``meta.prefs_cleared_at``), None if never."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'prefs_cleared_at'").fetchone()
+    try:
+        return None if row is None else float(json.loads(row[0]))
+    except (TypeError, ValueError):
+        return None
 
 
 def _imported(conn: sqlite3.Connection) -> bool:
