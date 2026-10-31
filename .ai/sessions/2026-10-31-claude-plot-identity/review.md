@@ -112,3 +112,26 @@ after the new sentence. Rewrap to the file's width.
 - CI run 41162571197: `success`, head `d2d5334`; every Tests (1/2, 2/2), Converter backends and Build job
   on macOS, Ubuntu and Windows `success` (conclusions read; job logs for RERUN not re-read here, the
   handoff reports none).
+
+## Re-check of the fixes (Optic, 2026-10-31): no open findings
+
+Fix diff `0d00b13..eb0a131` without the merge `75aba55` (which touches none of this floor's code paths):
+`a76ba3c` (R-1, R-2, R-3, R-5) and the handoff's R-4 proposal (`c9b311e`).
+
+- **R-1 fixed.** The fresh-load leg now runs right after the kept rerun, on a load of the same choice
+  (same signature, TXY choice and profile hashes), so only the chain differs. Fails with the chain token
+  blanked (checked).
+- **R-2 fixed.** `test_another_load_keeps_no_detection`: a revision keeps the detection ("detected,
+  kept"), another load detects again. Fails with `chain_key` out of `detection_key` (17 others pass), and
+  with the token blanked (checked).
+- **R-3 fixed.** `_finished` now drops `RERUNNING` once, at the top, for every run that ends (failed,
+  cancelled, not shown when pinned); a completed run clears the note as before. The test is parametrised
+  failed/cancelled; both fail with that line removed (checked).
+- **R-4 fixed** as a doc proposal: the handoff rewords the known-issues item (lines 61-66) by `Held`, not
+  the signature. Accurate.
+- **R-5 fixed.** The comment is wrapped.
+
+Checks at `eb0a131`: the touched tests (`test_correlations_plot.py`, `test_result_cache_plots.py`,
+`test_velocity_distributions.py`, `test_shot_trends.py`) with `-n 4 --reruns 5 --reruns-delay 1
+--basetemp=.ai/temp/pytest-optic -rR`: **80 passed in 14.32 s; no RERUN** (log
+`.ai/temp/optic/recheck.log`). Fix-removed runs in a scratch copy of `eb0a131`, one change at a time.
