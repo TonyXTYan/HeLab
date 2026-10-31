@@ -1,7 +1,8 @@
 """The disk cache's questions to the user, one at a time: a save that doesn't fit (Make room),
 an update to a cached folder over 80% of the budget (Save update), an analysis result that doesn't
-fit (Make room or Discard, result caching R2), and the 80% warning that pauses automatic loads of
-new folders. See roadmaps/cache-storage-and-settings.md."""
+fit (Make room or Discard, result caching R2), the 80% warning that pauses automatic loads of
+new folders, and (caching v2, store-v4) the one-time question about an older HeLab's store-v3: Keep
+using it, Ignore it or Clear it… (Q19.4, Q22.3). See roadmaps/cache-storage-and-settings.md."""
 from __future__ import annotations
 
 from datetime import datetime
@@ -24,19 +25,83 @@ def _name(path: str) -> str:
 
 
 def room_text(room: dict[str, Any] | None) -> str:
-    """What Make room removes, from the helper's room plan."""
+    """What Make room removes, from the helper's room plan: other folders' cached data, then (store-v4,
+    D8) raw pulses whose raw files are still in their folders, then raw pulses that are the only copy,
+    each of those folders named."""
     if not room:
         return "Make room removes the least recently used cached data of other folders until this fits."
     count = len(room.get("paths") or ())
-    if not count:
+    raw, only = list(room.get("raw_paths") or ()), list(room.get("only_copy_paths") or ())
+    if not count and not raw and not only:
         return "There is room now: Make room saves it without removing anything."
-    since = room.get("newest_last_used")
-    when = ""
-    if isinstance(since, (int, float)):
-        day = datetime.fromtimestamp(since)
-        when = f" not used since {day.day} {day:%b}"
-    return (f"Make room removes cached data for {count} folder{'' if count == 1 else 's'} "
-            f"({byte_size(int(room.get('bytes', 0)), 'disk')}){when}, least recently used first.")
+    parts: list[str] = []
+    if count:
+        since = room.get("newest_last_used")
+        when = ""
+        if isinstance(since, (int, float)):
+            day = datetime.fromtimestamp(since)
+            when = f" not used since {day.day} {day:%b}"
+        parts.append(f"Make room removes cached data for {count} folder{'' if count == 1 else 's'} "
+                     f"({byte_size(int(room.get('bytes', 0)), 'disk')}){when}, least recently used first.")
+    if raw:
+        parts.append(f"{'Then it' if count else 'Make room'} removes the cached raw pulses of "
+                     f"{len(raw)} folder{'' if len(raw) == 1 else 's'} (read again from their raw files when needed).")
+    if only:
+        names = ", ".join(_name(path) for path in only[:5]) + (" …" if len(only) > 5 else "")
+        parts.append(f"It also removes cached raw pulses that are the only copy: their raw files are gone from "
+                     f"{names}.")
+    if raw or only:
+        parts[-1] += f" ({byte_size(int(room.get('raw_bytes', 0)), 'disk')} of raw pulses in all.)"
+    return " ".join(parts)
+
+
+def room_items(room: dict[str, Any]) -> list[str]:
+    """What the user was told Make room removes, as ``adopt``'s ``room_paths`` names it."""
+    return ([str(path) for path in room.get("paths") or ()]
+            + [f"raw:{path}" for path in room.get("raw_paths") or ()]
+            + [f"raw-only:{path}" for path in room.get("only_copy_paths") or ()])
+
+
+def legacy_text(legacy: dict[str, Any] | None) -> str:
+    """store-v3 beside store-v4, for a question or a row: its size and whether it counts."""
+    if not legacy or not legacy.get("present"):
+        return ""
+    size = byte_size(int(legacy.get("bytes") or 0), "disk")
+    choice = legacy.get("choice")
+    state = {"keep": "kept, counted in the budget", "ignore": "ignored"}.get(str(choice), "not answered yet: kept")
+    return f"{size} · {state}"
+
+
+def ask_clear_old_stores(parent: QWidget, cache: FolderCache, confirm: Callable[[str, str, str], bool] | None = None,
+                         others: Callable[[], list[int]] | None = None) -> str:
+    """Clear old stores… (Q28.5): store-v3 (any older store, as they come), after the user saw its size, and only
+    while no other HeLab runs (as a cache move). The job's owner, or "" when nothing was asked of the store."""
+    from helab.utils.cache_locks import other_instances
+    from helab.utils.constants import app_folder
+    legacy = cache.legacy or {}
+    if not legacy.get("present"):
+        return ""
+    running = (others or (lambda: other_instances(app_folder())))()
+    if running:
+        QMessageBox.information(parent, "Clear old stores", "Another HeLab is running. Quit it first: it may still use "
+                                "the older disk cache.")
+        return ""
+    text = (f"Remove the disk cache of an older HeLab (store-v3, {byte_size(int(legacy.get('bytes') or 0), 'disk')})? "
+            "This HeLab no longer reads it; an older HeLab started later would begin an empty one. This can't be undone.")
+    asked = (confirm("Clear old stores", text, "Remove") if confirm is not None
+             else _confirm(parent, "Clear old stores", text))
+    if not asked:
+        return ""
+    return cache.cache_admin("clear_legacy") or ""
+
+
+def _confirm(parent: QWidget, title: str, text: str) -> bool:
+    box = QMessageBox(QMessageBox.Icon.Warning, title, text, QMessageBox.StandardButton.Cancel, parent)
+    remove = box.addButton("Remove", QMessageBox.ButtonRole.DestructiveRole)
+    identify_buttons(box, "disk_cache_clear_old")
+    box.setDefaultButton(QMessageBox.StandardButton.Cancel)
+    box.exec()
+    return box.clickedButton() is remove
 
 
 def result_room_text(room: dict[str, Any] | None) -> str:
@@ -55,6 +120,10 @@ def result_room_text(room: dict[str, Any] | None) -> str:
     return (f"Make room removes {count} saved analysis result{'' if count == 1 else 's'} "
             f"({byte_size(int(room.get('bytes', 0)), 'disk')}){when}, least recently shown first. "
             "Cached data isn't touched.")
+
+
+# The store-v3 question's place in ``CacheDialogs._asking`` (no pending save of that id exists).
+LEGACY_QUESTION = "store-v3"
 
 
 class CacheDialogs(QObject):
@@ -84,6 +153,8 @@ class CacheDialogs(QObject):
         self._answers: dict[str, tuple[str, str]] = {}
         self._failed: dict[str, str] = {}
         self._warn_full = False
+        # The store-v3 question (store-v4): asked once a session until answered; closing it answers nothing.
+        self._legacy_asked = False
         self._detached = False
         self._retry = QTimer(self)
         self._retry.setSingleShot(True)
@@ -92,6 +163,7 @@ class CacheDialogs(QObject):
         cache.diskNearlyFull.connect(self._nearly_full)
         cache.autoLoadPauseChanged.connect(self._pause_changed)
         cache.cacheAdminDone.connect(self._answer_done)
+        cache.legacyChanged.connect(self.next)
 
     def detach(self) -> None:
         self._detached = True
@@ -100,6 +172,7 @@ class CacheDialogs(QObject):
         self.cache.diskNearlyFull.disconnect(self._nearly_full)
         self.cache.autoLoadPauseChanged.disconnect(self._pause_changed)
         self.cache.cacheAdminDone.disconnect(self._answer_done)
+        self.cache.legacyChanged.disconnect(self.next)
         self._close()
 
     @staticmethod
@@ -155,7 +228,8 @@ class CacheDialogs(QObject):
             del self._failed[failed]
         if self.dialog is not None:
             pending_id, question = self._asking
-            if not pending_id or pending_id in pending and self.question(pending[pending_id]) == question:
+            if (not pending_id or pending_id in pending and self.question(pending[pending_id]) == question
+                    or pending_id == LEGACY_QUESTION):
                 return
             self._close()  # Its save was answered elsewhere, superseded, expired or changed.
         modal = QApplication.activeModalWidget()
@@ -166,6 +240,8 @@ class CacheDialogs(QObject):
                       if self._answered.get(entry["pending_id"]) != self.question(entry)), None)
         if entry is not None:
             self._ask_pending(entry)
+        elif self._legacy_due():
+            self._ask_legacy()
         elif self._warn_full and self.cache.auto_load_paused:
             self._ask_nearly_full()
         else:
@@ -195,6 +271,7 @@ class CacheDialogs(QObject):
         usage = int(self.cache.disk_usage if self.cache.disk_usage is not None else entry.get("usage") or 0)
         box = QMessageBox(self.parent_widget)
         box.setIcon(QMessageBox.Icon.Question)
+        old_stores: QAbstractButton | None = None
         if entry.get("result"):
             # An analysis result (R2): only other saved results make room for it.
             label = str(entry.get("label") or "a plot")
@@ -229,6 +306,9 @@ class CacheDialogs(QObject):
             else:
                 box.setInformativeText(room_text(entry.get("room")) + "\nThe loaded data stays in RAM either way.")
                 confirm = box.addButton("Make room", QMessageBox.ButtonRole.AcceptRole)
+            if (self.cache.legacy or {}).get("counted"):
+                # An older HeLab's store-v3 counts in the budget (D9, Q28.5): clearing it may make room instead.
+                old_stores = box.addButton("Clear old stores…", QMessageBox.ButtonRole.ActionRole)
             decline = box.addButton("Don't cache this folder now", QMessageBox.ButtonRole.RejectRole)
         if pending_id in self._failed and confirm is not None:
             box.setInformativeText(f"{confirm.text()} failed: {self._failed[pending_id]}\n\n"
@@ -239,12 +319,16 @@ class CacheDialogs(QObject):
         def answer(clicked: QAbstractButton | None) -> None:
             # Closing the question any other way is "not now": nothing is removed.
             result = bool(entry.get("result"))
+            if old_stores is not None and clicked is old_stores:
+                ask_clear_old_stores(self.parent_widget, self.cache)  # (Then this save is asked again.)
+                return
             if confirm is not None and clicked is confirm:
                 room = entry.get("room")
-                listed = "result_ids" if result else "paths"
+                listed: list[str] | None = None
+                if isinstance(room, dict):
+                    listed = [str(item) for item in room.get("result_ids") or ()] if result else room_items(room)
                 self._answer(pending_id, question, "adopt_result" if result else "adopt",
-                             make_room=kind == "over_budget",
-                             room_paths=list(room.get(listed) or ()) if isinstance(room, dict) else None)
+                             make_room=kind == "over_budget", room_paths=listed)
             else:
                 self._answer(pending_id, question, "discard_result" if result else "discard")
         self._open(box, (pending_id, question), answer)
@@ -280,6 +364,38 @@ class CacheDialogs(QObject):
         else:
             # Still "not now"; the save waits in the store until it expires.
             self.notify(f"Disk cache: couldn't drop a waiting save — {message}")
+
+    def _legacy_due(self) -> bool:
+        legacy = self.cache.legacy or {}
+        return bool(legacy.get("present")) and legacy.get("choice") is None and not self._legacy_asked
+
+    def _ask_legacy(self) -> None:
+        """Caching v2 (Q19.4): an older HeLab's store-v3 is in the cache folder. Keep using it (read for what
+        the new cache lacks, counted in the budget; what HeLab does until answered, Q22.3), Ignore it (left
+        on disk, unused) or Clear it… (asked again with its size). Closing it answers nothing."""
+        self._legacy_asked = True
+        legacy = self.cache.legacy or {}
+        box = QMessageBox(self.parent_widget)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("An older disk cache")
+        box.setText(f"The cache folder also holds an older HeLab's disk cache (store-v3, "
+                    f"{byte_size(int(legacy.get('bytes') or 0), 'disk')}).")
+        box.setInformativeText("Keep using it: HeLab reads its records and saved analysis where the new cache "
+                               "has none, and it counts toward the disk budget. Ignore it: it stays on disk, unused. "
+                               "Clear it: it is removed, after asking. Settings → Cache can change this later.")
+        keep = box.addButton("Keep using it", QMessageBox.ButtonRole.AcceptRole)
+        ignore = box.addButton("Ignore it", QMessageBox.ButtonRole.RejectRole)
+        clear = box.addButton("Clear it…", QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(keep)
+
+        def answer(clicked: QAbstractButton | None) -> None:
+            if clicked is keep:
+                self.cache.cache_admin("legacy_choice", choice="keep")
+            elif clicked is ignore:
+                self.cache.cache_admin("legacy_choice", choice="ignore")
+            elif clicked is clear:
+                ask_clear_old_stores(self.parent_widget, self.cache)
+        self._open(box, (LEGACY_QUESTION, "store-v3"), answer)
 
     def _ask_nearly_full(self) -> None:
         self._warn_full = False

@@ -200,7 +200,33 @@ class CacheTab(QWidget):
         self.results_button = QPushButton("Clear…")
         self.results_button.clicked.connect(self.clear_results)
         grid.addWidget(self.results_button, row, 2)
+        # Caching v2 (store-v4, the switch on): raw pulses, and an older HeLab's store-v3 beside it.
+        self.raw_name = QLabel("Raw pulses")
+        self.raw_label = QLabel("")
+        self.raw_label.setToolTip("Each raw file's pulses, kept so any converter profile can make its TXY without "
+                                  "reading the folder again. Filled in the background after a folder's data is "
+                                  "cached. Only copies: raw files gone from their folders since.")
+        self.raw_button = QPushButton("Clear…")
+        self.raw_button.clicked.connect(self.clear_raw)
+        grid.addWidget(self.raw_name, row + 1, 0)
+        grid.addWidget(self.raw_label, row + 1, 1)
+        grid.addWidget(self.raw_button, row + 1, 2)
         layout.addLayout(grid)
+        legacy = QHBoxLayout()
+        self.legacy_name = QLabel("Older cache (store-v3)")
+        legacy.addWidget(self.legacy_name)
+        self.legacy_label = QLabel("")
+        self.legacy_label.setToolTip("An older HeLab's disk cache in this cache folder. Kept: HeLab reads its records "
+                                     "and saved analysis where the new cache has none, and it counts toward the "
+                                     "budget. Ignored: left on disk, unused.")
+        legacy.addWidget(self.legacy_label, 1)
+        self.legacy_choice_button = QPushButton("Ignore it")
+        self.legacy_choice_button.clicked.connect(self.toggle_legacy)
+        legacy.addWidget(self.legacy_choice_button)
+        self.legacy_clear_button = QPushButton("Clear…")
+        self.legacy_clear_button.clicked.connect(self.clear_legacy)
+        legacy.addWidget(self.legacy_clear_button)
+        layout.addLayout(legacy)
         self.result_reuse = QCheckBox("Reuse saved analysis results")
         self.result_reuse.setChecked(read_result_reuse(settings))
         self.result_reuse.setToolTip(
@@ -354,6 +380,9 @@ class CacheTab(QWidget):
         for kind, button in self.kind_buttons.items():
             identify(button, f"cache_clear_{kind}", f"{button.text().rstrip('…')} {KIND_ROWS[kind][0].lower()}…")
         identify(self.results_button, "cache_clear_results", f"Clear {RESULTS_LABEL.lower()}…")
+        identify(self.raw_button, "cache_clear_raw", "Clear raw pulses…")
+        identify(self.legacy_choice_button, "cache_legacy_choice", "Keep using or ignore the older cache")
+        identify(self.legacy_clear_button, "cache_clear_legacy", "Clear the older cache…")
         identify(self.result_reuse, "result_reuse")
         identify(self.refresh_button, "cache_refresh", "Refresh cache sizes")
         identify(self.clear_all_button, "cache_clear_all")
@@ -516,14 +545,18 @@ class CacheTab(QWidget):
         inventory = self.inventory
         if inventory is None or self.busy:
             return
-        if set(kinds) == set(KINDS):
+        if set(kinds) >= set(KINDS):
+            raw = inventory.get("raw")
             title = "Clear the disk cache?"
             text = (f"Removes everything in the disk cache: cached data for "
                     f"{plural(inventory['datasets']['count'], 'folder')} ({byte_size(inventory['datasets']['bytes'], 'disk')}),"
-                    " folder summaries, scan failures, subfolder status and folder listings.\n\n"
+                    + (f" raw pulses for {plural(int(raw['folders']), 'folder')} ({byte_size(int(raw['bytes']), 'disk')}),"
+                       if raw else "")
+                    + " folder summaries, scan failures, subfolder status and folder listings.\n\n"
                     "Loaded data stays open. Automatic checks will try failed folders again. Cached analysis "
                     "stays (its own Clear).")
             verb, label = "Clear all", "Clear all"
+            kinds = [*KINDS, *(["raw"] if raw is not None else [])]  # (store-v4: its raw pulses too.)
         else:
             kind = kinds[0]
             name = KIND_ROWS[kind][0]
@@ -536,6 +569,46 @@ class CacheTab(QWidget):
             label = f"{verb} {name.lower()}"
         if self.confirm(title, text, verb):
             self._run(label, "clear", kinds=list(kinds))
+
+    def clear_raw(self) -> None:
+        """Clear raw pulses (store-v4): every folder's, only copies included, after asking."""
+        inventory = self.inventory
+        raw = (inventory or {}).get("raw")
+        if inventory is None or self.busy or not raw:
+            return
+        only = int(raw.get("only_copy") or 0)
+        text = (f"Removes the raw pulses of {plural(int(raw['folders']), 'folder')} "
+                f"({byte_size(int(raw['bytes']), 'disk')}). They are cached again from the raw files after the next "
+                "load of each folder." + (f"\n\n{plural(only, 'shot')} are the only copy: their raw files are gone "
+                                          "from their folders, so these can't be read again." if only else ""))
+        if self.confirm("Clear raw pulses?", text, "Clear"):
+            self._run("Clear raw pulses", "clear_raw")
+
+    def toggle_legacy(self) -> None:
+        """Keep using the older store-v3, or ignore it (store-v4)."""
+        legacy = (self.inventory or {}).get("legacy") or {}
+        if self.busy or not legacy.get("present"):
+            return
+        choice = "keep" if legacy.get("choice") == "ignore" else "ignore"
+        self._run("Keep using the older cache" if choice == "keep" else "Ignore the older cache", "legacy_choice",
+                  choice=choice)
+
+    def clear_legacy(self) -> None:
+        """Clear old stores… (Q28.5): store-v3 goes, after asking with its size, while no other HeLab runs."""
+        from helab.utils.cache_locks import other_instances
+        from helab.utils.constants import app_folder
+        legacy = (self.inventory or {}).get("legacy") or {}
+        if self.busy or not legacy.get("present"):
+            return
+        if other_instances(app_folder()):
+            self.message = "Another HeLab is running: quit it before clearing the older cache"
+            self._update()
+            return
+        text = (f"Removes an older HeLab's disk cache (store-v3, {byte_size(int(legacy.get('bytes') or 0), 'disk')}). "
+                "This HeLab no longer reads it; an older HeLab started later would begin an empty one. This can't "
+                "be undone.")
+        if self.confirm("Clear the older cache?", text, "Remove"):
+            self._run("Clear the older cache", "clear_legacy")
 
     def clear_results(self) -> None:
         """Clear cached analysis: every saved result, nothing else (asks first)."""
@@ -639,6 +712,9 @@ class CacheTab(QWidget):
                   "Changing the disk budget…" if self._budget_job else f"{self._job_label}…" if self.busy else "Checking…" if self._inventory_owner and inventory is None
                   else "")
         if inventory is None:
+            for widget in (self.raw_name, self.raw_label, self.raw_button, self.legacy_name, self.legacy_label,
+                           self.legacy_choice_button, self.legacy_clear_button):
+                widget.setVisible(False)
             for label in (*self.kind_labels.values(), self.prefs_label, self.results_label, self.converted_label):
                 label.setText(status or "Not checked")
             self.usage_label.setText(status or "Not checked")
@@ -697,9 +773,33 @@ class CacheTab(QWidget):
             for name, base in (converted.get("bases") or {}).items()))))
         # (Only when Clear would remove something: never the index itself, which the bytes include.)
         self.converted_button.setEnabled(writable and bool(converted.get("clearable")))
+        self._show_v4_rows(inventory, writable)
         checked = f"Checked {datetime.fromtimestamp(inventory['checked_at']):%H:%M}"
         self.checked_label.setText(" · ".join(filter(None, (status or checked, self.message))))
         self._show_estimates()
+
+    def _show_v4_rows(self, inventory: dict[str, Any], writable: bool) -> None:
+        """Caching v2's rows, shown only with store-v4: raw pulses, and the older store-v3 when there is one."""
+        raw = inventory.get("raw")
+        for widget in (self.raw_name, self.raw_label, self.raw_button):
+            widget.setVisible(raw is not None)
+        if raw is not None:
+            text = f"{plural(int(raw['count']), 'shot')} in {plural(int(raw['folders']), 'folder')} · " \
+                   f"{byte_size(int(raw['bytes']), 'disk')}"
+            if raw.get("only_copy"):
+                text += f" · {int(raw['only_copy']):,} only copies"
+            self.raw_label.setText(text)
+            self.raw_button.setEnabled(writable and bool(raw["count"]))
+        legacy = inventory.get("legacy") or {}
+        present = bool(legacy.get("present"))
+        for widget in (self.legacy_name, self.legacy_label, self.legacy_choice_button, self.legacy_clear_button):
+            widget.setVisible(present)
+        if present:
+            from helab.views.CacheDialogs import legacy_text
+            self.legacy_label.setText(legacy_text(legacy))
+            self.legacy_choice_button.setText("Keep using it" if legacy.get("choice") == "ignore" else "Ignore it")
+            self.legacy_choice_button.setEnabled(writable)
+            self.legacy_clear_button.setEnabled(writable)
 
     def focus_purge(self) -> None:
         """Opened from the 80% warning: start at Remove old entries."""

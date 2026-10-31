@@ -238,6 +238,8 @@ class FolderCache(QObject):
     clockSkew = pyqtSignal(str, float)
     # A raw file of this folder was overwritten in place since store-v4 cached it (Q22.5, Q28.6).
     rawOverwritten = pyqtSignal(str)
+    # What store-v4 last said about store-v3 beside it (``legacy``): its question, Settings › Cache's row.
+    legacyChanged = pyqtSignal()
     # The saves the quit window waits for changed (``quit_saves``).
     quitSavesChanged = pyqtSignal()
     # Work Offline turned on (True) or off (False): ``set_offline``.
@@ -554,6 +556,9 @@ class FolderCache(QObject):
         self._raw_fills: set[str] = set()
         self._raw_fill_again: set[str] = set()
         self.raw_overwrites: dict[str, dict[int, dict[str, Any]]] = {}
+        # store-v3 beside store-v4 (``CacheStore.measure_legacy``: present, choice, bytes, counted), as the
+        # last inventory or answer said; None in store-v3 or before any.
+        self.legacy: dict[str, Any] | None = None
         service.is_foreground = self._is_foreground
         service.owners_of = self._owners_of
         service.before_start = self._before_start
@@ -1214,6 +1219,13 @@ class FolderCache(QObject):
                 QTimer.singleShot(0, lambda: self.schedule_raw_fill(path))
             else:
                 self._raw_fill_again.discard(path)
+
+    def _note_legacy(self, legacy: object) -> None:
+        """store-v3's state as store-v4 said it (``legacyChanged``: the question, Settings › Cache)."""
+        found = dict(legacy) if isinstance(legacy, dict) else None
+        if found != self.legacy:
+            self.legacy = found
+            self.legacyChanged.emit()
 
     def _raw_overwritten(self, path: str, event: Mapping[str, Any]) -> None:
         """Q28.6: a raw file overwritten in place since store-v4 cached it (it only happens when the TDC is
@@ -3688,6 +3700,9 @@ class FolderCache(QObject):
             self.pending_results = merged_results
             self.pendingSavesChanged.emit()
             self._schedule_sweep(event["inventory"].get("next_deadline"))
+            self._note_legacy(event["inventory"].get("legacy"))
+        elif kind == "admin_result" and action in ("legacy_choice", "clear_legacy"):
+            self._note_legacy(event.get("legacy"))
         elif kind == "admin_result" and action in ("adopt", "discard"):
             # Matched by pending_id: a late answer about an older save never touches a newer one.
             pending_id = producer.payload["params"].get("pending_id")

@@ -106,6 +106,7 @@ class AdminResultFields(TypedDict, total=False):
     recorded: bool
     results: int  # saved results removed (R2)
     raw: int  # store-v4's raw layer rows removed (``clear_raw``, caching v2)
+    legacy: dict[str, Any]  # store-v3 beside store-v4 after ``legacy_choice``/``clear_legacy`` (``measure_legacy``)
     result_id: str  # an adopted result's saved row (R2)
     folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
     store: str  # the store an adoption answered from (its ``store_id``)
