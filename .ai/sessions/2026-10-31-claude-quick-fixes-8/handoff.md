@@ -214,3 +214,27 @@ With one app per computer, the only other process sharing the app folder and sto
 - **Proposed** (A~, not done here): other tests that open a `HelabMainWindow` and depend on its widths
   carry the same hidden dependence. A conftest autouse `initialise_icons()` would remove it everywhere;
   it is outside this brief's files.
+
+### Run 41163140243 (`0a1e799`): success, all 12 job logs read (four fetched again after API drops)
+
+- **No RERUN in any job.** Tests passed: windows 1/2 4246, 2/2 4258; macos 4263, 4276; ubuntu 4259,
+  4276. Converter backends 713 / 715 / 715.
+- On Windows the fixed tests passed: `test_main_split`'s window test [1600], [1300] and [1000], the
+  default split, and `test_one_running`'s lock test.
+- **A39.1 passed on all three builds:** "built cleanly from 0.0.7a1 at 0a1e799126…".
+
+### e8e7ebc: test_cache_mover's startup test waits for the move lock itself (CoCo, from IO Fixes' CI)
+
+- **The RERUN.** CI 41162160704 (I/O Fixes), windows Tests 1/2:
+  `test_cache_mover.py::test_startup_waits_out_a_move_then_recovers_and_registers`,
+  `[True, True, True] == [True]` at :198.
+- **Cause.** The same as f128623's. `wait()` killed the helper holding `move.lock` and returned at once.
+  Windows frees a killed process's locks a little later, so `startup` found the lock still held and
+  called `wait()` again.
+- **Fix.** `wait()` now also waits (`free_soon`) until the move lock is free.
+- **Repro (macOS, scratch).** A helper that forks a child sharing its locked file, the child living
+  0.3 s longer, so the lock is freed late as on Windows:
+  - the old test records 3541 waits;
+  - with the fix it passes 3 of 3.
+- **Checks.** The file's 22 tests pass, three runs. The cause is the one CoCo named, so no known-issues
+  line is needed.
