@@ -41,8 +41,9 @@ def test_taken_port_falls_back_to_a_free_one(servers: list[DashServer]) -> None:
 @pytest.mark.parametrize("family", [socket.AF_INET, socket.AF_INET6], ids=["ipv4", "ipv6"])
 def test_a_port_another_program_holds_on_all_addresses_is_left_to_it(
         servers: list[DashServer], family: socket.AddressFamily) -> None:
-    """plots-4: on macOS, SO_REUSEADDR let 127.0.0.1:8050 bind beside another program listening on
-    all addresses, which then lost its localhost connections to HeLab. HeLab moves to another port."""
+    """plots-4: on macOS (SO_REUSEADDR) and Windows, 127.0.0.1:8050 could bind beside another program
+    listening on all addresses, which then lost its localhost connections to HeLab (Windows CI run
+    41158691080 showed it there). HeLab moves to another port."""
     if family == socket.AF_INET6 and not socket.has_ipv6:
         pytest.skip("no IPv6")
     server = DashServer()
