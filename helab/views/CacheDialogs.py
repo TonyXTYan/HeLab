@@ -63,13 +63,33 @@ def room_items(room: dict[str, Any]) -> list[str]:
 
 
 def legacy_text(legacy: dict[str, Any] | None) -> str:
-    """store-v3 beside store-v4, for a question or a row: its size and whether it counts."""
-    if not legacy or not legacy.get("present"):
+    """store-v3 beside store-v4, for a question or a row: its size and whether it counts; and what a Clear
+    cut short left (C3-4)."""
+    if not legacy:
         return ""
+    left = int(legacy.get("leftover_bytes") or 0)
+    rest = f"{byte_size(left, 'disk')} left by a Clear cut short" if legacy.get("leftover") else ""
+    if not legacy.get("present"):
+        return rest
     size = byte_size(int(legacy.get("bytes") or 0), "disk")
     choice = legacy.get("choice")
     state = {"keep": "kept, counted in the budget", "ignore": "ignored"}.get(str(choice), "not answered yet: kept")
-    return f"{size} · {state}"
+    return " · ".join(filter(None, (f"{size} · {state}", rest)))
+
+
+def legacy_clear_text(legacy: dict[str, Any]) -> str:
+    """What Clear old stores… asks before removing store-v3 and what an earlier Clear left (C3-4)."""
+    size = byte_size(int(legacy.get("bytes") or 0) + int(legacy.get("leftover_bytes") or 0), "disk")
+    if not legacy.get("present"):
+        return (f"Remove what is left of an older HeLab's disk cache, whose earlier removal was cut short ({size})? "
+                "This can't be undone.")
+    return (f"Remove the disk cache of an older HeLab (store-v3, {size})? This HeLab no longer reads it; an older "
+            "HeLab started later would begin an empty one. This can't be undone.")
+
+
+def legacy_clearable(legacy: dict[str, Any] | None) -> bool:
+    """Whether Clear old stores… has anything to remove: store-v3, or what a Clear cut short left."""
+    return bool(legacy and (legacy.get("present") or legacy.get("leftover")))
 
 
 def ask_clear_old_stores(parent: QWidget, cache: FolderCache, confirm: Callable[[str, str, str], bool] | None = None,
@@ -79,15 +99,14 @@ def ask_clear_old_stores(parent: QWidget, cache: FolderCache, confirm: Callable[
     from helab.utils.cache_locks import other_instances
     from helab.utils.constants import app_folder
     legacy = cache.legacy or {}
-    if not legacy.get("present"):
+    if not legacy_clearable(legacy):
         return ""
     running = (others or (lambda: other_instances(app_folder())))()
     if running:
         QMessageBox.information(parent, "Clear old stores", "Another HeLab is running. Quit it first: it may still use "
                                 "the older disk cache.")
         return ""
-    text = (f"Remove the disk cache of an older HeLab (store-v3, {byte_size(int(legacy.get('bytes') or 0), 'disk')})? "
-            "This HeLab no longer reads it; an older HeLab started later would begin an empty one. This can't be undone.")
+    text = legacy_clear_text(legacy)
     asked = (confirm("Clear old stores", text, "Remove") if confirm is not None
              else _confirm(parent, "Clear old stores", text))
     if not asked:

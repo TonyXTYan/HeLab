@@ -597,17 +597,15 @@ class CacheTab(QWidget):
         """Clear old stores… (Q28.5): store-v3 goes, after asking with its size, while no other HeLab runs."""
         from helab.utils.cache_locks import other_instances
         from helab.utils.constants import app_folder
+        from helab.views.CacheDialogs import legacy_clear_text, legacy_clearable
         legacy = (self.inventory or {}).get("legacy") or {}
-        if self.busy or not legacy.get("present"):
+        if self.busy or not legacy_clearable(legacy):
             return
         if other_instances(app_folder()):
             self.message = "Another HeLab is running: quit it before clearing the older cache"
             self._update()
             return
-        text = (f"Removes an older HeLab's disk cache (store-v3, {byte_size(int(legacy.get('bytes') or 0), 'disk')}). "
-                "This HeLab no longer reads it; an older HeLab started later would begin an empty one. This can't "
-                "be undone.")
-        if self.confirm("Clear the older cache?", text, "Remove"):
+        if self.confirm("Clear the older cache?", legacy_clear_text(legacy), "Remove"):
             self._run("Clear the older cache", "clear_legacy")
 
     def clear_results(self) -> None:
@@ -790,16 +788,18 @@ class CacheTab(QWidget):
                 text += f" · {int(raw['only_copy']):,} only copies"
             self.raw_label.setText(text)
             self.raw_button.setEnabled(writable and bool(raw["count"]))
+        from helab.views.CacheDialogs import legacy_clearable, legacy_text
         legacy = inventory.get("legacy") or {}
         present = bool(legacy.get("present"))
-        for widget in (self.legacy_name, self.legacy_label, self.legacy_choice_button, self.legacy_clear_button):
-            widget.setVisible(present)
-        if present:
-            from helab.views.CacheDialogs import legacy_text
+        for widget in (self.legacy_name, self.legacy_label, self.legacy_clear_button):
+            widget.setVisible(legacy_clearable(legacy))  # (Or only what a Clear cut short left, C3-4.)
+        self.legacy_choice_button.setVisible(present)
+        if legacy_clearable(legacy):
             self.legacy_label.setText(legacy_text(legacy))
+            self.legacy_clear_button.setEnabled(writable)
+        if present:
             self.legacy_choice_button.setText("Keep using it" if legacy.get("choice") == "ignore" else "Ignore it")
             self.legacy_choice_button.setEnabled(writable)
-            self.legacy_clear_button.setEnabled(writable)
 
     def focus_purge(self) -> None:
         """Opened from the 80% warning: start at Remove old entries."""

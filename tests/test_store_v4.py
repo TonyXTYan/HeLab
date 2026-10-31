@@ -244,9 +244,10 @@ def test_after_ignore_or_clear_store_v3_is_never_opened(tmp_path: Path, monkeypa
     caches = tmp_path / "caches"
     v3_with_state(caches)
     with CacheStore(str(caches / "store-v4")) as v4:
-        with v4.transaction():
-            v4._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_v3', ?)",
-                             (json.dumps({"choice": choice, "v3_store_id": "x", "set_at": 1.0}),))
+        if choice == "clear":  # (A store-v3 there after a Clear is one made since: asked about again, C3-3.)
+            v4.clear_legacy()
+        else:
+            v4.set_legacy_choice(choice)
     opened: list[str] = []
     real = LegacyStore.__init__
 

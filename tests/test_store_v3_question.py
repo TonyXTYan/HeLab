@@ -234,3 +234,81 @@ def test_the_tab_wont_clear_the_older_store_while_another_helab_runs(
         assert not any(r.payload.get("action") == "clear_legacy" for r in service.pending)
     finally:
         service.shutdown()
+
+
+# A store-v3 made again (C3-3) and a Clear cut short (C3-4)
+
+def test_a_store_v3_made_again_is_asked_about_again_unless_ignored(tmp_path: Path,
+                                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    """C3-3 (Assay): the choice is for the store-v3 it was made for. After Clear, a store-v3 there again is an
+    older HeLab's new one; under Keep, one with another ``store_id``: both unanswered (kept, asked again).
+    Ignore holds for whatever is there, and an ignored store-v3 is never opened to tell."""
+    caches = two_stores(tmp_path)
+    with CacheStore(str(caches / "store-v4")) as v4:
+        v4.clear_legacy()
+    two_stores(tmp_path)  # (An older HeLab started by hand makes store-v3 again.)
+    with CacheStore(str(caches / "store-v4")) as v4:
+        again = v4.measure_legacy()
+        assert again["present"] and again["choice"] is None and again["counted"] is True
+        assert v4.set_legacy_choice("keep")["choice"] == "keep"
+    os.rename(caches / "store-v3", tmp_path / "old-v3")
+    two_stores(tmp_path)  # (Another store-v3, another store_id.)
+    with CacheStore(str(caches / "store-v4")) as v4:
+        assert v4.measure_legacy()["choice"] is None
+        assert v4.set_legacy_choice("ignore")["choice"] == "ignore"
+    os.rename(caches / "store-v3", tmp_path / "older-v3")
+    two_stores(tmp_path)
+    from helab.utils.legacy_store import LegacyStore
+    monkeypatch.setattr(LegacyStore, "__init__", lambda self, root: pytest.fail("an ignored store-v3 was opened"))
+    with CacheStore(str(caches / "store-v4")) as v4:
+        assert v4.measure_legacy()["choice"] == "ignore"
+
+
+def test_what_a_clear_cut_short_leaves_is_shown_and_removed_only_when_asked(
+        qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """C3-4 (Assay): a file held open (Windows) leaves ``store-v3.clearing-<hex>``. The reply counts only what
+    went; Settings › Cache's Older cache row shows what is left with its Clear…; housekeeping never removes
+    it; the next asked Clear does."""
+    import shutil
+    caches = two_stores(tmp_path)
+    options: dict[str, Any] = {"directory": str(caches / "store-v4")}
+    rmtree = shutil.rmtree
+
+    def held_open(path: str, ignore_errors: bool = False) -> None:
+        for name in os.listdir(path):  # (Everything but the database goes.)
+            if name != "records.sqlite":
+                full = os.path.join(path, name)
+                (rmtree(full) if os.path.isdir(full) else os.unlink(full))
+    monkeypatch.setattr(shutil, "rmtree", held_open)
+    events: list[Any] = []
+    cache_admin(options, "clear_legacy", events.append)
+    [leftover] = [name for name in os.listdir(caches) if name.startswith("store-v3.clearing-")]
+    kept = os.path.getsize(caches / leftover / "records.sqlite")
+    result = events[-1]
+    assert result["legacy"]["present"] is False and result["legacy"]["leftover_bytes"] == kept
+    assert [item["name"] for item in result["legacy"]["leftover"]] == [leftover]
+    removed = next(event for event in events if event["kind"] == "removed")
+    assert removed["bytes"] == result["bytes"] and removed["bytes"] > 5000  # (The dataset went, the database not.)
+    monkeypatch.setattr(shutil, "rmtree", rmtree)
+    for action in ("sweep", "inventory"):
+        cache_admin(options, action, lambda event: None)
+    assert (caches / leftover).exists()  # (Never removed without asking.)
+    legacy = result["legacy"]
+    assert legacy_text(legacy) == f"{byte_size(kept, 'disk')} left by a Clear cut short"
+    service, cache = frozen_cache(monkeypatch)
+    monkeypatch.setattr(cache_locks, "other_instances", lambda app_dir: [])
+    try:
+        tab, asked = make_tab(qtbot, cache, tmp_path)
+        tab.inventory = inventory(raw={"count": 0, "bytes": 0, "folders": 0, "only_copy": 0, "only_copy_bytes": 0,
+                                       "last_used": None}, legacy=legacy, older_stores=[])
+        tab._update()
+        assert tab.legacy_clear_button.isVisibleTo(tab) and not tab.legacy_choice_button.isVisibleTo(tab)
+        assert tab.legacy_label.text() == legacy_text(legacy)
+        tab.clear_legacy()
+        assert "what is left" in asked[-1][1] and admin_request(service, "clear_legacy")
+    finally:
+        service.shutdown()
+    events.clear()
+    cache_admin(options, "clear_legacy", events.append)
+    assert not (caches / leftover).exists() and events[-1]["bytes"] == kept
+    assert "leftover" not in events[-1]["legacy"]
