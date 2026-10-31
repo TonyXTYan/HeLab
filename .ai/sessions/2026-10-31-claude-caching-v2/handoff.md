@@ -173,6 +173,22 @@ Checks at `627d1ab` (macOS, M4 Max): `pytest -n 4 --reruns 5 --reruns-delay 1 --
 --strict` (199 files), `mypy tests --strict` (178), `--platform win32`: no issues; `pyright helab tests` and
 `--pythonplatform Windows`: 0 errors. Logs: `.ai/temp/step4/`.
 
+### Checkpoint 2 review fixes (Assay, `review-checkpoint2.md`)
+
+All six fixed, each with a test that fails before it; fix range `bdbd2bc..` this push.
+
+| Finding | Commit | Fix |
+|---|---|---|
+| C2-2 Low | `471a980` | `.hlb`: the header's CRC32 after its length (header at offset 16); chunks must tile the body in order, no gap, overlap or trailing bytes. Format 1 still unwritten, so no bump |
+| C2-3 Low | `6d53159` | `machine_id`: an invalid or empty file is replaced atomically, once; a missing one made with `os.link` so two first starts agree; never recursion |
+| C2-1 Medium | `9d5889c` | Keep reads store-v3 for a key only while v4 never removed that kind for it (its generation, the key's epoch, its root's; a `None` save's tombstone `legacy-hidden:<kind>:<key>`, read by no guard; purges by age recorded in `meta.legacy_purged`) |
+| C2-4 Nit | `9d5889c` | the result count adds only v3 lookups v4 lacks, none for a removed key; the step-4 test's 4 corrected to 3 |
+| C2-5 Nit | `47a6723` | a root forgotten in v4 before a retried import stays forgotten (`meta.forgotten_before_import`); only roots are ever deleted of the imported state |
+| C2-6 Nit | `0551343` | `cache_move.start(..., layout=)` makes the live store the primary (record `primary`); without it, the newest as before. **Proposed:** `CacheMover` sends `cache_store.live_layout()` as the move's `layout` (an `app` file, not owned here) |
+
+Checks at `0551343`: **8723 passed, 672 skipped, 2 warnings in 154.35s; no RERUN**; mypy (also win32) and pyright
+(also Windows) clean. Log: `.ai/temp/step4/suite-fixes.log`.
+
 ## Proposed doc changes (for the Coordinator)
 
 - **known-issues** (cache-4): replace the `test_cache_switch.py` leak entry with: "Fixed on
@@ -224,5 +240,5 @@ Checks at `627d1ab` (macOS, M4 Max): `pytest -n 4 --reruns 5 --reruns-delay 1 --
 - **known-issues** (S0-2, Assay; `explorer_live.py`, I/O Fixes' file, not fixed here): "Live's line counts
   shots waiting with reason `cleared` (A19.2: Clear converted TXY ran during that conversion) as stuck until
   the next check, and their tooltip ends 'A waiting file is checked again only when it changes', which is
-  wrong for `cleared`: the next check converts them. Transient (one check interval). Fix: add `cleared` to
-  `explorer_live.CONVERT_SETTLING`."
+  wrong for `cleared`: the next check converts them. Transient (one check interval). Fix: leave `cleared` out
+  of `stuck()` (Assay's correction; not in `CONVERT_SETTLING`)."
