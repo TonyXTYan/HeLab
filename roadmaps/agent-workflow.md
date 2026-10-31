@@ -50,6 +50,10 @@ his settings and cache, the packaged release, or each other.
   reviewer stalls unattended on approval prompts, even for `maestri`, so it
   reviews only while Tony is at the screen; unattended, a fresh Claude
   reviewer does it (Q24.1, Tony 2026-10-29).
+- **Reviewers** (Tony, 2026-10-31): one Reviewer per floor, recruited for the landing (an area floor's
+  checkpoints are its landings). It checks again only once every finding is fixed, and then reads only
+  the fix diff. A re-review is the same Reviewer, never a new set. Wide reviews (several areas, or Codex
+  on the PR) only at release milestones.
 - **Supervised runs** (Tony away, the Assistant approving for him under a written
   mandate; only Tony starts one): [setup guide](../.ai/maestri-setup.md#supervised-runs-mandate-mode)
   (Q24.2, 2026-10-29).
