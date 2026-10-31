@@ -205,7 +205,22 @@ Raw layers in store-v4 (no `folder_cache.py`, no `raw_fill` helper yet: they wai
 `raw_rows`, `read_raw`, `remove_raw`; raw bytes and v3's counted bytes in `_live`; `inventory()["raw"]` and
 `["older_stores"]` (Q28.5's list); Make room's order (datasets, raw seen, only copies; plan `raw_paths`,
 `only_copy_paths`, `items`); a root's Clear takes its raw layers; the sweep's existing orphan rule over `raw/`;
-the admin's `clear_raw` and `removed` kind `raw`. 16 tests in `tests/test_raw_layers_store.py`. `trim` (a lowered
+the admin's `clear_raw` and `removed` kind `raw`. 16 tests in `tests/test_raw_layers_store.py`.
+
+Assay's pass 3 (`99f7fd1`) on it, both fixed with a test that fails first:
+- **C2-10 Low** (`0c08c5c`): the only-copy mark goes by when its evidence was taken: a sighting (a listing's
+  time; a batch's `RawEntry.read_at`) clears `gone_at` only if newer than it, and a listing marks a shot gone only
+  if newer than its last sighting.
+- **C2-9 Low** (`6603b4b`): Don't cache with remove cached data also takes the folder's raw layers whose files
+  were seen, and keeps only copies. **For Tony to confirm** (CoCo's decision per Q22.6: an only copy is never
+  removed without being named; step 6's dialog may name and offer them).
+
+Assay's notes for later steps:
+- **Step 6:** Settings › Cache's Clear all passes `kinds=list(KINDS)` (`CacheTab.py:538`), so it doesn't take raw
+  layers although it says "Removes everything in the disk cache"; with the raw row, Clear all includes `raw`. Make
+  room's dialog names `only_copy_paths`.
+- **Step 5's `raw_fill`:** publish each `.hlb` just before its batch's save (an unsaved file is an orphan the sweep
+  deletes after an hour; a paused job could pass that). `trim` (a lowered
 budget) still removes datasets only (A~4: give it Make room's order).
 
 ## Proposed doc changes (for the Coordinator)
