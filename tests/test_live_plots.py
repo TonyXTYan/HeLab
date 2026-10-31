@@ -4,13 +4,16 @@ never queueing obsolete reruns. Live itself is simulated here by publishing data
 main window does for each dataset a Live tab shows; the last tests drive a real tab."""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import gc
 import threading
 import time
 import weakref
+from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Iterator, List, Optional, cast
 
 import numpy as np
@@ -49,13 +52,16 @@ from helab.views.HelabMainWindow import HelabMainWindow
 from helab.views.plots.workspace import PlotWorkspace
 
 PATH = "/data/root/run_L"
+# Every dataset of a folder has its MATLAB TXY's signature, whatever shots and TXY choice it holds
+# (``io_ops.loading``): that of a folder without MATLAB TXY, so the fakes never tell loads apart (plots-1).
+SIGNATURE = hashlib.sha256(b"[]").hexdigest()
 
 
 def revision(shots: range | list[int], path: str = PATH) -> Dataset:
     """The data a Live tab shows once it holds ``shots`` (two events each, fixed fingerprints)."""
     numbers = list(shots)
     data = {shot: np.full((2, 3), float(shot)) for shot in numbers}
-    return Dataset(path, f"sig-{numbers[-1] if numbers else 0}", data, {
+    return Dataset(path, SIGNATURE, data, {
         "fingerprint": [[shot, 100 + shot, 1_000 + shot] for shot in numbers], "source": "updated",
         "loaded_at": time.time()}, 0)
 
@@ -224,7 +230,7 @@ def test_a_newer_dataset_of_the_folder_is_the_next_revision() -> None:
     second_data = revision(range(1, 5))
     second = revise(first, second_data)
     assert second.identity == first.identity and second.revision == 2 and second.added_shots == (3, 4)
-    assert second.signature == "sig-4" and first.signature == "sig-2" and second.shot_numbers == (1, 2, 3, 4)
+    assert second.signature == first.signature == SIGNATURE and second.shot_numbers == (1, 2, 3, 4)
     assert view_of(second_data) is second  # A new run on the data shown starts from this revision.
     assert second.fingerprints[4] == (4, 104, 1004)
     # The same shots again (e.g. a save's reload): no new revision.
@@ -298,10 +304,10 @@ def test_follow_policy_every_n_shots_and_a_delay() -> None:
     assert follow.offer(revise(four, revision(range(1, 9))))
 
 
-def changed(dataset: Dataset, shot: int, signature: str) -> Dataset:
-    """``dataset`` loaded again with ``shot``'s file changed in place (same shot numbers)."""
+def changed(dataset: Dataset, shot: int) -> Dataset:
+    """``dataset`` loaded again with ``shot``'s file changed in place (same shot numbers, same signature)."""
     prints = [[entry[0], entry[1] + (7 if entry[0] == shot else 0), entry[2]] for entry in dataset.metadata["fingerprint"]]
-    return Dataset(dataset.path, signature, dict(dataset.data), {**dataset.metadata, "fingerprint": prints}, 0)
+    return Dataset(dataset.path, dataset.signature, dict(dataset.data), {**dataset.metadata, "fingerprint": prints}, 0)
 
 
 def test_follow_counts_changed_fingerprints_and_runs_another_input_once() -> None:
@@ -312,15 +318,15 @@ def test_follow_counts_changed_fingerprints_and_runs_another_input_once() -> Non
     follow = Follow(old, LivePolicy(every_shots=3))
     follow.start(old)
     follow.end(0.0)
-    same = view_of(Dataset(PATH, "sig-again", dict(before.data), dict(before.metadata), 0))
+    same = view_of(Dataset(PATH, SIGNATURE, dict(before.data), dict(before.metadata), 0))
     assert follow.offer(same) and follow.changes() == (0, 0) and follow.due(1.0) == (None, 0.0)
-    loaded_again = view_of(changed(before, 2, "sig-changed"))
+    loaded_again = view_of(changed(before, 2))
     assert follow.offer(loaded_again) and follow.changes() == (0, 1)
     assert follow.due(1.0) == (loaded_again, 0.0)
     # Live's next revisions of one input still wait for N new or changed shots.
     follow.start(loaded_again)
     follow.end(2.0)
-    follow.offer(revise(loaded_again, changed(revision([1, 2, 3]), 2, "sig-3")))
+    follow.offer(revise(loaded_again, changed(revision([1, 2, 3]), 2)))
     assert follow.changes() == (1, 0) and follow.due(3.0) == (None, 0.0)
 
 
@@ -329,6 +335,95 @@ def test_newer_compares_revisions_of_one_input_and_any_other_input() -> None:
     second = revise(first, revision([1, 2]))
     assert newer(second, first) and not newer(first, second) and not newer(first, first)
     assert newer(view_of(revision([1, 2], "/elsewhere")), first)
+
+
+def helab_only(dataset: Dataset, profile: str) -> Dataset:
+    """``dataset``'s shots read from HeLab's TXY of ``profile`` alone (HeLab only, Settings › TXY
+    converter): another TXY choice, with the folder's signature all the same."""
+    shots = [int(shot) for shot in dataset.data]
+    return Dataset(dataset.path, dataset.signature, dict(dataset.data), {
+        **dataset.metadata, "txy": {"source": "helab-only", "profile_tag": f"{profile}v1",
+                                    "origins": {str(shot): f"helab:{profile}" for shot in shots}}}, 0)
+
+
+def test_each_load_of_a_raw_only_folder_is_another_chain() -> None:
+    """plots-1: every dataset of a folder without MATLAB TXY has one signature, so the identity
+    alone told loads apart only by revision. A plot that ran rev 6 is offered a fresh load's rev 1
+    (Live restarted on newly loaded data) and another profile's, and their next revisions too."""
+    view = view_of(revision([1]))
+    for n in range(2, 8):
+        view = revise(view, revision(range(1, n + 1)))
+    assert view.revision == 7
+    follow = Follow(view, LivePolicy(every_shots=5))
+    follow.start(view)
+    follow.end(0.0)
+    fresh = view_of(revision(range(1, 9)))  # Live restarts on a newly loaded Dataset.
+    assert fresh.revision == 1 and fresh.signature == view.signature == SIGNATURE
+    assert fresh.identity != view.identity and fresh.key != view.key
+    assert newer(fresh, view) and not newer(view, view)
+    assert follow.offer(fresh) and follow.due(1.0) == (fresh, 0.0)  # Another input: once, whatever N.
+    follow.start(fresh)
+    follow.end(1.0)
+    after = revise(fresh, revision(range(1, 10)))
+    assert after.revision == 2 and after.identity == fresh.identity and follow.offer(after)
+    # Another profile's TXY while Live runs: no revision of the plot's chain, but newer.
+    other = revise(after, helab_only(revision(range(1, 10)), "p22"))
+    assert other.revision == 1 and other.identity != after.identity and other.key != after.key
+    assert follow.offer(other) and follow.due(2.0) == (other, 0.0)
+    follow.start(other)
+    assert follow.offer(revise(other, helab_only(revision(range(1, 11)), "p22")))
+    # The same data again is still no revision of it.
+    assert revise(other, helab_only(revision(range(1, 10)), "p22")) is other
+
+
+def test_the_feed_offers_a_new_chain_after_live_starts_again(window: Window, qtbot: QtBot) -> None:
+    """plots-1 (A): Live stops, the folder is loaded again and Live starts on it: the feed's view is
+    rev 1 of another chain, and a plot that ran a later revision of the old one runs on it."""
+    script = Gated()
+    old = window.plots.live_feed.publish(revision([1]))
+    for n in range(2, 5):
+        old = window.plots.live_feed.publish(revision(range(1, n + 1)))
+    window.view = old
+    instance = plot(window, qtbot, script)
+    qtbot.waitUntil(lambda: shown_revision(instance) == 4, timeout=10_000)
+    window.plots.live_feed.stop(PATH)
+    fresh = window.plots.live_feed.publish(revision(range(1, 6)))
+    assert fresh.revision == 1 and fresh.identity != old.identity
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.input == fresh.key, timeout=10_000)
+    window.plots.live_feed.publish(revision(range(1, 7)))
+    qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.input.revision == 2
+                    and instance.shown.input.identity == fresh.identity, timeout=10_000)
+    window.plots.live_feed.stop(PATH)
+
+
+def test_the_source_label_compares_the_data_shown_not_the_signature(window: Window, qtbot: QtBot) -> None:
+    """plots-1: a plot not following Live says "Data source" while its tab shows the same shots (by
+    fingerprint and origin), and "Showing previously loaded data" once the folder moved on, though
+    every load of a folder without MATLAB TXY has one signature."""
+    five = revision(range(1, 6))
+    window.view = view_of(five)  # Not published: the plot doesn't follow Live.
+    instance = plot(window, qtbot, Gated())
+    qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
+    dock = cast(QDockWidget, instance.dock_widget)
+    tab = SimpleNamespace(displayed_dataset=five, selected_path_globally=PATH, folder_opened_path=PATH)
+
+    def prefix(shown: Dataset) -> str:
+        tab.displayed_dataset = shown
+        PlotWorkspace._update_plot_source_label(dock, cast(FolderExplorer, tab))
+        return source(instance).text().split(":", 1)[0]
+
+    assert prefix(five) == "Data source"
+    assert prefix(revision(range(1, 6))) == "Data source"  # Loaded again: the same files.
+    assert prefix(revision(range(1, 51))) == "Showing previously loaded data"  # 50 shots now.
+    assert prefix(changed(revision(range(1, 6)), 3)) == "Showing previously loaded data"
+    assert prefix(helab_only(revision(range(1, 6)), "p22")) == "Showing previously loaded data"
+    assert all(dataset.signature == SIGNATURE for dataset in (five, cast(Dataset, tab.displayed_dataset)))
+    tab.folder_opened_path = "/data/root/elsewhere"
+    assert prefix(five) == "Showing previously loaded data"
+    # A plot with its own TXY choice is compared by shot numbers: the tab reads other files.
+    own = replace(view_of(helab_only(five, "p22")).held, own=True)
+    assert own.shown_in(five) and own.shown_in(changed(revision(range(1, 6)), 3))
+    assert not own.shown_in(revision(range(1, 51))) and not view_of(helab_only(five, "p22")).held.shown_in(five)
 
 
 def test_live_settings_read_back_as_a_policy() -> None:
@@ -374,7 +469,7 @@ def test_every_result_records_coverage_and_a_json_reuse_key(qtbot: QtBot, script
     qtbot.waitUntil(lambda: len(ended) == 1, timeout=10_000)
     result = ended[0]
     assert result.coverage.shots == (16, 17, 18, 19, 20)
-    assert result.coverage.fingerprints[20] == (20, 120, 1020) and result.input_signature == "sig-20"
+    assert result.coverage.fingerprints[20] == (20, 120, 1020) and result.input_signature == SIGNATURE
     key = result.reuse_key()
     assert json.loads(json.dumps(key)) == key  # Parameters and all: JSON values only.
     assert key["analysis_id"] == metadata.analysis_id and key["version"] == metadata.version
@@ -418,7 +513,7 @@ def test_bundled_plots_say_why_they_are_empty(qtbot: QtBot, script: DatasetAnaly
     elif case == "none chosen":
         dataset = revision([1, 2])
     else:  # Shots loaded, but their TXY files held no events.
-        dataset = Dataset(PATH, "sig-empty-shots", {1: np.empty((0, 3)), 2: np.empty((0, 3))},
+        dataset = Dataset(PATH, SIGNATURE, {1: np.empty((0, 3)), 2: np.empty((0, 3))},
                           {"fingerprint": [[1, 0, 1_001], [2, 0, 1_002]]}, 0)
     view = view_of(dataset)
     values = effective(script.parameters("Plot"), {"first_shot": 10} if case == "none chosen" else {})
@@ -518,7 +613,7 @@ def cloud_revision(shots: list[int]) -> Dataset:
     for shot in shots:
         rng = np.random.default_rng(shot)
         data[shot] = np.column_stack([rng.normal(0.4165, 0.002, 400), rng.normal(0, 0.002, (400, 2))])
-    return Dataset(PATH, f"sig-cloud-{shots[-1]}", data, {
+    return Dataset(PATH, SIGNATURE, data, {
         "fingerprint": [[shot, 100 + shot, 1_000 + shot] for shot in shots], "source": "updated",
         "loaded_at": time.time()}, 0)
 
@@ -588,7 +683,7 @@ def spread(shots: list[int], per_shot: int = 400) -> Dataset:
     rng = np.random.default_rng(len(shots))
     data = {shot: np.column_stack([0.4 + rng.uniform(0, 0.05, per_shot), rng.normal(0, 1e-3, (per_shot, 2))])
             for shot in shots}
-    return Dataset(PATH, f"sig-spread-{shots[-1]}", data, {
+    return Dataset(PATH, SIGNATURE, data, {
         "fingerprint": [[shot, 100 + shot, 1_000 + shot] for shot in shots], "source": "updated",
         "loaded_at": time.time()}, 0)
 
@@ -642,7 +737,7 @@ def test_the_scatter_highlights_the_newest_shot(qtbot: QtBot) -> None:
 def test_the_display_cap_keeps_the_newest_shot_whole() -> None:
     rng = np.random.default_rng(1)
     data = {1: rng.normal(size=(1500, 3)), 2: rng.normal(size=(1500, 3)), 3: rng.normal(size=(300, 3)) + 5}
-    view = view_of(Dataset(PATH, "sig-cap", data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
+    view = view_of(Dataset(PATH, SIGNATURE, data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
     result = run_now(scatter_3d.Scatter3D(), view, {"highlight_newest": True, "display_cap": 1000,
                                                     "keep_percent": 100.0})
     assert len(result.data.newest) == 300 and len(result.data.points) == 700 and result.data.shown == 1000
@@ -651,7 +746,7 @@ def test_the_display_cap_keeps_the_newest_shot_whole() -> None:
 def test_the_histograms_overlay_the_newest_shot(qtbot: QtBot) -> None:
     rng = np.random.default_rng(2)
     data = {1: rng.normal(size=(400, 3)), 2: rng.normal(size=(400, 3)), 3: rng.normal(size=(50, 3)) * 0.1}
-    view = view_of(Dataset(PATH, "sig-hist", data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
+    view = view_of(Dataset(PATH, SIGNATURE, data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
     script = basic_plots.TxyHistograms()
     plain = run_now(script, view, {})
     assert plain.data.newest_shot is None and plain.data.newest == ()
@@ -672,7 +767,7 @@ def test_the_newest_shot_has_its_own_axis_on_the_right(qtbot: QtBot, log_y: bool
     keeps all the counts, in the plot's colour. The overlay leaves the mouse to the plot."""
     rng = np.random.default_rng(2)
     data = {1: rng.normal(size=(400, 3)), 2: rng.normal(size=(400, 3)), 3: rng.normal(size=(50, 3)) * 0.1}
-    view = view_of(Dataset(PATH, "sig-axis", data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
+    view = view_of(Dataset(PATH, SIGNATURE, data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
     script = basic_plots.TxyHistograms()
     lit = run_now(script, view, {"highlight_newest": True, "keep_percent": 100.0, "log_y": log_y})
     widget = cast(Any, script.render(lit))
@@ -745,7 +840,7 @@ def test_without_the_highlight_there_is_no_right_axis(qtbot: QtBot, log_y: bool)
     either: a right decade axis would repeat the left one, unlabelled)."""
     rng = np.random.default_rng(4)
     data = {shot: rng.normal(size=(300, 3)) for shot in (1, 2, 3)}
-    view = view_of(Dataset(PATH, "sig-plain", data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
+    view = view_of(Dataset(PATH, SIGNATURE, data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
     script = basic_plots.TxyHistograms()
     widget = cast(Any, script.render(run_now(script, view, {"log_y": log_y})))
     qtbot.addWidget(widget)
@@ -765,7 +860,7 @@ def test_a_highlighted_histogram_is_freed_with_its_widget(qtbot: QtBot, log_y: b
     the widget is deleted, its plot, overlay, curve and counts are freed."""
     rng = np.random.default_rng(3)
     data = {shot: rng.normal(size=(300, 3)) for shot in (1, 2, 3)}
-    view = view_of(Dataset(PATH, "sig-free", data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
+    view = view_of(Dataset(PATH, SIGNATURE, data, {"fingerprint": [[s, 1, 1] for s in data]}, 0))
     script = basic_plots.TxyHistograms()
     widget = cast(Any, script.render(run_now(script, view, {"highlight_newest": True, "log_y": log_y})))
     widget.resize(800, 600)
@@ -966,12 +1061,12 @@ def test_a_plot_made_before_live_catches_up_with_changed_data(
     instance = plot(window, qtbot, script)
     qtbot.waitUntil(lambda: shown_revision(instance) == 1, timeout=10_000)
     old = instance.view
-    live = window.plots.live_feed.publish(changed(before, 2, "sig-changed"))  # Live starts on it.
+    live = window.plots.live_feed.publish(changed(before, 2))  # Live starts on it.
     assert live.identity != old.identity and live.shot_numbers == old.shot_numbers == (1, 2)
     qtbot.waitUntil(lambda: instance.shown is not None and instance.shown.input == live.key, timeout=10_000)
     assert script.started == [1, 1] and instance.follow.pending is None
     shown = cast(AnalysisResult, instance.shown)
-    assert shown.input_signature == "sig-changed" and shown.coverage.fingerprints[2] == (2, 109, 1002)
+    assert shown.input_signature == SIGNATURE and shown.coverage.fingerprints[2] == (2, 109, 1002)
     assert instance.follow_text() == "following Live"
 
 
@@ -1465,7 +1560,7 @@ def lab_revision(shots: range | list[int]) -> Dataset:
         times = np.concatenate([rng.normal(2.1375 + order * 0.0125, 0.001, count)
                                 for order, count in {-2: 20, -1: 100, 0: 600, 1: 250, 2: 30}.items()])
         data[shot] = np.column_stack((times, rng.normal(0, 0.005, (len(times), 2))))
-    return Dataset(PATH, f"sig-lab-{numbers[-1] if numbers else 0}", data, {
+    return Dataset(PATH, SIGNATURE, data, {
         "fingerprint": [[shot, 100 + shot, 1_000 + shot] for shot in numbers], "source": "updated",
         "loaded_at": time.time()}, 0)
 

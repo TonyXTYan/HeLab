@@ -614,7 +614,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.released = None  # Drawn again: its picture goes.
             self._nowhere = False
         self._check_constants()
-        self._show_content(content, result, specs, warnings)
+        self._show_content(content, result, specs, warnings, view)
         self._follow_next()
 
     def _still_released(self) -> None:
@@ -657,8 +657,13 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         self._show_content(content, result, specs, warnings)
 
-    def _show_content(self, content: QWidget, result: AnalysisResult, specs: List[Any], warnings: str) -> None:
+    def _show_content(self, content: QWidget, result: AnalysisResult, specs: List[Any], warnings: str,
+                      view: Optional[DatasetView] = None) -> None:
+        """Show ``result``'s plot ``content``; ``view``: the data it ran on (default: the shown result's,
+        none for an outdated saved result's, which is no data a tab shows)."""
         self._content = content
+        if view is None and result is self.shown and not result.outdated:
+            view = self._shown_view
         if self.dock_widget is None:
             content.deleteLater()
             return
@@ -680,7 +685,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if warnings:
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
                 record = f"{record}\nWarning: {warnings}"
-            self.workspace.set_plot_result(self.dock_widget, content, result, settings, record, chosen)
+            self.workspace.set_plot_result(self.dock_widget, content, result, settings, record, chosen, view,
+                                           not self.on_tab_choice())
         elif self.dock_widget.widget() is not content:
             old = self.dock_widget.widget()
             self.dock_widget.setWidget(content)
