@@ -470,3 +470,15 @@ def test_the_inventory_measures_store_v3_kept_and_only_its_files_after_ignore(tm
         assert v4.inventory()["legacy"] == {"present": False, "choice": None, "bytes": 0}
     with CacheStore(str(tmp_path / "alone" / "store-v3")) as v3:
         assert "legacy" not in v3.inventory()
+
+
+@pytest.mark.parametrize("contents", [b"abc123\n", b"A" * 32 + b"\n", b"", b"\x00\xff"])
+def test_an_invalid_machine_id_file_is_replaced_never_recursed_on(tmp_path: Path, contents: bytes) -> None:
+    """C2-3 (Assay): anything but 32 lowercase hex digits (a cut write, another format) is replaced by a
+    new id, once; the same id comes back afterwards."""
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / store_v4.MACHINE_FILE).write_bytes(contents)
+    made = store_v4.machine_id(str(app))
+    assert len(made) == 32 and all(c in "0123456789abcdef" for c in made)
+    assert (app / store_v4.MACHINE_FILE).read_text().strip() == made == store_v4.machine_id(str(app))

@@ -24,6 +24,7 @@ Qt-free; standard library only (``build_info`` and NumPy/SciPy versions read laz
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import platform
@@ -112,28 +113,45 @@ def _versions() -> dict[str, str]:
 
 def machine_id(app_folder: str | None = None) -> str:
     """This machine's random id, made once in the app folder (``machine-id``): not its name, which the
-    record keeps apart. "" when the app folder can't hold it."""
+    record keeps apart. A file that doesn't hold one (a cut write, another format) is replaced by a new
+    id, atomically and once (C2-3: never a loop). "" when the app folder can't hold it."""
     if app_folder is None:
         app_folder = os.environ.get("HELAB_APP_DIR_OVERRIDE") or _default_app_folder()
     path = os.path.join(app_folder, MACHINE_FILE)
-    try:
-        with open(path, encoding="ascii") as handle:
-            found = handle.read().strip()
-        if len(found) == 32 and all(c in "0123456789abcdef" for c in found):
-            return found
-    except OSError:
-        pass
+    found = _read_machine_id(path)
+    if found:
+        return found
     made = uuid.uuid4().hex
+    temporary = f"{path}.{uuid.uuid4().hex[:8]}.tmp"
     try:
         os.makedirs(app_folder, exist_ok=True)
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(descriptor, "w", encoding="ascii") as handle:
+        with open(temporary, "x", encoding="ascii") as handle:
             handle.write(made + "\n")
+        if os.path.lexists(path):
+            os.replace(temporary, path)  # (An invalid one: replaced.)
+            return made
+        try:
+            os.link(temporary, path)  # (None yet: only if still none, so two first starts agree.)
+        except FileExistsError:
+            return _read_machine_id(path)
+        except OSError:
+            os.replace(temporary, path)  # (No links here, e.g. FAT: the rare race loses one id.)
         return made
-    except FileExistsError:
-        return machine_id(app_folder) if os.path.getsize(path) else ""
     except OSError:
         return ""
+    finally:
+        with contextlib.suppress(OSError):
+            os.remove(temporary)
+
+
+def _read_machine_id(path: str) -> str:
+    """The id in ``path``, or "" when there is none or it isn't 32 lowercase hex digits."""
+    try:
+        with open(path, encoding="ascii", errors="replace") as handle:
+            found = handle.read().strip()
+    except OSError:
+        return ""
+    return found if len(found) == 32 and all(c in "0123456789abcdef" for c in found) else ""
 
 
 def _default_app_folder() -> str:
