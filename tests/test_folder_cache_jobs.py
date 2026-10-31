@@ -88,3 +88,45 @@ def test_clearing_a_folders_cache_cancels_its_plot_choice_loads(
         assert "cancelled" in events and not cache.jobs and producer.owner not in cache._producers
     finally:
         service.shutdown()
+
+
+def test_a_background_check_keeps_its_cached_reads_dataset_over_the_ram_budget(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Area review io-7 (2026-10-31): a background check beside its cached read waits for that read's
+    dataset; the RAM budget (here: nothing unshown fits) must not drop it first, or the check fails with
+    "Cached data couldn't be read — Retry" and its newly read shots are thrown away."""
+    service = service_for_test(monkeypatch)
+    cache = FolderCache(service)
+    cache.max_data_bytes = 0  # (Plots already over the RAM budget, or a large folder: nothing unshown stays.)
+    got: list[tuple[str, str, dict[str, Any]]] = []
+    cache.resultReady.connect(lambda r, e: got.append((r.owner, r.operation, e)))
+    try:
+        assert cache.submit("bg", 0, RUN, "cached", {})
+        assert cache.submit("bg", 0, RUN, "load", {"cache_base": True})
+        read = next(r for r in service.pending if r.owner == cache.jobs[("cached", RUN)].owner)
+        check = next(r for r in service.pending if r.owner == cache.jobs[("load", RUN)].owner)
+        # The check read a new shot 2 and finished first: it waits for the read's dataset.
+        service.resultReady.emit(check, {"kind": "started"})
+        service.resultReady.emit(check, {"kind": "shot", "shot": 2, "array": np.ones((1, 3)), "fingerprint": [2, 6, 9]})
+        service.resultReady.emit(check, {
+            "kind": "loaded", "signature": "new", "memory_shots": [1], "base_signature": "old",
+            "fingerprint": [[1, 6, 1], [2, 6, 9]], "files": 2, "total_files": 2, "failed_files": 0, "rows": 1,
+            "bytes": 24, "problematic": [], "source": "updated", "cached": False, "disk_cached": True,
+            "disk_cache_pending": False, "cache_info": {}, "load_counts": {}})
+        service.resultReady.emit(check, {"kind": "done"})
+        assert cache._awaiting_cached
+        # The cached read delivers (no subscriber pins it: the tab moved on, the load is in the background).
+        service.resultReady.emit(read, {"kind": "shot", "shot": 1, "array": np.ones((1, 3)), "fingerprint": [1, 6, 1]})
+        service.resultReady.emit(read, {
+            "kind": "loaded", "signature": "old", "files": 1, "total_files": 1, "failed_files": 0, "rows": 1,
+            "bytes": 24, "problematic": [], "source": "disk", "cached": True, "disk_cached": True,
+            "disk_cache_pending": False, "cache_info": {}, "verified": False, "fingerprint": [[1, 6, 1]],
+            "memory_shots": [], "load_counts": {}})
+        service.resultReady.emit(read, {"kind": "done"})
+        qtbot.wait(50)
+        load_events = [e["kind"] + (":" + e.get("message", "") if e["kind"] == "error" else "")
+                       for o, op, e in got if o == "bg" and op == "load"]
+        assert any(k.startswith("loaded") for k in load_events), load_events
+    finally:
+        service.shutdown()

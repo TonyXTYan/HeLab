@@ -2117,6 +2117,9 @@ class FolderCache(QObject):
                 holders.update(dataset_buffers(entry).keys())
             total += sum(size for key, size in plots.items() if not holders[key])
         pinned = {id(entry) for entry in self.pins.values()}
+        # A folder's cached read a check beside it waits for (``_awaiting_producers``, nothing pins it in the
+        # background) stays until that check takes it as its base (``_resume_awaiting``), next (io-7).
+        pinned |= {id(entry) for key, entry in self.datasets.items() if key[0] in self._awaiting_producers}
         for key, entry in list(self.datasets.items()):
             if total <= limit:
                 break
