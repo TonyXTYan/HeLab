@@ -86,6 +86,11 @@ class CacheStatus:
     error: str = ""
 
 
+def job_key(operation: str, path: str, live: bool = False, choice: str | None = None) -> tuple[str, str]:
+    """Where ``FolderCache.jobs`` files a job: one derivation, for filing and forgetting it."""
+    return ("live" if live else operation if choice is None else f"{operation}:{choice}"), path
+
+
 @dataclass
 class SharedJob:
     owner: str
@@ -126,10 +131,12 @@ class SharedJob:
     # A Live save's summary older than the folder's snapshot (a newer listing ran meanwhile): not
     # adopted, and its data is kept without the signature check, not counted as checked.
     behind_listing: bool = False
+    # A load of a plot's own TXY choice (``FolderCache.payload_key_choice``): keyed apart from the tab's.
+    choice: str | None = None
 
     @property
     def key(self) -> tuple[str, str]:
-        return ("live" if self.live else self.operation), self.path
+        return job_key(self.operation, self.path, self.live, self.choice)
 
     def saves(self) -> bool:
         """Whether a subscriber asked for a save (``FolderCache.save``), whatever the job's own payload."""
@@ -2217,8 +2224,8 @@ class FolderCache(QObject):
                 self._deliver(request, {"kind": "resolved", "path": self._defaults[candidates]})
                 return True
         live = operation == "load" and bool(payload.get("live"))
-        job_key = ("live" if live else operation if choice is None else f"{operation}:{choice}", path)
-        job = self.jobs.get(job_key)
+        filed = job_key(operation, path, live, choice)
+        job = self.jobs.get(filed)
         if job and operation == "load" and choice is None and self.payload_choice(job.payload) != \
                 self.payload_choice(payload):
             # The tab's load of the choice it had before Settings changed it: this one waits for it to end,
@@ -2229,7 +2236,7 @@ class FolderCache(QObject):
             def wait_for_job() -> None:
                 if request.cancelled.is_set() or self.service.closed:
                     return
-                if self.jobs.get(job_key) is job:
+                if self.jobs.get(filed) is job:
                     QTimer.singleShot(50, wait_for_job)
                     return
                 if request in self._deliveries:
@@ -2296,16 +2303,17 @@ class FolderCache(QObject):
                            "held_raw_times": list(base.metadata.get("raw_times") or ())}
             else:
                 payload = {key: value for key, value in payload.items() if key != "save_memory"}
-        job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base, live=live)
+        job = SharedJob(uuid4().hex, path, operation, self._epochs.get(path, 0), payload, base=base, live=live,
+                        choice=choice)
         if operation in SCANS:
             job.payload = payload = {**payload, "scan_operation_id": job.owner,
                                      "scan_revision": time.time_ns(), "scan_manual": manual}
         job.subscribers[(owner, generation)] = request
-        self.jobs[job_key] = job
+        self.jobs[job.key] = job
         self._producers[job.owner] = job
         if not self.service.submit(job.owner, 0, path, operation, payload, priority=priority, timeout=timeout,
                                    arrays=arrays):
-            self.jobs.pop(job_key)
+            self.jobs.pop(job.key)
             self._producers.pop(job.owner)
             return False
         return True
@@ -2654,10 +2662,9 @@ class FolderCache(QObject):
 
     def _invalidate_data(self, path: str) -> None:
         self._epochs[path] = self._epochs.get(path, 0) + 1
-        for operation in ("load", "live", "cached"):
-            job = self.jobs.get((operation, path))
-            if job:
-                self._cancel_job(job)
+        # Every load of the folder: the tab's, Live's, plots' own choices (``load:<choice>``), cached reads.
+        for job in [job for job in self.jobs.values() if job.path == path and job.operation in ("load", "cached")]:
+            self._cancel_job(job)
         for key in [key for key in self.datasets if key[0] == path]:
             del self.datasets[key]
         for request in self._deliveries:
