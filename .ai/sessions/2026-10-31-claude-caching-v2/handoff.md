@@ -370,6 +370,8 @@ gave 8851 passed, 672 skipped, no RERUN; strict mypy (also win32) and pyright (a
   (the next commit) makes the slow encode last until three heartbeats have come, with a 10 s deadline. It passes
   25 of 25 runs under a 12-process CPU load with reruns off, and fails without C3-1's ticker. Every other job in
   that run was green.
+- **CI 41188263711** (`375562e`, the fixes with the test fix): green on all three OSes. I read every Tests and
+  Converter job's log (9 jobs): **no RERUN**. Windows Tests 1/2 took 12.9 min, 2/2 took 10.9 min.
 
 ## Step 8: doc proposals for checkpoint 3 (steps 5–7, the export, cache-1)
 
