@@ -994,3 +994,33 @@ def test_after_a_settings_change_live_and_its_save_read_the_new_sources_txy(
         assert set(saved["txy"]["origins"]) == expected and saved["txy"]["source"] == after
     finally:
         service.shutdown()
+
+
+def test_a_load_finding_the_cache_whole_with_a_new_signature_saves_it(tmp_path: Path, private_store: str) -> None:
+    """Area review io-5 (2026-10-31): shots 1–3 held from HeLab's TXY under helab-priority, MATLAB's for 1–2.
+    MATLAB's TXY of shot 3 arrives: the data's fingerprint is unchanged but the folder's signature (its
+    MATLAB TXY) is new. The load reads no TXY file and the cached dataset takes the new signature, so the
+    next check of the data in RAM is the quick one again."""
+    source = tmp_path / "run"
+    source.mkdir()
+    old = time.time() - 600
+    for shot in (1, 2, 3):
+        write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 1))))
+    for shot in (1, 2):
+        os.utime(matlab_txy(source, shot), (old, old))
+    convert(source, tmp_path, private_store, shots=[1, 2, 3])
+    priority = options(tmp_path, private_store, txy_sources.HELAB_PRIORITY)
+    aged(source, *helab_txy.folders(str(source), priority, _key(source, private_store)))
+    first = loaded(run_load(source, tmp_path, private_store, priority))
+    assert saved_info(source, private_store)["signature"] == first["signature"]
+    os.utime(matlab_txy(source, 3), (old, old))
+    aged(source)
+    events = run_load(source, tmp_path, private_store, priority)
+    second = loaded(events)
+    assert second["fingerprint"] == first["fingerprint"] and second["signature"] != first["signature"]
+    assert not [event for event in events if event["kind"] == "file_started"]  # (No TXY file read.)
+    assert saved_info(source, private_store)["signature"] == second["signature"]
+    # The data in RAM is the cached data again: the next check doesn't list the folder.
+    third = loaded(run_load(source, tmp_path, private_store, priority, memory=second["fingerprint"],
+                            base_signature=second["signature"], memory_origins=second["txy"]["origins"]))
+    assert third["source"] == "memory" and third["unchanged"], third["cache_reason"]
