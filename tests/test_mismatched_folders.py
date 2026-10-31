@@ -2,6 +2,7 @@
 2, 4, 8… mismatched folders, skipping them from 8, and scans that find them."""
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 import sqlite3
 import time
@@ -184,7 +185,7 @@ def test_helper_scan_reports_cached_shots_the_folder_no_longer_has(tmp_path: Pat
     assert (mismatch["missing"], mismatch["known_count"], mismatch["listed_count"]) == ([1], 2, 2)
     # Only the dataset's record is read, never its data.
     db = next(tmp_path.rglob("records.sqlite"))
-    with sqlite3.connect(db) as conn:
+    with contextlib.closing(sqlite3.connect(db)) as conn, conn:
         assert conn.execute("SELECT COUNT(*) FROM datasets").fetchone()[0] == 1
 
 

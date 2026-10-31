@@ -1,6 +1,7 @@
 """Roadmap S5: the helpers use the store-v2 disk cache (``cache_store``) instead of diskcache."""
 from __future__ import annotations
 
+import contextlib
 from pathlib import Path
 import json
 import os
@@ -133,7 +134,7 @@ def test_replaced_dataset_file_is_retired_not_deleted(tmp_path: Path) -> None:
     assert second["file"] != first and second["shots"] == 3
     # A reader that looked up the old row can still open its file until the sweep's grace period ends.
     assert (Path(options["directory"]) / "datasets" / first).exists()
-    with sqlite3.connect(Path(options["directory"]) / "records.sqlite") as connection:
+    with contextlib.closing(sqlite3.connect(Path(options["directory"]) / "records.sqlite")) as connection, connection:
         assert connection.execute("SELECT file FROM retired_files").fetchall() == [(first,)]
 
 
@@ -204,7 +205,7 @@ def test_newer_store_is_read_but_never_written(tmp_path: Path) -> None:
     source = data_folder(tmp_path)
     path, options = str(source), options_for(tmp_path)
     run_load(source, tmp_path, options)
-    with sqlite3.connect(Path(options["directory"]) / "records.sqlite") as connection:
+    with contextlib.closing(sqlite3.connect(Path(options["directory"]) / "records.sqlite")) as connection, connection:
         connection.execute("UPDATE meta SET value = ? WHERE key = 'layout_version'", (str(LAYOUT_VERSION + 1),))
     row = dataset_row(options, path)
     (source / "d_txy_forc3.txt").write_text("3,2,3\n")
@@ -299,7 +300,8 @@ def test_unreadable_saved_records_are_unknown_not_missing(
     run_load(source, tmp_path, options)
     scan(path, lambda event: None, options)
     if failure == "malformed record":
-        with sqlite3.connect(Path(options["directory"]) / "records.sqlite") as connection:
+        database = Path(options["directory"]) / "records.sqlite"
+        with contextlib.closing(sqlite3.connect(database)) as connection, connection:
             connection.execute("UPDATE folder_summaries SET record = '{broken'")
             connection.execute("UPDATE datasets SET info = '{broken'")
     else:

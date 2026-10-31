@@ -4,6 +4,7 @@ when several helpers open it at once; a read-only store without them is left as 
 files and rows count toward the one disk budget."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -46,12 +47,12 @@ def base_store(directory: Path, *, layout: int = cache_store.LAYOUT_VERSION) -> 
 
 
 def tables(directory: Path) -> set[str]:
-    with sqlite3.connect(directory / "records.sqlite") as conn:
+    with contextlib.closing(sqlite3.connect(directory / "records.sqlite")) as conn, conn:
         return {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'index')")}
 
 
 def meta(directory: Path) -> dict[str, str]:
-    with sqlite3.connect(directory / "records.sqlite") as conn:
+    with contextlib.closing(sqlite3.connect(directory / "records.sqlite")) as conn, conn:
         return {str(key): str(value) for key, value in conn.execute("SELECT key, value FROM meta")}
 
 
@@ -89,7 +90,7 @@ def test_an_older_store_v3_gains_the_result_tables_when_opened(tmp_path: Path) -
 
 def test_a_store_with_the_table_but_no_generation_gains_it(tmp_path: Path) -> None:
     directory = base_store(tmp_path / "store")
-    with sqlite3.connect(directory / "records.sqlite") as conn:
+    with contextlib.closing(sqlite3.connect(directory / "records.sqlite")) as conn, conn:
         conn.execute(cache_store.RESULT_SCHEMA[0])
     with CacheStore(str(directory)):
         pass
@@ -99,7 +100,7 @@ def test_a_store_with_the_table_but_no_generation_gains_it(tmp_path: Path) -> No
 def test_a_store_from_the_first_result_schema_gains_pending_results(tmp_path: Path) -> None:
     """c31ac10's stores have ``results`` but not ``pending_results`` (added for Make room or Discard)."""
     directory = base_store(tmp_path / "store")
-    with sqlite3.connect(directory / "records.sqlite") as conn:
+    with contextlib.closing(sqlite3.connect(directory / "records.sqlite")) as conn, conn:
         for statement in cache_store.RESULT_SCHEMA:
             if "pending_results" not in statement:
                 conn.execute(statement)

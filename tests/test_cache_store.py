@@ -1,6 +1,7 @@
 """The store-v2 disk cache (helab/utils/cache_store.py), before any helper uses it."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -66,7 +67,7 @@ def files_in(store: CacheStore) -> set[str]:
 
 
 def retired(store: CacheStore) -> set[str]:
-    with sqlite3.connect(store.database) as conn:
+    with contextlib.closing(sqlite3.connect(store.database)) as conn, conn:
         return {file for (file,) in conn.execute("SELECT file FROM retired_files")}
 
 
@@ -74,7 +75,7 @@ def test_new_store_is_versioned_and_readable_with_sqlite(store: CacheStore, root
     assert store.layout_version == LAYOUT_VERSION and not store.read_only
     store.save_record("summaries", "/data/a", {"status": "ok", "identity": [1, 2]},
                       store.guard(["/data/a"], ["summaries"]))
-    with sqlite3.connect(store.database) as conn:
+    with contextlib.closing(sqlite3.connect(store.database)) as conn, conn:
         assert conn.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
         meta = dict(conn.execute("SELECT key, value FROM meta"))
         saved = conn.execute("SELECT record, identity FROM folder_summaries").fetchone()
@@ -95,7 +96,7 @@ def test_records_are_found_missing_or_deleted(store: CacheStore) -> None:
 
 
 def test_unreadable_record_is_an_error_not_missing(store: CacheStore) -> None:
-    with sqlite3.connect(store.database) as conn:
+    with contextlib.closing(sqlite3.connect(store.database)) as conn, conn:
         conn.execute("INSERT INTO subtrees (path, record, saved_at) VALUES ('a', '{broken', 0)")
         conn.execute("INSERT INTO subtrees (path, record, saved_at) VALUES ('b', '[1]', 0)")
     found = store.read_records("subtrees", ["a", "b"])
@@ -339,7 +340,7 @@ def test_newer_layout_opens_read_only(root: str) -> None:
     with CacheStore(root) as store:
         store.save_record("summaries", "a", {"status": "ok"}, store.guard(["a"], ["summaries"]))
         database = store.database
-    with sqlite3.connect(database) as conn:
+    with contextlib.closing(sqlite3.connect(database)) as conn, conn:
         conn.execute("UPDATE meta SET value = ? WHERE key = 'layout_version'", (str(LAYOUT_VERSION + 1),))
         conn.commit()
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
@@ -370,7 +371,7 @@ def test_read_only_open_handles_uri_characters_in_the_path(tmp_path: Path, name:
     root = tmp_path / name / "store-v2"
     with CacheStore(str(root)) as store:
         store.save_record("summaries", "a", {"status": "ok"}, store.guard(["a"], ["summaries"]))
-    with sqlite3.connect(root / "records.sqlite") as conn:
+    with contextlib.closing(sqlite3.connect(root / "records.sqlite")) as conn, conn:
         conn.execute("UPDATE meta SET value = ? WHERE key = 'layout_version'", (str(LAYOUT_VERSION + 1),))
     with CacheStore(str(root)) as newer:
         assert newer.read_only and newer.read_record("summaries", "a").value == {"status": "ok"}
@@ -381,7 +382,7 @@ def test_read_only_open_handles_uri_characters_in_the_path(tmp_path: Path, name:
 def test_older_or_corrupt_store_fails_to_open(root: str, tmp_path: Path) -> None:
     with CacheStore(root) as store:
         database = store.database
-    with sqlite3.connect(database) as conn:
+    with contextlib.closing(sqlite3.connect(database)) as conn, conn:
         conn.execute("UPDATE meta SET value = '1' WHERE key = 'layout_version'")
     with pytest.raises(StoreError):
         CacheStore(root)
@@ -424,7 +425,7 @@ def test_two_processes_writing_at_once(store: CacheStore, root: str) -> None:
     row = store.read_dataset_row("shared").value
     # 50 jobs took distinct sequence numbers; the stored dataset is the newest saved.
     assert row is not None and store.read_dataset("shared").found
-    with sqlite3.connect(store.database) as conn:
+    with contextlib.closing(sqlite3.connect(store.database)) as conn, conn:
         assert conn.execute("SELECT job_seq FROM folder_epochs WHERE path = 'shared'").fetchone()[0] == 50
     referenced = {row["file"]} | retired(store)
     assert files_in(store) <= referenced

@@ -5,6 +5,7 @@ without them reads as "none set", never as an error. A nested root's re-key is i
 with its root record, so a failed one is retried by the next listing."""
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 from pathlib import Path
@@ -91,7 +92,7 @@ def old_store(directory: Path, *, layout: int = cache_store.LAYOUT_VERSION) -> P
 
 
 def schema(directory: Path) -> tuple[set[str], set[str]]:
-    with sqlite3.connect(directory / "records.sqlite") as conn:
+    with contextlib.closing(sqlite3.connect(directory / "records.sqlite")) as conn, conn:
         tables = {str(row[0]) for row in conn.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
         columns = {str(row[1]) for row in conn.execute("PRAGMA table_info(datasets)")}
     return tables, columns
