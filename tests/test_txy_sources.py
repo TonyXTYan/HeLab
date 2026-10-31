@@ -571,6 +571,7 @@ def test_a_held_shot_converted_again_is_read_again(tmp_path: Path, private_store
     assert sorted(entry[0] for entry in seen) == [3, 4]  # Read again once seen unchanged a check apart.
     result = loaded(check(seen=seen))
     assert sorted(entry["shot"] for entry in result["live_reread"]) == [3, 4]
+    assert all(entry.get("converted") for entry in result["live_reread"])  # (Not a writer that paused.)
     assert result["txy"]["origins"] == {"3": f"helab:{other}", "4": f"helab:{other}"}
 
 
@@ -848,6 +849,47 @@ def test_a_shot_held_from_matlabs_keeps_it_when_helabs_is_converted(tmp_path: Pa
     restored = run_load(source, tmp_path, private_store, priority)
     assert sorted(loaded(restored)["txy"]["origins"]) == ["1", "2", "3"]
     assert loaded(restored)["cache_reason"] == "Reused 2 shots from disk cache; 1 new or changed TXY file to read"
+
+
+def test_live_takes_helabs_txy_for_a_shot_held_from_matlabs(tmp_path: Path, private_store: str) -> None:
+    """A39.2 (Q38.2, Tony 2026-10-31): under HeLab priority, a HeLab TXY converted during Live replaces the shot
+    held from MATLAB's TXY, read again as a changed shot is (once seen unchanged a check apart), instead of
+    waiting for the folder's next load. Until then the held data stands, with no mismatch."""
+    source = tmp_path / "run"
+    source.mkdir()
+    for shot in (1, 2, 3):
+        write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 1))))
+    old = time.time() - 600
+    os.utime(matlab_txy(source, 1), (old, old))
+    convert(source, tmp_path, private_store, shots=[2, 3])
+    priority = options(tmp_path, private_store, txy_sources.HELAB_PRIORITY)
+    first = loaded(run_load(source, tmp_path, None, priority))
+    assert sorted(first["txy"]["origins"]) == ["2", "3"]
+    convert(source, tmp_path, private_store, shots=[1])  # Auto-convert during Live.
+    txy = {**priority, "key": _key(source, private_store)}
+    aged(source, *helab_txy.folders(str(source), txy, _key(source, private_store)))
+
+    def check(**kwargs: Any) -> list[dict[str, Any]]:
+        output = tmp_path / f"live-{time.monotonic_ns()}"
+        output.mkdir()
+        sent: list[dict[str, Any]] = []
+        live_check(str(source), str(output), sent.append, first["fingerprint"],  # type: ignore[arg-type]
+                   txy=txy, memory_origins=first["txy"]["origins"], check_level="full", **kwargs)
+        return sent
+    look = check()
+    assert kinds_of(look)[-1] == "live_unchanged" and "shots_missing" not in kinds_of(look)
+    seen = last(look, "live_unchanged")["live_seen"]
+    assert [entry[0] for entry in seen] == [1]
+    events = check(seen=seen, seen_names=last(look, "live_unchanged")["live_seen_names"],
+                   helab_since=last(look, "live_unchanged")["live_helab"])
+    result = loaded(events)
+    assert sorted(result["txy"]["origins"]) == ["1", "2", "3"]
+    assert [(entry["shot"], entry.get("converted")) for entry in result["live_reread"]] == [(1, True)]
+    assert result["memory_shots"] == [2, 3]
+    helab_file = next(event["filename"] for event in events if event["kind"] == "file_started")
+    assert "d_txy_helab_" in os.path.basename(helab_file)
+    # The folder's signature (its MATLAB TXY) is unchanged by the switch: the tab still finds it matches.
+    assert result["signature"] == first["signature"]
 
 
 def aged(*folders: str | Path) -> None:

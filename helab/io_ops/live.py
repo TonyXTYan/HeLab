@@ -186,12 +186,27 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     # MATLAB's too: "" its origin, so a HeLab TXY converted since doesn't replace it).
     chosen = helab_txy.compose(txy_source, matlab, helab_found, {shot: held_origins.get(shot, "") for shot in held})
     origins = {shot: origin for shot, (_, origin) in chosen.items() if origin}
-    for shot, (filename, origin) in chosen.items():
-        names[shot] = filename
+
+    def pending_name(shot: int, filename: str, origin: str) -> str:
         # The pending check joins a name to the folder: HeLab's in their own folder are named in full.
-        file_names[shot] = filename if origin and os.path.dirname(filename) != os.path.dirname(
+        return filename if origin and os.path.dirname(filename) != os.path.dirname(
             beside_entries[shot].path if shot in beside_entries else os.path.join(path, "_")) \
             else os.path.basename(filename)
+    for shot, (filename, origin) in chosen.items():
+        names[shot] = filename
+        file_names[shot] = pending_name(shot, filename, origin)
+    # A held shot kept on MATLAB's TXY (the held-kind rule) that the source takes from HeLab's now, one
+    # converted during Live under HeLab priority: read again from HeLab's like a changed shot, as a HeLab-held
+    # shot converted again is, instead of at the folder's next load (A39.2, Q38.2: Tony 2026-10-31). Its MATLAB
+    # TXY, written once, still feeds the mismatch rule (``names``) until then.
+    switching: dict[int, str] = {}
+    for shot in sorted(set(held) - set(held_origins)):
+        if (shot in helab_found and chosen.get(shot, ("", "?"))[1] == ""
+                and txy_sources.choose(txy_source, shot in matlab, True) == txy_sources.HELAB):
+            found_shot = helab_found[shot]
+            switching[shot] = found_shot.file
+            origins[shot] = txy_sources.helab_origin(found_shot.profile_hash)
+            file_names[shot] = pending_name(shot, found_shot.file, origins[shot])
 
     def mismatch(reason: str, shots: list[int]) -> None:
         send({"kind": "shots_missing", "reason": reason, "missing": shots[:20], "missing_count": len(shots),
@@ -218,6 +233,9 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
             dropped.append(shot)
         elif origin != held_origins[shot] or stat_now != held[shot]:
             helab_rereads.append((shot, *stat_now))
+    helab_rereads += [(shot, helab_found[shot].size, helab_found[shot].mtime_ns) for shot in switching]
+    # Read again because HeLab's TXY of them is new (converted since), not because a writer paused: said apart.
+    converted = {item[0] for item in helab_rereads}
     missing = sorted(set(held) - set(names) - held_helab)
     if missing:
         mismatch("missing", missing)
@@ -312,7 +330,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
         shot = item[0]
         again = shot in replacing
         what = "read again" if again else "read"
-        filename = names[shot]
+        filename = switching.get(shot, names[shot])
         Pause.checkpoint(send)
         send({"kind": "file_started", "filename": filename})
         read += 1
@@ -361,7 +379,7 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
                 replaced.add(shot)
         if again and shot in replaced:
             reread.append({"shot": shot, "path": filename, "old": list(held[shot]), "new": list(item[1:]),
-                           "read": shot not in unreadable})
+                           "read": shot not in unreadable, **({"converted": True} if shot in converted else {})})
         send({"kind": "file_finished", "filename": filename})
         now = time.monotonic()
         if now - last_progress >= 0.1 or i + 1 == len(to_read):

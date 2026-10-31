@@ -444,7 +444,8 @@ class LiveController:
     def _live_reread(self, session: LiveSession, entries: list[dict[str, Any]]) -> None:
         """Shots Live read recently that changed since and were read again: one WARNING each (for
         Tony to report: the converter writing to a temporary name and renaming it avoids this), and
-        a note on the Live line and in Folder details for ``LIVE_REREAD_NOTE_SECONDS``."""
+        a note on the Live line and in Folder details for ``LIVE_REREAD_NOTE_SECONDS``. Those read
+        again from HeLab's TXY converted since (``converted``: no writer paused) are logged as INFO only."""
         now = time.time()
 
         def when(nanoseconds: int) -> str:
@@ -452,9 +453,17 @@ class LiveController:
                 return datetime.fromtimestamp(nanoseconds / 1e9).astimezone().isoformat(timespec="milliseconds")
             except (ValueError, OverflowError, OSError):  # A corrupt far-future mtime (Windows' localtime).
                 return f"{nanoseconds} ns"
+        paused: list[dict[str, Any]] = []
         for entry in entries:
             shot = int(entry["shot"])
             (old_size, old_mtime), (new_size, new_mtime) = entry["old"], entry["new"]
+            if entry.get("converted"):
+                # HeLab's TXY of a held shot, converted since Live read it (A39.2): the shot's data, no writer at fault.
+                logging.info("Live: shot %s read again from HeLab's TXY converted since%s: %s", shot,
+                             "" if entry.get("read") else " (now unreadable)", entry.get("path", ""))
+                session.read_at[shot] = now
+                continue
+            paused.append(entry)
             read_at = session.read_at.get(shot)
             logging.warning(
                 "Live: shot %s changed %s after Live read it, read again%s: %s (size %s → %s bytes, mtime %s → %s). "
@@ -463,7 +472,9 @@ class LiveController:
                 " (now unreadable)", entry.get("path", ""), f"{old_size:,}", f"{new_size:,}", when(old_mtime),
                 when(new_mtime))
             session.read_at[shot] = now
-        shots = sorted(int(entry["shot"]) for entry in entries)
+        if not paused:
+            return
+        shots = sorted(int(entry["shot"]) for entry in paused)
         note = (f"Shot {shots[0]} changed after it was read (writer paused past the settle time?): read again" if len(shots) == 1
                 else f"Shots {', '.join(map(str, shots[:5]))}{' …' if len(shots) > 5 else ''} changed after they "
                      "were read (writer paused past the settle time?): read again")

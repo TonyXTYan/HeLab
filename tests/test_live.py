@@ -5,6 +5,7 @@ Helpers run in-process: each queued request gets the real helper's events (``rep
 from __future__ import annotations
 
 import json
+import logging
 import os
 from pathlib import Path
 import re
@@ -497,6 +498,23 @@ def test_the_save_at_live_off_reads_a_recently_read_shot_again_and_saves_it(
     [warning] = [record.getMessage() for record in caplog.records if "Live: shot" in record.getMessage()]
     assert "shot 3 changed" in warning and str(partial) in warning
     assert f"size 9 → {partial.stat().st_size:,} bytes" in warning
+    explorer.close_cleanup()
+
+
+def test_a_shot_read_again_from_helabs_txy_converted_since_is_no_warning(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A39.2: a held shot read again because HeLab's TXY of it was converted since (``converted``) is the
+    shot's data, not a writer that paused: logged as INFO, no note on the Live line."""
+    path = str(run)
+    explorer = open_loaded(qtbot, service, run, tmp_path)
+    assert explorer.start_live()
+    session = explorer.live_control._live_sessions[path]
+    with caplog.at_level(logging.INFO):
+        explorer.live_control._live_reread(session, [{"shot": 1, "path": "d_txy_helab_m19v1_1.txt", "old": [10, 1],
+                                                      "new": [12, 2], "read": True, "converted": True}])
+    assert explorer.live_reread_note(path) == "" and 1 in session.read_at
+    assert [record.levelno for record in caplog.records if "shot 1" in record.getMessage()] == [logging.INFO]
     explorer.close_cleanup()
 
 
