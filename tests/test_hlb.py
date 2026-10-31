@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import struct
+import zlib
 from typing import Any, Callable
 
 import numpy as np
@@ -21,21 +22,24 @@ def sample() -> dict[str, np.ndarray[Any, Any]]:
             "none": np.empty(0, dtype="<f8"), "grid": np.zeros((0, 3), dtype="<f8")}
 
 
+START = len(hlb.MAGIC) + 8  # (The magic, then the header's length and CRC32.)
+
+
 def header_of(data: bytes) -> dict[str, Any]:
     (length,) = struct.unpack_from("<I", data, len(hlb.MAGIC))
-    found = json.loads(data[len(hlb.MAGIC) + 4:len(hlb.MAGIC) + 4 + length])
+    found = json.loads(data[START:START + length])
     assert isinstance(found, dict)
     return found
 
 
 def with_header(data: bytes, change: Callable[[dict[str, Any]], None]) -> bytes:
-    """``data`` with its header changed (the chunks' offsets still point at the same bytes)."""
-    start = len(hlb.MAGIC) + 4
+    """``data`` with its header changed and its CRC made again (the chunks' offsets still point at the
+    same bytes), so the reader's later checks are what refuse it."""
     (length,) = struct.unpack_from("<I", data, len(hlb.MAGIC))
     header = header_of(data)
     change(header)
     text = json.dumps(header).encode()
-    return data[:len(hlb.MAGIC)] + struct.pack("<I", len(text)) + text + data[start + length:]
+    return data[:len(hlb.MAGIC)] + struct.pack("<II", len(text), zlib.crc32(text)) + text + data[START + length:]
 
 
 def test_arrays_round_trip_with_their_dtypes_shapes_and_header() -> None:
@@ -95,7 +99,9 @@ def damaged() -> list[tuple[str, Callable[[bytes], bytes], str]]:
         ("empty", lambda data: b"", "first bytes"),
         ("cut header", lambda data: data[:20], "cut or too long"),
         ("huge header", lambda data: data[:8] + struct.pack("<I", hlb.MAX_HEADER + 1) + data[12:], "cut or too long"),
-        ("header not JSON", lambda data: data[:12] + b"}" + data[13:], "unreadable"),
+        ("header flipped", lambda data: flip(data, START + 3), "header is damaged"),
+        ("header crc", lambda data: data[:12] + struct.pack("<I", 1) + data[16:], "header is damaged"),
+        ("header not JSON", lambda data: data[:8] + struct.pack("<II", 1, zlib.crc32(b"}")) + b"}", "unreadable"),
         ("newer format", lambda data: with_header(data, lambda header: header.update(format=hlb.FORMAT + 1)),
          "newer HeLab"),
         ("no format", lambda data: with_header(data, lambda header: header.pop("format")), "no format"),
@@ -108,12 +114,16 @@ def damaged() -> list[tuple[str, Callable[[bytes], bytes], str]]:
         ("wrong shape", change("shape", [999]), "don't hold"),
         ("duplicate", lambda data: with_header(data, lambda header: header["arrays"][1].update(
             name=header["arrays"][0]["name"])), "listed twice"),
-        ("chunk outside", chunk("offset", 10 ** 9), "outside the file"),
-        ("negative offset", chunk("offset", -5), "outside the file"),
+        ("chunk outside", chunk("offset", 10 ** 9), "don't fill the file"),
+        ("negative offset", chunk("offset", -5), "don't fill the file"),
+        ("gap", chunk("offset", 1), "don't fill the file"),
+        ("overlap", lambda data: with_header(data, lambda header: header["arrays"][1]["chunks"][0].__setitem__(
+            "offset", 0)), "don't fill the file"),
+        ("trailing bytes", lambda data: data + b"\0", "after the last chunk"),
         ("crc", chunk("crc32", 1), "checksum"),
         ("size", chunk("size", 7), "don't hold"),
         ("flipped data", lambda data: flip(data, len(data) - 3), "checksum"),
-        ("truncated", lambda data: data[:-10], "outside the file"),
+        ("truncated", lambda data: data[:-10], "after the last chunk, or is cut"),
     ]
 
 
@@ -123,3 +133,18 @@ def test_damage_or_a_newer_format_is_an_error_never_data(name: str, spoil: Calla
     data = hlb.pack({"channel": sample()["channel"], "time": sample()["time"]}, kind="raw")
     with pytest.raises(hlb.HlbError, match=message):
         hlb.unpack(spoil(data))
+
+
+def test_a_header_change_that_stays_valid_json_is_an_error() -> None:
+    """C2-2 (Assay): the header has its own CRC, so a flipped digit in the facts isn't read as data."""
+    from helab.convert import raw_layer
+    data = raw_layer.to_hlb(raw_layer.encode(b"5,10\r\n1,20\r\n"))
+    assert b'"first_channel":5' in data
+    with pytest.raises(hlb.HlbError, match="header is damaged"):
+        raw_layer.from_hlb(data.replace(b'"first_channel":5', b'"first_channel":7'))
+
+
+def test_bytes_after_the_last_chunk_are_an_error() -> None:
+    data = hlb.pack({"time": np.arange(10, dtype="<i8")}, kind="raw")
+    with pytest.raises(hlb.HlbError, match="after the last chunk|don't fill"):
+        hlb.unpack(data + b"junk")

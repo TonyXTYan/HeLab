@@ -5,8 +5,9 @@ Layout (stage 1 design addendum §5)::
 
     offset 0   MAGIC   8 bytes  b"\\x89HLB\\r\\n\\x1a\\n" (PNG-style: a text-mode copy or a cut file fails it)
     offset 8   length  <u4      the header's bytes (at most MAX_HEADER)
-    offset 12  header  JSON, UTF-8
-    then       chunks  each array's Blosc chunks, back to back
+    offset 12  crc32   <u4      zlib's CRC32 of the header's bytes
+    offset 16  header  JSON, UTF-8
+    then       chunks  each array's Blosc chunks, back to back, to the end of the file
 
 The header is ``{"format", "kind", "maker", "meta", "arrays": [{"name", "dtype", "shape", "codec",
 "chunks": [{"offset", "length", "size", "crc32"}]}]}``: ``offset`` from the end of the header,
@@ -18,8 +19,9 @@ cut at element boundaries, so python-blosc's 2 GB limit on one call never applie
 file of a newer ``format``, or an unknown dtype or codec, is refused (``HlbError``), never rewritten.
 Only the dtypes in ``DTYPES`` are read, with their byte order spelled out.
 
-Reading checks everything before trusting it: the magic, the header's length and shape, each array's
-dtype, shape and chunk sizes, every chunk's place in the file, CRC and decompressed size. A file
+Reading checks everything before trusting it: the magic, the header's length, CRC and shape, each
+array's dtype, shape and chunk sizes, that the chunks tile the body exactly (in order, no gap, no
+overlap, nothing after the last), and every chunk's CRC and decompressed size. A file
 that fails any check is an error, never "nothing saved" (AGENTS.md's read rule).
 
 Bytes only: the store writes the file (a temporary name, fsync, rename). Qt-free; standard
@@ -44,7 +46,7 @@ CHUNK_BYTES = 64 * 1024 * 1024
 DTYPES: dict[str, np.dtype[Any]] = {name: np.dtype(name) for name in ("|i1", "|u1", "<i8", "<f8")}
 CNAME = "zstd"
 CLEVEL = 9
-_LENGTH = struct.Struct("<I")
+_LENGTH = struct.Struct("<II")  # (The header's length and CRC32.)
 _START = len(MAGIC) + _LENGTH.size
 
 
@@ -91,16 +93,18 @@ def pack(arrays: Mapping[str, npt.NDArray[Any]], *, kind: str, meta: Mapping[str
                          "arrays": entries}, separators=(",", ":"), allow_nan=False).encode("utf-8")
     if len(header) > MAX_HEADER:
         raise HlbError(f"The header is {len(header)} bytes, over {MAX_HEADER}")
-    return b"".join((MAGIC, _LENGTH.pack(len(header)), header, *body))
+    return b"".join((MAGIC, _LENGTH.pack(len(header), zlib.crc32(header)), header, *body))
 
 
 def read_header(data: bytes) -> dict[str, Any]:
     """The header of a container's bytes, checked (``HlbError`` otherwise)."""
     if len(data) < _START or data[:len(MAGIC)] != MAGIC:
         raise HlbError("Not a HeLab container (its first bytes are wrong)")
-    (length,) = _LENGTH.unpack_from(data, len(MAGIC))
+    length, crc = _LENGTH.unpack_from(data, len(MAGIC))
     if length > MAX_HEADER or _START + length > len(data):
         raise HlbError("The container's header is cut or too long")
+    if zlib.crc32(data[_START:_START + length]) != crc:
+        raise HlbError("The container's header is damaged (checksum)")
     try:
         header = json.loads(data[_START:_START + length].decode("utf-8"))
     except (UnicodeDecodeError, ValueError) as exc:
@@ -121,11 +125,20 @@ def unpack(data: bytes) -> tuple[dict[str, Any], dict[str, npt.NDArray[Any]]]:
     """A container's header and arrays (new arrays, never views of ``data``), every part checked."""
     blosc = _blosc()
     header = read_header(data)
-    (length,) = _LENGTH.unpack_from(data, len(MAGIC))
+    length, _ = _LENGTH.unpack_from(data, len(MAGIC))
     base = _START + length
+    entries = [_entry(entry) for entry in header["arrays"]]
+    # The chunks tile the body exactly: in the order listed, no gap, no overlap, nothing after the last.
+    end = 0
+    for name, _, _, chunks in entries:
+        for chunk in chunks:
+            if chunk["offset"] != end or chunk["length"] <= 0:
+                raise HlbError(f"Array {name!r}: its chunks don't fill the file in order (a gap or an overlap)")
+            end += chunk["length"]
+    if base + end != len(data):
+        raise HlbError("The container has bytes after the last chunk, or is cut")
     arrays: dict[str, npt.NDArray[Any]] = {}
-    for entry in header["arrays"]:
-        name, dtype, shape, chunks = _entry(entry)
+    for name, dtype, shape, chunks in entries:
         if name in arrays:
             raise HlbError(f"Array {name!r} is listed twice")
         expected = math.prod(shape) * dtype.itemsize

@@ -148,8 +148,9 @@ CREATE INDEX raw_layers_file ON raw_layers (file);
 ```
 offset 0   magic     8 bytes  b"\x89HLB\r\n\x1a\n"   (PNG-style: catches text-mode and truncation damage)
 offset 8   length    <u4      header bytes (≤ 16 MiB, else refused)
-offset 12  header    JSON, UTF-8
-then       chunks    each array's Blosc chunks, back to back
+offset 12  crc32     <u4      the header's CRC32 (C2-2)
+offset 16  header    JSON, UTF-8
+then       chunks    each array's Blosc chunks, back to back, tiling the rest of the file exactly
 ```
 
 - **Header:** `{"format": 1, "kind": "raw", "maker": {"maker", "record"}, "meta": {…}, "arrays": [{"name",
