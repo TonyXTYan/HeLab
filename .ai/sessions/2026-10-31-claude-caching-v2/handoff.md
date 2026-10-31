@@ -102,6 +102,77 @@ c, c:` (commit on exit kept, connection closed). The other direct connections in
 no `unclosed database`; the same on the old `test_cache_switch.py` shows the leak
 (`.ai/temp/cache-4/gc_plugin.py`, not committed).
 
+## Steps 2–4 (checkpoint 2): the addendum, `.hlb` and the raw layer, store-v4's core (switch off)
+
+| Commit | What |
+|---|---|
+| `9767d15` | step 2: [design-stage1.md](design-stage1.md), read by CoCo; T~1–T~3 sent to Tony |
+| `b3945f1` | step 3: `helab/utils/hlb.py`, `helab/convert/raw_layer.py`, `check.convert_via_layer`, `check_samples.py --via-layer` |
+| `9cbaa0a` | CI: the Converter backends job runs `tests/test_raw_layer.py` (CoCo's OK) |
+| `cbf6e16` | step 4: the switch, store-v4 in `CacheStore` (`helab/utils/store_v4.py`), `LegacyStore`, the import, Keep, cache-2, makers, cache moves |
+| `627d1ab` | step 4: the inventory measures store-v3 (`meta.legacy_bytes`, gap 8) |
+
+Outside the brief's owned paths, approved by CoCo: `helab/convert/raw_layer.py` (new), `helab/convert/check.py`,
+`dev/txy/check_samples.py`, `.github/workflows/ci-test.yml` (one line). New modules in `PURE`: `helab.utils.hlb`,
+`helab.convert.raw_layer`.
+
+### Step 3
+
+- **`.hlb`** as the addendum §5: magic `\x89HLB\r\n\x1a\n`, `<u4` header length (≤ 16 MiB), JSON header (`format` 1,
+  `kind`, `maker`, `meta`, `arrays` with explicit dtypes `|i1 |u1 <i8 <f8`, codec, chunks with offset, length,
+  size, CRC32), Blosc chunks ≤ 64 MiB at element boundaries. Unknown header fields ignored; a newer `format`, an
+  unknown dtype or codec, any damage: `HlbError`, never data. Bytes only (the store writes files, step 5).
+- **Raw layer** as §6: compact `i8-i64d-1` when the strict path read the file, channels ≤ 127 and times < 2^62
+  (looser than the design's 2^53 and still exact: every strict value is an integer float64, so its int64 and the
+  deltas are exact); row 0 first, then stable time order. `f64-1` otherwise, in file order. `Facts` give
+  `not_done` the same answer as the bytes. zstd 9 + byte shuffle.
+- **Proof:** `tests/test_raw_layer.py` (every case, every textscan probe (1,381 inputs in 8 folders),
+  `tests_sample_data/`, a seeded fuzz set of 57): byte-identical TXY from the layer with every available backend
+  and the split path. **Here only `reference` and `numpy` are built: the cython backend is proved by CI's
+  Converter backends job only** (rust, numba, mlx only wherever they are installed; the test skips a backend that
+  can't run). Storing all
+  rows in plain sorted order (row 0 not first) fails 54 of the tests.
+- **Sample set** (`check_samples.py --positions all --via-layer --backend numpy`, read only, in memory; nothing in
+  `~/HeLab-samples` changed, checked with `find -newer`): **303 identical, 1 cut, 2 variant, 3 empty (the 6
+  proved exceptions), 0 differ**, the same table as the file path. 9.4 s for 309 shots.
+
+### Step 4
+
+- **The switch:** `store_v4` row (bool, off, no control); `cache_store.store_root()` reads it once per process
+  (`live_layout`, lazily through `cache_setting.store_v4_enabled(app_settings())`); `store_root_for(dir, layout)`
+  and `layout_of(root)` (the folder's name decides: `store-v4` is layout 4). Helpers never read it. Off: v3 as
+  today, and `test_with_the_switch_off_store_v3_is_live_and_no_store_v4_is_ever_made`.
+- **store-v4** = every v3 table (datasets included, T~3) + `makers` + `raw_layers` (empty until step 5) + `maker`
+  columns on `datasets` and `results`; `meta.format` 1 (newer: read only), `gen_raw`, `imported_v3`,
+  `legacy_bytes`; `store_v4.migrate` for tables added within layout 4 (none yet; called on every writable open).
+  Not yet in v4: `legacy_v3` is written by step 6's question (unset = not answered = Keep).
+- **cache-2:** in v4 a record kind's removal bumps `<kind>:<key>` (`store_v4.epoch_key`), datasets keep the
+  folder's own row; v3 unchanged. A nested root's re-key moves only the folder rows (as today); a per-kind row
+  left under the old key is harmless (a guard naming the old key is `REKEYED` anyway).
+- **makers (Q28.4):** the session's maker is `HELAB_STORE_MAKER` in the environment, made at the GUI's (or
+  `helab convert`'s) first `store_root()` under v4 and inherited by its helpers (`IOService` starts them with a copy
+  of `os.environ`), so `store_options()` needs no change; a store without one (tests) makes its own. The row is
+  written in the same transaction as the first data row. **Privacy (CoCo's note, block 29): the record holds the
+  machine's hostname, and every `.hlb` header will carry the maker's record: fine on this machine, but a `.hlb` or a
+  saved result shared off it carries the hostname.** The machine id is a random UUID in `app_folder()/machine-id`.
+- **store-v3:** `LegacyStore` (`mode=ro`, else `mode=rw` + `query_only`; `NO_CKPT_ON_CLOSE`); the import once at
+  v4's creation (retried while v3 can't be read; a v3 appearing later isn't imported); Keep's read-through of
+  records and results (v4 exact, v3 exact, v4 outdated, v3 outdated; `ResultFound.legacy`; counts include v3's);
+  Ignore/Clear never open v3. **Not built: copy-on-use** of v3 results into v4 (the addendum said "by the next save
+  of that folder's results"); read-through only, while v3 is kept (A~3).
+- **Cache moves:** the primary store (newest layout present) keeps `store_id`'s role; the record adds
+  `store_ids`; `verify` checks each store; `checkpoint` writes the primary only; a v3 beside a v4 is read through
+  `LegacyStore`. Older records (no `store_ids`) recover as before.
+- **The guard test** (`test_only_legacy_store_ever_opens_store_v3_once_store_v4_is_live`): with v4 live, a session
+  of opens, saves, results, records, purges, removals, the sweep, inventories and a copy move opens v3's database
+  only from `legacy_store.py` (every `sqlite3.connect` and `CacheStore` open watched) and v3's files (all but
+  `-wal`/`-shm`) are byte-identical, in place and in the copy. It fails if `cache_move` opens v3 itself.
+
+Checks at `627d1ab` (macOS, M4 Max): `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
+**8699 passed, 672 skipped, 2 warnings in 136.77s; no RERUN** (the known pyqtgraph warnings); `mypy helab/
+--strict` (199 files), `mypy tests --strict` (179), `--platform win32`: no issues; `pyright helab tests` and
+`--pythonplatform Windows`: 0 errors. Logs: `.ai/temp/step4/`.
+
 ## Proposed doc changes (for the Coordinator)
 
 - **known-issues** (cache-4): replace the `test_cache_switch.py` leak entry with: "Fixed on
@@ -122,10 +193,34 @@ no `unclosed database`; the same on the old `test_cache_switch.py` shows the lea
 - **converter.md**: the same in the converter's index section, plus "`txy.write_atomic` takes
   `after_rename` (run after the rename, before the folder fsync)" and the `shot_waiting` reason `cleared`.
 - **AI_TODO**: A19.2 done.
+- **AGENTS.md** (for Tony to confirm, wording only):
+  - Disk cache: "Only helpers (and `helab convert`) open the store (`DIR_CACHES/store-v3`, `CacheStore`; with the
+    `store_v4` switch on, `store-v4`, and store-v3 then only through `LegacyStore`, read only)".
+  - `_migrate`: "A table or column added within `store-v3` or `store-v4` is added to older stores by
+    `cache_store._migrate` (store-v4: `store_v4.migrate`) on every writable open, never only in `SCHEMA`."
+  - Housekeeping (CoCo's note b): "the sweep deletes retired dataset and layer files, and store files no row names
+    once over an hour old": the same orphan rule over `raw/` too (step 5), **no new removal**.
+  - Settings: the `store_v4` row stays off until stage 2 and Tony's go (Q28.3).
+- **cache-store.md:** a "store-v4 (caching v2, behind the switch)" section: the switch and `layout_of`; v4's
+  tables and meta; per-kind epochs; makers and `HELAB_STORE_MAKER`; `LegacyStore`, the import and Keep;
+  `inventory()["legacy"]`; cache moves with two stores (primary, `store_ids`).
+- **converter.md:** `raw_layer` (encodings, facts, `RAW_PARSER_VERSION`), `check.convert_via_layer` and
+  `check_samples.py --via-layer`.
+- **testing.md:** the `switch_on` fixture in `tests/test_store_v4.py` (the `store_v4` row in the test's ini plus
+  `cache_store._reset_live_layout()`); `tests/test_raw_layer.py` in the Converter backends job.
+- **The plan** (`roadmaps/caching-v2.md`): stage 1's store-v4 carries `datasets` (T~3, pending Tony); the raw
+  layer's compact limit is 2^62; the sample set's via-layer result.
 
 ## Follow-ups (provisional)
 
 - ~~A~1~~ done in stage 0 (S0-1, above).
+- **A~2** `pack_dataset`'s 2.1 GB limit stays for v4's `datasets` in stage 1 (blosc-pickle); stage 2's `.hlb`
+  segments end it.
+- **A~3** copy-on-use of store-v3's saved results into v4 (or decide read-through is enough while v3 is kept).
+- **M~1** time the raw codec on the lab PC (`check_samples.py --via-layer`; zstd 9 measured 16 MB/s of raw text
+  per M4 Max thread).
+- **Step 5 owes:** `raw/` in `_known_files`/`_listed_files` (the sweep's orphan rule), v3's `legacy_bytes` in v4's
+  usage and fit checks, the maker id in each `.hlb` header written, Make room's order.
 - **known-issues** (S0-2, Assay; `explorer_live.py`, I/O Fixes' file, not fixed here): "Live's line counts
   shots waiting with reason `cleared` (A19.2: Clear converted TXY ran during that conversion) as stuck until
   the next check, and their tooltip ends 'A waiting file is checked again only when it changes', which is
