@@ -166,7 +166,7 @@ class IOService(QObject):
     LOCAL_CAP = 2
     PAUSABLE = ("load", "list", "details", "scan", "icons", "roots_verify", "convert")
     # Held while cached data doesn't match several folders (``mismatch_hold``): loads and scans.
-    # Browsing, cached reads, cache writes and icons go on.
+    # Browsing, cached reads, cache writes, saves, Live checks and icons go on (``mismatch_spared``).
     MISMATCH_HELD = ("load", "details", "scan")
     # Maintenance nothing waits for: other background work queued later still goes first.
     LAST = ("roots_verify",)
@@ -354,8 +354,9 @@ class IOService(QObject):
 
     def _foreground_busy(self, now: float) -> bool:
         # A Live check runs every few seconds and is mostly one stat or a names-only listing: it
-        # holds background work only while it reads a new file.
-        return any(r.lane == FOREGROUND and not r.completed
+        # holds background work only while it reads a new file. A load the mismatch hold pauses
+        # holds none: icons, listings and conversions go on while the user decides (io-6).
+        return any(r.lane == FOREGROUND and not r.completed and not self.held_by_mismatch(r)
                    and (r.operation == "load" and (not self.live(r) or r.current_file is not None)
                         or self._listing_progressing(r, now)) for r in self.active)
 
@@ -427,19 +428,27 @@ class IOService(QObject):
             self.mismatch_hold = held
             self.reschedule()
 
-    def held_by_mismatch(self, request: IORequest) -> bool:
-        return self.mismatch_hold and request.operation in self.MISMATCH_HELD
+    @staticmethod
+    def mismatch_spared(request: IORequest) -> bool:
+        """A load the mismatch hold never holds: a save (``FolderCache.save``, Live's included), which
+        writes data already shown, and a Live check, which reads only the watched folder's new shots
+        and stops on its own when that folder doesn't match (area review io-1, 2026-10-31)."""
+        return request.operation == "load" and bool(request.payload.get("save") or request.payload.get("live"))
 
-    def cancel_operations(self, operations: tuple[str, ...]) -> None:
-        """Cancel every queued or running request of these operations; a finished load still
-        writing its disk cache is left to finish."""
+    def held_by_mismatch(self, request: IORequest) -> bool:
+        return (self.mismatch_hold and request.operation in self.MISMATCH_HELD
+                and not self.mismatch_spared(request))
+
+    def cancel_held(self) -> None:
+        """Cancel every queued or running load and scan the mismatch hold holds (``held_by_mismatch``
+        with the hold on); a finished load still writing its disk cache is left to finish."""
         for request in list(self.pending):
-            if request.operation in operations:
+            if request.operation in self.MISMATCH_HELD and not self.mismatch_spared(request):
                 self.pending.remove(request)
                 request.cancelled.set()
                 self.resultReady.emit(request, {"kind": "cancelled"})
         for request in list(self.active):
-            if request.operation in operations and not request.completed:
+            if request.operation in self.MISMATCH_HELD and not self.mismatch_spared(request) and not request.completed:
                 self._retire(request)
                 self.resultReady.emit(request, {"kind": "cancelled"})
         self.activityChanged.emit()
@@ -553,12 +562,14 @@ class IOService(QObject):
                                                              else request.operation == "load" and hold_load)))
             if pause != request.pause_requested:
                 with request.control:
-                    request.pause_requested = pause
-                    if request.output:
-                        self._write_pause(request.output, pause)
+                    # Not written (the flag held by another process for a moment): the next tick tries again,
+                    # so a helper is never left paused, its no-progress timer frozen (io-8).
+                    if not request.output or self._write_pause(request.output, pause):
+                        request.pause_requested = pause
 
     @staticmethod
-    def _write_pause(output: str, pause: bool) -> None:
+    def _write_pause(output: str, pause: bool) -> bool:
+        """Set or remove the pause flag: whether it is as asked now."""
         # A local temp file; the helper checks it between files and entries.
         flag = os.path.join(output, "pause")
         try:
@@ -566,8 +577,11 @@ class IOService(QObject):
                 Path(flag).touch()
             else:
                 os.remove(flag)
+        except FileNotFoundError:
+            return not pause
         except OSError:
-            pass
+            return False
+        return True
 
     def load_busy(self) -> bool:
         """Whether a load is running or waiting, without filesystem access."""
@@ -808,8 +822,8 @@ class IOService(QObject):
             with request.control:
                 request.output = tempfile.mkdtemp(
                     prefix="helab_data_" if request.operation in ("load", "cached") else "helab_io_")
-                if request.pause_requested:
-                    self._write_pause(request.output, True)
+                if request.pause_requested and not self._write_pause(request.output, True):
+                    request.pause_requested = False  # (Tried again by the next tick's ``_apply_pauses``.)
             payload["output"] = payload["control"] = request.output
             if request.arrays is not None:
                 import numpy as np
@@ -1108,6 +1122,16 @@ class IOService(QObject):
             self.folder_cache.shutdown()
         for owner in {r.owner for r in (*self.pending, *self.active)}:
             self.cancel(owner)
+        # Signalled here too: the reapers are daemon threads, which may not run before the interpreter exits,
+        # and a helper left running (a finishing save's cache write) would outlive HeLab. ``kill`` and ``poll``
+        # never wait; the reapers still confirm each exit.
+        for request in self.retired:
+            process = request.process
+            try:
+                if process is not None and process.poll() is None:
+                    process.kill()
+            except OSError:
+                logging.exception("Could not stop I/O helper: %s %s", request.operation, request.path)
         self.closed = True
         self.timer.stop()
         while not self.messages.empty():

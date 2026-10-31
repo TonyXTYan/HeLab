@@ -506,6 +506,7 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             packed: bytes | None = None
             same_kind = {shot for shot in current if saved_origins.get(shot, "") == origins.get(shot, "")}
             if row is not None and not (_saved_fingerprint(row) == fingerprint and saved_origins == origins
+                                        and _cache_info(row["info"]).get("signature") == summary["signature"]
                                         and in_memory >= set(current)):
                 # The dataset itself is needed: read it with its row, which may have changed meanwhile.
                 full = store.read_dataset(path)
@@ -540,7 +541,11 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
             def unpack() -> dict[int, Any] | None:
                 return unpack_dataset(packed) if packed is not None and not too_big else None
 
-            whole = saved_fingerprint == fingerprint and saved_origins == origins
+            # The signature too: from the folder's MATLAB TXY, it changes without the fingerprint when one
+            # arrives or settles for a shot held from HeLab's; such a dataset is saved again, with no TXY
+            # read (area review io-5, 2026-10-31).
+            whole = (saved_fingerprint == fingerprint and saved_origins == origins
+                     and cache_info.get("signature") == summary["signature"])
             if whole and packed is None:
                 # The caller already holds every shot: no need to decompress the cache.
                 cached, problematic = True, previous

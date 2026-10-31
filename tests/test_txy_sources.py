@@ -571,7 +571,31 @@ def test_a_held_shot_converted_again_is_read_again(tmp_path: Path, private_store
     assert sorted(entry[0] for entry in seen) == [3, 4]  # Read again once seen unchanged a check apart.
     result = loaded(check(seen=seen))
     assert sorted(entry["shot"] for entry in result["live_reread"]) == [3, 4]
+    assert all(entry.get("converted") for entry in result["live_reread"])  # (Not a writer that paused.)
     assert result["txy"]["origins"] == {"3": f"helab:{other}", "4": f"helab:{other}"}
+
+
+def test_a_helab_held_shot_read_again_from_matlabs_isnt_called_converted(
+    tmp_path: Path, private_store: str,
+) -> None:
+    """Probe's IO-R2 (review of A39.2): shot 3 held from HeLab's TXY, whose TXY is cleared once MATLAB's
+    arrived, is read again from MATLAB's. That isn't a new HeLab conversion: its ``live_reread`` entry
+    isn't ``converted``."""
+    source = make_run(tmp_path, private_store)  # (MATLAB's TXY for shots 1-2; HeLab's for every shot.)
+    first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store)))
+    assert sorted(first["txy"]["origins"]) == ["3", "4"]
+    old = time.time() - 600
+    os.utime(matlab_txy(source, 3), (old, old))
+    helab_txy.clear_converted(helab_txy.converted_root(store_root(private_store)))
+    look = live(source, tmp_path, private_store, first["fingerprint"], memory_origins=first["txy"]["origins"])
+    assert "shots_missing" not in kinds_of(look)
+    seen = last(look, "live_unchanged")["live_seen"] if kinds_of(look)[-1] == "live_unchanged" else \
+        last(look, "loaded")["live_seen"]
+    assert [entry[0] for entry in seen] == [3]
+    result = loaded(live(source, tmp_path, private_store, first["fingerprint"],
+                         memory_origins=first["txy"]["origins"], seen=seen))
+    assert [entry["shot"] for entry in result["live_reread"]] == [3]
+    assert not result["live_reread"][0].get("converted") and "3" not in result["txy"]["origins"]
 
 
 def test_live_finds_the_store_key_itself(tmp_path: Path, private_store: str) -> None:
@@ -850,6 +874,47 @@ def test_a_shot_held_from_matlabs_keeps_it_when_helabs_is_converted(tmp_path: Pa
     assert loaded(restored)["cache_reason"] == "Reused 2 shots from disk cache; 1 new or changed TXY file to read"
 
 
+def test_live_takes_helabs_txy_for_a_shot_held_from_matlabs(tmp_path: Path, private_store: str) -> None:
+    """A39.2 (Q38.2, Tony 2026-10-31): under HeLab priority, a HeLab TXY converted during Live replaces the shot
+    held from MATLAB's TXY, read again as a changed shot is (once seen unchanged a check apart), instead of
+    waiting for the folder's next load. Until then the held data stands, with no mismatch."""
+    source = tmp_path / "run"
+    source.mkdir()
+    for shot in (1, 2, 3):
+        write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 1))))
+    old = time.time() - 600
+    os.utime(matlab_txy(source, 1), (old, old))
+    convert(source, tmp_path, private_store, shots=[2, 3])
+    priority = options(tmp_path, private_store, txy_sources.HELAB_PRIORITY)
+    first = loaded(run_load(source, tmp_path, None, priority))
+    assert sorted(first["txy"]["origins"]) == ["2", "3"]
+    convert(source, tmp_path, private_store, shots=[1])  # Auto-convert during Live.
+    txy = {**priority, "key": _key(source, private_store)}
+    aged(source, *helab_txy.folders(str(source), txy, _key(source, private_store)))
+
+    def check(**kwargs: Any) -> list[dict[str, Any]]:
+        output = tmp_path / f"live-{time.monotonic_ns()}"
+        output.mkdir()
+        sent: list[dict[str, Any]] = []
+        live_check(str(source), str(output), sent.append, first["fingerprint"],  # type: ignore[arg-type]
+                   txy=txy, memory_origins=first["txy"]["origins"], check_level="full", **kwargs)
+        return sent
+    look = check()
+    assert kinds_of(look)[-1] == "live_unchanged" and "shots_missing" not in kinds_of(look)
+    seen = last(look, "live_unchanged")["live_seen"]
+    assert [entry[0] for entry in seen] == [1]
+    events = check(seen=seen, seen_names=last(look, "live_unchanged")["live_seen_names"],
+                   helab_since=last(look, "live_unchanged")["live_helab"])
+    result = loaded(events)
+    assert sorted(result["txy"]["origins"]) == ["1", "2", "3"]
+    assert [(entry["shot"], entry.get("converted")) for entry in result["live_reread"]] == [(1, True)]
+    assert result["memory_shots"] == [2, 3]
+    helab_file = next(event["filename"] for event in events if event["kind"] == "file_started")
+    assert "d_txy_helab_" in os.path.basename(helab_file)
+    # The folder's signature (its MATLAB TXY) is unchanged by the switch: the tab still finds it matches.
+    assert result["signature"] == first["signature"]
+
+
 def aged(*folders: str | Path) -> None:
     """Folders' mtimes moved back, so a quick check trusts them (a fresh mtime is too recent to)."""
     old = time.time() - 600
@@ -994,3 +1059,33 @@ def test_after_a_settings_change_live_and_its_save_read_the_new_sources_txy(
         assert set(saved["txy"]["origins"]) == expected and saved["txy"]["source"] == after
     finally:
         service.shutdown()
+
+
+def test_a_load_finding_the_cache_whole_with_a_new_signature_saves_it(tmp_path: Path, private_store: str) -> None:
+    """Area review io-5 (2026-10-31): shots 1–3 held from HeLab's TXY under helab-priority, MATLAB's for 1–2.
+    MATLAB's TXY of shot 3 arrives: the data's fingerprint is unchanged but the folder's signature (its
+    MATLAB TXY) is new. The load reads no TXY file and the cached dataset takes the new signature, so the
+    next check of the data in RAM is the quick one again."""
+    source = tmp_path / "run"
+    source.mkdir()
+    old = time.time() - 600
+    for shot in (1, 2, 3):
+        write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 1))))
+    for shot in (1, 2):
+        os.utime(matlab_txy(source, shot), (old, old))
+    convert(source, tmp_path, private_store, shots=[1, 2, 3])
+    priority = options(tmp_path, private_store, txy_sources.HELAB_PRIORITY)
+    aged(source, *helab_txy.folders(str(source), priority, _key(source, private_store)))
+    first = loaded(run_load(source, tmp_path, private_store, priority))
+    assert saved_info(source, private_store)["signature"] == first["signature"]
+    os.utime(matlab_txy(source, 3), (old, old))
+    aged(source)
+    events = run_load(source, tmp_path, private_store, priority)
+    second = loaded(events)
+    assert second["fingerprint"] == first["fingerprint"] and second["signature"] != first["signature"]
+    assert not [event for event in events if event["kind"] == "file_started"]  # (No TXY file read.)
+    assert saved_info(source, private_store)["signature"] == second["signature"]
+    # The data in RAM is the cached data again: the next check doesn't list the folder.
+    third = loaded(run_load(source, tmp_path, private_store, priority, memory=second["fingerprint"],
+                            base_signature=second["signature"], memory_origins=second["txy"]["origins"]))
+    assert third["source"] == "memory" and third["unchanged"], third["cache_reason"]
