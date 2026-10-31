@@ -265,6 +265,10 @@ class ConverterTab(QWidget):
             identify(widget, ident, name)
         buttons.addStretch()
         layout.addLayout(buttons)
+        self.load(settings)
+
+    def load(self, settings: QSettings) -> None:
+        """The choices above the list as ``settings`` has them (at the start, and after Reset all settings)."""
         self.refresh(read_setting(settings, CONVERT_PROFILE_SETTING, typed=True) or DEFAULT_PROFILE)
         self.backend_combo.setCurrentIndex(max(0, self.backend_combo.findData(read_convert_backend(settings))))
         self.output_combo.setCurrentIndex(max(0, self.output_combo.findData(read_convert_output(settings))))

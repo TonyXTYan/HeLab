@@ -171,10 +171,36 @@ jobs:
 
       # Ship only HeLab.app on macOS (dist/HeLab is the same app again), zipped here
       # so the Qt framework symlinks survive: upload-artifact would replace each
-      # link with a copy of its target (~2.1 GB instead of ~290 MB).
+      # link with a copy of its target (~2.1 GB instead of ~290 MB). Also made to check it (below).
       - name: Zip the macOS app, keeping its symlinks
-        if: inputs.upload && inputs.os == 'macos'
+        if: inputs.os == 'macos' && (inputs.upload || inputs.python-minor == '13')
         run: ditto -c -k --norsrc --noextattr --noacl --keepParent dist/HeLab.app dist/HeLab-macos.zip
+
+      # A39.1: each Python 3.13 build's archive checked as the release job checks the three (its build
+      # stamps: version, commit, clean), against the commit it was built from, with no tag or draft, so a
+      # packaging change that breaks the release's check fails its PR. The release zips Windows' and
+      # Ubuntu's folder from the artifact, whose links are copies: zipfile follows links too. (A recovery
+      # build of an older tag, whose release_draft has no --check, is checked by the release job.)
+      - name: Check the build's stamps against its commit
+        if: inputs.python-minor == '13' && inputs.build-sha == github.sha
+        shell: bash
+        env:
+          BUILD_SHA: ${{ inputs.build-sha }}
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            source venv/Scripts/activate
+          else
+            source venv/bin/activate
+          fi
+          case "$RUNNER_OS" in
+            macOS) archive=dist/HeLab-macos.zip ;;
+            Windows) archive="$RUNNER_TEMP/HeLab-windows.zip" ;;
+            *) archive="$RUNNER_TEMP/HeLab-ubuntu.zip" ;;
+          esac
+          if [ "$RUNNER_OS" != "macOS" ]; then
+            python -m zipfile -c "$archive" dist/HeLab
+          fi
+          python -m helab.release_draft --check "$archive" --commit "$BUILD_SHA"
 
       - name: Archive build artifacts
         if: inputs.upload
