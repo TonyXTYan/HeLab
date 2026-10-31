@@ -53,6 +53,16 @@ The review's scratch reproductions pass on this tree. Two exceptions, both from 
 - `mypy helab/ --strict --platform win32`: no issues.
 - `pyright helab tests` and `pyright --pythonplatform Windows helab tests`: 0 errors.
 
+**CI run 41159308171** (`8aedf6d`, push of `agent/io-fixes`): **success**, every job green on macOS, Windows and
+Ubuntu (py3.13; the 3.11/3.12/3.14 compat jobs run only on PRs and were skipped). Every Tests (1/2), Tests (2/2) and
+Converter backends log was read whole, and none has a RERUN:
+
+| Job | macOS | Windows | Ubuntu |
+|---|---|---|---|
+| Tests (1/2) | 4260 passed | 4243 passed | 4256 passed |
+| Tests (2/2) | 4274 passed | 4256 passed | 4274 passed |
+| Converter backends | 713 passed | 711 passed | 713 passed |
+
 A second full run at `ad90e34` found one type error in the note-2 test (`Popen[bytes]` for `Popen[str]`): 3
 `test_typing` failures, 15 RERUN, all of them those three tests (5 each). Fixed in `c843b15`.
 
