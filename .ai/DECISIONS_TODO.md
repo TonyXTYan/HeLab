@@ -38,6 +38,18 @@ the roadmap or a plan, or was superseded or one-off; these two aren't recorded t
 - **Q30.4** with the disk cache off this session, Settings › Cache doesn't list the temp folder's
   converted TXY: "ok", left for caching v2.
 
+Tony in Chat, 2026-10-31, on starting caching v2 (block 28; "other sounds good"):
+
+- **Q28.1 The go:** stages 0 (A19.1, A19.2) and 1 (the raw layer, store-v4's core, the read-only
+  store-v3 reader, the user-state import) in v0.0.8; stage 2 later. The area review's cache findings fold
+  into the caching floor; its I/O fixes land before stage 1 reaches `folder_cache.py`.
+- **Q28.3** store-v4 is built behind a switch that stays off until stage 2 and Tony's go.
+- **Q28.5** Make room offers "Clear old stores…": every older store version found (store-v3 now, older
+  ones as they come), each with its size, asked first (Tony: "in the future would expand to clear all
+  old store versions?").
+- **Q28.6** an overwritten raw file: a system notification once per shot per session, a Folder details
+  line and a log line.
+
 ## Quick Fixes 7 (block 38)
 
 From Quick Fixes 7's [handoff](sessions/2026-10-31-claude-quick-fixes-7/handoff.md) (Rivet on Ground,
@@ -146,20 +158,10 @@ bump. Q27.1–Q27.5 are decided (Recently decided).
 Tony asked (2026-10-29) whether caching v2 / store-v4 can be built unattended (mandate mode). The
 review: ready for stages 0–1 after these answers and a few design fixes; stage 2 in a later run.
 
-- **Q28.1 The go:** which stages? Proposed: stage 0 (A19.1, A19.2 with Q26.2's floor) and stage 1
-  (the raw layer, store-v4's core, the read-only store-v3 reader, the user-state import) only.
-
-- **Q28.3 Behind a switch:** store-v4 drops `datasets`, and the TXY layers replacing it come only in
-  stage 2, so stage 1 as the live store would stop disk caching of folders. Proposed: build
-  store-v4 behind a switch that stays off until stage 2 and Tony's go.
-- **Q28.4 Provenance in stage 1's schema** (Q27.2): every row records a `made_by` (HeLab version,
+- **Q28.4 Provenance in stage 1's schema** (Q27.2; explained to Tony in Chat 2026-10-31, his answer
+  open): every row records a `made_by` (HeLab version,
   commit, modified, machine, Python/NumPy/SciPy); a machine is a random id in the app folder plus
   the hostname. Proposed: yes.
-- **Q28.5 Make room and store-v3:** MATLAB's TXY layers and layers cached without raw files are not
-  rebuildable, so Make room treats them like data; under Keep, a large store-v3 counts in the
-  budget and Make room can't free it. Proposed: Make room offers "Clear store-v3…" (asked first).
-- **Q28.6 The "big warning"** for an overwritten raw file (Q22.5). Proposed: a system notification
-  once per shot per session, plus a Folder details line and a log line.
 
 ## Post-2025 plates (block 25; [investigation](sessions/2026-10-29-claude-txy-2025-plates/investigation.md))
 
