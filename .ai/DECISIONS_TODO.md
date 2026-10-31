@@ -101,16 +101,20 @@ Tony in Chat, 2026-10-31, on the I/O fixes and caching v2's checkpoint 2 (blocks
   FOLDER --to npz|mat|csv`; read-only, no new dependency. On the Caching v2 floor
   ([plan](../roadmaps/caching-v2.md#stages-each-needs-tonys-go), stage 1).
 
-## Caching v2 (block 42)
+Tony in Chat, 2026-10-31 evening, on Quick Fixes 8 and Caching v2 checkpoint 3 (blocks 42, 43; "ok"):
 
-From the Caching v2 floor's [handoff](sessions/2026-10-31-claude-caching-v2/handoff.md) (Vault; stage 0 and
-checkpoint 2 landed `ad86bd3`, the switch off).
-
-- **Q42.6 AGENTS.md's store-v4 wording** (applied at the docs commit, for Tony to confirm; wording only, no
-  new rule): the store bullet names store-v4 behind the `store_v4` switch and store-v3 then read only
-  through `LegacyStore`; `_migrate`'s bullet adds `store_v4.migrate`; the sweep's housekeeping line says
-  "dataset and layer files", the existing orphan rule over `raw/` too (no new removal); the `store_v4`
-  row stays off until stage 2 and Tony's go (Q28.3). Proposed: keep as applied.
+- **Q43.2 yes:** `helab convert --watch` may run beside the app (the lab's headless converter; it registers
+  in `instances/` so a cache move waits for it); a second app refuses to start (Q39.1).
+- **Q43.3** the plots' least width stays 240 px (`MIN_PLOTS_WIDTH`) when saved widths don't fit.
+- **Q43.4** the cache move's refusal while a converter runs: "A HeLab converter (helab convert) is running
+  (N). Stop it before moving the cache."
+- **Q42.6** AGENTS.md's store-v4 wording kept as applied.
+- **Caching v2 checkpoint 3's Q~1 and Q~2** (numbered when it lands): the store-v3 question's and Settings ›
+  Cache's wording as built ("An older disk cache"; Keep using it / Ignore it / Clear it, asked first); the
+  `.hlb` format page goes to `docs/hlb-format.md`, linked from the README and `cache-store.md`.
+- **The Windows flake** `test_io_service_run.py::test_writing_held_data_out_counts_as_progress` (known-issues):
+  yes, a Quick Fixer hunts its cause.
+- **Floors:** close IO Fixes and Plot Identity (landed; branches kept).
 
 ## Quick Fixes 8 (block 43)
 
@@ -122,17 +126,6 @@ area review's app and convert fixes, A39.1, A39.3).
   Offline, like the cache folder's location, and the confirmation says so; (b) Reset turns Work Offline
   off at once; (c) leave it. Proposed: (a): Work Offline is a mode turned on for a reason (no network),
   not a preference to forget.
-- **Q43.2 Does `helab convert` count as a running HeLab?** (A39.3): a second app refuses to start, but
-  `helab convert --watch` may run beside the app, as before (it registers in `instances/` so a cache move
-  waits for it). Proposed: yes, it may run beside the app: it is the lab's headless converter, and the
-  app's auto-convert and the CLI already share the store and index safely.
-- **Q43.3 The plots' least width when saved widths don't fit** (app-2): 240 px (`MIN_PLOTS_WIDTH`). 400
-  would also narrow Q33.2's default 380/320 in a small window (Windows CI's 976 px splitter leaves the
-  plots 268 px). Proposed: 240 for now; raise it only if small screens should favour the plots over the
-  default panels.
-- **Q43.4 The cache move's refusal while a converter runs** (`cache_locks.lock_for_move`): "Another HeLab
-  is running (N windows)." can count only `helab convert` processes now (Q39.1). Proposed: "A HeLab
-  converter (helab convert) is running (N). Stop it before moving the cache."
 
 ## Quick Fixes 7 (block 38)
 
