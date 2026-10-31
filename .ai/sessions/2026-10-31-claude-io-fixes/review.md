@@ -156,3 +156,21 @@ For each fix I reverse-applied its `helab/` diff with `patch -R`, ran its test (
 `test_live_check`, `test_quit_confirms` and `test_typing` (mypy strict and not, pyright),
 `-n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-probe`: **158 passed, no RERUN**. I didn't rerun
 the full suite or CI on this re-check.
+
+## Re-check 2 (`623ce20..38b4742`)
+
+Reviewer: Claude Code (Opus 5.5), 2026-10-31.
+
+**Verdict: no open findings.**
+
+- **`38b4742`** (test only). The IO-R1 test compared the pending paths with `/held-load` and `/held-scan` as
+  written. On Windows, FolderCache keys those paths with a drive (`D:\held-load`), so the comparison failed
+  there. It now compares them with `cache.key(...)`. The test's point, that nothing held is `started` and
+  nothing is active after `cancel_for_quit`, is unchanged.
+- **Still fails without the fix:** I extracted `38b4742` into `.ai/temp/rv-io3/` and reverse-applied
+  `af5a205`'s `helab/` diff. The test fails on its intended assertion: both held requests were started
+  (`not ['/held-load', '/held-scan']`), so the earlier pending-paths assertion still passes on this
+  platform. Re-applied, it passes.
+- **Checks** at `38b4742`: `test_mismatched_folders.py` and `test_typing.py`,
+  `-n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-probe`: 21 passed, no RERUN.
+- **Not checked here:** this is macOS. The `cache.key` spelling on Windows rests on Windows CI.
