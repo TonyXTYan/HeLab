@@ -724,14 +724,16 @@ def test_a_live_save_checks_every_held_file_once_and_reads_none(tmp_path: Path, 
               identity=identity, identity_root=root)
     kinds = [event["kind"] for event in events]
     assert "cache_saved" in kinds and "disk_cached" in kinds and "shots_missing" not in kinds
-    assert "scan_summary" not in kinds  # (The fingerprint is the data's: nothing new to say.)
+    # The folder's status as this data stands (io-3: a newer listing elsewhere then keeps its own).
+    assert kinds.index("scan_summary") < kinds.index("loaded")
     loaded = next(event for event in events if event["kind"] == "loaded")
     assert loaded["memory_shots"] == list(range(1, 10)) and loaded["disk_cache_pending"]
     assert loaded["unsettled_files"] == 1 and loaded["problematic"] == [3]
     found = counts(lines(trace)[before:])
     assert found[("scandir", "save: listing")] == 1 and found[("entry_stat", "save: checking")] == 10
-    assert not any(op in ("read", "stat") for op, _ in found)
-    assert found[("marker_read", "save: identity")] == 1
+    assert not any(op == "read" for op, _ in found)
+    assert [key for key in found if key[0] == "stat"] == [("stat", "folder mtime")]  # (The summary's, once.)
+    assert found[("stat", "folder mtime")] == 1 and found[("marker_read", "save: identity")] == 1
     with stores._cache_store(cache["directory"], [str(run)]) as store:
         value = store.read_dataset(str(run)).value
         assert value is not None
