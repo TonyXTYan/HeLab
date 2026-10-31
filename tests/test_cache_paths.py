@@ -12,7 +12,7 @@ import pytest
 
 from helab.utils import cache_paths
 from helab.utils.cache_paths import CachePaths, Mount, UnresolvedRemotePath, _smb_source
-from helab.utils.cache_store import CacheStore, DatasetRecord, Kind
+from helab.utils.cache_store import CacheStore, DatasetRecord, Kind, SaveRejected
 
 RECORD_KINDS: tuple[Kind, ...] = ("summaries", "histories", "subtrees")
 # macOS mount sources carry the SMB account (//user@host/share); on Windows that shape is a
@@ -122,7 +122,7 @@ def test_guard_from_old_share_cannot_save_history_to_reused_mount_path(tmp_path:
     with opened(root, mounts("-1", "-2")) as store:
         guard = store.guard([path], ("histories",))
     with opened(root, mounts("-2", "-1")) as store:
-        with pytest.raises(ValueError, match="save guard doesn't cover"):
+        with pytest.raises(SaveRejected, match="data root changed"):
             store.save_record("histories", path, {"blocked": True}, guard)
         assert store.read_record("histories", path).missing
 

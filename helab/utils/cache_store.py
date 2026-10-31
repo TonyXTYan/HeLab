@@ -181,6 +181,9 @@ class StoreReadOnly(StoreError):
 
 
 NOT_CACHED = "Not cached: your choice"
+# A save whose guard names another key than the folder's now (a nested root re-keyed it, or a mount
+# path resolves to another share): rejected as "cleared", never re-guarded under the new key.
+REKEYED = "The folder's data root changed before saving completed"
 
 
 class SaveRejected(Exception):
@@ -1162,9 +1165,11 @@ class CacheStore:
     def _guard_holds(self, guard: SaveGuard, kind: Kind, path: str) -> bool:
         if kind not in guard.generations or path not in guard.epochs:
             # A delayed write may have re-resolved a local mount path to a
-            # different SMB share. Never replace the original keyed guard with
-            # a fresh one: that would let the old outcome write to the new share.
-            raise ValueError(f"The save guard doesn't cover {kind} for {path}")
+            # different SMB share, or a nested root re-keyed the folder since the
+            # guard was taken. Never replace the original keyed guard with a fresh
+            # one: that would let the old outcome write under the new key. Rejected
+            # like a Clear, so a published file is retired at once (cache-5).
+            raise SaveRejected("cleared", REKEYED)
         meta = self._meta()
         # A data root's Clear cached data bumps its root epoch: a guard taken before it (or one
         # without it) no longer holds for any folder below that root.
@@ -1727,7 +1732,7 @@ class CacheStore:
     def _check_result_guard(self, guard: SaveGuard, key: str) -> None:
         folder, root = _results_epoch(key), _results_root_epoch(key)
         if "results" not in guard.generations or folder not in guard.epochs:
-            raise ValueError(f"The save guard doesn't cover results for {key}")
+            raise SaveRejected("cleared", REKEYED)  # (As ``_guard_holds``.)
         if (int(self._meta()["gen_results"]) != guard.generations["results"]
                 or self._epoch(folder) != guard.epochs[folder]
                 or (root is not None and self._epoch(root) != guard.epochs.get(root, 0))):
@@ -1862,10 +1867,8 @@ class CacheStore:
                 try:
                     self._check_result_guard(guard, path)
                     self._check_cacheable(path)
-                except SaveRejected as rejected:
+                except SaveRejected as rejected:  # (Its guard may name the folder's old key: ``REKEYED``.)
                     rejection = rejected
-                except ValueError:  # (Its guard names the folder's old key: a nested root re-keyed it since.)
-                    rejection = SaveRejected("cleared", "The folder's data root changed before saving completed")
                 if rejection is not None:
                     self._retire(file, now)
                     self._conn.execute("DELETE FROM pending_results WHERE pending_id = ?", (pending_id,))
