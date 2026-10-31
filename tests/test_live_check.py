@@ -347,6 +347,78 @@ def test_unreadable_new_files_are_kept_known_and_not_read_again(
     assert last(again, "live_unchanged")["total_files"] == 3 and not reads
 
 
+def save_from(folder: Path, tmp_path: Path, fingerprint: list[list[int]], arrays: dict[int, Any],
+              **kwargs: Any) -> list[dict[str, Any]]:
+    """Live's save (``save_held``) of data held as FolderCache sends it: the dataset's whole
+    fingerprint, unreadable shots included, with arrays only for the shots read."""
+    from helab.io_ops.save_held import save_held
+    held_dir = tmp_path / f"held-{time.monotonic_ns()}"
+    held_dir.mkdir()
+    for shot, array in arrays.items():
+        np.save(held_dir / f"{shot}.npy", np.asarray(array, dtype=np.float64), allow_pickle=False)
+    output = tmp_path / f"save-{time.monotonic_ns()}"
+    output.mkdir()
+    events: list[Any] = []
+    save_held(str(folder), events.append, None, fingerprint, [], str(held_dir), output=str(output), **kwargs)
+    return events
+
+
+def unreadable_then_held(folder: Path, tmp_path: Path) -> tuple[Path, list[list[int]]]:
+    """Shot 3's writer paused mid-number past the settle time: Live keeps it known-unreadable. The
+    fingerprint the app then holds (shots 1–2 read, 3 not)."""
+    memory = held(folder, tmp_path)
+    partial = folder / "d_txy_forc3.txt"
+    partial.write_text("3,2,3\n3,4,1.2e-")
+    when = time.time() - 100
+    os.utime(partial, (when, when))
+    age_folder(folder, 90)
+    loaded = last(check_twice(folder, tmp_path, memory), "loaded")
+    assert loaded["failed_files"] == 1 and loaded["memory_shots"] == [1, 2]
+    return partial, [list(entry) for entry in loaded["fingerprint"]]
+
+
+HELD = {1: [[1, 2, 3], [1, 4, 5]], 2: [[2, 2, 3], [2, 4, 5]]}
+
+
+def test_a_save_reads_again_a_shot_live_found_unreadable_that_its_writer_finished(
+    folder: Path, tmp_path: Path,
+) -> None:
+    """Area review io-4 (2026-10-31): not a mismatch (Live itself reads such a shot again, as a new
+    file); the save reads it once settled and saves its data."""
+    partial, fingerprint = unreadable_then_held(folder, tmp_path)
+    partial.write_text("3,2,3\n3,4,1.2e-3\n")
+    when = time.time() - 30
+    os.utime(partial, (when, when))
+    events = save_from(folder, tmp_path, fingerprint, HELD, recent=[1, 2])
+    assert not [event for event in events if event["kind"] == "shots_missing"]
+    assert [event["shot"] for event in events if event["kind"] == "shot"] == [3]
+    loaded = last(events, "loaded")
+    assert loaded["failed_files"] == 0 and loaded["memory_shots"] == [1, 2]
+    stat = partial.stat()
+    assert [3, stat.st_size, stat.st_mtime_ns] in loaded["fingerprint"]
+
+
+def test_a_save_keeps_an_unreadable_shot_still_being_written_as_held(
+    monkeypatch: pytest.MonkeyPatch, folder: Path, tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(fingerprints, "SETTLE_SECONDS", 5.0)
+    partial, fingerprint = unreadable_then_held(folder, tmp_path)
+    partial.write_text("3,2,3\n3,4,1.2e-3\n")  # Just now: within the settle time.
+    events = save_from(folder, tmp_path, fingerprint, HELD)
+    assert not [event for event in events if event["kind"] in ("shots_missing", "shot")]
+    loaded = last(events, "loaded")
+    assert loaded["unsettled_files"] == 1 and loaded["fingerprint"] == fingerprint
+
+
+def test_a_save_drops_an_unreadable_shot_gone_from_the_folder(folder: Path, tmp_path: Path) -> None:
+    """As a Live check does (its writer renamed it, say): no data was held for it."""
+    partial, fingerprint = unreadable_then_held(folder, tmp_path)
+    partial.unlink()
+    events = save_from(folder, tmp_path, fingerprint, HELD)
+    assert not [event for event in events if event["kind"] == "shots_missing"]
+    assert [entry[0] for entry in last(events, "loaded")["fingerprint"]] == [1, 2]
+
+
 def no_space(*args: Any, **kwargs: Any) -> None:
     raise OSError(errno.ENOSPC, "No space left on device")
 

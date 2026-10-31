@@ -40,7 +40,8 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
     Except, by Tony's decision, the shots Live itself read recently (``recent``, as for
     ``live_check``): one of those that changed is read again before the save, if settled by age and
     unchanged while read (its new data sent as a ``shot`` artifact in ``output``; ``live_reread``),
-    else saved as held and counted as unsettled; it isn't a mismatch.
+    else saved as held and counted as unsettled; it isn't a mismatch. Nor is a held shot with no data (one
+    found unreadable, kept known): changed, it is read again the same way; gone, it is dropped.
 
     HeLab's TXY (Q6.6): a held shot read from one (``held_txy``: the held data's ``txy`` record) is
     checked against that TXY, found as a load finds it (``helab_txy``, the load's ``txy``), and the
@@ -121,6 +122,14 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         held_helab = set(held_origins)
         helab_off = {shot for shot, size, modified in fingerprint
                      if shot in held_helab and listed.get(shot) != (size, modified)}
+        # Held shots with no data (unreadable when Live or a load read them, kept known) are no mismatch
+        # either, as for a Live check: one changed is read again like a new file, once settled (its writer
+        # paused past the settle time, then finished it), and one gone is dropped (area review io-4).
+        unread = {shot for shot in known - held_helab if not os.path.exists(os.path.join(held_dir, f"{shot}.npy"))}
+        if gone := unread - set(listed):
+            fingerprint = [entry for entry in fingerprint if entry[0] not in gone]
+            known -= gone
+            unread -= gone
         if missing := sorted(known - set(listed) - held_helab):
             mismatch("missing", missing)
             return
@@ -131,8 +140,8 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
                 return
         changed = [shot for shot, size, modified in fingerprint
                    if shot not in held_helab and listed[shot] != (size, modified)]
-        rereadable = {int(shot) for shot in recent or ()} if output else set()
-        if stale := [shot for shot in changed if shot not in rereadable]:
+        rereadable = {int(shot) for shot in recent or ()} | unread if output else set()
+        if stale := [shot for shot in changed if shot not in rereadable and shot not in unread]:
             mismatch("changed", stale)
             return
         data = {shot: np.load(os.path.join(held_dir, f"{shot}.npy"), allow_pickle=False)
@@ -154,8 +163,8 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         for item in items:
             shot = item[0]
             filename = os.path.join(path, file_names[shot])  # (HeLab's in their own folder: named in full.)
-            if shot not in settled:
-                unsettled += 1
+            if shot not in settled or shot not in rereadable:
+                unsettled += 1  # (Saved as held: an unreadable one with nowhere to put its new data.)
                 continue
             Pause.checkpoint(send)
             try:
