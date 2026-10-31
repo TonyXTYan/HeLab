@@ -203,10 +203,10 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
     for shot in sorted(set(held) - set(held_origins)):
         if (shot in helab_found and chosen.get(shot, ("", "?"))[1] == ""
                 and txy_sources.choose(txy_source, shot in matlab, True) == txy_sources.HELAB):
-            found_shot = helab_found[shot]
-            switching[shot] = found_shot.file
-            origins[shot] = txy_sources.helab_origin(found_shot.profile_hash)
-            file_names[shot] = pending_name(shot, found_shot.file, origins[shot])
+            converted_shot = helab_found[shot]
+            switching[shot] = converted_shot.file
+            origins[shot] = txy_sources.helab_origin(converted_shot.profile_hash)
+            file_names[shot] = pending_name(shot, converted_shot.file, origins[shot])
 
     def mismatch(reason: str, shots: list[int]) -> None:
         send({"kind": "shots_missing", "reason": reason, "missing": shots[:20], "missing_count": len(shots),

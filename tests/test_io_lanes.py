@@ -122,7 +122,8 @@ def test_a_pause_flag_that_couldnt_be_removed_is_removed_on_a_later_tick(
     assert background.pause_requested and flag.exists()
     exit_helper(service, active(service, "tab", "list"))
     service._foreground_busy_at -= service.RESUME_DELAY
-    real_remove, failures = os.remove, []
+    real_remove = os.remove
+    failures: list[Any] = []
 
     def held_once(path: Any) -> None:
         if not failures:
