@@ -155,7 +155,8 @@ def test_a_move_is_refused_while_another_helab_or_a_move_helper_runs(tmp_path: P
     try:
         assert other_instances(app) == [4242]
         lock, reason = lock_for_move(app, "move")
-        assert lock is None and reason.startswith("Another HeLab is running (1 window)")
+        # (Only helab convert can be the other now: one HeLab app per computer, Q39.1; Tony's wording, Q43.4.)
+        assert lock is None and reason == "A HeLab converter (helab convert) is running (1). Stop it before moving the cache."
     finally:
         other.kill()
         other.wait()
@@ -324,8 +325,8 @@ def test_a_failed_or_cancelled_move_keeps_the_source(
         assert run.finished[-1] is False and not run.service.cache_hold and cache_dir() == run.source
         # Refused while another HeLab runs.
         monkeypatch.setattr("helab.views.CacheMover.lock_for_move",
-                            lambda app, token: (None, "Another HeLab is running (1 window). Close it before moving "
-                                                "the cache."))
+                            lambda app, token: (None, "A HeLab converter (helab convert) is running (1). Stop it "
+                                                "before moving the cache."))
         run.mover.change(run.target, run.parent)
         run.send(run.request("check"), {"kind": "move_check", "problem": "", "method": "copy", "bytes": 1, "free": 9})
         assert run.reports[-1][0] == "Can't move the disk cache now" and not run.service.cache_hold

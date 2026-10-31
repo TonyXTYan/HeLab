@@ -178,8 +178,8 @@ def startup(app_dir: str, run_recovery: Callable[[str], str], wait: Callable[[],
 
 
 def lock_for_move(app_dir: str, token: str) -> tuple[FileLock | None, str]:
-    """``cache.lock`` for a move (holding ``token``, its move id), or why not: another HeLab
-    is running, starting or moving."""
+    """``cache.lock`` for a move (holding ``token``, its move id), or why not: a HeLab converter
+    (``helab convert``) is running, or another HeLab is starting or moving the cache."""
     lock = cache_lock(app_dir)
     if not lock.try_lock(token):
         return None, "Another HeLab is starting or moving the cache. Try again in a moment."
@@ -190,6 +190,6 @@ def lock_for_move(app_dir: str, token: str) -> tuple[FileLock | None, str]:
     if others:
         lock.unlock()
         count = len(others)
-        return None, (f"Another HeLab is running ({count} window{'' if count == 1 else 's'}). "
-                      "Close it before moving the cache.")
+        # Only ``helab convert`` can hold an instance lock beside this app now: one app per computer (Q39.1, Q43.4).
+        return None, f"A HeLab converter (helab convert) is running ({count}). Stop it before moving the cache."
     return lock, ""
