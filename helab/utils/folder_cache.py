@@ -1247,7 +1247,11 @@ class FolderCache(QObject):
             if lists["profile"] == profile:
                 payload["seen"] = lists["waiting"]
                 payload["done"], payload["kept"] = lists["current"], lists["kept"]
-                payload["skip"] = lists["unconvertible"]
+                # Unconvertible under these settings only: a shot refused for its TXY's path length, or
+                # failed under a backend, is tried again once the user changes where TXY go or the backend
+                # (convert-2: the refusal's advice can be acted on this session).
+                if lists.get("where") == self._convert_where(payload):
+                    payload["skip"] = lists["unconvertible"]
             else:
                 # Another profile's current and unconvertible shots, and why a file looked unfinished (its
                 # trigger channel), aren't this one's: checked again. When each waiting file was seen, with its
@@ -1255,11 +1259,20 @@ class FolderCache(QObject):
                 payload["seen"] = [[*entry[:3], "", "", *entry[5:6]] for entry in lists["waiting"]]
         return self.submit(owner, 0, path, "convert", payload)
 
+    @staticmethod
+    def _convert_where(payload: Mapping[str, Any]) -> dict[str, Any]:
+        """What besides the profile decides whether a shot converts: the backend and where its TXY go."""
+        cache = payload.get("cache")
+        return {"backend": payload.get("backend"), "destination": payload.get("destination"),
+                "beside": bool(payload.get("beside")), "temps": payload.get("temps"),
+                "cache": cache.get("directory") if isinstance(cache, Mapping) else None}
+
     def _remember_convert(self, job: SharedJob, event: dict[str, Any]) -> None:
         """A conversion's lists, for the folder's next one (``convert``)."""
         lists: dict[str, Any] = {key: [list(entry) for entry in event.get(key) or ()]
                                  for key in ("current", "waiting", "unconvertible", "kept")}
         lists["profile"] = job.payload.get("profile")
+        lists["where"] = self._convert_where(job.payload)
         self.convert_lists[job.path] = lists
         self.convert_lists.move_to_end(job.path)
         while len(self.convert_lists) > self.MAX_SNAPSHOTS:

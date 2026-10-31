@@ -6,6 +6,7 @@ Helpers run in-process, as in ``test_live``: each queued request gets the real h
 """
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
@@ -25,7 +26,8 @@ from helab.utils import events, folder_cache, io_service
 from helab.utils.folder_cache import FolderCache, SharedJob
 from helab.utils.io_service import IORequest, IOService
 from helab.utils.settings_defaults import (
-    CONVERT_BACKEND_SETTING, CONVERT_LOW_HITS_SETTING, LIVE_LAUNCH_FOLDER_SETTING, LIVE_LAUNCH_FOLDERS_SETTING,
+    CONVERT_BACKEND_SETTING, CONVERT_LOW_HITS_SETTING, CONVERT_OUTPUT_SETTING, LIVE_LAUNCH_FOLDER_SETTING,
+    LIVE_LAUNCH_FOLDERS_SETTING,
 )
 from helab.utils.settings_store import app_settings
 from helab.views import live_launch
@@ -395,6 +397,41 @@ def test_a_file_unconvertible_under_one_profile_is_tried_under_another(
     explorer.close_cleanup()
 
 
+def test_a_shot_refused_for_its_paths_length_converts_once_the_user_follows_the_advice(
+        qtbot: QtBot, service: IOService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """convert-2 (area review): "Path too long… choose a shorter cache or temp folder (Settings)" refuses the shot,
+    which isn't tried again while nothing changed; once the user changes where TXY go (here cache to temp), or the
+    backend, it is tried again and converts, this session (the unconvertible list is those settings', as the done
+    one is the profile's)."""
+    from helab.convert import txy
+    real, too_long = txy.write_atomic, [True]
+
+    def write_atomic(target: str, *args: Any, **kwargs: Any) -> Any:
+        if too_long[0]:
+            raise OSError(errno.ENAMETOOLONG, "File name too long", target)
+        return real(target, *args, **kwargs)
+    monkeypatch.setattr(txy, "write_atomic", write_atomic)
+    explorer, path = watching_raw_folder(qtbot, tmp_path)
+    cycle(qtbot, explorer, path, tmp_path)
+    write_raw(Path(path), 4, raw_bytes(10_000))
+    cycle(qtbot, explorer, path, tmp_path)  # (Seen once.)
+    _, sent = cycle(qtbot, explorer, path, tmp_path)
+    [refused] = of(sent, "shot_unconvertible")
+    assert refused["shot"] == 4 and "Path too long" in refused["message"], refused
+    request, sent = cycle(qtbot, explorer, path, tmp_path)
+    assert [entry[0] for entry in request.payload["skip"]] == ["d4.txt"] and not of(sent, "shot_unconvertible")
+    # The user follows the advice: TXY to the temp folder, whose paths are short enough.
+    app_settings().setValue(CONVERT_OUTPUT_SETTING, "temp")
+    too_long[0] = False
+    request, sent = cycle(qtbot, explorer, path, tmp_path)
+    # (Tried again, it is a file this check sees for the first time: it waits one tick, as under another profile.)
+    assert "skip" not in request.payload and [event["shot"] for event in of(sent, "shot_waiting")] == [4]
+    _, sent = cycle(qtbot, explorer, path, tmp_path)
+    assert [event["shot"] for event in of(sent, "shot_converted")] == [4] and not of(sent, "shot_unconvertible")
+    explorer.stop_live(save=False)
+    explorer.close_cleanup()
+
+
 def test_a_file_waiting_off_one_profiles_trigger_converts_under_another(
         qtbot: QtBot, service: IOService, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Codex 4425610377: why a file looked unfinished is the profile's (its trigger channel): under another
@@ -420,16 +457,38 @@ def test_a_file_waiting_off_one_profiles_trigger_converts_under_another(
 def test_the_lists_of_the_last_conversion_are_sent_back(service: IOService) -> None:
     cache = folder_cache.get_folder_cache(service)
     path = FolderCache.key("/data/run")
-    cache._remember_convert(
-        SharedJob("job", path, "convert", 0, {"profile": MATLAB_2019.to_dict()}),
-        {"current": [["d1.txt", 10, 1]], "waiting": [["d2.txt", 5, 2, "no_final_newline", "…"]],
-         "unconvertible": [["d3.txt", 0, 3]], "kept": [["d4.txt", 9, 4]]})
+    lists = {"current": [["d1.txt", 10, 1]], "waiting": [["d2.txt", 5, 2, "no_final_newline", "…"]],
+             "unconvertible": [["d3.txt", 0, 3]], "kept": [["d4.txt", 9, 4]]}
+
+    def converted() -> dict[str, Any]:
+        """A conversion asked for now, answered with ``lists``: its payload."""
+        assert cache.convert("t", path)
+        made = next(r for r in service.pending if r.operation == "convert").payload
+        cache.cancel("t")
+        cache._remember_convert(SharedJob("job", path, "convert", 0, made), lists)
+        return made
+    converted()
     assert cache.convert("t", path)
     payload = next(r for r in service.pending if r.operation == "convert").payload
     assert payload["seen"] == [["d2.txt", 5, 2, "no_final_newline", "…"]] and payload["skip"] == [["d3.txt", 0, 3]]
     assert payload["done"] == [["d1.txt", 10, 1]] and payload["kept"] == [["d4.txt", 9, 4]]
     assert payload["profile"] == MATLAB_2019.to_dict() and payload["backend"] == "numpy"
     cache.cancel("t")
+    # The same profile, another backend or place for the TXY (convert-2): the unconvertible shots are tried
+    # again (a path too long, a backend's failure), the done ones still aren't.
+    for key, value in ((CONVERT_BACKEND_SETTING, "reference"), (CONVERT_OUTPUT_SETTING, "temp")):
+        app_settings().setValue(key, value)
+        assert cache.convert("t", path)
+        payload = next(r for r in service.pending if r.operation == "convert").payload
+        assert "skip" not in payload and payload["done"] == [["d1.txt", 10, 1]], key
+        cache.cancel("t")
+        converted()  # (Under these settings now: skipped again while they hold.)
+        assert cache.convert("t", path)
+        assert next(r for r in service.pending if r.operation == "convert").payload["skip"] == [["d3.txt", 0, 3]]
+        cache.cancel("t")
+    app_settings().remove(CONVERT_BACKEND_SETTING)
+    app_settings().remove(CONVERT_OUTPUT_SETTING)
+    converted()
     # Another profile and backend (Settings → TXY converter's Save): the profile's current shots
     # aren't this one's, so they are checked again.
     cache.set_convert_profile(MATLAB_2023_LAB_EDIT)
