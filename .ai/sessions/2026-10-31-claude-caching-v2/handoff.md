@@ -339,6 +339,10 @@ Q28.6's notice. **`converter.md`**: a conversion in store-v4 saves its shots' ra
 
 A mutation (Clear's default leaving out raw) fails it.
 
+**Checkpoint 3** (`45a7aa5`, pushed): CI 41184198967 was green on all three OSes. I read every Tests and Converter
+job's log (9 jobs) and found **no RERUN**. Windows Tests 1/2 took 14.0 min, 2/2 took 11.8 min. The local full suite
+gave 8851 passed, 672 skipped, no RERUN; strict mypy (also win32) and pyright (also Windows) are clean.
+
 ## Step 8: doc proposals for checkpoint 3 (steps 5–7, the export, cache-1)
 
 The list below ("Proposed doc changes") was applied at checkpoint 2's docs commit (`7180751`); these are what
