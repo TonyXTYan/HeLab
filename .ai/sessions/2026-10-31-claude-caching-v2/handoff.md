@@ -343,6 +343,27 @@ A mutation (Clear's default leaving out raw) fails it.
 job's log (9 jobs) and found **no RERUN**. Windows Tests 1/2 took 14.0 min, 2/2 took 11.8 min. The local full suite
 gave 8851 passed, 672 skipped, no RERUN; strict mypy (also win32) and pyright (also Windows) are clean.
 
+### Checkpoint 3 review fixes (Assay, `review-checkpoint3.md`, `1af8796`)
+
+| Finding | Commit | Fix | Test (fails before the fix) |
+|---|---|---|---|
+| C3-1 Medium | `c1489ae` | `_RawRows` also saves at `BATCH_BYTES`; `save_batch` encodes each shot under the converter's `_Ticker` (`compute_budget` of its size), for `raw_fill` and conversions | `test_a_conversions_raw_rows_are_saved_by_bytes_too`, `test_encoding_a_large_raw_file_keeps_heartbeats_going` |
+| C3-2 Low | `c1489ae` | `raw_fill` leaves a blank file, or one without a final newline, waiting (`raw.not_done`'s checks that need no profile) | `test_a_fill_leaves_a_raw_file_that_isnt_finished_waiting` |
+| C3-3 Nit | `3938938` | The choice holds for the store-v3 it was made for (`_legacy_choice`). After Clear, a store-v3 there again is unanswered; under Keep, one with another `store_id` is. Ignore holds for whatever is there (an ignored store-v3 is never opened to tell) | `test_a_store_v3_made_again_is_asked_about_again_unless_ignored` |
+| C3-4 Nit | `3938938` | `measure_legacy` lists `store-v3.clearing-<8 hex>` (`leftover`, `leftover_bytes`). Settings › Cache's Older cache row shows them with Clear… (asked). Clear old stores… removes them; housekeeping never does. `clear_legacy` returns the bytes actually removed | `test_what_a_clear_cut_short_leaves_is_shown_and_removed_only_when_asked` |
+| C3-5 Nit (docs) | this handoff | Added to step 8's AGENTS.md proposal below | — |
+| C3-6 Nit | `877a24f` | `_read_only` inside a `try`: "can't be opened read only (…)", exit 2 | `test_a_store_that_cant_be_opened_is_an_error_not_a_traceback` |
+
+- **C3-3, which of Assay's two:** the comparison, kept to what can be told without opening an ignored store-v3.
+  The docstring's promise now holds for Clear and Keep; for Ignore it is reworded.
+- `test_store_v4.py::test_after_ignore_or_clear_store_v3_is_never_opened[clear]` set `clear` with store-v3 still
+  present: under C3-3 that is a store-v3 made since. Its `clear` case now runs a real Clear.
+- **Not done:** C3-2's optional half, not sending `raw_overwritten` when the replaced row wasn't finished. With
+  the fix, `raw_fill` no longer saves unfinished rows, and conversions check `not_done` first. Only a row saved
+  before this fix, with the switch on (no users), could still trigger it.
+- **Checks:** the full suite (-n 4) gives **8857 passed**, 672 skipped, **no RERUN**. mypy --strict (helab, tests,
+  win32) and pyright (also Windows) are clean.
+
 ## Step 8: doc proposals for checkpoint 3 (steps 5–7, the export, cache-1)
 
 The list below ("Proposed doc changes") was applied at checkpoint 2's docs commit (`7180751`); these are what
@@ -356,22 +377,30 @@ came after it. The switch stays off, so none of this is user-visible yet.
     --to npz|mat|csv   # read only`".
   - The "frozen helper entry point … (after `freeze_support()`, before the `convert` dispatch)" rule stays
     true (`cache`'s dispatch follows convert's).
+  - The disk-cache rule (C3-5, Assay's wording): "Only helpers, `helab convert` and, read only, `helab cache`
+    open the store (…)".
   - Housekeeping: nothing new. `clear_legacy` is the user's choice, asked first, and sends `removed`
-    (kind `legacy`).
+    (kind `legacy`). It also removes what an earlier Clear cut short left (`store-v3.clearing-<8 hex>`,
+    C3-4). Those folders are shown in Settings › Cache and never removed without asking.
 - **cache-store.md**, "store-v4":
   - The header line: "(stage 0 and checkpoints 2 and 3, landed …)".
   - **Raw layers**: drop "inert until `raw_fill`" and add: "`raw_fill` (`helab/io_ops/raw_fill.py`) fills
     them on the background lane after a valid `cache_saved`. Batches are at most 50 shots or 64 MB, each `.hlb`
     published just before its batch's save; `read_at` is the evidence; it yields after about 30 s (`more`).
-    Over the budget it saves nothing and asks nothing (Q42.1). A conversion in store-v4 saves its shots' raw
-    rows through the same `save_batch`. A raw file changed since it was cached is replaced, and Q28.6's
+    Over the budget it saves nothing and asks nothing (Q42.1). A file that is blank or doesn't end with a newline
+    waits, as in the converter (C3-2). Each shot encodes under the converter's ticker (C3-1). A conversion in
+    store-v4 saves its shots' raw rows through the same `save_batch`, by 50 shots or 64 MB. A raw file changed since it was cached is replaced, and Q28.6's
     notice says so (`raw_overwritten`: once per shot per session, a log warning, Folder details' amber
     Problems line)."
   - **store-v3 under v4**: replace "(until step 6's question is answered)" with: "The question (Keep using it /
     Ignore it / Clear it…) is asked once a session while unanswered (`CacheDialogs`); the choice goes in
     `meta.legacy_v3` (admin `legacy_choice`). **Clear** (`clear_legacy`, Settings › Cache or Make room's
     Clear old stores…, Q28.5) asks first, is refused while another HeLab runs (`cache_locks.other_instances`),
-    renames store-v3 aside and deletes it, never through a link, and sends `removed` kind `legacy`."
+    renames store-v3 aside and deletes it, never through a link, and sends `removed` kind `legacy`. What a Clear
+    cut short leaves (`store-v3.clearing-<8 hex>`) is listed in `measure_legacy` and shown in the Older cache
+    row; only the next asked Clear removes it (C3-4). The choice holds for the store-v3 it was made for. After
+    Clear, a store-v3 there again, or under Keep one with another `store_id`, is unanswered and asked about
+    again. Ignore holds for whatever is there, never opened (C3-3)."
   - Removals: "`removed` kinds `raw` (rows in `raw`) and `legacy`; Clear all takes `raw` too."
   - A new bullet, **Reading `.hlb` outside HeLab**: "`helab.utils.hlb.read(path)`, `raw_layer.columns`, and
     `helab cache dump|export` (`helab/cache_cli.py`: read only; a folder through a `mode=ro`,
