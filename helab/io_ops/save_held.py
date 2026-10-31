@@ -75,7 +75,7 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         matlab_stats: dict[int, tuple[int, int]] = {}
         beside_entries: dict[int, os.DirEntry[str]] = {}
         raw_entries: dict[int, os.DirEntry[str]] = {}  # For the times of shots read again.
-        found: dict[str, set[int]] = {}  # (For the summary of a save that reads shots again.)
+        found: dict[str, set[int]] = {}  # (For the save's summary.)
         has_dirs = False
         listed_at = time.time()
         beat = Heartbeat(send, "listing")
@@ -217,13 +217,15 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
         matlab_print = helab_txy.folder_print(fingerprint, data_origins,
                                               {shot: (shot, *matlab_stats[shot]) for shot in matlab_stats})
         signature = _fingerprint_signature([list(entry) for entry in matlab_print])
-        if replaced:
-            # A new fingerprint: the folder's summary as of this listing, before ``loaded``, as a Live
-            # check sends it (the app adopts it as Live's, so the folder's status matches the data).
-            summary = _summary(path, found, {file_kinds.TXY.name: sum(entry[1] for entry in matlab_print)}, has_dirs,
-                               False, matlab_print, listed_at)
-            summary["unsettled"] = unsettled
-            send({"kind": "scan_summary", "status": summary})
+        # The folder's summary as of this listing, before ``loaded``, as a Live check sends it: the app adopts
+        # it as Live's, so the folder's status matches the data, unless a newer listing ran (another tab's
+        # check, Refresh), whose status it keeps (``behind_listing``). Sent even when no shot was read again:
+        # the data's signature differs from such a listing's when the folder has shots Live hasn't read yet,
+        # and the save would otherwise be taken for an old load (area review io-3, 2026-10-31).
+        summary = _summary(path, found, {file_kinds.TXY.name: sum(entry[1] for entry in matlab_print)}, has_dirs,
+                           False, matlab_print, listed_at)
+        summary["unsettled"] = unsettled
+        send({"kind": "scan_summary", "status": summary})
         send({"kind": "load_source", "source": "updated", "cache_reason": ""})
         send({"kind": "loaded", "rows": sum(len(data[entry["shot"]]) for entry in again),
               "bytes": sum(data[entry["shot"]].nbytes for entry in again), "files": len(data),

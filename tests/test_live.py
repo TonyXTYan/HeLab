@@ -552,6 +552,65 @@ def test_a_save_older_than_the_folders_listing_keeps_the_listing_and_still_saves
     explorer.close_cleanup()
 
 
+def live_save_after_a_newer_listing(cache: FolderCache, run: Path, tmp_path: Path, *,
+                                    listing_first: bool) -> tuple[list[str], list[dict[str, Any]]]:
+    """The area review's io-3 (2026-10-31): the tab shows shots 1–2; shot 3 lands and another tab's
+    status check lists it (Live hasn't read it yet), before the Live save's own listing or while it
+    runs. The save's subscriber's events, and the save helper's."""
+    path = cache.key(str(run))
+    got: list[tuple[str, dict[str, Any]]] = []
+    cache.resultReady.connect(lambda request, event: got.append((request.owner, event)))
+    assert cache.submit("tab", 0, path, "load", {"signature": "", "cache": store_options()})
+    replay(cache, path, tmp_path)
+    shown = next(event["dataset"] for owner, event in got if owner == "tab" and event["kind"] == "loaded")
+    cache.retain("tab", shown)
+    write_shot(run, 3)
+    age_folder(run, 120)
+
+    def other_tabs_check() -> None:
+        assert cache.submit("tab-b", 0, path, "details", {"scan_manual": True, "cache": store_options()}, force=True)
+        replay(cache, path, tmp_path, "details")
+    if listing_first:
+        other_tabs_check()
+    assert cache.save("tab:live-save", path, {"cache": store_options(), "signature": "", "no_cache": False,
+                                              "save_memory": True, "prefer_base": shown.signature})
+    save, events = run_helper(cache, path, tmp_path)
+    if not listing_first:
+        other_tabs_check()
+    deliver(cache, save, events)
+    return [event["kind"] for owner, event in got if owner == "tab:live-save"], events
+
+
+def test_a_live_save_after_a_newer_listing_isnt_cancelled(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
+) -> None:
+    """io-3: the save's listing is the newer one; its summary (the data as held: shots 1–2) is the
+    folder's status, as a Live check's is, so its ``loaded`` matches and the save completes."""
+    cache = FolderCache(service)
+    kinds, events = live_save_after_a_newer_listing(cache, run, tmp_path, listing_first=True)
+    assert "cancelled" not in kinds and "loaded" in kinds, kinds
+    summary = next(event for event in events if event["kind"] == "scan_summary")
+    snapshot = cache.snapshot(cache.key(str(run)))
+    assert snapshot is not None and snapshot.status["signature"] == summary["status"]["signature"]
+    assert cached_shots(cache.key(str(run)), tmp_path) == [1, 2]
+
+
+def test_a_live_save_overtaken_by_a_listing_isnt_cancelled(
+    qtbot: QtBot, service: IOService, run: Path, tmp_path: Path,
+) -> None:
+    """io-3: the other tab's listing ran while the save did; the snapshot keeps that newer status (shot 3)
+    and the save completes, its data not counted as checked."""
+    cache = FolderCache(service)
+    kinds, _ = live_save_after_a_newer_listing(cache, run, tmp_path, listing_first=False)
+    assert "cancelled" not in kinds and "loaded" in kinds, kinds
+    path = cache.key(str(run))
+    snapshot = cache.snapshot(path)
+    assert snapshot is not None and snapshot.status["txy"] == [1, 2, 3]
+    dataset = cache.latest_dataset(path)
+    assert dataset is not None and sorted(dataset.data) == [1, 2] and not cache.counts_as_checked(dataset)
+    assert cached_shots(path, tmp_path) == [1, 2]
+
+
 def test_shots_gone_from_the_folder_stop_live(qtbot: QtBot, service: IOService, run: Path, tmp_path: Path) -> None:
     path = str(run)
     explorer = open_loaded(qtbot, service, run, tmp_path)

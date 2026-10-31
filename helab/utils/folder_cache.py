@@ -4109,7 +4109,7 @@ class FolderCache(QObject):
                 if job.load_status is not None and job.load_status["kind"] == "heartbeat":
                     job.load_status = None
             if kind == "scan_summary":
-                # A Live check's, or a Live save's that read shots again (``io_ops.save_held.save_held``).
+                # A Live check's, or a Live save's (``io_ops.save_held.save_held``).
                 listed = self.snapshots.get(job.path)
                 if (job.payload.get("save_memory") and listed is not None
                         and float(event["status"].get("scanned_at") or 0)
