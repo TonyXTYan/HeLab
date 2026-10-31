@@ -410,6 +410,46 @@ def test_reset_all_settings_resets_the_txy_converter_tab_and_what_it_applies(
         cache.set_result_reuse(False)
 
 
+@pytest.mark.parametrize("choice", ["keep", "online", None], ids=["keep offline", "go online", "cancel"])
+def test_reset_while_working_offline_asks_to_keep_it_or_go_online(
+        main_window: HelabMainWindow, monkeypatch: pytest.MonkeyPatch, choice: str | None) -> None:
+    """Q43.1 (Tony): only while Work Offline is on, Reset's confirmation asks whether to keep it (the default
+    button, as the cache folder's location is kept) or go online now; Cancel resets nothing. Online, the window
+    goes online as Settings closes, saved and in the session alike."""
+    from PyQt6.QtWidgets import QDialog
+    from helab.utils.folder_cache import get_folder_cache
+    from helab.utils.io_service import get_io_service
+    from helab.utils.settings_defaults import TXY_SOURCE_SETTING, WORK_OFFLINE_SETTING, read_setting
+    from helab.utils.settings_store import app_settings
+    cache = get_folder_cache(get_io_service())
+    settings = app_settings()
+    main_window.set_work_offline(True)
+    settings.setValue(TXY_SOURCE_SETTING, "matlab-only")  # (A setting Reset clears.)
+    shown: list[tuple[Any, ...]] = []
+
+    def reset_then_cancel(dialog: SettingsDialog) -> int:
+        box, keep, online = dialog.reset_offline_question()
+        shown.append((box.defaultButton() is keep, keep.objectName(), keep.accessibleName(), online.objectName(),
+                      online.accessibleName(), sorted(button.objectName() for button in box.buttons())))
+        box.deleteLater()
+        dialog.cache_tab.confirm = lambda title, text, verb: pytest.fail("asked the online question")
+        monkeypatch.setattr(dialog, "ask_reset_offline", lambda: choice)
+        dialog.reset_settings()
+        return int(QDialog.DialogCode.Rejected)
+    monkeypatch.setattr(SettingsDialog, "exec", reset_then_cancel)
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: None))
+    try:
+        main_window.show_settings_dialog()
+        assert shown == [(True, "reset_offline_keep", "Reset, keep Work Offline", "reset_offline_online",
+                          "Reset and go online", ["reset_offline_cancel", "reset_offline_keep", "reset_offline_online"])]
+        offline = choice != "online"
+        assert cache.offline is offline and main_window.action_work_offline.isChecked() is offline
+        assert bool(read_setting(settings, WORK_OFFLINE_SETTING, typed=True)) is offline
+        assert settings.contains(TXY_SOURCE_SETTING) is (choice is None)  # Cancel: nothing reset.
+    finally:
+        main_window.set_work_offline(False)
+
+
 def test_help_menu_records_the_io_trace_for_this_session(
     main_window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
 ) -> None:

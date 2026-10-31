@@ -929,6 +929,9 @@ class HelabMainWindow(QMainWindow):
         cache.set_convert_profile(read_convert_profile(settings))
         cache.set_tab_source(read_txy_source(settings))
         cache.set_result_reuse(read_result_reuse(settings))
+        # Reset while working offline, "go online now" (Q43.1): the setting was cleared, the session follows.
+        if bool(read_setting(settings, WORK_OFFLINE_SETTING, typed=True)) != cache.offline:
+            self.set_work_offline(not cache.offline)
         if read_disk_budget(settings) != store_options().get("budget"):
             # Saved without Save (e.g. Reset, then Cancel): the store is told until it has it.
             # (After Save it already has it: Settings saves a new disk budget only then.)

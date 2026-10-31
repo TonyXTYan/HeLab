@@ -4,12 +4,12 @@ from typing import Optional, Dict, Any
 
 from PyQt6.QtGui import QCloseEvent, QDesktopServices
 from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QCheckBox, QLineEdit, QLabel, QTabWidget, \
-    QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem, QDoubleSpinBox
+    QWidget, QComboBox, QFormLayout, QScrollArea, QSpinBox, QFileDialog, QSpacerItem, QDoubleSpinBox, QMessageBox
 from PyQt6.QtCore import QSettings, QUrl
 
 from helab.utils import app_log, folder_cache
 from helab.utils.settle_time import DEFAULT_SETTLE_SECONDS, MAX_SETTLE_SECONDS, MIN_SETTLE_SECONDS, settle_seconds
-from helab.utils.accessible import identify
+from helab.utils.accessible import identify, identify_buttons
 from helab.utils.folder_cache import FolderCache
 from helab.utils.number_format import fnum
 from helab.utils.constants import (
@@ -21,7 +21,7 @@ from helab.utils.constants import (
 from helab.utils.settings_defaults import (
     AUTO_SCAN_VISIBLE_SETTING, CHECK_LEVEL_SETTING, DIR_CACHES_SETTING, DIR_TEMPS_SETTING, LIVE_INTERVAL_SETTING,
     LOAD_MODE_SETTING, LOG_KEEP_SETTING, REOPEN_PLOTS_SETTING, RETIRED, SETTLE_SECONDS_SETTING, SIMULTANEOUS_IO_SETTING,
-    read_setting)
+    WORK_OFFLINE_SETTING, read_setting)
 from helab.utils.settings_store import app_settings
 from helab.views.DataRootsTab import DataRootsTab
 from helab.views.CacheTab import CacheTab, read_result_reuse
@@ -405,12 +405,42 @@ class SettingsDialog(QDialog):
         super().closeEvent(a0)
         self.deleteLater()
 
+    RESET_TEXT = ("Resets every HeLab setting to its default: folders, load options, both cache budgets, window "
+                  "and view choices, and the list of plots to reopen. The disk cache's contents and your presets "
+                  "are kept.")
+
+    def reset_offline_question(self) -> tuple[QMessageBox, QPushButton, QPushButton]:
+        """Reset's confirmation while working offline (Q43.1): keep Work Offline (the default, as the cache
+        folder's location is kept) or go online now; Cancel resets nothing. The box and those two buttons."""
+        box = QMessageBox(QMessageBox.Icon.Question, "Reset all settings?",
+                          f"{self.RESET_TEXT}\n\nYou are working offline (File › Work Offline): keep working "
+                          "offline, or go online now? Online, HeLab lists the folders in every tab again.",
+                          QMessageBox.StandardButton.Cancel, self)
+        keep, online = QPushButton("Reset, keep Work Offline"), QPushButton("Reset and go online")
+        box.addButton(keep, QMessageBox.ButtonRole.AcceptRole)
+        box.addButton(online, QMessageBox.ButtonRole.AcceptRole)
+        box.setDefaultButton(keep)
+        identify_buttons(box, "reset_offline")
+        identify(keep, "reset_offline_keep", "Reset, keep Work Offline")
+        identify(online, "reset_offline_online", "Reset and go online")
+        return box, keep, online
+
+    def ask_reset_offline(self) -> str | None:
+        """Reset's question while working offline: "keep", "online" or None (Cancel). (A method, not a bound
+        method kept on the dialog: that would keep the deleted dialog's wrapper alive.)"""
+        box, keep, online = self.reset_offline_question()
+        box.exec()
+        clicked = box.clickedButton()
+        return "keep" if clicked is keep else "online" if clicked is online else None
+
     def reset_settings(self) -> None:
-        if not self.cache_tab.confirm(
-                "Reset all settings?",
-                "Resets every HeLab setting to its default: folders, load options, both cache budgets, window "
-                "and view choices, and the list of plots to reopen. The disk cache's contents and your presets "
-                "are kept.", "Reset all settings"):
+        offline = self.cache is not None and self.cache.offline
+        choice: str | None = None
+        if offline:
+            choice = self.ask_reset_offline()
+            if choice is None:
+                return
+        elif not self.cache_tab.confirm("Reset all settings?", self.RESET_TEXT, "Reset all settings"):
             return
         settings = self.settings
         # Where the disk cache is isn't a preference: it stays (moving it is Change…).
@@ -418,6 +448,8 @@ class SettingsDialog(QDialog):
         settings.clear()
         if caches:
             settings.setValue(DIR_CACHES_SETTING, caches)
+        if offline and choice == "keep":
+            settings.setValue(WORK_OFFLINE_SETTING, True)  # (Online: cleared; the window goes online as Settings closes.)
         self.load_settings()
         self.lab_tab.load(settings)
         self.cache_tab.show_disk_budget(read_disk_budget(settings))
