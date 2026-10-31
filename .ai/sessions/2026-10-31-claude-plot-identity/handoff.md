@@ -36,12 +36,13 @@ plots-4 and both nits. plots-2 is out of scope (Q39.1, A39.3). Base `0571ff2`; n
    profile's and a fresh load's next Live run detects again (velocity), another load's Live run keeps no
    box (correlations); both fail without `chain_key` (checked). The existing velocity kept test built its
    "later" view as another load; it now uses `revise` (a real revision).
-3. **plots-4 (`a293214`, Windows `65de6d4`): Dash port.** `DashServer._listened_on_all(port)`: before
+3. **plots-4 (`a293214`; Windows `65de6d4`, `fd069e2`): Dash port.** `DashServer._listened_on_all(port)`: before
    binding the preferred port, a wildcard bind as HeLab binds its own (`SO_REUSEADDR` off Windows);
    refused only by a socket holding the port on all addresses (IPv4, or dual-stack IPv6), not by
    connections in TIME_WAIT, so `test_stop_frees_the_port` still gets the same port back. Windows has the
    same hijack without `SO_REUSEADDR` (CI run 41158691080 failed the new test there on every try), so
-   the probe runs on every OS since `65de6d4`. Nothing is sent to the other program.
+   the probe runs on every OS since `65de6d4`; Windows also lets a dual-stack `[::]` listener sit beside
+   an IPv4 wildcard bind, so `fd069e2` probes `[::]` too (`IPV6_V6ONLY` on). Nothing is sent to the other program.
    Measured on this Mac first (scratch probe): IPv4 and dual-stack `[::]` listeners found, TIME_WAIT
    not, our own bind not. Test parametrised ipv4/ipv6, fails without the probe (checked). Dropping
    `SO_REUSEADDR` on macOS (the review's first option) would have broken that same-port restart.
@@ -95,6 +96,12 @@ Logs kept whole in `.ai/temp/plot-identity/` (gitignored): `suite.log`, `suite2.
   40803552596); this run is another occurrence to add there. Every other job green with no RERUN (each
   log read): macOS Tests 1/2 4250 passed, 2/2 4273; Ubuntu 1/2 4247, 2/2 4273; Windows 1/2 4233;
   Converter backends macOS 713, Ubuntu 713, Windows 711; Builds green on all three.
+- **CI run 41160242383** (`529786e`): failed. Windows Tests (2/2) (job 124416059305): `1 failed, 4254
+  passed, 364 skipped, 34 warnings, 5 rerun`: the plots-4 test's ipv6 case on every try (rerun reason each
+  time `assert <port> != <port>` at `tests/test_dash_server.py:63`); ipv4 passed. Fixed in `fd069e2`. Every
+  other job green with no RERUN (each log read): macOS 4250 / 4273, Ubuntu 4246 / 4273 (one fewer than the
+  last run: `test_uncertainty_format.py::test_prefix_matches_pyqtgraph` takes random parameters, two of
+  which collided this time), Windows 1/2 4233, Converter backends 713 / 713 / 711, Builds green.
 - CI: CI_RESULTS
 
 ## Proposed doc changes (for CoCo)
