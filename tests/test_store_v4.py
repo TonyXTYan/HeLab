@@ -442,3 +442,31 @@ def test_a_copy_with_either_store_damaged_fails_verification(tmp_path: Path, dam
         "v4 file": lambda: next((caches / "store-v4" / "datasets").iterdir()).write_bytes(b"x")}
     spoil[damage]()
     assert cache_move.verify(str(caches), v4_id, ids) != ""
+
+
+@pytest.mark.no_auto_data_root
+def test_the_inventory_measures_store_v3_kept_and_only_its_files_after_ignore(tmp_path: Path,
+                                                                              monkeypatch: pytest.MonkeyPatch) -> None:
+    """Gap 8: under Keep, v3's live bytes (through LegacyStore) go into ``meta.legacy_bytes`` with its
+    write count; after Ignore, v3 isn't opened and its folder's size on disk is shown."""
+    caches = tmp_path / "caches"
+    v3_id = v3_with_state(caches)
+    with LegacyStore(str(caches / "store-v3")) as legacy:
+        live, writes = legacy.live_bytes(), legacy.writes()
+    with CacheStore(str(caches / "store-v4")) as v4:
+        kept = v4.inventory()["legacy"]
+        assert kept == {"present": True, "choice": None, "bytes": live, "store_id": v3_id, "counted": True}
+        recorded = v4._meta()["legacy_bytes"]
+        assert (recorded["bytes"], recorded["writes"], recorded["v3_store_id"]) == (live, writes, v3_id)
+        with v4.transaction():
+            v4._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_v3', ?)",
+                             (json.dumps({"choice": "ignore", "v3_store_id": v3_id, "set_at": 1.0}),))
+    monkeypatch.setattr(LegacyStore, "__init__", lambda self, root: pytest.fail("store-v3 opened after Ignore"))
+    with CacheStore(str(caches / "store-v4")) as v4:
+        ignored = v4.inventory()["legacy"]
+    on_disk = sum(path.stat().st_size for path in (caches / "store-v3").rglob("*") if path.is_file())
+    assert ignored == {"present": True, "choice": "ignore", "bytes": on_disk, "counted": False}
+    with CacheStore(str(tmp_path / "alone" / "store-v4")) as v4:
+        assert v4.inventory()["legacy"] == {"present": False, "choice": None, "bytes": 0}
+    with CacheStore(str(tmp_path / "alone" / "store-v3")) as v3:
+        assert "legacy" not in v3.inventory()

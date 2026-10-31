@@ -20,6 +20,7 @@ import math
 import os
 import pathlib
 import sqlite3
+import stat
 import time
 from typing import (Any, Callable, Generator, Generic, Iterable, Literal, Mapping, NotRequired, Sequence, TypeVar,
                     TypedDict, cast)
@@ -2558,7 +2559,9 @@ class CacheStore:
             raise StoreError(f"Disk cache could not be read: {exc}") from exc
         retired_bytes = sum(self._size_or_zero(file) for file in retired)
         orphans = [name for name in self._listed_files() if name not in known]
+        legacy = self.measure_legacy() if self.layout >= store_v4.LAYOUT else None
         return {
+            **({"legacy": legacy} if legacy is not None else {}),
             "layout_version": self.layout_version, "store_id": self.store_id, "read_only": self.read_only,
             "root": self.root, "usage": live, "budget": budget, "records_bytes": records_bytes,
             "datasets": {"count": len(dataset_ages), "bytes": sum(size for _, size in dataset_ages),
@@ -2575,6 +2578,33 @@ class CacheStore:
             "orphans": {"count": len(orphans), "bytes": sum(self._size_or_zero(name) for name in orphans)},
             "ages": ages, "next_deadline": deadline, "checked_at": time.time(),
             **Usage(live, self.store_id, writes).event()}
+
+    def measure_legacy(self) -> dict[str, Any]:
+        """store-v3 beside this store-v4, for Settings › Cache and the budget under Keep (gap 8): whether
+        it is there, the choice, and its size. Kept (Keep, or not answered): its live bytes measured
+        through ``LegacyStore`` and recorded in ``meta.legacy_bytes`` with its write count (fit checks
+        read that, never v3). After Ignore: the folder's bytes on disk, v3 not opened."""
+        from helab.utils.legacy_store import present
+        choice = store_v4.legacy_choice(self._meta())
+        found: dict[str, Any] = {"present": present(self.legacy_root), "choice": choice, "bytes": 0}
+        if not found["present"]:
+            return found
+        legacy = self._kept_legacy()
+        if legacy is None:
+            found["bytes"] = _folder_bytes(self.legacy_root)
+            found["counted"] = False
+            return found
+        try:
+            measured = {"bytes": legacy.live_bytes(), "writes": legacy.writes(), "measured_at": time.time(),
+                        "v3_store_id": legacy.store_id}
+        except LegacyUnavailable as exc:
+            return {**found, "error": str(exc)}
+        if not self.read_only:
+            with contextlib.suppress(sqlite3.Error, StoreError):
+                with self.transaction():
+                    self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_bytes', ?)",
+                                       (_dumps(measured),))
+        return {**found, "bytes": measured["bytes"], "store_id": legacy.store_id, "counted": True}
 
     def _size_or_zero(self, file: str) -> int:
         try:
@@ -2794,6 +2824,17 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except BaseException:
         conn.execute("ROLLBACK")
         raise
+
+
+def _folder_bytes(folder: str) -> int:
+    """Bytes of the regular files under ``folder`` (links aren't followed)."""
+    total = 0
+    for top, _, names in os.walk(folder):
+        for name in names:
+            with contextlib.suppress(OSError):
+                info = os.lstat(os.path.join(top, name))
+                total += info.st_size if stat.S_ISREG(info.st_mode) else 0
+    return total
 
 
 def _store_format(conn: sqlite3.Connection) -> int:
