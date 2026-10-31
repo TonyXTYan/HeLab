@@ -97,7 +97,7 @@ def test_shutdown_stops_its_helpers_itself_not_only_from_the_reapers(
     service.timer.stop()
     monkeypatch.setattr(service, "_run", lambda request: None)
     monkeypatch.setattr(service, "_reap", lambda request: None)  # (The reapers never got to run.)
-    helper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    helper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], text=True)
     try:
         service.submit("tab", 0, "/saving", "load", {"save": True})
         request = service.active[0]
