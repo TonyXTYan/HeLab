@@ -80,7 +80,7 @@ import re
 import sys
 import threading
 import time
-from typing import Any, Callable, Iterable, NotRequired, TypedDict, TYPE_CHECKING
+from typing import Any, Callable, Iterable, Mapping, NotRequired, TypedDict, TYPE_CHECKING
 
 from helab.io_ops import fingerprints, stores
 from helab.io_ops.events import ConvertProfile, ConvertSeconds, HelperEvent, ShotUnconvertibleEvent
@@ -465,6 +465,8 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
     # this conversion's writes. (Beside: none; Clear never removes those TXY.)
     fence = None if places["output"] == "beside" else provenance.fence_of(os.path.dirname(places["folder"]))
     cleared = False
+    # Caching v2 (store-v4): the raw layers of the shots this conversion reads, saved as it goes.
+    raw_rows = _RawRows.start(path, places, request, send)
     numba_folder = ""
     if backend == "numba":
         # Its compiled code goes in HeLab's temp folder (Q18.1): numba no longer ships (Q11.2), so
@@ -751,12 +753,16 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
             seconds["write"] = time.perf_counter() - write_started
             converted += 1
             current.append(shot.entry)
+            if raw_rows is not None:
+                raw_rows.add(shot.shot, shot.name, shot.size, shot.mtime_ns, data, read_at.get(shot.shot, time.time()))
             send({"kind": "shot_converted", "path": path, "shot": shot.shot, "raw_name": shot.name,
                   "raw_size": shot.size, "raw_mtime_ns": shot.mtime_ns, "raw_sha256": record.raw_sha256,
                   "output": places["output"], "txy": target, "txy_size": len(result.txy), "provenance": index_path,
                   "hits": result.hits, "replaced": shot.replaced, "profile": profile_info, "backend": backend,
                   "seconds": seconds})
         progress()
+
+    read_at: dict[int, float] = {}
 
     def read(shot: _Shot) -> tuple[bytes, float] | None:
         """The shot's bytes and read time, or None when it waits (sent here)."""
@@ -768,6 +774,7 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
             return None
         read_started = time.perf_counter()
         reader = Heartbeat(send, "reading")
+        read_at[shot.shot] = time.time()
         try:
             data = _read_raw(shot, reader)
         except OSError as exc:
@@ -812,10 +819,66 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
             pool.close()
         if index is not None:
             index.close()
+    if raw_rows is not None:
+        raw_rows.flush()
     progress(force=True)
     send({"kind": "convert_summary", "path": path, "output": places["output"], "folder": places["folder"],
           "txy_folder": places["txy_folder"], "converted": converted, "current": current, "waiting": waiting,
           "unconvertible": unconvertible, "kept": kept, "seconds": time.monotonic() - started})
+
+
+class _RawRows:
+    """A conversion's raw layers (caching v2, store-v4): the shots it read and converted, saved in
+    batches under one raw guard taken as it starts (``io_ops.raw_fill.save_batch``), as a ``raw_fill`` would
+    have saved them. Only for a folder with a data root whose output is the cache folder or beside the raw
+    files, online. It never fails the conversion: a store that can't take them (busy, a Clear since, the
+    budget, Don't cache) sends one ``cache_warning`` or nothing, and the rest of this run's go unsaved."""
+
+    def __init__(self, path: str, cache: Mapping[str, Any], guard: Any, send: Emit) -> None:
+        self.path, self.cache, self.guard, self.send = path, cache, guard, send
+        self.batch: list[Any] = []
+
+    @classmethod
+    def start(cls, path: str, places: _Places, request: ConvertRequest, send: Emit) -> _RawRows | None:
+        from helab.utils.cache_store import StoreError, layout_of
+        from helab.utils.store_v4 import LAYOUT
+        cache = request.get("cache") or {}
+        if (not cache or cache.get("offline") or not places["key"] or places["output"] not in ("cache", "beside")
+                or layout_of(str(cache["directory"])) < LAYOUT):
+            return None
+        try:
+            with stores._cache_store(cache["directory"], [path]) as store:
+                if store.read_only:
+                    return None
+                return cls(path, cache, store.start_raw_job(path), send)
+        except (StoreError, OSError, ValueError) as exc:
+            send({"kind": "cache_warning", "message": f"Raw pulses of {path} aren't cached this time: {exc}"})
+            return None
+
+    def add(self, shot: int, name: str, size: int, mtime_ns: int, data: bytes, read_at: float) -> None:
+        from helab.io_ops.raw_fill import BATCH_SHOTS, RawRead
+        if self.guard is None:
+            return
+        self.batch.append(RawRead(shot, name, size, mtime_ns, data, read_at))
+        if len(self.batch) >= BATCH_SHOTS:
+            self.flush()
+
+    def flush(self) -> None:
+        from helab.io_ops.raw_fill import save_batch
+        from helab.utils.cache_store import SaveRejected, StoreError
+        batch, self.batch = self.batch, []
+        if not batch or self.guard is None:
+            return
+        try:
+            with stores._cache_store(self.cache["directory"], [self.path]) as store:
+                result = save_batch(store, self.path, batch, self.guard, self.cache, self.send)
+            if result.reason:
+                self.guard = None  # (Over the budget: the rest isn't tried either, T~1.)
+        except SaveRejected:
+            self.guard = None  # (Cleared since, or Don't cache: nothing more this run.)
+        except (StoreError, OSError, ValueError) as exc:
+            self.guard = None
+            self.send({"kind": "cache_warning", "message": f"Raw pulses of {self.path} weren't cached: {exc}"})
 
 
 def _remove_partial(path: str, entry: os.DirEntry[str], send: Emit) -> None:

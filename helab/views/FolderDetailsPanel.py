@@ -27,6 +27,8 @@ from helab.views.explorer_live import no_hits_text
 from helab.views.explorer_text import large_text
 
 
+# The Problems row's part for raw files overwritten since they were cached (Q28.6), which is then amber.
+RAW_OVERWRITTEN_TEXT = "raw file(s) overwritten since cached"
 # Marks the large-folder part of a state row, which is then amber.
 LARGE_MARK = "Update not loaded: "
 
@@ -198,6 +200,9 @@ class FolderDetailsPanel(QScrollArea):
             rows["state"] = ("Select a data folder", "")
         else:
             rows.update(self._folder_rows(explorer))
+            overwritten = self._raw_overwritten_row(explorer, rows["errors"])
+            if overwritten is not None:
+                rows["errors"] = overwritten
             if explorer.activity_text:
                 rows["tab"] = (explorer.activity_text, "\n\n".join(filter(None, (
                     "Other work in this tab; the selected folder's load is above.", explorer.activity_tooltip))))
@@ -221,10 +226,27 @@ class FolderDetailsPanel(QScrollArea):
             style = f"color: {AMBER};"
         if self.values["state"].styleSheet() != style:
             self.values["state"].setStyleSheet(style)
+        # A raw file overwritten in place since it was cached is amber (Q28.6).
+        style = f"color: {AMBER};" if RAW_OVERWRITTEN_TEXT in rows["errors"][0] else ""
+        if self.values["errors"].styleSheet() != style:
+            self.values["errors"].setStyleSheet(style)
         # Shots converted with no hits are amber (A17.1).
         style = f"color: {AMBER};" if "with no hits" in rows.get("convert", ("", ""))[0] else ""
         if self.values["convert"].styleSheet() != style:
             self.values["convert"].setStyleSheet(style)
+
+    @staticmethod
+    def _raw_overwritten_row(explorer: FolderExplorer, problems: tuple[str, str]) -> tuple[str, str] | None:
+        """The Problems row with the folder's raw files overwritten in place since store-v4 cached them
+        this session (Q28.6, ``FolderCache.raw_overwrites``), or None when there are none."""
+        found = explorer.model.cache.raw_overwrites.get(explorer.selected_path_globally)
+        if not found:
+            return None
+        names = [str(found[shot]["raw_name"]) for shot in sorted(found)]
+        text = f"{len(names):,} {RAW_OVERWRITTEN_TEXT}"
+        tooltip = ("Raw files overwritten in place since HeLab cached them (read again; the TDC may be "
+                   "misconfigured): " + ", ".join(names[:20]) + (" …" if len(names) > 20 else ""))
+        return (f"{problems[0]} · {text}" if problems[0] else text, "\n\n".join(filter(None, (problems[1], tooltip))))
 
     def _folder_rows(self, explorer: FolderExplorer) -> dict[str, tuple[str, str]]:
         path = explorer.selected_path_globally
