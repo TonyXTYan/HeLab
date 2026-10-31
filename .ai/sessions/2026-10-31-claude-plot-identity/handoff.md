@@ -36,13 +36,17 @@ plots-4 and both nits. plots-2 is out of scope (Q39.1, A39.3). Base `0571ff2`; n
    profile's and a fresh load's next Live run detects again (velocity), another load's Live run keeps no
    box (correlations); both fail without `chain_key` (checked). The existing velocity kept test built its
    "later" view as another load; it now uses `revise` (a real revision).
-3. **plots-4 (`a293214`; Windows `65de6d4`, `fd069e2`): Dash port.** `DashServer._listened_on_all(port)`: before
+3. **plots-4 (`a293214`; Windows `65de6d4`; `b1f6280`): Dash port.** `DashServer._listened_on_all(port)`: before
    binding the preferred port, a wildcard bind as HeLab binds its own (`SO_REUSEADDR` off Windows);
    refused only by a socket holding the port on all addresses (IPv4, or dual-stack IPv6), not by
    connections in TIME_WAIT, so `test_stop_frees_the_port` still gets the same port back. Windows has the
    same hijack without `SO_REUSEADDR` (CI run 41158691080 failed the new test there on every try), so
-   the probe runs on every OS since `65de6d4`; Windows also lets a dual-stack `[::]` listener sit beside
-   an IPv4 wildcard bind, so `fd069e2` probes `[::]` too (`IPV6_V6ONLY` on). Nothing is sent to the other program.
+   the probe runs on every OS since `65de6d4` (CI then passed the IPv4 case on Windows). **Not handled:
+   Windows beside a dual-stack `[::]` listener**: HeLab's 127.0.0.1 bind and an IPv4 wildcard probe both
+   succeed there, and so did a `[::]` probe with `IPV6_V6ONLY` (`fd069e2`, CI 41161383176); which socket
+   then gets 127.0.0.1's connections is unverified. `b1f6280` reverts that probe (it fixed nothing, and on
+   macOS the IPv4 probe already finds dual-stack listeners) and skips the test's ipv6 case on Windows, with
+   the reason; a known-issues entry is proposed below. Nothing is sent to the other program.
    Measured on this Mac first (scratch probe): IPv4 and dual-stack `[::]` listeners found, TIME_WAIT
    not, our own bind not. Test parametrised ipv4/ipv6, fails without the probe (checked). Dropping
    `SO_REUSEADDR` on macOS (the review's first option) would have broken that same-port restart.
@@ -100,8 +104,11 @@ Logs kept whole in `.ai/temp/plot-identity/` (gitignored): `suite.log`, `suite2.
   passed, 364 skipped, 34 warnings, 5 rerun`: the plots-4 test's ipv6 case on every try (rerun reason each
   time `assert <port> != <port>` at `tests/test_dash_server.py:63`); ipv4 passed. Fixed in `fd069e2`. Every
   other job green with no RERUN (each log read): macOS 4250 / 4273, Ubuntu 4246 / 4273 (one fewer than the
-  last run: `test_uncertainty_format.py::test_prefix_matches_pyqtgraph` takes random parameters, two of
-  which collided this time), Windows 1/2 4233, Converter backends 713 / 713 / 711, Builds green.
+  last run: `test_uncertainty_format.py::test_prefix_matches_pyqtgraph` takes random parameters (its IDs differ
+  between the runs), Windows 1/2 4233, Converter backends 713 / 713 / 711, Builds green.
+- **CI run 41161383176** (`49dd945`): failed. Windows Tests (2/2) (job 124419526951): `1 failed, 4254
+  passed, 364 skipped, 34 warnings, 5 rerun`: the ipv6 case again on every try (the same reason, line 63),
+  so the `[::]` probe didn't help; reverted and skipped on Windows in `b1f6280` (above).
 - CI: CI_RESULTS
 
 ## Proposed doc changes (for CoCo)
@@ -126,8 +133,15 @@ Logs kept whole in `.ai/temp/plot-identity/` (gitignored): `suite.log`, `suite2.
   TXY source and choice, chain, profile hashes), settings and constants are the same (`KeptRuns`); a
   run the user starts, another plot, load or TXY choice finds its own (plots-3). Correlations' kept box
   and detection use the same key."
-- **`roadmaps/known-issues.md`**: plots-1, plots-3 and plots-4 fixed here (nothing to file for them); the
-  area review proposed filing them until fixed. plots-2 stays moot by Q39.1 (A39.3).
+- **`roadmaps/known-issues.md`**: plots-1 and plots-3 fixed here, plots-4 for IPv4 wildcard listeners on
+  every OS (nothing to file for those); plots-2 stays moot by Q39.1 (A39.3). File:
+  - "On Windows the Dash server can bind 127.0.0.1:8050 beside a dual-stack `[::]:8050` listener (an IPv4
+    wildcard probe and a `[::]` V6ONLY probe both bind); whether that program then loses its 127.0.0.1
+    connections is unverified. `test_dash_server.py`'s ipv6 case is skipped on Windows (CI 41160242383,
+    41161383176). Needs a Windows machine: try `SO_EXCLUSIVEADDRUSE` on HeLab's socket, checking it still
+    gets its port back after a restart (TIME_WAIT)."
+  - Another occurrence of `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`'s
+    worker crash: Windows CI run 41158691080, Tests 2/2 (job 124411181934), passed on retry.
 
 ## Provisional items
 
