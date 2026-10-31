@@ -188,3 +188,60 @@ On an export of `393f999`, whose `helab/` and `tests/` equal `HEAD` `c63f89e` (t
   - the two mutations above (in copies, `.ai/temp/assay/mut-*`).
 
 On fix diffs I re-check only the fixes, their tests and the touched files' type checks.
+
+## Re-check of the fixes (`1af8796..375562e`)
+
+**Open findings: none.** C3-1 to C3-6 are fixed.
+
+| Finding | Commit | Without the fix | With it |
+|---|---|---|---|
+| C3-1, C3-2 | `c1489ae` (`convert.py`, `raw_fill.py`) | 3 failed (heartbeat test: 10 s deadline) | 3 passed |
+| C3-1 test | `375562e` (only the `_Ticker` removed from `save_batch`) | 1 failed | 1 passed |
+| C3-3, C3-4 | `3938938` (`cache_store.py`, `CacheDialogs.py`, `CacheTab.py`) | 2 failed | 2 passed |
+| C3-6 | `877a24f` (`cache_cli.py`) | 1 failed | 1 passed |
+
+(For each, on an export of `375562e`, I put the commit's `helab/` files back as they were before it, ran the tests it
+added, then restored the files and compared them with git.)
+
+- **C3-1: fixed.**
+  - `_RawRows.add` flushes at `BATCH_BYTES` too.
+  - `save_batch` encodes each shot under the converter's `_Ticker` with `compute_budget(len(data))`, for
+    `raw_fill` and conversions alike. A hung encode still times out after its budget.
+  - `_Ticker.__exit__` joins its thread, so in `raw_fill` (the plain `emit`, not the converter's `_locked` one)
+    no heartbeat overlaps a send from the main thread.
+- **C3-1's test (`375562e`):** the slow encode now waits until three heartbeats have arrived (a 10 s deadline)
+  instead of counting them in a 0.3 s window, so a loaded runner can't fail it. The CI RERUNs that caused the change
+  are in the handoff.
+- **C3-2: fixed.** `raw_fill` leaves a file that is blank, or doesn't end with a newline, waiting (`_unfinished`).
+  The trigger-first check needs the profile, so it stays the converter's.
+- **C3-3: fixed.**
+  - After Clear, a store-v3 present again is unanswered: kept, counted and asked about.
+  - Under Keep, `measure_legacy` reports the choice as unanswered when v3's `store_id` differs.
+  - Ignore holds for whatever is there, so an ignored store-v3 is still never opened.
+  - The changed older test, `test_after_ignore_or_clear_store_v3_is_never_opened[clear]`, now runs a real Clear
+    (store-v3 gone); its old setup (Clear recorded with v3 still present) is now the made-again case, covered by
+    the new test. The `ignore` case is unchanged, so the never-opened guarantee keeps its test.
+- **C3-4: fixed.**
+  - `store-v3.clearing-<8 hex>` leftovers are listed (`leftover`, `leftover_bytes`) and shown in the Older cache
+    row.
+  - They are removed only by an asked Clear old stores…, whose text includes their size.
+  - The bytes returned are those actually removed. Housekeeping never touches them.
+- **C3-5: in the handoff's step 8 AGENTS.md proposal**, with my wording.
+- **C3-6: fixed.** A store that can't be opened read-only is a `CliError`: exit 2 with a message.
+
+### Checks (re-check)
+
+On an export of `375562e`:
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-assay` (the full suite, the touched
+  `test_raw_fill.py`, `test_store_v3_question.py`, `test_cache_cli.py` and `test_store_v4.py` included):
+  **8853 passed, 673 skipped, 2 warnings, 3 failed, 15 rerun in 156.73 s.**
+  - All 3 failures and all 15 RERUNs are the three git-provenance tests (the export has no `.git`; 5 reruns each).
+    They passed in the floor checkout with no RERUN at this review, and neither they nor `build_info.py` changed
+    since.
+  - No other RERUN.
+  - The 2 warnings are the known pyqtgraph ones.
+  - The totals match Vault's 8857 passed and 672 skipped, once the export's 3 and 1 are added back.
+- `mypy helab/ --strict` (201 files), `mypy tests --strict` (186), `--platform win32`: no issues.
+- `pyright helab tests` and `--pythonplatform Windows`: 0 errors.
+
+Checkpoint 3 has no open review findings.
