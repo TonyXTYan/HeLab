@@ -38,6 +38,30 @@ def test_taken_port_falls_back_to_a_free_one(servers: list[DashServer]) -> None:
         assert second.start() not in (port, first.start())
 
 
+@pytest.mark.parametrize("family", [socket.AF_INET, socket.AF_INET6], ids=["ipv4", "ipv6"])
+def test_a_port_another_program_holds_on_all_addresses_is_left_to_it(
+        servers: list[DashServer], family: socket.AddressFamily) -> None:
+    """plots-4: on macOS, SO_REUSEADDR let 127.0.0.1:8050 bind beside another program listening on
+    all addresses, which then lost its localhost connections to HeLab. HeLab moves to another port."""
+    if family == socket.AF_INET6 and not socket.has_ipv6:
+        pytest.skip("no IPv6")
+    server = DashServer()
+    servers.append(server)
+    with socket.socket(family) as other:
+        if family == socket.AF_INET6:
+            try:
+                other.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # IPv4 too, as a dual-stack server
+                other.bind(("::", 0))
+            except OSError:
+                pytest.skip("no dual-stack IPv6")
+        else:
+            other.bind(("0.0.0.0", 0))
+        other.listen()
+        port = other.getsockname()[1]
+        server.HOST_PORT = port
+        assert server.start() != port
+
+
 def test_serves_added_plot(servers: list[DashServer]) -> None:
     server = DashServer()
     servers.append(server)
