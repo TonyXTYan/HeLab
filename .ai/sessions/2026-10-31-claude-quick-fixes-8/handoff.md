@@ -314,3 +314,59 @@ With one app per computer, the only other process sharing the app folder and sto
 - **Q~ (proposed).** The TXY row is shown only for data whose load counted it. Data shown from memory or
   a disk-cache quick check, or saved before A39.4, has no row. Proposed: leave it so; the next full load
   counts again.
+
+## The Windows flake (Tony's yes, CoCo's brief): test_writing_held_data_out_counts_as_progress (3bafef1)
+
+- **The failure.** `test_io_service_run.py::test_writing_held_data_out_counts_as_progress` failed now and
+  then on Windows Tests 2/2 with `assert (2 == 1)` at :40: `len(idle_at_start)` was 2, with two values
+  about 0.5–1 ms apart (e.g. 0.04205, 0.04250 in 41158349537).
+- **Cause.** Those are not two progress marks. `idle_at_start` gets one entry per `subprocess.Popen`
+  call, and `IOService._run` calls it once. Read: no retry, nothing after its failure calls it,
+  `IOService()` starts no thread. But the test patched `helab.utils.io_service.subprocess.Popen`, which
+  is the `subprocess` module's own Popen, so the whole process saw the fake.
+  - Another thread starting a process meanwhile called the fake, was counted, and got a fake `OSError`.
+    That thread is a helper start left over from an earlier test in the worker.
+  - On Windows, process and file creation are slow, and `_run`'s `open()` of its stderr file, just
+    before `Popen`, lets a waiting thread run. That puts the two calls within a millisecond.
+  - In 41158349537 it failed twice right after `test_io_lanes.py` on gw0 and passed on the third try,
+    once the other thread was gone.
+  - The exact other thread can't be named from CI's `-rR` output, which only shows the assertion.
+- **Repro (macOS, scratch).** The old fake with another thread starting a real process during the
+  held-data write fails with `assert (2 == 1)`.
+- **Fix (test only; `_run` was right).** The fake counts only calls on the test's own thread, where
+  `_run` runs here, and hands other threads' calls to the real `Popen`. The repro is kept as a second
+  case ("another thread starts a process meanwhile").
+- **Checks.** The file's 6 tests pass, three runs. The full suite: 8858 passed, with 1 RERUN, the known
+  `test_live_plots.py::test_a_floating_plot_runs_and_follows_with_its_settings_in_its_window`
+  (`'completed' == 'cancelled'` at :1250; known-issues, another sighting, plots, unrelated). The five
+  type checks pass.
+- **Known-issues proposal:** move the entry to Fixed, saying "the test's process-wide `Popen` fake counted
+  another thread's process start; it counts only its own thread's now (3bafef1, QF8)".
+
+## A43.3 (Q43.1): Reset all settings while working offline (c9e64e6)
+
+- **What it does.** Only while Work Offline is on, Reset's confirmation offers three buttons:
+  - "Reset, keep Work Offline": the default, ID `reset_offline_keep`;
+  - "Reset and go online": `reset_offline_online`;
+  - Cancel: `reset_offline_cancel`.
+
+  Keep saves Work Offline again after the clear. Go online: the main window makes the session follow the
+  setting as Settings closes, saved or cancelled. Online, the confirmation is unchanged.
+- **Slip, then fixed.** The first version kept `ask_reset_offline` as a bound method on the dialog. That
+  reference cycle kept a closed dialog's wrapper alive, so qtbot's teardown touched the deleted dialog:
+  `test_presets_store`'s Reset test and others errored. That suite also ran while Ground changed under
+  it (c2663b9), 39 failures in 74 min. It's now a plain method, patched per instance in the test; the
+  suite was rerun on a stable tree.
+- **Checks.** The new test covers keep, go online and cancel. The full suite, HEAD the same before and
+  after the run: 8861 passed, no RERUN. The five type checks pass.
+
+## A43.4 (Q43.4): the cache move's refusal (4940a81)
+
+- **New text:** `lock_for_move` now says "A HeLab converter (helab convert) is running (N). Stop it before
+  moving the cache."
+- **Checks.** The test asserts the whole text and fails on the old code. Full suite 8861 passed, no
+  RERUN; five type checks pass.
+- **Left as they are (proposed for Tony):** two other "Another HeLab is running" texts, not in Q43.4. They
+  now also mean a `helab convert` process:
+  - `CacheTab.py:605`: "Another HeLab is running: quit it before clearing the older cache";
+  - `CacheDialogs.py:106`: Clear old stores, "Another HeLab is running. Quit it first…".
