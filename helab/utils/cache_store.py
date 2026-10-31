@@ -2581,7 +2581,7 @@ class CacheStore:
                 maker = self._maker_id()
                 for entry in entries:
                     row = self._conn.execute(
-                        "SELECT size, mtime_ns, sha256, parser, file, job_seq FROM raw_layers "
+                        "SELECT size, mtime_ns, sha256, parser, file, job_seq, gone_at FROM raw_layers "
                         "WHERE path = ? AND shot = ?", (key, entry.shot)).fetchone()
                     read_at = now if entry.read_at is None else entry.read_at
                     if row is not None and (int(row[0]), int(row[1]), int(row[3])) == (
@@ -2598,6 +2598,10 @@ class CacheStore:
                         refused.append(entry.shot)  # (A job that listed the folder later saved its version.)
                         unused.append(entry.file)
                         continue
+                    # A listing at or after this batch read the file found the shot gone: still the only
+                    # copy (C2-11); one before the read is outdated by it.
+                    gone_at = (float(row[6]) if row is not None and row[6] is not None and float(row[6]) >= read_at
+                               else None)
                     if row is not None:
                         retired.append(str(row[4]))
                         if (int(row[0]), int(row[1])) != (entry.size, entry.mtime_ns):
@@ -2607,10 +2611,10 @@ class CacheStore:
                     self._conn.execute(
                         "INSERT OR REPLACE INTO raw_layers (path, shot, name, size, mtime_ns, sha256, parser, "
                         "encoding, facts, pulses, file, bytes, seen_at, gone_at, maker, job_seq, saved_at, last_used) "
-                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                         (key, entry.shot, entry.name, entry.size, entry.mtime_ns, entry.sha256, entry.parser,
                          entry.encoding, _dumps(dict(entry.facts)), entry.pulses, entry.file, sizes[entry.file],
-                         read_at, maker, guard.job_seq, now, now))
+                         read_at, gone_at, maker, guard.job_seq, now, now))
                     saved.append(entry.shot)
                 usage, writes = self._live(), self._writes()
                 if budget is not None and usage > budget and saved:

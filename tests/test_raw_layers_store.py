@@ -320,3 +320,17 @@ def test_dont_cache_with_remove_cached_data_takes_raw_layers_seen_and_keeps_only
                 set_at=40.0)
     raw = [event for event in events if event["kind"] == "removed" and event["kinds"] == ["raw"]]
     assert raw and raw[0]["paths"] == [X] and raw[0]["raw"] == 1
+
+
+def test_a_replacing_batch_read_before_a_listing_found_the_shot_gone_keeps_it_gone(tmp_path: Path) -> None:
+    """C2-11 (Assay): a batch replacing a shot's layer carries its only-copy mark when a listing at or after
+    the batch's read found the shot gone; one read after that listing clears it."""
+    with v4(tmp_path) as store:
+        store.save_raw_batch(RUN, [dataclasses.replace(entry(store, 1), read_at=10.0)], store.start_raw_job(RUN))
+        store.mark_raw_seen(RUN, {}, 200.0)
+        older = dataclasses.replace(entry(store, 1, size=5555), read_at=150.0)
+        assert store.save_raw_batch(RUN, [older], store.start_raw_job(RUN)).saved == (1,)
+        assert (store.raw_rows(RUN).value or {})[1].gone_at == 200.0
+        newer = dataclasses.replace(entry(store, 1, size=6666), read_at=250.0)
+        assert store.save_raw_batch(RUN, [newer], store.start_raw_job(RUN)).saved == (1,)
+        assert (store.raw_rows(RUN).value or {})[1].gone_at is None
