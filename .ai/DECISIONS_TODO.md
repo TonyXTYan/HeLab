@@ -115,17 +115,11 @@ Tony in Chat, 2026-10-31 evening, on Quick Fixes 8 and Caching v2 checkpoint 3 (
 - **The Windows flake** `test_io_service_run.py::test_writing_held_data_out_counts_as_progress` (known-issues):
   yes, a Quick Fixer hunts its cause.
 - **Floors:** close IO Fixes and Plot Identity (landed; branches kept).
-
-## Quick Fixes 8 (block 43)
-
-From Quick Fixes 8's [handoff](sessions/2026-10-31-claude-quick-fixes-8/handoff.md) (Rivet on Ground; the
-area review's app and convert fixes, A39.1, A39.3).
-
-- **Q43.1 Work Offline and Reset all settings** (app-1): Reset clears `work_offline`, but the session
-  stays offline with File › Work Offline checked, and the next start is online. (a) Reset keeps Work
-  Offline, like the cache folder's location, and the confirmation says so; (b) Reset turns Work Offline
-  off at once; (c) leave it. Proposed: (a): Work Offline is a mode turned on for a reason (no network),
-  not a preference to forget.
+- **Q43.1 Reset all settings while Work Offline is on** (app-1): Tony, "show popup of options, offer both a
+  and b": the Reset confirmation, only while Work Offline is on, asks whether to keep Work Offline (the
+  default button, as the cache folder's location is kept) or go online now. Not built yet.
+- **Landing Caching v2 checkpoint 3** (`ba898b8`) once its re-check has no open findings, and closing the
+  Area Review floor (branch kept): "ok".
 
 ## Quick Fixes 7 (block 38)
 
