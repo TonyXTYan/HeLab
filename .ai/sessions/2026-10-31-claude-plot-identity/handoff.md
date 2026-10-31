@@ -36,10 +36,12 @@ plots-4 and both nits. plots-2 is out of scope (Q39.1, A39.3). Base `0571ff2`; n
    profile's and a fresh load's next Live run detects again (velocity), another load's Live run keeps no
    box (correlations); both fail without `chain_key` (checked). The existing velocity kept test built its
    "later" view as another load; it now uses `revise` (a real revision).
-3. **plots-4 (`a293214`): Dash port.** `DashServer._listened_on_all(port)`: before binding the preferred
-   port (off Windows), a wildcard bind with `SO_REUSEADDR`; refused only by a socket holding the port on
-   all addresses (IPv4, or dual-stack IPv6), not by connections in TIME_WAIT, so
-   `test_stop_frees_the_port` still gets the same port back. Nothing is sent to the other program.
+3. **plots-4 (`a293214`, Windows `65de6d4`): Dash port.** `DashServer._listened_on_all(port)`: before
+   binding the preferred port, a wildcard bind as HeLab binds its own (`SO_REUSEADDR` off Windows);
+   refused only by a socket holding the port on all addresses (IPv4, or dual-stack IPv6), not by
+   connections in TIME_WAIT, so `test_stop_frees_the_port` still gets the same port back. Windows has the
+   same hijack without `SO_REUSEADDR` (CI run 41158691080 failed the new test there on every try), so
+   the probe runs on every OS since `65de6d4`. Nothing is sent to the other program.
    Measured on this Mac first (scratch probe): IPv4 and dual-stack `[::]` listeners found, TIME_WAIT
    not, our own bind not. Test parametrised ipv4/ipv6, fails without the probe (checked). Dropping
    `SO_REUSEADDR` on macOS (the review's first option) would have broken that same-port restart.
@@ -84,6 +86,15 @@ Logs kept whole in `.ai/temp/plot-identity/` (gitignored): `suite.log`, `suite2.
   mypy --strict and pyright on it clean, and test_typing in the second suite run.
 - Each new test was run against the code with its fix taken out and failed (plots-1 follow tests,
   plots-3 velocity and correlations, plots-4 both families, the nit).
+- **CI run 41158691080** (`08afbb0`): failed. Windows Tests (2/2) (job 124411181934): `2 failed, 4253
+  passed, 364 skipped, 34 warnings, 11 rerun`: the new plots-4 test, both families, on every try (rerun
+  reason each time `assert <port> != <port>` at `tests/test_dash_server.py:62`: Windows binds beside a
+  wildcard listener); fixed in `65de6d4`. The 11th RERUN:
+  `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`, reason
+  "worker 'gw1' crashed while running" it, passed on retry: **already in known-issues** (Windows CI run
+  40803552596); this run is another occurrence to add there. Every other job green with no RERUN (each
+  log read): macOS Tests 1/2 4250 passed, 2/2 4273; Ubuntu 1/2 4247, 2/2 4273; Windows 1/2 4233;
+  Converter backends macOS 713, Ubuntu 713, Windows 711; Builds green on all three.
 - CI: CI_RESULTS
 
 ## Proposed doc changes (for CoCo)
