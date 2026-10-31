@@ -126,3 +126,33 @@ its new tests, then re-applied it. With every fix in, the baseline is 144 passed
 - **Not rerun:** CI. The handoff's run 41159308171 is at `8aedf6d`, before the merge.
 - While I was reviewing, the worker committed `8145ff1` (a Live-convert test from the merge, outside this
   range). I did not review it.
+
+## Re-check of the fixes (`5457ccd..623ce20`, plus `8145ff1`)
+
+Reviewer: Claude Code (Opus 5.5), 2026-10-31. I checked only the fix diff.
+
+**Verdict: no open findings.** IO-R1 and IO-R2 are fixed.
+
+- **IO-R1, fixed** (`af5a205`). `cancel_for_quit` now lifts the hold after its cancel loop, as proposed. The new
+  test is `test_quitting_starts_none_of_the_loads_and_scans_the_hold_held`. It uses `held_service`, so the real
+  `_dispatch` runs. It asserts that no held load or scan sends `started` and that nothing is active. It fails
+  with `af5a205` reverted and passes with it.
+- **IO-R2, fixed** (`00de809`). `converted` now needs `origins.get(shot)`, the filter proposed. The new test is
+  `test_a_helab_held_shot_read_again_from_matlabs_isnt_called_converted`: the converted TXY is cleared, the
+  shot is read again from MATLAB's TXY, it isn't `converted`, and it has no HeLab origin. It fails with
+  `00de809` reverted and passes with it.
+- **`8145ff1`** (the Live convert test race, test only). This is a sound test fix. It waits for both the queued
+  conversion and the check instead of asserting the check at the moment the conversion is queued. It is
+  parametrized with `live_interval` 0, which reproduces the late-tick order. No app code changed. In five
+  repeated runs the test passed 2/2 each time.
+- **A~3** (the handoff's proposal for N1): I agree. It belongs to the cache area (`confirm_dataset` takes the
+  signature) and doesn't block this floor.
+
+**How "fails without the fix" was checked:** I extracted `623ce20` into `.ai/temp/rv-io2/` with `git archive`.
+For each fix I reverse-applied its `helab/` diff with `patch -R`, ran its test (1 failed), then re-applied it
+(1 passed).
+
+**Checks** at `623ce20`: `test_mismatched_folders`, `test_txy_sources`, `test_live_convert`, `test_live`,
+`test_live_check`, `test_quit_confirms` and `test_typing` (mypy strict and not, pyright),
+`-n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-probe`: **158 passed, no RERUN**. I didn't rerun
+the full suite or CI on this re-check.
