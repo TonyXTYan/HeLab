@@ -11,6 +11,7 @@ from PyQt6 import QtWebEngineWidgets  # noqa: F401  (before any QApplication: th
 from PyQt6.QtCore import QSettings
 from pytestqt.qtbot import QtBot
 
+from helab.resources.icons import IconsInitUtil
 from helab.utils.settings_defaults import MAIN_SPLIT_SETTING, read_setting
 from helab.utils.settings_store import app_settings
 from helab.views.FolderExplorer import FolderExplorer
@@ -18,6 +19,16 @@ from helab.views.HelabMainWindow import HelabMainWindow
 from test_debug_runner_menu import load, plot, run_folder
 
 pytestmark = pytest.mark.no_auto_data_root
+
+
+@pytest.fixture(autouse=True)
+def icons() -> None:
+    """The toolbars' icons, as ``main.py`` sets them up before the window opens. Without them each side
+    toolbar's buttons show their text, and how wide the toolbars are, so how much of the window the splitter
+    gets, depended on whether an earlier test in the worker had set them up: a 1300 px window gave a 976 px
+    splitter on Windows CI in one run and 676 px in the next (41161254527; 315 px of toolbars without icons
+    here, 72 px with them)."""
+    IconsInitUtil.initialise_icons()
 
 
 def wide_parts(window: HelabMainWindow) -> str:
@@ -183,8 +194,6 @@ def test_read_split_takes_two_widths_in_range_else_the_default(tmp_path: Path, s
     assert HelabMainWindow.read_split(settings) == expected
 
 
-# The splitter a window gets differs by OS and by what ran before in the worker (Windows CI: 976 px, and 676 px
-# in run 41161254527); 1300 and 1000 give about those here.
 @pytest.mark.parametrize("width", [1600, 1300, 1000], ids=["1600", "1300", "1000"])
 def test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved(qtbot: QtBot, width: int) -> None:
     """app-2 (area review): widths saved on a wide monitor, then a narrower window (a laptop, DPI scaling,
@@ -201,7 +210,7 @@ def test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved(qtbo
 
     def room() -> None:
         sizes, total = window.splitter.sizes(), window.splitter.width()
-        why = f"{sizes} in a {total} px splitter ({window.width()} px window)"
+        why = f"{sizes} in a {total} px splitter ({window.width()} px window, toolbars {window.width() - total} px)"
         assert (sizes[0], sizes[2]) == HelabMainWindow.fitted(1500, 600, total), why
         assert sizes[1] >= HelabMainWindow.MIN_PLOTS_WIDTH - handles, why
     try:
@@ -229,6 +238,7 @@ def test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved(qtbo
     (380, 320, 976, (380, 320)),     # The default in Windows CI's splitter: as it is (Q33.2).
     (1500, 600, 976, (406, 330)),    # Saved on a wide monitor: the plots keep 240 px.
     (1500, 600, 1277, (647, 390)),   # (A 1600 px window on macOS.)
+    (1500, 600, 676, (165, 271)),    # (Windows CI 41161254527: both near their least widths.)
     (1500, 0, 976, (736, 0)),        # The settings collapsed: the folders take the room.
     (0, 600, 976, (0, 600)),         # The folders collapsed: it fits.
     (300, 250, 500, (80, 250)),      # Too narrow even for both least widths: they hold, the plots get the rest.
