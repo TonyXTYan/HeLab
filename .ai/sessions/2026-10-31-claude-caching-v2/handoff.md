@@ -234,6 +234,17 @@ Not changed: `trim` (a lowered budget) still removes datasets only (A~4: give it
 Checks at `3f98958`: **8746 passed, 672 skipped, 2 warnings in 134.48s; no RERUN**; mypy (also win32) and pyright
 (also Windows) clean. Log: `.ai/temp/step4/suite-c2d.log`.
 
+### Tony's answers (2026-10-31, via CoCo) and what's next
+
+- **T~1 yes**: a raw batch over the budget is never saved and never asks. **T~2**: keep zstd 9. **T~3 yes**: store-v4
+  carries `datasets` through stage 1. **C2-9 confirmed**: Don't cache with remove cached data keeps only copies.
+- Checkpoint 2 lands at `a7b7257` (Assay pass 5: no open findings), after I/O Fixes (`471966b`) and Plot Identity.
+- **New item (Tony), after step 5 and before step 7: export cache options and the file format with sample code.**
+  Drafts: [hlb-format.md](hlb-format.md) (the format page, its "without HeLab" reader checked against a file
+  HeLab wrote) and [design-export.md](design-export.md) (`hlb.read`, `raw_layer.columns`, `helab cache dump` and
+  `export` to npz/mat/csv, read-only; one dispatch line in `helab/main.py`, to ask CoCo).
+- Next: CoCo's word to merge `dev/v0.0.8`, then step 5's `folder_cache.py` part.
+
 ## Proposed doc changes (for the Coordinator)
 
 - **known-issues** (cache-4): replace the `test_cache_switch.py` leak entry with: "Fixed on
