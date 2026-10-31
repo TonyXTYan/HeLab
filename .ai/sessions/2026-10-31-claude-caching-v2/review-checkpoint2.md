@@ -403,3 +403,83 @@ On an export of `630bf8e`:
 - The scratch checks for C2-9 and C2-10 (`.ai/temp/assay/test_zz_p3.py`), and the fails-without-fix table above.
 
 On the C2-9 and C2-10 fixes I re-check only those diffs.
+
+## Pass 4: the fix diff `99f7fd1..feba1ff`
+
+**Open findings: 2 Nits (C2-11, C2-12). C2-9 and C2-10 are fixed.**
+
+| Finding | Commit | Without the fix | With it |
+|---|---|---|---|
+| C2-10 | `0c08c5c` (`cache_store.py`) | 1 failed | 1 passed |
+| C2-9 | `6603b4b` (`cache_store.py`, `admin.py`) | 1 failed | 1 passed |
+
+(For each, I exported the commit, put its `helab/` files back as they were before it, and ran the tests it added.)
+
+- **C2-10: fixed for `mark_raw_seen` and the kept path.**
+  - A sighting clears `gone_at` only when it is newer: `CASE WHEN gone_at >= ? THEN gone_at END`, so an equal time
+    keeps the mark.
+  - A listing marks a shot gone only when it is newer than its `seen_at` (`AND seen_at < ?`); `COALESCE` keeps the
+    first time it was found gone.
+  - A batch's evidence is `RawEntry.read_at`. Note for step 5's `raw_fill`: it must pass `read_at`, because the
+    default (the save time) re-opens this hole.
+  - The test covers a late listing, a late batch, seen again later, and a late "gone".
+- **C2-9: fixed, as CoCo decided (Q22.6), for Tony to confirm.**
+  - `set_prefs_removing` with `remove_cached` also removes the folder's raw layers whose files were seen
+    (`gone_at IS NULL`), in the same transaction, bumping `raw:` epochs only when rows went. A batch is refused
+    after it anyway, by Don't cache.
+  - Only copies stay.
+  - `admin.py`'s `prefs` sends the raw `removed` event through `_removal_events`.
+- **Handoff:** it records both fixes and my notes for steps 5 and 6.
+
+### C2-11 · Nit · A batch that replaces a row clears the only-copy mark a newer listing set
+
+- `helab/utils/cache_store.py:2608` (`save_raw_batch`'s `INSERT OR REPLACE … gone_at NULL`): C2-10's own class,
+  on the replace path that fix didn't cover.
+- **Scenario.**
+  1. `d1.txt` is cached (version A).
+  2. The TDC overwrites it in place (version B), and a raw fill reads B at t=150.
+  3. A listing at t=200 finds `d1.txt` gone (`gone_at = 200` on A's row).
+  4. The batch lands at t=400. Its job is later, so B replaces A, correctly, with the overwrite noticed. But the
+     new row gets `gone_at NULL` and `seen_at 150`, although the shot was found gone at 200.
+
+  B's layer is now the only copy, yet Make room would take it in the "re-readable" pass without naming it. Rare:
+  it needs an overwrite, then a deletion, both while a fill is in flight.
+- **Fix.** On a replace, carry the old row's `gone_at` when it is at or after `read_at`.
+- **How verified.** Scratch test (`.ai/temp/assay/test_zz_p4.py`, on the export of `feba1ff`): `saved == (1,)`,
+  then `gone_at is None` and `seen_at == 150.0`.
+
+### C2-12 · Nit (test) · The `--via-layer` writes-nothing test patches `open` for the whole process and breaks the IOService cleanup thread
+
+- `tests/test_raw_layer.py:247-250`, from step 3's `b3945f1`. My pass 1 missed it: it shows only when the timing
+  lines up.
+- **Scenario.**
+  1. The test replaces `builtins.open` and `os.open` with `refuse` for every thread.
+  2. An earlier test on the same xdist worker left `IOService.release`'s "HeLab-artifact-cleanup" daemon thread
+     running `shutil.rmtree` (`os.open`).
+  3. That thread raises `AssertionError: a file was opened: ('…/helab_io_lgfnx0lc',)`, so the helper's temporary
+     folder is left behind.
+  4. Pytest reports `PytestUnhandledThreadExceptionWarning` against whichever test runs next. In my run that was
+     `test_raw_layers_store.py::test_a_batch_saves_its_layers_and_they_read_back`: the run's 3rd warning, not a
+     failure or a RERUN.
+
+  It's the same trap as the known-issues entry for `test_folder_cache.py::test_scan_reports_cached_children_…`.
+- **Fix** (as that entry proposes): refuse only on the test's own thread (`threading.get_ident()`) and pass other
+  threads' calls through to the real `open`/`os.open`.
+- **How verified.** The warning's traceback in `.ai/temp/assay/p4-suite.log` (thread `HeLab-artifact-cleanup`,
+  `shutil.rmtree` → `refuse`), and `grep` for the message: only `tests/test_raw_layer.py:248` raises it.
+
+### Checks (pass 4)
+
+On an export of `feba1ff`:
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-assay` (the full suite, every touched test
+  included): **8741 passed, 673 skipped, 3 warnings, 3 failed, 15 rerun in 148.38 s.**
+  - All 3 failures and all 15 RERUNs are the three git-provenance tests (the export has no `.git`; 5 reruns each),
+    which passed in the floor checkout with no RERUN at the last pass. Neither they nor `build_info.py` changed
+    since.
+  - No other RERUN.
+  - The 3rd warning is C2-12; the other two are the known pyqtgraph ones.
+- `mypy helab/ --strict` (199 files), `mypy tests --strict` (179), `--platform win32`: no issues.
+- `pyright helab tests` and `--pythonplatform Windows`: 0 errors.
+- The fails-without-fix table above, and the C2-11 scratch test.
+
+On the C2-11 and C2-12 fixes I re-check only those diffs.
