@@ -148,3 +148,21 @@ With one app per computer, the only other process sharing the app folder and sto
 - **Tests.** Seven `fitted` cases, CI's 976 px among them, and the window test at 1600 and 1300 px. The
   1300 case fails on c4e5b25.
 - **Suite.** 8537 passed, 672 skipped, no RERUN. The five type checks pass.
+
+### Run 41160032390 (`903f2b6`): success, every Tests, Converter and Build job log read
+
+- **windows Tests (1/2)** (job 124415375251): 4243 passed, **1 RERUN**:
+  `test_one_running.py::test_the_running_lock_is_held_by_one_process_and_freed_when_it_ends`
+  (`assert (None is not None)` at :50, my new test). Cause:
+  - it waited with `free_soon(lambda: take_running(app))`, but `take_running` returns a tuple, and
+    `(None, "")` is truthy;
+  - so it never waited out Windows' late release of a killed process's lock, which is the case
+    `free_soon` exists for (POSIX releases at once, so macOS can't show it).
+  - Fixed in the local commit below: the test waits on the lock itself and unlocks the override folder's
+    lock it took. Passed 5 of 5 here.
+- **No RERUN:** windows Tests 2/2 (4259 passed), macos Tests 1/2 (4260) and 2/2 (4277), ubuntu Tests
+  1/2 (4257) and 2/2 (4278), and all three Converter backends jobs (715 / 713 / 715).
+- **A39.1 again passed on all three builds:** "built cleanly from 0.0.7a1 at 903f2b6158…".
+- **Run 1's RERUNs did not recur:** the `test_io_service_run` one (known) and the `test_live_convert` one
+  (new, proposed above).
+- **Not pushed** (each push runs the full CI): the test fix and this record. CoCo says when to push.
