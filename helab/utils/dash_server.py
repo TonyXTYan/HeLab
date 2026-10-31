@@ -152,18 +152,25 @@ class DashServer:
     def _listened_on_all(port: int) -> bool:
         """Whether another socket holds ``port`` on all addresses (IPv4's, or IPv6's taking IPv4 too).
         macOS (with SO_REUSEADDR) and Windows (without) bind HOST_NAME beside it, which then takes its
-        connections to 127.0.0.1 (plots-4). Found by binding the wildcard address as HeLab binds its own
+        connections to 127.0.0.1 (plots-4). Found by binding each wildcard address as HeLab binds its own
         (SO_REUSEADDR off Windows, where it would share the port): connections in TIME_WAIT don't refuse
-        that (on Linux a listener on HOST_NAME does, whose port can't be shared anyway). Nothing is sent."""
-        probe = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        try:
-            if os.name != "nt":
-                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            probe.bind(("0.0.0.0", port))
-        except OSError:
-            return True
-        finally:
-            probe.close()
+        that (on Linux a listener on HOST_NAME does, whose port can't be shared anyway). IPv6's is probed
+        IPv6 only, since Windows doesn't let a dual-stack listener refuse IPv4's. Nothing is sent."""
+        for family, address in ((socket.AF_INET, "0.0.0.0"), (socket.AF_INET6, "::")):
+            try:
+                probe = socket.socket(family, socket.SOCK_STREAM)
+            except OSError:
+                continue  # No IPv6 here.
+            try:
+                if os.name != "nt":
+                    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if family == socket.AF_INET6:
+                    probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                probe.bind((address, port))
+            except OSError:
+                return True
+            finally:
+                probe.close()
         return False
 
     def start(self) -> int:
