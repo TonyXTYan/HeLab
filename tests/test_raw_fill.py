@@ -182,22 +182,31 @@ def test_encoding_a_large_raw_file_keeps_heartbeats_going(source: Path, v4_optio
                                                           monkeypatch: pytest.MonkeyPatch) -> None:
     """C3-1 (Assay): zstd 9 on a few hundred MB takes longer than the no-progress timeout on a slow PC; the
     encode runs under the converter's ticker (``compute_budget``), for ``raw_fill`` and conversions alike."""
+    import threading
     from helab.io_ops import raw_fill as module
     from helab.io_ops.infra import Heartbeat
     monkeypatch.setattr(Heartbeat, "INTERVAL", 0.02)
     encode = raw_layer.encode
+    sent: list[dict[str, Any]] = []
+    beating = threading.Event()
+
+    def send(event: dict[str, Any]) -> None:
+        sent.append(event)
+        if sum(item["kind"] == "heartbeat" for item in sent) >= 3:
+            beating.set()
 
     def slow(data: bytes) -> Any:
-        time.sleep(0.3)  # (A long encode: no read, no shot finished meanwhile.)
+        # (A long encode, with no read and no shot finished meanwhile: it lasts until three heartbeats came,
+        # however slowly a loaded runner schedules the ticker; without one it gives up after 10 s.)
+        beating.wait(10)
         return encode(data)
     monkeypatch.setattr(raw_layer, "encode", slow)
-    sent: list[dict[str, Any]] = []
     with opened(v4_options, source) as store:
         guard = store.start_raw_job(str(source))
         data = raw_text(1)
         item = module.RawRead(1, "d1.txt", len(data), OLD * 10**9, data, time.time())
-        module.save_batch(store, str(source), [item], guard, v4_options, sent.append)  # type: ignore[arg-type]
-    assert sum(event["kind"] == "heartbeat" for event in sent) >= 5
+        module.save_batch(store, str(source), [item], guard, v4_options, send)  # type: ignore[arg-type]
+    assert beating.is_set()
 
 
 def test_a_fill_leaves_a_raw_file_that_isnt_finished_waiting(source: Path, v4_options: dict[str, Any]) -> None:

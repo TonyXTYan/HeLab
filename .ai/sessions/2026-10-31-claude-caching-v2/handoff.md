@@ -363,6 +363,13 @@ gave 8851 passed, 672 skipped, no RERUN; strict mypy (also win32) and pyright (a
   before this fix, with the switch on (no users), could still trigger it.
 - **Checks:** the full suite (-n 4) gives **8857 passed**, 672 skipped, **no RERUN**. mypy --strict (helab, tests,
   win32) and pyright (also Windows) are clean.
+- **CI 41186805673** (`9abdb58`): macOS Tests 1/2 **failed**. My own new test,
+  `test_encoding_a_large_raw_file_keeps_heartbeats_going`, needed **5 RERUNs** and still failed: it got 2–4
+  heartbeats where it asked for ≥ 5. The cause is the test itself: it counted heartbeats in a fixed 0.3 s
+  window at a 0.02 s interval, and the loaded runner's ticker thread got fewer turns. The code was fine. The fix
+  (the next commit) makes the slow encode last until three heartbeats have come, with a 10 s deadline. It passes
+  25 of 25 runs under a 12-process CPU load with reruns off, and fails without C3-1's ticker. Every other job in
+  that run was green.
 
 ## Step 8: doc proposals for checkpoint 3 (steps 5–7, the export, cache-1)
 
