@@ -230,6 +230,9 @@ Checks at `0551343`: **8723 passed, 672 skipped, 2 warnings in 154.35s; no RERUN
 ## Follow-ups (provisional)
 
 - ~~A~1~~ done in stage 0 (S0-1, above).
+- **known-issues** (the fixes' CI 41164715526): add to the `test_io_service_run.py::test_writing_held_data_out_counts_as_progress`
+  entry "Again: `agent/caching-v2` CI 41164715526 (Windows Tests 2/2, job 124429733436, marks 1.4 ms and 5.2 ms)".
+  Its only RERUN; IOService untouched by this floor.
 - **A~2** `pack_dataset`'s 2.1 GB limit stays for v4's `datasets` in stage 1 (blosc-pickle); stage 2's `.hlb`
   segments end it.
 - **A~3** copy-on-use of store-v3's saved results into v4 (or decide read-through is enough while v3 is kept).
