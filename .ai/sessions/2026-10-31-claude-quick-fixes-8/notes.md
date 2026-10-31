@@ -54,6 +54,10 @@ One section per "Now" item: cause, evidence, fix, checks. Findings are the area 
 
   The old code fails it with `[1027, 0, 250]`. All of `test_main_split.py` passes (17 tests).
 
+- **Follow-up a0c630c** (Windows CI 41158349537): the floor is 240 px, so Q33.2's default holds in a
+  976 px splitter. The room is shared above each panel's least width (`fitted`). Collapsing the settings
+  panel keeps the folders as shown. The handoff's CI section has the details.
+
 ## 4. A39.3: one running HeLab per computer (0335768)
 
 - **Fix.**
