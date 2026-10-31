@@ -106,6 +106,37 @@ def test_background_pauses_while_foreground_works_and_resumes_after_delay(
     service.shutdown()
 
 
+def test_a_pause_flag_that_couldnt_be_removed_is_removed_on_a_later_tick(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    """Area review io-8 (2026-10-31): an antivirus or indexer holding the flag (a Windows sharing violation)
+    makes one ``os.remove`` fail; the helper must not stay paused for good, its no-progress timer frozen."""
+    service = lanes_service(monkeypatch, {"tab"})
+    service.configure_concurrency(2)
+    service.submit("other-tab", 0, "/a", "load")
+    background = service.active[0]
+    background.output = str(tmp_path)
+    flag = tmp_path / "pause"
+    service.submit("tab", 0, "/browse", "list")
+    service._tick()
+    assert background.pause_requested and flag.exists()
+    exit_helper(service, active(service, "tab", "list"))
+    service._foreground_busy_at -= service.RESUME_DELAY
+    real_remove, failures = os.remove, []
+
+    def held_once(path: Any) -> None:
+        if not failures:
+            failures.append(path)
+            raise PermissionError(13, "The process cannot access the file because it is being used")
+        real_remove(path)
+    monkeypatch.setattr(os, "remove", held_once)
+    service._tick()
+    assert failures and flag.exists()
+    service._tick()
+    assert not flag.exists() and not background.pause_requested
+    service.shutdown()
+
+
 def test_selected_load_pauses_for_listings_and_stalled_listings_do_not_block(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
 ) -> None:

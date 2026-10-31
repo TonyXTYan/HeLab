@@ -562,12 +562,14 @@ class IOService(QObject):
                                                              else request.operation == "load" and hold_load)))
             if pause != request.pause_requested:
                 with request.control:
-                    request.pause_requested = pause
-                    if request.output:
-                        self._write_pause(request.output, pause)
+                    # Not written (the flag held by another process for a moment): the next tick tries again,
+                    # so a helper is never left paused, its no-progress timer frozen (io-8).
+                    if not request.output or self._write_pause(request.output, pause):
+                        request.pause_requested = pause
 
     @staticmethod
-    def _write_pause(output: str, pause: bool) -> None:
+    def _write_pause(output: str, pause: bool) -> bool:
+        """Set or remove the pause flag: whether it is as asked now."""
         # A local temp file; the helper checks it between files and entries.
         flag = os.path.join(output, "pause")
         try:
@@ -575,8 +577,11 @@ class IOService(QObject):
                 Path(flag).touch()
             else:
                 os.remove(flag)
+        except FileNotFoundError:
+            return not pause
         except OSError:
-            pass
+            return False
+        return True
 
     def load_busy(self) -> bool:
         """Whether a load is running or waiting, without filesystem access."""
@@ -817,8 +822,8 @@ class IOService(QObject):
             with request.control:
                 request.output = tempfile.mkdtemp(
                     prefix="helab_data_" if request.operation in ("load", "cached") else "helab_io_")
-                if request.pause_requested:
-                    self._write_pause(request.output, True)
+                if request.pause_requested and not self._write_pause(request.output, True):
+                    request.pause_requested = False  # (Tried again by the next tick's ``_apply_pauses``.)
             payload["output"] = payload["control"] = request.output
             if request.arrays is not None:
                 import numpy as np
