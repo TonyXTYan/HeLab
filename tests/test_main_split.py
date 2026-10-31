@@ -183,7 +183,8 @@ def test_read_split_takes_two_widths_in_range_else_the_default(tmp_path: Path, s
     assert HelabMainWindow.read_split(settings) == expected
 
 
-def test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved(qtbot: QtBot) -> None:
+@pytest.mark.parametrize("width", [1600, 1300], ids=["1600", "1300"])  # (1300: Windows CI's splitter, ~976 px.)
+def test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved(qtbot: QtBot, width: int) -> None:
     """app-2 (area review): widths saved on a wide monitor, then a narrower window (a laptop, DPI scaling,
     ``--geometry``): both panels narrow in proportion so the plots keep MIN_PLOTS_WIDTH (QSplitter gave them
     0 px), also when a panel is shown again; quitting saves the widths chosen, not the narrowed ones. A width
@@ -191,7 +192,7 @@ def test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved(qtbo
     app_settings().setValue(MAIN_SPLIT_SETTING, "1500,600")
     window = HelabMainWindow()
     qtbot.addWidget(window)
-    window.resize(1600, 900)
+    window.resize(width, 900)
     window.show()
     qtbot.waitUntil(lambda: isinstance(window.tab_widget.currentWidget(), FolderExplorer), timeout=10_000)
     handles = 2 * window.splitter.handleWidth()
@@ -219,3 +220,23 @@ def test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved(qtbo
     finally:
         closed(qtbot, again)
     assert read_setting(app_settings(), MAIN_SPLIT_SETTING) == f"{left - 100},600"
+
+
+@pytest.mark.parametrize("left, right, total, expected", [
+    (380, 320, 976, (380, 320)),     # The default in Windows CI's splitter: as it is (Q33.2).
+    (1500, 600, 976, (406, 330)),    # Saved on a wide monitor: the plots keep 240 px.
+    (1500, 600, 1277, (647, 390)),   # (A 1600 px window on macOS.)
+    (1500, 0, 976, (736, 0)),        # The settings collapsed: the folders take the room.
+    (0, 600, 976, (0, 600)),         # The folders collapsed: it fits.
+    (300, 250, 500, (80, 250)),      # Too narrow even for both least widths: they hold, the plots get the rest.
+    (2000, 260, 976, (484, 252)),    # The settings near its least width: the folders give way.
+])
+def test_widths_that_dont_fit_are_shared_above_each_panels_least_width(left: int, right: int, total: int,
+                                                                       expected: tuple[int, int]) -> None:
+    """app-2: the plots keep MIN_PLOTS_WIDTH where the panels allow; each shown panel keeps its least width, and
+    the room above those goes in proportion to what each had above its own (Windows CI's splitter is 976 px)."""
+    fitted = HelabMainWindow.fitted(left, right, total)
+    assert fitted == expected
+    if left + right > total - HelabMainWindow.MIN_PLOTS_WIDTH:
+        assert sum(fitted) == max(total - HelabMainWindow.MIN_PLOTS_WIDTH,
+                                  min(left, HelabMainWindow.MIN_PANEL_WIDTH) + min(right, HelabMainWindow.MIN_SETTINGS_WIDTH))

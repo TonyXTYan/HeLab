@@ -1276,8 +1276,9 @@ class HelabMainWindow(QMainWindow):
     # default split holds where the system's font is wider (Windows), set rather than taken from the contents.
     MIN_SETTINGS_WIDTH = 250
     # The plots' least width when the panels' widths don't fit the window (app-2: a split saved on a wider
-    # screen narrows both panels in proportion, rather than leaving the plots 0 px).
-    MIN_PLOTS_WIDTH = 400
+    # screen narrows both panels in proportion, rather than leaving the plots 0 px). Below what the default
+    # split leaves in Windows CI's 976 px splitter (268 px), so the default 380/320 holds there (Q33.2).
+    MIN_PLOTS_WIDTH = 240
     _split_shown = True  # (False from ``_setup_central_widgets`` until the first show applies the widths.)
     # Panels the window narrowed (splitter index: (width shown, width chosen)), not saved as the user's.
     _narrowed: dict[int, tuple[int, int]] = {}
@@ -1310,16 +1311,27 @@ class HelabMainWindow(QMainWindow):
             self._split_shown = True
             self._set_split(self.left_panel_width, self.right_panel_width, self.splitter.width())
 
+    @classmethod
+    def fitted(cls, left: int, right: int, total: int) -> tuple[int, int]:
+        """The panels' widths ``left`` and ``right`` (0: collapsed) in a splitter ``total`` wide: as they are
+        when the plots keep MIN_PLOTS_WIDTH; else each shown panel keeps its least width and the room above
+        those is shared in proportion to what each had above its own (one held at its least width narrows
+        the other)."""
+        room = total - cls.MIN_PLOTS_WIDTH
+        if left + right <= room:
+            return left, right
+        least_left, least_right = min(left, cls.MIN_PANEL_WIDTH), min(right, cls.MIN_SETTINGS_WIDTH)
+        above_left, above_right = left - least_left, right - least_right
+        spare = max(0, room - least_left - least_right)
+        share = round(spare * above_left / (above_left + above_right)) if above_left + above_right else 0
+        return least_left + share, least_right + min(spare - share, above_right)
+
     def _set_split(self, left: int, right: int, total: int) -> None:
         """The panels ``left`` and ``right`` wide (0: collapsed), the plots the rest of ``total``. Where the
         plots would get less than MIN_PLOTS_WIDTH, the shown panels are narrowed in proportion (to no less
         than their least widths) for this window only: the widths chosen stay the ones saved."""
         chosen = {0: left, 2: right}
-        room = total - self.MIN_PLOTS_WIDTH
-        if left + right > room:
-            scale = max(room, 0) / (left + right)
-            left = max(round(left * scale), self.MIN_PANEL_WIDTH) if left else 0
-            right = max(round(right * scale), self.MIN_SETTINGS_WIDTH) if right else 0
+        left, right = self.fitted(left, right, total)
         self.splitter.setSizes([left, max(0, total - left - right), right])
         sizes = self.splitter.sizes()
         self._narrowed = {index: (sizes[index], width) for index, width in chosen.items() if sizes[index] < width}
@@ -1481,11 +1493,9 @@ class HelabMainWindow(QMainWindow):
             self.view_toggle_right_panel.setChecked(True)
         else:
             self._remember_panel_widths()
-            self.splitter.setSizes([
-                self.splitter.sizes()[0],
-                self.width()-self.left_panel_width,
-                0
-            ])
+            # Its width goes to the plots; the folders keep the width shown (which the window may narrow).
+            left, middle, right = self.splitter.sizes()
+            self.splitter.setSizes([left, middle + right, 0])
             self.sidebar_toolbar_right.actions()[0].setIcon(ToolIcons.ICON_RIGHT_EXPAND)
             self.toggle_right_panel_action.setChecked(False)
             self.view_toggle_right_panel.setChecked(False)
