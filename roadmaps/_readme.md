@@ -31,16 +31,24 @@ version bump on that branch.
   v0.0.7; built in v0.0.8 (Q28.2) as one staged area floor
   ([hybrid workflow](agent-workflow.md#feature-floors-with-named-areas-hybrid-tony-2026-10-31)),
   stage by stage, **after Tony's go** (no cache code before it) (block 28; [plan](caching-v2.md),
-  Q19.x, Q22.x, 2026-10-29).
+  Q19.x, Q22.x, 2026-10-29). Go given (Q28.1); stage 0 and stage 1's checkpoint 2 (the `.hlb` container,
+  the raw layer, store-v4's core and raw layers' store side, the switch off) landed `ad86bd3`; left:
+  `raw_fill`, the store-v3 question, the integration check, cache export and the `.hlb` format (Q42.5).
 - [ ] Say when a raw file's reading stops early (A37.1, Q37.1; Tony, 2026-10-31): the parser stops at
   the first unreadable token as MATLAB's `textscan` does, silently today.
 - [ ] TXY and shares (Q39.2, Tony 2026-10-31; A39.5): writing TXY to a share warns that conversion
   belongs on the machine that owns the data; a share folder without TXY offers to convert into HeLab's
   cache (recommended) or temp, and still allows beside after the warning.
-- [ ] One running HeLab per computer, from source or a build (Q39.1, A39.3).
+- [x] One running HeLab per computer, from source or a build (Q39.1, A39.3; `0335768`, Quick Fixes 8).
+- [ ] The v0.0.7a1 area review's findings (`.ai/sessions/2026-10-31-claude-area-review/`): io by IO Fixes
+  (landed `471966b`, with A39.2), plots by Plot Identity (`e3f94d9`), cache by Caching v2's stage 0
+  (`ad86bd3`), app-1, app-2 and convert-1 by Quick Fixes 8 on Ground, with A39.1 (the archive check on PR
+  builds, `c201c01`); convert-2 (`9d2a866`) and A39.4 (`915aff5`) by Quick Fixes 8 too;
+  left: Q43.1–Q43.4.
 - [ ] Quick Fixes 7's open items (block 38): Q38.1–Q38.3 (beside conversion without a no-replace
   rename, Live switching a held shot to HeLab's TXY, Folder details' wording), A38.1, A38.2 and M38.1
-  (whether the lab share can add a file without replacing one).
+  (whether the lab share can add a file without replacing one). Q38.2 is built (A39.2, `471966b`);
+  Q38.3 is A39.4.
 - [ ] v0.0.7's open checks ([MANUAL_TODO](../.ai/MANUAL_TODO.md)): on a Mac, M1.4-2 to M1.4-4,
   M1.5, M1.6-3, M1.8, M1.9 and M36.1–M36.4, and by hand the splitter drags and floated plots
   opening a step apart; the review of M1.4-1 and M1.7's physics; the lab PC pass (M1.1–M1.10 on

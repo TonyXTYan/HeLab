@@ -32,8 +32,9 @@ How to use it:
 
 - [ ] **A cached dataset over ~2.1 GB can't be saved.** `pack_dataset` (`helab/utils/cache_store.py:459`)
   compresses a whole folder in one Blosc call, and python-blosc 1.11.4 caps a call at 2,147,483,631
-  bytes (store-v4 design note, 2026-10-29). Store-v4's chunked `.hlb` files fix it; until then a
-  folder that large stays RAM only (check what the save reports).
+  bytes (store-v4 design note, 2026-10-29). Store-v4's chunked `.hlb` files fix it in caching v2's stage
+  2; store-v4's `datasets` keep the limit through stage 1 (Q42.3; Caching v2's A~2). Until then a folder
+  that large stays RAM only (check what the save reports).
 - [ ] **Dataset files are pickles** (`DATASET_FORMAT = "blosc-pickle-1"`, `pickle.loads` in
   `unpack_dataset`, `cache_store.py:466-473`), unlike saved results (NumPy + JSON). A cache folder
   someone else can write to could run code in HeLab's helpers. Store-v4's pickle-free `.hlb`
@@ -61,9 +62,22 @@ How to use it:
 - [ ] When a tab's shown data is dropped while it is shown (a folder status check finds
   the folder mismatched, or its cache is cleared), the tab keeps its arrays and later
   plots on screen; a load finding missing shots clears them (Tony, 2026-10-14). Since
-  plotting, a plot whose folder signature no longer matches says "Showing previously loaded
-  data" (`_update_plot_source_label`); not checked: a cache clear, which keeps the signature,
-  and the tab's own arrays (2026-10-28).
+  plotting, a plot whose data differs from the tab's (its shots, their files and origins:
+  `DatasetView.held` / `held_of`, plots-1; by shot numbers for a plot with its own TXY choice) says
+  "Showing previously loaded data" (`_update_plot_source_label`); not checked: a cache clear (which
+  keeps the tab's dataset, so the label stays) and the tab's own arrays (2026-10-28).
+- [ ] Live's line counts shots waiting with reason `cleared` (A19.2: Clear converted TXY ran during that
+  conversion) as stuck until the next check, and their tooltip ends "A waiting file is checked again only
+  when it changes", which is wrong for `cleared`: the next check converts them. Transient (one check
+  interval). Fix: leave `cleared` out of `stuck()` in `explorer_live.py`, with its own line or none; not
+  adding it to `CONVERT_SETTLING`, which would list them as being written (Caching v2 stage 0, Assay's
+  S0-2, 2026-10-31).
+- [ ] On Windows the Dash server can bind 127.0.0.1:8050 beside a dual-stack `[::]:8050` listener (an IPv4
+  wildcard probe and a `[::]` V6ONLY probe both bind); whether that program then loses its 127.0.0.1
+  connections is unverified. `test_dash_server.py`'s ipv6 case is skipped on Windows (CI 41160242383,
+  41161383176). IPv4 wildcard listeners are found on every OS (`DashServer._listened_on_all`, plots-4).
+  Needs a Windows machine: try `SO_EXCLUSIVEADDRUSE` on HeLab's socket, checking it still gets its port
+  back after a restart (TIME_WAIT) (Plot Identity, 2026-10-31).
 - [ ] With a server clock more than 2 s off ours, a change in the same mtime step right after a
   listing (FAT and some shares keep 2 s) isn't seen by the quick check until the folder's next
   change (the next shot) or a Retry / Refresh (R-1's residual, agreed with the reviewer)
@@ -123,18 +137,22 @@ How to use it:
   helpers to exit after `service.shutdown()`), on Windows CI run 40803552596 (`agent/txy-ship`) and
   once locally on macOS; passed on retry. Again on Windows: Ground CI 40861772277 (`9f0b21f`) and
   `agent/txy-index` CI 40874212130; Ground CI 40988453930 (`c492242`, Windows Tests 1/2) and 41000437956 (`43cb202`);
-  the `[1]` case on Windows, `agent/ui-polish` CI 41005221588 (same line). A candidate: 3 s under load.
+  the `[1]` case on Windows, `agent/ui-polish` CI 41005221588 (same line); `[2]` on Ground CI 41164525298
+  (`82c9db3`, Windows Tests 1/2, job 124429158185). A candidate: 3 s under load.
 - [ ] `test_plot_backends.py::test_2d_plots_draw_with_every_library[values0-Plotly-CountsPerShot]`: an
   xdist worker crashed on Windows CI run 40803552596; passed on retry (no traceback; look for a
   faulthandler dump). Again: the Plotly case on `agent/byte-units` CI 40865344851 (job 123418722344,
   gw3), and `[values1-Matplotlib-CountsPerShot]` on `agent/txy-index` CI 40883472651 (job
   123480992297, gw1). The Plotly case again on Windows Tests 2/2: Ground CI 41084197666 (job
-  124161029996, `dd540cd`) and PR CI 41095142656 (`8ccc0be`).
+  124161029996, `dd540cd`) and PR CI 41095142656 (`8ccc0be`); `agent/plot-identity` CI 41158691080
+  (Windows Tests 2/2, job 124411181934, gw1).
 - [ ] `test_io_service_run.py::test_writing_held_data_out_counts_as_progress`: `assert (2 == 1)` at
   line 40 (two progress marks, 0.7 ms and 1.4 ms, where one is expected), Windows CI 40863356565
   (job 123411955603, `agent/txy-index`); passed on retry. Again: `agent/runner-tools` CI 40989399407
-  (Windows); Ground CI 41084197666 (Windows Tests 2/2, job 124161029996, two marks 0.96 ms and 1.5 ms).
-  A Windows timing flake; IOService untouched.
+  (Windows); Ground CI 41084197666 (Windows Tests 2/2, job 124161029996, two marks 0.96 ms and 1.5 ms);
+  Ground CI 41158349537 (Quick Fixes 8, Windows Tests 2/2, job 124410096333, twice); `agent/caching-v2`
+  CI 41164715526 (Windows Tests 2/2, job 124429733436, marks 1.4 ms and 5.2 ms). A Windows timing flake;
+  IOService untouched by those branches.
 - [ ] `test_root_discovery.py::test_volume_check_alone_refreshes_hints_without_visiting_markers`:
   xdist worker gw2 crashed on macOS CI 40866574094 attempt 1 (job 123422851726, `agent/txy-index`
   `9691873`; `INTERNALERROR> AssertionError: (…, <WorkerController gw2>)`, exit code 3, no RERUN);
@@ -142,19 +160,20 @@ How to use it:
   `os.lstat` for the whole process; an unraisable reached pytest's hook, whose `tracemalloc_message`
   ran coverage's `canonical_filename` → `os.path.realpath` → the patched `lstat` → `Failed` inside the
   hook. Fix: patch the name the code under test calls (`data_roots`' or `infra`'s), or `gc.collect()`
-  before patching. The collected object may be one of `test_cache_switch.py`'s leaked connections
-  (next).
-- [ ] `test_cache_switch.py` leaves three `sqlite3.Connection`s unclosed (`ResourceWarning:
-  unclosed database` with `-W always::ResourceWarning`): two in
-  `test_load_that_cannot_read_the_cache_leaves_its_flag_unknown`, one in
-  `test_newer_store_is_read_but_never_written` (the store's error paths). They surface when the GC
-  collects them, in whatever test runs then. Found by the TXY Index floor on `9f0b21f`.
+  before patching. The collected object may have been one of the tests' leaked connections (fixed,
+  `46f481f`, below); the patch-the-name fix still stands.
 - [ ] `test_folder_cache.py::test_scan_reports_cached_children_without_loading_or_probing_them`: reran
   once on Windows CI 40894080358 (job 123518429856, `agent/txy-index` `1b71c37`): `assert scanned ==
   [str(root)]` at line 1155, with a `helab_io_…` temp folder first. Its process-wide `os.scandir` patch
   caught `IOService.release`'s `shutil.rmtree` on the "HeLab-artifact-cleanup" daemon thread
   (`io_service.py:963`), the same trap as the fixed `test_folder_summary` entry below. Fix: record
   only the test thread's calls (`threading.get_ident()`) or paths under `tmp_path`.
+- [ ] `test_folder_icons.py::test_native_icon_delivery_is_shared_and_rendering_stays_memory_only`:
+  "Painting an icon performed I/O or submitted work" raised on another thread (pytestqt "Failed to
+  process thread exception"), Ground CI 41164525298 (Windows Tests 1/2, job 124429158185, gw0,
+  `82c9db3`); passed on rerun. It patches `os.stat` and `os.scandir` for the whole process, so likely
+  another thread in the worker stat'ed meanwhile (the trap above). Fix: check only the GUI thread's calls
+  (Quick Fixes 8, 2026-10-31).
 - [ ] `test_folder_summary.py::test_cached_scan_age_and_failed_refresh_retain_counts` fails across
   midnight UTC: 3 RERUNs on Windows CI 40975825607 (job 123803535756, `agent/txy-index` `c6277f0`):
   `assert '2026-10-29' in 'Last successful status scan: 2026-10-30 00:00:19 …'` at line 286. It takes
@@ -168,7 +187,9 @@ How to use it:
   124171347360, `b836b56`, 2026-10-31); passed on rerun. Cause not found.
 - [ ] `test_root_gui.py::test_the_gui_never_writes_the_saved_file_itself`: xdist worker gw0 crashed
   once on macOS CI (run 40790093719, `agent/quick-fixes-5` `ed0635c`, job 123172940859, 2026-10-29);
-  passed on its rerun. A crash, not an assertion (a native fault in a GUI test?); cause unknown.
+  passed on its rerun. Again: gw2 on Ground CI 41161254527 (Windows Tests 2/2, job 124419124616,
+  `f128623`; "node down: Not properly terminated", a stack at line 449), passed on gw4. A crash, not an
+  assertion (a native fault in a GUI test?); cause unknown.
 - [ ] `test_test_isolation.py::test_pytest_imports_the_checkout_it_runs_in_before_any_other`: a
   collection error in pathlib `lstat` on Windows CI (run 40754482305, `agent/txy-packaging` `7d2bff9`),
   passed on retry. Again on Windows Tests (2/2): `agent/byte-units` CI 40989130996 (job
@@ -260,4 +281,30 @@ lines are in TonyXTYan/HeLab#10):
   this step. Fixed on `dev/v0.0.8`: a linked stamp is followed and must lead to another stamp
   (`tests/test_release_recovery.py`; the old check fails and the new one passes on that run's macOS
   zip). Tony chose no hotfix to `main` (2026-10-31): v0.0.8's release is the first with zips. Running
-  `release_draft --validate-only` on PR builds would have shown it before the merge (A39.1).
+  `release_draft --validate-only` on PR builds would have shown it before the merge: since `c201c01`
+  every 3.13 build checks its own archive (`release_draft --check`, A39.1).
+- [x] `test_cache_switch.py` left three `sqlite3.Connection`s unclosed (`ResourceWarning: unclosed
+  database`; found by the TXY Index floor on `9f0b21f`). Fixed on `agent/caching-v2` (`46f481f`, landed
+  `ad86bd3`): the leaks were the tests' own `with sqlite3.connect(...)` blocks (29 in 11 files; sqlite3's
+  context manager commits but never closes), not the store's error paths; tests now use
+  `contextlib.closing`.
+- [x] `test_live_convert.py::test_a_converted_shot_asks_for_lives_next_check`: `'' == 'check'` at :231,
+  macOS CI 41158349537 (Tests 2/2, gw3; passed on rerun). A race in the test: when two ticks in a row are
+  late, a check queued with a conversion is answered by `cycle` without running it, so the test reached
+  :230 with a conversion queued and no check out yet. Fixed in the test (`8145ff1`, IO Fixes, landed
+  `471966b`): it waits for the conversion and a check, with `live_interval` 0.02 and 0 (0 reproduced it
+  3/3).
+- [x] `test_cache_mover.py::test_startup_waits_out_a_move_then_recovers_and_registers`: `[True, True,
+  True] == [True]` at :198, CI 41162160704 (IO Fixes `623ce20`, Windows Tests 1/2); passed on rerun.
+  Windows frees a killed helper's `move.lock` a little later, so `startup` found it held and waited again.
+  Fixed: the test's `wait()` also waits until the move lock is free (`e8e7ebc`).
+- [x] `test_one_running.py::test_the_running_lock_is_held_by_one_process_and_freed_when_it_ends`:
+  `None is not None` at :50, Ground CI 41160032390 (Windows Tests 1/2, job 124415375251). It waited on
+  `take_running`'s tuple, always truthy, so never waited out Windows' late release of a killed process's
+  lock. Fixed: it waits on the lock itself (`f128623`).
+- [x] `test_main_split.py`'s window test (`[1300]`) failed on Windows (CI 41161048586, 41161254527): its
+  window's splitter width depended on the worker's history (without `IconsInitUtil.initialise_icons()` the
+  side toolbars show their text, and whichever earlier test set the icons up decided it). Fixed: the test
+  checks the panels against `fitted()` for the splitter it got (`279fc8b`), the file sets the icons up for
+  every test (`04a667a`), after the `QApplication` (`1f86ca2`: icons made first aborted six workers on CI
+  41164525298). Other window tests: A43.1.

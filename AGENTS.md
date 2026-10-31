@@ -162,21 +162,28 @@ Each rule names the area file with the detail.
   add a kind there, and `tests/test_helper_events.py` checks both sides.
 - The frozen helper entry point in `helab/main.py` (after `freeze_support()`, before the `convert`
   dispatch) runs before imports that start GUI services, caches or Dash.
+- One HeLab app per computer: `main()` takes `running.lock` in the app folder
+  (`cache_locks.take_running`) before anything opens; a second start says so and exits 1 (Q39.1,
+  A39.3; [app-runtime](.ai/architecture/app-runtime-and-ui.md)). `helab convert` doesn't take it.
 
 **The disk cache** ([cache-store](.ai/architecture/cache-store.md),
 [data-roots](.ai/architecture/data-roots.md)):
 - Only helpers (and `helab convert`, a headless process without the GUI) open the store
-  (`DIR_CACHES/store-v3`, `CacheStore`); the GUI sends `store_options()` with each request. A
-  read answers found / missing / error, and an error is never "nothing saved".
+  (`DIR_CACHES/store-v3`, `CacheStore`; with the `store_v4` switch on, `store-v4`, and store-v3 then
+  only through `LegacyStore`, read only; wording for Tony to confirm, Q42.6); the GUI sends
+  `store_options()` with each request. A read answers found / missing / error, and an error is
+  never "nothing saved".
 - Disk caching needs a data root (a hidden `.helab-root` at or above the folder; keys
   `root://<uuid>/<relative>`). Without one the folder is RAM only, with no fallback to path keys.
 - Every store write checks the save guard its job took when it started (generations, epochs,
   `job_seq`), so a running save can't bring back removed data or overwrite newer data.
-- A table or column added within `store-v3` is added to older stores by `cache_store._migrate`
-  on every writable open, never only in `SCHEMA`.
+- A table or column added within `store-v3` or `store-v4` is added to older stores by
+  `cache_store._migrate` (store-v4: `store_v4.migrate`) on every writable open, never only in
+  `SCHEMA`.
 - **HeLab never removes the user's data, cached datasets, records, folder flags, constants or
   presets without asking.** Housekeeping is the exception, and only what is listed here:
-  - the sweep deletes retired dataset files, and store files no row names once over an hour old;
+  - the sweep deletes retired dataset and layer files, and store files no row names (store-v4's
+    `raw/` too) once over an hour old;
   - pending saves and results expire after `PENDING_MAX_AGE` (1 h);
   - startup deletes the old diskcache folders and log files beyond the kept count;
   - session-only lists drop their oldest entries;
@@ -203,7 +210,7 @@ Each rule names the area file with the detail.
 **Settings** ([settings](.ai/architecture/settings.md)): open QSettings only through
 `app_settings()` (helpers: `cache_setting.open_settings`). Every key HeLab reads is a row in
 `helab/utils/settings_defaults.py`, read through `read_setting`. Read numbers untyped (PyQt's
-`type=int` is 32-bit).
+`type=int` is 32-bit). The `store_v4` row stays off until caching v2's stage 2 and Tony's go (Q28.3).
 
 **Analysis and plots** ([plots-and-scripts](.ai/architecture/plots-and-scripts.md),
 [dld-analyses](.ai/architecture/dld-analyses.md)):
@@ -251,13 +258,13 @@ that needs Python uses `weakref.finalize` (`tests/test_destroyed_connections.py`
 | `helab/convert_cli.py` | `helab convert --watch` (headless converter) | [converter](.ai/architecture/converter.md) |
 | `helab/utils/io_service.py` | `IOService`: lanes, slots, pausing, offline gate | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
 | `helab/utils/folder_cache.py` | `FolderCache`: session memory, jobs, RAM budget, presets and results state, store identity | [cache-store](.ai/architecture/cache-store.md) |
-| `helab/utils/cache_store.py`, `cache_paths.py`, `data_roots.py`, `cache_move.py` | the store, location keys, markers, cache-folder move | [cache-store](.ai/architecture/cache-store.md), [data-roots](.ai/architecture/data-roots.md) |
+| `helab/utils/cache_store.py`, `cache_paths.py`, `data_roots.py`, `cache_move.py`; `store_v4.py`, `legacy_store.py`, `hlb.py` | the store, location keys, markers, cache-folder move; store-v4 behind its switch, store-v3 read only under it, the `.hlb` container | [cache-store](.ai/architecture/cache-store.md), [data-roots](.ai/architecture/data-roots.md) |
 | `helab/utils/file_kinds.py` | `FILE_KINDS`: raw `d<N>.txt`, TXY `d_txy_forc<N>.txt`, HeLab's `d_txy_helab_<tag>_<N>.txt` (a new format is a new entry) | [cache-store](.ai/architecture/cache-store.md) |
 | `helab/models/SnapshotFileSystemModel.py` | the tree model (memory only) | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md) |
 | `helab/views/` | main window, `FolderExplorer` and `explorer_live.py` (Live, auto-convert), `live_launch.py` (one launch folder), Folder details, Settings tabs (`ConverterTab.py`: TXY converter), dialogs | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [live](.ai/architecture/live.md), [converter](.ai/architecture/converter.md) |
 | `helab/views/plots/` | `PlotWorkspace`, docks, settings panel, presets, arrangements, cached results, each plot's TXY row (`txy_source.py`) | [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |
 | `helab/analysis/` | analysis core, mostly Qt-free (`QT` in `tests/test_headless_imports.py` lists the rest): `DatasetView`, runner, parameters, selection, fits and other numerics, presets, result cache | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
-| `helab/convert/`, `native/` | the TXY converter (Qt-free): `raw`, `profile`, `reconstruct` and `backends/` (numpy the default; cython ships; reference; rust, numba, mlx for developers only, A9.1), `txy`, `fastio`, `split`, `pipeline`, `provenance` (the converted-TXY index), `user_profiles`, built-in profiles as JSON; harness `samples`, `check`, `timing` (scripts in `dev/txy/`); compiled backends' sources in `native/`; TXY sources' four modes `helab/utils/txy_sources.py` | [converter](.ai/architecture/converter.md) |
+| `helab/convert/`, `native/` | the TXY converter (Qt-free): `raw`, `profile`, `reconstruct` and `backends/` (numpy the default; cython ships; reference; rust, numba, mlx for developers only, A9.1), `txy`, `fastio`, `split`, `pipeline`, `provenance` (the converted-TXY index), `raw_layer` (caching v2), `user_profiles`, built-in profiles as JSON; harness `samples`, `check`, `timing` (scripts in `dev/txy/`); compiled backends' sources in `native/`; TXY sources' four modes `helab/utils/txy_sources.py` | [converter](.ai/architecture/converter.md) |
 | `helab/scripts/standard/`, `helab/scripts/dld/` | Basic plots v1; the DLD Front Panel Port | [plots-and-scripts](.ai/architecture/plots-and-scripts.md), [dld-analyses](.ai/architecture/dld-analyses.md) |
 | `helab/utils/settings_store.py`, `settings_defaults.py`, `lab_parameters.py` | settings | [settings](.ai/architecture/settings.md) |
 | `helab/utils/app_log.py`, `gui_watchdog.py`, `events.py`, `dash_server.py` | logging, stall dumps, notifications, the Plotly server | [app-runtime-and-ui](.ai/architecture/app-runtime-and-ui.md), [plots-and-scripts](.ai/architecture/plots-and-scripts.md) |

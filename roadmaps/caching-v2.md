@@ -1,8 +1,10 @@
 # Caching v2: raw files as the cached source
 
-Horizon: v0.0.8 (Q28.2, Tony 2026-10-29), after v0.0.7's converter. Added: 2026-10-29, planned with Tony in Chat. **Planning
-only: no cache code until Tony's explicit go** (block 19; Q26.2's converted-TXY index has its go
-for v0.0.7; readiness for an unattended build: block 28). Evidence and options:
+Horizon: v0.0.8 (Q28.2, Tony 2026-10-29), after v0.0.7's converter. Added: 2026-10-29, planned with Tony in Chat. **Tony's
+go came on 2026-10-31 (Q28.1): stages 0 and 1 in v0.0.8, stage 2 later**, on one area floor (Caching v2,
+`agent/caching-v2`); stage 0 and stage 1's checkpoint 2 landed `ad86bd3` with store-v4 behind its switch,
+off (Q28.3; [stages](#stages-each-needs-tonys-go)). Readiness for an unattended build: block 28; stage 1's
+design: the [addendum](../.ai/sessions/2026-10-31-claude-caching-v2/design-stage1.md). Evidence and options:
 [caching audit](../.ai/sessions/2026-10-29-claude-caching-audit/audit.md); the design:
 [store-v4 design note](../.ai/sessions/2026-10-29-claude-caching-audit/store-v4-design.md);
 decisions Q19.x and Q22.x in [DECISIONS_TODO](../.ai/DECISIONS_TODO.md), with Tony's answers so far
@@ -41,7 +43,13 @@ Per shot, the raw file parsed into binary arrays and kept in the store, beside t
   again, re-converted, and **a big warning** shown, since it only happens when the TDC is
   misconfigured (Q22.5).
 - **Exactness:** converting from the layer must equal converting from the file, byte for byte;
-  stage 1's checker proves it on every sample shot and the fuzz set.
+  stage 1's checker proves it on every sample shot and the fuzz set. As built (`helab/convert/raw_layer.py`,
+  `b3945f1`): the compact encoding (int8 channels, int64 time deltas, row 0 first) holds when the strict
+  parser read the file, channels ≤ 127 and times < 2^62 (exact, since every strict value is an integer
+  float64), else float64 in file order; `tests/test_raw_layer.py` proves layer = file on every case, the
+  textscan probes, `tests_sample_data/` and a 57-file fuzz set with every backend (cython in CI's Converter
+  backends job), and the sample set via the layer gives 303 identical and the same 6 proved exceptions as
+  the file path (`check_samples.py --via-layer`, in memory).
 - **Filled** by a background `raw_fill` job after the folder shows, so loads keep today's speed
   (Q22.1; raw files are 2.4–3.6× the TXY bytes over the share), wherever HeLab caches a folder
   today (Q19.10, Tony 2026-10-29): a load of the
@@ -90,7 +98,8 @@ Caching v2 lives in a new `DIR_CACHES/store-v4`, not a migration of store-v3. Th
 schema, keys, read and write paths, budget, tests and build order; in short:
 
 - **Tables:** the record tables carried over from store-v3 (listings, status, subtrees, data
-  roots' records, results, presets' references, flags), plus `raw_layers` (one row per raw file:
+  roots' records, results, presets' references, flags; and `datasets` through stage 1, Q42.3, so a v4
+  store caches datasets until stage 2's TXY layers replace it), plus `raw_layers` (one row per raw file:
   key, fingerprint, parser version, pulse count, file) and `txy_layers` (one row per folder and
   layer, per-shot fingerprints as `datasets` has now).
 - **Files:** pickle-free `.hlb` containers (a magic, a JSON header, Blosc chunks of at most 64 MB),
@@ -142,7 +151,23 @@ design:
 
 0. Small fixes from the audit (A19.1 temp-folder TXY shown and cleared; A19.2 Clear vs a running
    conversion; both on hold for Tony's go) and the Q18.4 tags (built, `c718c71`).
-1. The raw layer: parser output as stored pulses; the checker proves layer = file.
+   **Done** (landed `ad86bd3`): A19.2's fence (A19.1 earlier, with the converted-TXY index), cache-4,
+   cache-5, cache-6.
+1. The raw layer: parser output as stored pulses; the checker proves layer = file. Steps (the brief's):
+   - [x] the design addendum (T~1–T~3 decided as Q42.1–Q42.3);
+   - [x] the `.hlb` container and the raw layer's codec, layer = file proved (`b3945f1`);
+   - [x] store-v4's core behind the switch: the carried-over tables, `makers`, `LegacyStore`, the import,
+     Keep's read-through, cache moves with two stores (`cbf6e16`, `627d1ab`; checkpoint 2, landed `ad86bd3`);
+   - [x] step 5's store side: raw layers, save units and guards, Make room's order, the sweep's orphan rule
+     over `raw/`, v3's bytes in the usage (`d207b61`, inert);
+   - [ ] step 5's rest: `raw_fill` (passing `RawEntry.read_at`; each `.hlb` published just before its batch's
+     save), raw rows from `convert`, the maker id in each `.hlb` header, Q28.6's notice, cache-1;
+   - [ ] step 6: the store-v3 question and Settings › Cache rows (raw pulses; Clear all includes `raw`); Make
+     room's dialog names only copies (Q42.4);
+   - [ ] step 7: the integration check with the switch on, in temp stores;
+   - [ ] **cache export and the `.hlb` format documented** (Q42.5, Tony 2026-10-31): the format written up
+     with sample code (`helab.utils.hlb.read`), `helab cache dump FILE` and `helab cache export FILE|--folder
+     FOLDER --to npz|mat|csv`; read only, no new dependency.
 2. TXY layers per profile hash and the loading order above; identity by raw fingerprint +
    profile hash; every source mode disk cached.
 3. Convert on read: loads and Live convert from the raw layer; HeLab writes TXY text only beside
@@ -162,6 +187,10 @@ In [DECISIONS_TODO](../.ai/DECISIONS_TODO.md):
 - Block 28 is decided (Tony, 2026-10-31): stages 0 and 1 (Q28.1), store-v4 behind a switch until stage
   2 (Q28.3), the `makers` table (Q28.4), Make room's "Clear old stores…" (Q28.5), the overwrite
   warning (Q28.6).
+- Block 42 (the floor, 2026-10-31): Q42.1 a raw batch over the budget isn't saved and never asks; Q42.2
+  zstd 9 stays unless M42.1 finds it too slow; Q42.3 `datasets` through stage 1; Q42.4 Don't cache's
+  removal takes seen raw layers, keeps only copies; Q42.5 cache export (all decided). Open: Q42.6
+  (AGENTS.md's wording). Follow-ups: A42.1, A42.2, A40.3.
 
 Decided: Q19.2 (under Q12.3), Q19.3–Q19.10, Q22.1–Q22.11 (Q22.7: keep 8 GB and zstd 9 + byte
 shuffle), Q26.1 (byte units by OS), Q26.2 (one `converted-txy/index.sqlite` instead of a JSON
