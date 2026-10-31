@@ -286,3 +286,19 @@ def _removed_event(removal: Any) -> RemovedEvent:
     return {"kind": "removed", "kinds": list(removal.kinds),
             "paths": None if removal.paths is None else list(removal.paths),
             "datasets": removal.datasets, "bytes": removal.dataset_bytes}
+
+
+def _raw_removed_event(paths: Any, rows: int, size: int) -> RemovedEvent:
+    """A removal of store-v4's raw layers (kind ``raw``): its folders (None: every one), rows and bytes."""
+    return {"kind": "removed", "kinds": ["raw"], "paths": None if paths is None else list(paths), "raw": rows,
+            "bytes": size}
+
+
+def _removal_events(removal: Any) -> list[RemovedEvent]:
+    """The ``removed`` events of one removal: its kinds', and (store-v4: Make room, a root's Clear) its
+    raw layers' when it took any."""
+    events = [_removed_event(removal)]
+    raw = [*getattr(removal, "raw_paths", ()), *getattr(removal, "only_copy_paths", ())]
+    if getattr(removal, "raw_rows", 0) or raw:
+        events.append(_raw_removed_event(raw, removal.raw_rows, removal.raw_bytes))
+    return events

@@ -105,6 +105,7 @@ class AdminResultFields(TypedDict, total=False):
     budget: int
     recorded: bool
     results: int  # saved results removed (R2)
+    raw: int  # store-v4's raw layer rows removed (``clear_raw``, caching v2)
     result_id: str  # an adopted result's saved row (R2)
     folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
     store: str  # the store an adoption answered from (its ``store_id``)
@@ -549,6 +550,8 @@ class RemovedEvent(TypedDict):
     datasets: NotRequired[int]
     bytes: NotRequired[int]
     results: NotRequired[int]
+    # Kind ``raw`` (store-v4's raw layers, caching v2): the rows removed.
+    raw: NotRequired[int]
     root: NotRequired[str | None]
     # Saved results Make room removed for a waiting one, [folder, lookup, result_id] each: not a clear
     # (no epoch moved; a newer copy of one of those keys has another result_id).

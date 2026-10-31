@@ -14,6 +14,7 @@ and the reasons behind them: ``roadmaps/cache-storage-and-settings.md``.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 from dataclasses import dataclass, field
 import json
 import math
@@ -174,6 +175,15 @@ def _results_root_epoch(key: str) -> str | None:
 _LEGACY_HIDDEN = "legacy-hidden:"
 
 
+def _raw_epoch(key: str) -> str:
+    """The ``folder_epochs`` row a removal of one folder's raw layers bumps (``raw:<key>``, store-v4)."""
+    return f"raw:{key}"
+
+
+_RAW_COLUMNS = ("path, shot, name, size, mtime_ns, sha256, parser, encoding, facts, pulses, file, bytes, seen_at, "
+                "gone_at, maker, job_seq, saved_at, last_used")
+
+
 def _results_epoch(key: str) -> str:
     """The ``folder_epochs`` row a removal of one folder's results bumps (``results:<key>``): a
     dataset removal of the folder bumps the folder's own row, which result saves don't check."""
@@ -278,11 +288,17 @@ class DatasetInfo(TypedDict):
 
 @dataclass(frozen=True)
 class Removal:
-    """What one removal did. ``paths`` is None for a removal by kind (every path)."""
+    """What one removal did. ``paths`` is None for a removal by kind (every path). In store-v4 it may
+    also take raw layers (Make room, a root's Clear): their folders (``raw_paths``; ``only_copy_paths``
+    for those whose raw files were gone at the last look) and bytes."""
     kinds: tuple[Kind, ...]
     paths: tuple[str, ...] | None
     datasets: int = 0
     dataset_bytes: int = 0
+    raw_paths: tuple[str, ...] = ()
+    only_copy_paths: tuple[str, ...] = ()
+    raw_rows: int = 0
+    raw_bytes: int = 0
 
 
 @dataclass(frozen=True)
@@ -413,13 +429,105 @@ class SaveResult:
 
 @dataclass(frozen=True)
 class RoomPlan:
-    """What Make room removes for a pending save: other folders' datasets, least recently used first."""
+    """What Make room removes for a pending save: other folders' datasets, least recently used first;
+    in store-v4 then other folders' raw layers whose files were still there, then those that are the
+    only copy (D8). ``bytes`` is the datasets'; ``raw_bytes`` the raw layers'."""
     paths: tuple[str, ...]
     bytes: int
     oldest_last_used: float | None
     newest_last_used: float | None
     # False: the folder alone is bigger than the budget, so nothing can make room.
     possible: bool
+    raw_paths: tuple[str, ...] = ()
+    only_copy_paths: tuple[str, ...] = ()
+    raw_bytes: int = 0
+
+    @property
+    def items(self) -> tuple[str, ...]:
+        """Everything the plan removes, as ``adopt_pending``'s ``expected_room`` names it: a folder's
+        dataset by its path, its raw layer as ``raw:<path>``, an only copy as ``raw-only:<path>``."""
+        return room_items(self.paths, self.raw_paths, self.only_copy_paths)
+
+
+def room_items(paths: Sequence[str], raw_paths: Sequence[str] = (), only_copy: Sequence[str] = ()) -> tuple[str, ...]:
+    return (*paths, *(RAW_ITEM + path for path in raw_paths), *(ONLY_COPY_ITEM + path for path in only_copy))
+
+
+RAW_ITEM, ONLY_COPY_ITEM = "raw:", "raw-only:"
+
+
+@dataclass(frozen=True)
+class RawEntry:
+    """One raw file's layer to save (``write_raw_file`` published its ``.hlb``): its shot and name, the
+    fingerprint and SHA-256 of the bytes read, the parser and encoding, the facts and pulse count."""
+    shot: int
+    name: str
+    size: int
+    mtime_ns: int
+    sha256: str
+    parser: int
+    encoding: str
+    facts: Mapping[str, Any]
+    pulses: int
+    file: str
+
+
+@dataclass(frozen=True)
+class RawRow:
+    """A ``raw_layers`` row."""
+    path: str
+    shot: int
+    name: str
+    size: int
+    mtime_ns: int
+    sha256: str
+    parser: int
+    encoding: str
+    facts: dict[str, Any]
+    pulses: int
+    file: str
+    bytes: int
+    seen_at: float
+    gone_at: float | None
+    maker: str
+    job_seq: int
+    saved_at: float
+    last_used: float
+
+
+@dataclass(frozen=True)
+class RawOverwrite:
+    """A raw file overwritten in place since HeLab cached it (Q22.5, Q28.6): the shot, its file's name,
+    and the old and new (size, mtime_ns, sha256)."""
+    shot: int
+    name: str
+    old: tuple[int, int, str]
+    new: tuple[int, int, str]
+
+
+@dataclass(frozen=True)
+class RawSave:
+    """One raw batch's save: the shots ``saved`` (new or replaced), ``kept`` (the same file already
+    cached), ``refused`` (a job that listed the folder later saved another version), ``overwritten``
+    (raw files changed in place), or nothing at all when it didn't fit (``reason`` ``over_budget``:
+    never a pending save, T~1). With usage after it, in the store's write order."""
+    saved: tuple[int, ...]
+    kept: tuple[int, ...]
+    refused: tuple[int, ...]
+    overwritten: tuple[RawOverwrite, ...]
+    reason: str
+    bytes: int
+    usage: int
+    usage_seq: int
+    budget: int | None
+
+
+@dataclass(frozen=True)
+class RawRemoval:
+    """What a removal of raw layers did: the folders (None: every one), rows and bytes."""
+    paths: tuple[str, ...] | None
+    rows: int
+    bytes: int
 
 
 @dataclass(frozen=True)
@@ -1681,8 +1789,25 @@ class CacheStore:
                     if self._live() <= budget:
                         break
                     removed.append(self.remove(("datasets",), [other], _stored_keys=True))
+                # store-v4 (D8): then other folders' raw layers whose files were there at the last look
+                # (re-readable from the share), least recently used folder first; then only copies.
+                for only_copy in (False, True) if self.layout >= store_v4.LAYOUT else ():
+                    gone = "IS NOT NULL" if only_copy else "IS NULL"
+                    for (other,) in self._conn.execute(
+                            f"SELECT path FROM raw_layers WHERE gone_at {gone} AND path != ? GROUP BY path "
+                            "ORDER BY MAX(last_used), path", (path,)).fetchall():
+                        if self._live() <= budget:
+                            break
+                        keys, count, size = self._remove_raw_rows(f" WHERE path = ? AND gone_at {gone}", (other,),
+                                                                  time.time())
+                        folder = (self._source_path(str(other)),)
+                        removed.append(Removal((), (), raw_paths=() if only_copy else folder,
+                                               only_copy_paths=folder if only_copy else (), raw_rows=count,
+                                               raw_bytes=size))
             fits = budget is None or self._live() <= budget
-            planned = {other for item in removed for other in item.paths or ()}
+            planned = set(room_items([other for item in removed for other in item.paths or ()],
+                                     [other for item in removed for other in item.raw_paths],
+                                     [other for item in removed for other in item.only_copy_paths]))
             if expected is not None and make_room and planned != set(expected):
                 fits = False  # Not what the user agreed to remove: nothing is.
         except BaseException:
@@ -1694,7 +1819,10 @@ class CacheStore:
         self._conn.execute("RELEASE adopt_fit")
         removal = None if not removed else Removal(
             ("datasets",), tuple(other for item in removed for other in item.paths or ()),
-            sum(item.datasets for item in removed), sum(item.dataset_bytes for item in removed))
+            sum(item.datasets for item in removed), sum(item.dataset_bytes for item in removed),
+            tuple(other for item in removed for other in item.raw_paths),
+            tuple(other for item in removed for other in item.only_copy_paths),
+            sum(item.raw_rows for item in removed), sum(item.raw_bytes for item in removed))
         return fits, removal
 
     def _room_plan(self, pending_id: str, budget: int) -> RoomPlan:
@@ -1705,8 +1833,12 @@ class CacheStore:
         # mounted path. Match stored rows through the display mapping, never re-key it.
         used = [] if not paths else [float(last_used) for key, last_used in self._conn.execute(
             "SELECT path, last_used FROM datasets") if self._source_path(str(key)) in paths]
-        return RoomPlan(paths, 0 if removal is None or not fits else removal.dataset_bytes,
-                        min(used, default=None), max(used, default=None), fits)
+        planned = removal is not None and fits
+        return RoomPlan(paths, removal.dataset_bytes if planned and removal else 0,
+                        min(used, default=None), max(used, default=None), fits,
+                        removal.raw_paths if planned and removal else (),
+                        removal.only_copy_paths if planned and removal else (),
+                        removal.raw_bytes if planned and removal else 0)
 
     def room_plan(self, pending_id: str, budget: int) -> RoomPlan:
         """What Make room would remove for a pending save: least recently used other
@@ -1874,6 +2006,8 @@ class CacheStore:
         """A file the store names: a dataset file, or a result file (``results/<name>``)."""
         if file.startswith(RESULTS_DIRNAME + "/"):
             return os.path.join(self.results_dir, file[len(RESULTS_DIRNAME) + 1:])
+        if file.startswith(store_v4.RAW_DIRNAME + "/"):
+            return os.path.join(self.raw_dir, file[len(store_v4.RAW_DIRNAME) + 1:])
         return os.path.join(self.datasets_dir, file)
 
     def start_result_job(self, path: str) -> SaveGuard:
@@ -2346,6 +2480,281 @@ class CacheStore:
         return ResultRemoval(None if everything else tuple(self._source_path(path) for path in folders),
                              len(rows), sum(int(size) for _, _, size in rows), root)
 
+    # Raw layers (store-v4, caching v2 stage 1): one row per raw file, its pulses in ``raw/<uuid>.hlb``.
+
+    def _needs_v4(self) -> None:
+        if self.layout < store_v4.LAYOUT:
+            raise StoreError("Raw layers are kept only in store-v4")
+
+    def write_raw_file(self, packed: bytes) -> str:
+        """Publish a raw layer's ``.hlb`` under its final name (``raw/<name>``); no row names it yet (a
+        killed writer's file is an orphan the sweep deletes after an hour, the existing rule)."""
+        self._needs_v4()
+        if self.read_only:
+            raise StoreReadOnly("This disk cache was written by a newer HeLab and is read-only")
+        name = uuid.uuid4().hex
+        temporary = os.path.join(self.raw_dir, f"tmp-{name}")
+        final = f"{name}.hlb"
+        try:
+            os.makedirs(self.raw_dir, exist_ok=True)
+            descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o666)
+            with os.fdopen(descriptor, "wb") as handle:
+                handle.write(packed)
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, os.path.join(self.raw_dir, final))
+        except OSError as exc:
+            with contextlib.suppress(OSError):
+                os.remove(temporary)
+            raise StoreError(f"Cached raw layer could not be written: {exc}") from exc
+        _fsync_dir(self.raw_dir)
+        return f"{store_v4.RAW_DIRNAME}/{final}"
+
+    def start_raw_job(self, path: str) -> SaveGuard:
+        """A guard for a job that may save ``path``'s raw layers: ``gen_raw``, the folder's ``raw:``
+        epoch and its root's, and the folder's next ``job_seq`` (shared with its dataset saves, so a
+        later listing's version wins whichever job saved it)."""
+        self._needs_v4()
+        key = self._path_key(path)
+        try:
+            with self.transaction():
+                self._conn.execute("INSERT INTO folder_epochs (path, job_seq) VALUES (?, 1) "
+                                   "ON CONFLICT (path) DO UPDATE SET job_seq = job_seq + 1", (key,))
+                (job_seq,) = self._conn.execute("SELECT job_seq FROM folder_epochs WHERE path = ?", (key,)).fetchone()
+                epochs = {_raw_epoch(key): self._epoch(_raw_epoch(key))}
+                if root := _root_epoch(key):
+                    epochs[root] = self._epoch(root)
+                generation = int(self._meta()["gen_raw"])
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return SaveGuard({"raw": generation}, epochs, int(job_seq))
+
+    def _check_raw_guard(self, guard: SaveGuard, key: str) -> None:
+        epoch, root = _raw_epoch(key), _root_epoch(key)
+        if "raw" not in guard.generations or epoch not in guard.epochs:
+            raise SaveRejected("cleared", REKEYED)  # (As ``_guard_holds``.)
+        if (int(self._meta()["gen_raw"]) != guard.generations["raw"] or self._epoch(epoch) != guard.epochs[epoch]
+                or (root is not None and self._epoch(root) != guard.epochs.get(root, 0))):
+            raise SaveRejected("cleared", "Raw pulses were cleared before saving completed")
+
+    def save_raw_batch(self, path: str, entries: Sequence[RawEntry], guard: SaveGuard, *,
+                       budget: int | None = None, budget_set_at: float | None = None,
+                       now: float | None = None) -> RawSave:
+        """Save one batch of a folder's raw layers (``raw_fill``, a conversion) in one transaction with
+        one fit check, if ``guard`` holds and the folder may be cached. A shot already cached from the
+        same file (fingerprint and parser) is kept (seen now); one cached from another version of the
+        file is replaced only by a job that started later (``job_seq``), and named in ``overwritten``
+        when the file changed in place; the replaced files are retired. A batch that doesn't fit the
+        budget saves nothing and never waits for an answer (T~1): its files are retired. A rejected
+        batch raises :class:`SaveRejected` and retires its files."""
+        self._needs_v4()
+        key = self._path_key(path)
+        now = time.time() if now is None else now
+        files = [entry.file for entry in entries]
+        sizes = {entry.file: self._size(entry.file) for entry in entries}
+        saved: list[int] = []
+        kept: list[int] = []
+        refused: list[int] = []
+        overwritten: list[RawOverwrite] = []
+        unused: list[str] = []
+        retired: list[str] = []
+        try:
+            with self.transaction():
+                self._check_raw_guard(guard, key)
+                self._check_cacheable(key)
+                budget = self._active_budget(budget, budget_set_at)
+                self._conn.execute("SAVEPOINT raw_fit")
+                maker = self._maker_id()
+                for entry in entries:
+                    row = self._conn.execute(
+                        "SELECT size, mtime_ns, sha256, parser, file, job_seq FROM raw_layers "
+                        "WHERE path = ? AND shot = ?", (key, entry.shot)).fetchone()
+                    if row is not None and (int(row[0]), int(row[1]), int(row[3])) == (
+                            entry.size, entry.mtime_ns, entry.parser):
+                        self._conn.execute("UPDATE raw_layers SET seen_at = ?, gone_at = NULL, last_used = ? "
+                                           "WHERE path = ? AND shot = ?", (now, now, key, entry.shot))
+                        kept.append(entry.shot)
+                        unused.append(entry.file)
+                        continue
+                    if row is not None and int(row[5]) > guard.job_seq:
+                        refused.append(entry.shot)  # (A job that listed the folder later saved its version.)
+                        unused.append(entry.file)
+                        continue
+                    if row is not None:
+                        retired.append(str(row[4]))
+                        if (int(row[0]), int(row[1])) != (entry.size, entry.mtime_ns):
+                            overwritten.append(RawOverwrite(
+                                entry.shot, entry.name, (int(row[0]), int(row[1]), str(row[2])),
+                                (entry.size, entry.mtime_ns, entry.sha256)))
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO raw_layers (path, shot, name, size, mtime_ns, sha256, parser, "
+                        "encoding, facts, pulses, file, bytes, seen_at, gone_at, maker, job_seq, saved_at, last_used) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?)",
+                        (key, entry.shot, entry.name, entry.size, entry.mtime_ns, entry.sha256, entry.parser,
+                         entry.encoding, _dumps(dict(entry.facts)), entry.pulses, entry.file, sizes[entry.file], now,
+                         maker, guard.job_seq, now, now))
+                    saved.append(entry.shot)
+                usage, writes = self._live(), self._writes()
+                if budget is not None and usage > budget and saved:
+                    self._conn.execute("ROLLBACK TO raw_fit")
+                    self._conn.execute("RELEASE raw_fit")
+                    for file in files:
+                        self._retire(file, now)
+                    return RawSave((), (), (), (), "over_budget", sum(sizes.values()), self._live(), self._writes(),
+                                   budget)
+                self._conn.execute("RELEASE raw_fit")
+                for file in (*unused, *retired):
+                    self._retire(file, now)
+        except SaveRejected as rejection:
+            raise self._reject_raw_files(files, rejection) from None
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return RawSave(tuple(saved), tuple(kept), tuple(refused), tuple(overwritten), "",
+                       sum(sizes[entry.file] for entry in entries if entry.shot in saved), usage, writes, budget)
+
+    def _reject_raw_files(self, files: Sequence[str], rejection: SaveRejected) -> SaveRejected:
+        """Retire a rejected batch's files, in their own transaction (never one a row names)."""
+        with contextlib.suppress(sqlite3.Error, StoreError):
+            with self.transaction():
+                now = time.time()
+                for file in files:
+                    if self._conn.execute("SELECT 1 FROM raw_layers WHERE file = ?", (file,)).fetchone() is None:
+                        self._retire(file, now)
+        return rejection
+
+    def mark_raw_seen(self, path: str, present: Mapping[int, tuple[int, int]], seen_at: float) -> tuple[int, int]:
+        """A full listing of ``path`` found these raw files (shot: (size, mtime_ns)): rows of the same
+        fingerprint are seen now; rows whose shot it didn't find get ``gone_at`` (their layer is then the
+        only copy HeLab knows of: kept, Q22.6; Make room lists it last). (seen, gone) counts."""
+        self._needs_v4()
+        key = self._path_key(path)
+        seen = gone = 0
+        try:
+            with self.transaction():
+                for shot, size, mtime_ns in self._conn.execute(
+                        "SELECT shot, size, mtime_ns FROM raw_layers WHERE path = ?", (key,)).fetchall():
+                    if present.get(int(shot)) == (int(size), int(mtime_ns)):
+                        self._conn.execute("UPDATE raw_layers SET seen_at = MAX(seen_at, ?), gone_at = NULL "
+                                           "WHERE path = ? AND shot = ?", (seen_at, key, shot))
+                        seen += 1
+                    elif int(shot) not in present:
+                        self._conn.execute("UPDATE raw_layers SET gone_at = COALESCE(gone_at, ?) "
+                                           "WHERE path = ? AND shot = ?", (seen_at, key, shot))
+                        gone += 1
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return seen, gone
+
+    def raw_rows(self, path: str) -> Read[dict[int, RawRow]]:
+        """``path``'s raw layer rows by shot (a ``raw_fill`` resumes from them)."""
+        if self.layout < store_v4.LAYOUT:
+            return _missing()
+        key = self._path_key(path)
+        try:
+            with self.transaction(write=False):
+                found = {int(row[1]): self._raw_row(row) for row in self._conn.execute(
+                    f"SELECT {_RAW_COLUMNS} FROM raw_layers WHERE path = ?", (key,))}
+        except (sqlite3.Error, StoreError, ValueError) as exc:
+            return _error(f"Disk cache could not be read: {exc}")
+        return _found(found)
+
+    def _raw_row(self, row: Sequence[Any]) -> RawRow:
+        return RawRow(self._source_path(str(row[0])), int(row[1]), str(row[2]), int(row[3]), int(row[4]), str(row[5]),
+                      int(row[6]), str(row[7]), json.loads(row[8]), int(row[9]), str(row[10]), int(row[11]),
+                      float(row[12]), None if row[13] is None else float(row[13]), str(row[14]), int(row[15]),
+                      float(row[16]), float(row[17]))
+
+    def read_raw(self, path: str, shot: int) -> Read[tuple[RawRow, bytes]]:
+        """A shot's raw layer row and its ``.hlb`` bytes; a file replaced meanwhile is looked up once more."""
+        if self.layout < store_v4.LAYOUT:
+            return _missing()
+        key = self._path_key(path)
+        for attempt in range(2):
+            try:
+                with self.transaction(write=False):
+                    row = self._conn.execute(f"SELECT {_RAW_COLUMNS} FROM raw_layers WHERE path = ? AND shot = ?",
+                                             (key, shot)).fetchone()
+            except (sqlite3.Error, StoreError) as exc:
+                return _error(f"Disk cache could not be read: {exc}")
+            if row is None:
+                return _missing()
+            found = self._raw_row(row)
+            try:
+                with open(self._store_file(found.file), "rb") as handle:
+                    return _found((found, handle.read()))
+            except FileNotFoundError:
+                if attempt:
+                    return _error("Cached raw layer file is missing")
+            except OSError as exc:
+                return _error(f"Cached raw layer file could not be read: {exc}")
+        return _error("Cached raw layer file is missing")  # (Not reached.)
+
+    def _remove_raw_rows(self, where: str, args: Sequence[Any], now: float) -> tuple[list[str], int, int]:
+        """Delete the raw rows ``where`` selects (inside a transaction), retire their files and bump each
+        folder's ``raw:`` epoch: (folder keys, rows, bytes)."""
+        found = self._conn.execute(f"SELECT path, file, bytes FROM raw_layers{where}", tuple(args)).fetchall()
+        for _, file, _ in found:
+            self._retire(str(file), now)
+        self._conn.execute(f"DELETE FROM raw_layers{where}", tuple(args))
+        keys = sorted({str(key) for key, _, _ in found})
+        for key in keys:
+            self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
+                               "DO UPDATE SET epoch = epoch + 1", (_raw_epoch(key),))
+        return keys, len(found), sum(int(size) for _, _, size in found)
+
+    def remove_raw(self, paths: Iterable[str] | None = None) -> RawRemoval:
+        """Clear raw pulses (the user asked: Settings › Cache, Clear all): every folder's (bumping
+        ``gen_raw``) or these folders' (each one's ``raw:`` epoch), so a batch already being saved can't
+        bring them back. Files are retired; nothing else is touched."""
+        if self.layout < store_v4.LAYOUT:
+            return RawRemoval(None if paths is None else (), 0, 0)
+        now = time.time()
+        try:
+            with self.transaction():
+                if paths is None:
+                    self._conn.execute("UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) "
+                                       "WHERE key = 'gen_raw'")
+                    _, count, size = self._remove_raw_rows("", (), now)
+                    return RawRemoval(None, count, size)
+                keys = list(dict.fromkeys(self._path_key(path) for path in paths))
+                for key in keys:  # (A folder with no rows is fenced too: a batch may be on its way.)
+                    self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) ON CONFLICT (path) "
+                                       "DO UPDATE SET epoch = epoch + 1", (_raw_epoch(key),))
+                _, count, size = self._remove_raw_rows(
+                    f" WHERE path IN ({','.join('?' * len(keys)) or 'NULL'})", keys, now)
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        return RawRemoval(tuple(self._source_path(key) for key in keys), count, size)
+
+    def _raw_summary(self) -> dict[str, Any]:
+        """store-v4's raw layers for Settings › Cache (inside a transaction): rows, bytes, folders, the
+        rows whose raw files were gone at the last look (``only_copy``), when one was last used."""
+        if self.layout < store_v4.LAYOUT:
+            return {"count": 0, "bytes": 0, "folders": 0, "only_copy": 0, "only_copy_bytes": 0, "last_used": None}
+        count, size, folders, last = self._conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(bytes), 0), COUNT(DISTINCT path), MAX(last_used) FROM raw_layers").fetchone()
+        only, only_bytes = self._conn.execute(
+            "SELECT COUNT(*), COALESCE(SUM(bytes), 0) FROM raw_layers WHERE gone_at IS NOT NULL").fetchone()
+        return {"count": int(count), "bytes": int(size), "folders": int(folders), "only_copy": int(only),
+                "only_copy_bytes": int(only_bytes), "last_used": None if last is None else float(last)}
+
+    def _raw_live(self) -> int:
+        if self.layout < store_v4.LAYOUT:
+            return 0
+        return int(self._conn.execute("SELECT COALESCE(SUM(bytes), 0) FROM raw_layers").fetchone()[0])
+
+    def _legacy_counted(self) -> int:
+        """store-v3's live bytes while it is kept (Keep, or not answered: D9), as last measured
+        (``meta.legacy_bytes``, ``measure_legacy``); 0 under v3, after Ignore or Clear, or with none."""
+        if self.layout < store_v4.LAYOUT:
+            return 0
+        meta = self._meta()
+        measured = meta.get("legacy_bytes")
+        if store_v4.legacy_choice(meta) not in (None, "keep") or not isinstance(measured, dict):
+            return 0
+        from helab.utils.legacy_store import present
+        return int(measured.get("bytes", 0)) if present(self.legacy_root) else 0
+
     # Removals and cleanup
 
     def root_usage(self) -> dict[str, dict[str, int]]:
@@ -2394,7 +2803,14 @@ class CacheStore:
                                     (top, len(top) + 1, top + "/"))})
                 self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) "
                                    "ON CONFLICT (path) DO UPDATE SET epoch = epoch + 1", (_root_epoch(top),))
-                return self.remove(KINDS, paths, _stored_keys=True)
+                removal = self.remove(KINDS, paths, _stored_keys=True)
+                if self.layout < store_v4.LAYOUT:
+                    return removal
+                # store-v4: its raw layers are cached data too (the root epoch fences their saves).
+                keys, count, size = self._remove_raw_rows(" WHERE path = ? OR substr(path, 1, ?) = ?",
+                                                          (top, len(top) + 1, top + "/"), time.time())
+                return dataclasses.replace(removal, raw_paths=tuple(self._source_path(key) for key in keys),
+                                           raw_rows=count, raw_bytes=size)
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
 
@@ -2464,7 +2880,9 @@ class CacheStore:
         if self._pending_results:  # (Nor a result waiting for the user's answer.)
             pending += self._conn.execute("SELECT COALESCE(SUM(LENGTH(record) + LENGTH(guard)), 0) "
                                           "FROM pending_results").fetchone()[0]
-        return int(datasets) + self._result_files() + max(0, self._records_bytes() - int(pending))
+        # (store-v4: its raw layers, and store-v3's bytes while it is kept, D9.)
+        return (int(datasets) + self._result_files() + self._raw_live() + self._legacy_counted()
+                + max(0, self._records_bytes() - int(pending)))
 
     def _result_files(self) -> int:
         if not self._results_table:
@@ -2613,7 +3031,9 @@ class CacheStore:
                 result_bytes = self._results_live()
                 pending_results = self.pending_result_rows()
                 live, writes = self._live(), self._writes()
-                records_bytes = live - sum(size for _, size in dataset_ages) - self._result_files()
+                raw = self._raw_summary()
+                records_bytes = (live - sum(size for _, size in dataset_ages) - self._result_files() - raw["bytes"]
+                                 - self._legacy_counted())
                 no_cache, no_auto_load = self._conn.execute(
                     "SELECT COALESCE(SUM(no_cache), 0), COALESCE(SUM(no_auto_load), 0) FROM folder_prefs").fetchone()
                 prefs = {"no_cache": int(no_cache), "no_auto_load": int(no_auto_load)}
@@ -2627,7 +3047,9 @@ class CacheStore:
         orphans = [name for name in self._listed_files() if name not in known]
         legacy = self.measure_legacy() if self.layout >= store_v4.LAYOUT else None
         return {
-            **({"legacy": legacy} if legacy is not None else {}),
+            **({"legacy": legacy, "raw": raw, "older_stores": older_stores(os.path.dirname(os.path.abspath(self.root)),
+                                                                          self.layout)}
+               if legacy is not None else {}),
             "layout_version": self.layout_version, "store_id": self.store_id, "read_only": self.read_only,
             "root": self.root, "usage": live, "budget": budget, "records_bytes": records_bytes,
             "datasets": {"count": len(dataset_ages), "bytes": sum(size for _, size in dataset_ages),
@@ -2687,13 +3109,18 @@ class CacheStore:
             known.update(str(file) for (file,) in self._conn.execute("SELECT file FROM results"))
         if self._pending_results:
             known.update(str(file) for (file,) in self._conn.execute("SELECT file FROM pending_results"))
+        if self.layout >= store_v4.LAYOUT:
+            known.update(str(file) for (file,) in self._conn.execute("SELECT file FROM raw_layers"))
         return known
 
     def _listed_files(self) -> list[str]:
         """The files in ``datasets/`` and ``results/``, by the names rows give them ([] for a folder
         that can't be listed: leftovers are only tidied up, the next sweep tries again)."""
         names: list[str] = []
-        for folder, prefix in ((self.datasets_dir, ""), (self.results_dir, RESULTS_DIRNAME + "/")):
+        folders = [(self.datasets_dir, ""), (self.results_dir, RESULTS_DIRNAME + "/")]
+        if self.layout >= store_v4.LAYOUT:  # (store-v4's raw layers: the same orphan rule.)
+            folders.append((self.raw_dir, store_v4.RAW_DIRNAME + "/"))
+        for folder, prefix in folders:
             try:
                 names += [prefix + name for name in os.listdir(folder)
                           if not (prefix == "" and name == RESULTS_DIRNAME)]
@@ -2890,6 +3317,21 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except BaseException:
         conn.execute("ROLLBACK")
         raise
+
+
+def older_stores(caches_dir: str, layout: int) -> list[dict[str, Any]]:
+    """The stores of older layouts in the cache folder (store-v3 now; any ``store-v<N>`` below this one
+    later), each with its folder's bytes on disk: what Make room's "Clear old stores…" offers (Q28.5),
+    asked first. Nothing is opened."""
+    found: list[dict[str, Any]] = []
+    with contextlib.suppress(OSError):
+        for entry in sorted(os.scandir(caches_dir), key=lambda item: item.name):
+            name = entry.name
+            if (entry.is_dir(follow_symlinks=False) and name.startswith("store-v") and name[7:].isdigit()
+                    and int(name[7:]) < layout):
+                found.append({"name": name, "layout": int(name[7:]), "path": entry.path,
+                              "bytes": _folder_bytes(entry.path)})
+    return found
 
 
 def _folder_bytes(folder: str) -> int:
