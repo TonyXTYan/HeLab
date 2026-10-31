@@ -184,10 +184,29 @@ All six fixed, each with a test that fails before it; fix range `bdbd2bc..` this
 | C2-1 Medium | `9d5889c` | Keep reads store-v3 for a key only while v4 never removed that kind for it (its generation, the key's epoch, its root's; a `None` save's tombstone `legacy-hidden:<kind>:<key>`, read by no guard; purges by age recorded in `meta.legacy_purged`) |
 | C2-4 Nit | `9d5889c` | the result count adds only v3 lookups v4 lacks, none for a removed key; the step-4 test's 4 corrected to 3 |
 | C2-5 Nit | `47a6723` | a root forgotten in v4 before a retried import stays forgotten (`meta.forgotten_before_import`); only roots are ever deleted of the imported state |
-| C2-6 Nit | `0551343` | `cache_move.start(..., layout=)` makes the live store the primary (record `primary`); without it, the newest as before. **Proposed:** `CacheMover` sends `cache_store.live_layout()` as the move's `layout` (an `app` file, not owned here) |
+| C2-6 Nit | `0551343`, `630bf8e` | `cache_move.start(..., layout=)` makes the live store the primary (record `primary`); `CacheMover` sends `cache_store.live_layout()` as every move request's `layout` (CoCo's OK to edit it); without one (an old record), the newest as before |
+| C2-7 Nit (re-check) | `f28f9ff` | purges by age keep two cutoffs per kind (the latest, and the latest that took scan histories with failures) |
+| C2-8 Nit (re-check) | `4270080` | a retried import brings v3's flags set before v4's `prefs_cleared_at` in off, dated at the Clear |
 
 Checks at `0551343`: **8723 passed, 672 skipped, 2 warnings in 154.35s; no RERUN**; mypy (also win32) and pyright
 (also Windows) clean. Log: `.ai/temp/step4/suite-fixes.log`.
+
+After the re-check (`ff1fe1a`): C2-7, C2-8 and C2-6's app half, each with a test that fails first. Checkpoint 2 now
+lands with step 5's store side (`d207b61`, inert: store-v4 only, switch off) under them. Checks at `630bf8e`:
+**8743 passed, 672 skipped, 2 warnings in 138.67s; no RERUN**; mypy (also win32) and pyright (also Windows) clean.
+Log: `.ai/temp/step4/suite-c2b.log`. For Assay: the fix diff `ff1fe1a..630bf8e` and `d207b61`.
+
+### Step 5, store side (`d207b61`, inert)
+
+Raw layers in store-v4 (no `folder_cache.py`, no `raw_fill` helper yet: they wait for I/O Fixes):
+`write_raw_file`, `start_raw_job` (`gen_raw`, `raw:<key>`, root epoch, the folder's `job_seq`), `save_raw_batch`
+(one transaction and fit check per batch; same file kept, a later job's version replaces, changes in place named in
+`overwritten` for Q28.6; over budget: nothing saved, never pending, as T~1 proposes), `mark_raw_seen` (`gone_at`),
+`raw_rows`, `read_raw`, `remove_raw`; raw bytes and v3's counted bytes in `_live`; `inventory()["raw"]` and
+`["older_stores"]` (Q28.5's list); Make room's order (datasets, raw seen, only copies; plan `raw_paths`,
+`only_copy_paths`, `items`); a root's Clear takes its raw layers; the sweep's existing orphan rule over `raw/`;
+the admin's `clear_raw` and `removed` kind `raw`. 16 tests in `tests/test_raw_layers_store.py`. `trim` (a lowered
+budget) still removes datasets only (A~4: give it Make room's order).
 
 ## Proposed doc changes (for the Coordinator)
 
@@ -235,6 +254,7 @@ Checks at `0551343`: **8723 passed, 672 skipped, 2 warnings in 154.35s; no RERUN
   Its only RERUN; IOService untouched by this floor.
 - **A~2** `pack_dataset`'s 2.1 GB limit stays for v4's `datasets` in stage 1 (blosc-pickle); stage 2's `.hlb`
   segments end it.
+- **A~4** `trim` (the user lowers the budget) in Make room's order in store-v4 (today datasets only).
 - **A~3** copy-on-use of store-v3's saved results into v4 (or decide read-through is enough while v3 is kept).
 - **M~1** time the raw codec on the lab PC (`check_samples.py --via-layer`; zstd 9 measured 16 MB/s of raw text
   per M4 Max thread).
