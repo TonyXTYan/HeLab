@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 import os
 from pathlib import Path
 import random
+import threading
 from typing import Any
 
 import numpy as np
@@ -238,14 +239,34 @@ def test_a_layer_whose_arrays_dont_match_is_an_error() -> None:
         raw_layer.from_hlb(hlb.pack({"x": np.zeros(1)}, kind="txy"))
 
 
-def test_via_layer_converts_in_memory_and_writes_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
-    """``check_samples.py --via-layer`` (``convert_via_layer``) opens no file: the samples stay read-only."""
+def test_via_layer_converts_in_memory_and_writes_nothing(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """``check_samples.py --via-layer`` (``convert_via_layer``) opens no file: the samples stay read-only.
+    Only this test's thread is refused (C2-12): another thread (an earlier test's helper clean-up) opens
+    files as usual meanwhile."""
     data = (CASES / "basic" / "d1.txt").read_bytes()
     expected = convert_or_none(data, MATLAB_2019)
     convert_via_layer(data, MATLAB_2019)  # (Backends loaded first.)
+    here = threading.get_ident()
+    real_open, real_os_open = builtins.open, os.open
 
-    def refuse(*args: Any, **kwargs: Any) -> Any:
-        raise AssertionError(f"a file was opened: {args[:1]}")
-    monkeypatch.setattr(builtins, "open", refuse)
-    monkeypatch.setattr(os, "open", refuse)
+    def refused(real: Any) -> Any:
+        def guarded(*args: Any, **kwargs: Any) -> Any:
+            if threading.get_ident() == here:
+                raise AssertionError(f"a file was opened: {args[:1]}")
+            return real(*args, **kwargs)
+        return guarded
+    monkeypatch.setattr(builtins, "open", refused(real_open))
+    monkeypatch.setattr(os, "open", refused(real_os_open))
     assert convert_via_layer(data, MATLAB_2019) == expected and expected
+    elsewhere: list[BaseException] = []
+
+    def other_thread() -> None:
+        try:
+            with open(tmp_path / "other.txt", "w", encoding="ascii") as handle:
+                handle.write("ok")
+        except BaseException as exc:
+            elsewhere.append(exc)
+    thread = threading.Thread(target=other_thread)
+    thread.start()
+    thread.join(10)
+    assert elsewhere == [] and (tmp_path / "other.txt").exists()
