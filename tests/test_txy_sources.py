@@ -575,6 +575,29 @@ def test_a_held_shot_converted_again_is_read_again(tmp_path: Path, private_store
     assert result["txy"]["origins"] == {"3": f"helab:{other}", "4": f"helab:{other}"}
 
 
+def test_a_helab_held_shot_read_again_from_matlabs_isnt_called_converted(
+    tmp_path: Path, private_store: str,
+) -> None:
+    """Probe's IO-R2 (review of A39.2): shot 3 held from HeLab's TXY, whose TXY is cleared once MATLAB's
+    arrived, is read again from MATLAB's. That isn't a new HeLab conversion: its ``live_reread`` entry
+    isn't ``converted``."""
+    source = make_run(tmp_path, private_store)  # (MATLAB's TXY for shots 1-2; HeLab's for every shot.)
+    first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store)))
+    assert sorted(first["txy"]["origins"]) == ["3", "4"]
+    old = time.time() - 600
+    os.utime(matlab_txy(source, 3), (old, old))
+    helab_txy.clear_converted(helab_txy.converted_root(store_root(private_store)))
+    look = live(source, tmp_path, private_store, first["fingerprint"], memory_origins=first["txy"]["origins"])
+    assert "shots_missing" not in kinds_of(look)
+    seen = last(look, "live_unchanged")["live_seen"] if kinds_of(look)[-1] == "live_unchanged" else \
+        last(look, "loaded")["live_seen"]
+    assert [entry[0] for entry in seen] == [3]
+    result = loaded(live(source, tmp_path, private_store, first["fingerprint"],
+                         memory_origins=first["txy"]["origins"], seen=seen))
+    assert [entry["shot"] for entry in result["live_reread"]] == [3]
+    assert not result["live_reread"][0].get("converted") and "3" not in result["txy"]["origins"]
+
+
 def test_live_finds_the_store_key_itself(tmp_path: Path, private_store: str) -> None:
     """With no root known to the app (FolderCache sends key ""), Live asks the store as a load does."""
     source = make_run(tmp_path, private_store)

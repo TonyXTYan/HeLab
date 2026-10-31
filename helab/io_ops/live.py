@@ -235,7 +235,9 @@ def live_check(path: str, output: str, send: Emit = emit, memory: list[list[int]
             helab_rereads.append((shot, *stat_now))
     helab_rereads += [(shot, helab_found[shot].size, helab_found[shot].mtime_ns) for shot in switching]
     # Read again because HeLab's TXY of them is new (converted since), not because a writer paused: said apart.
-    converted = {item[0] for item in helab_rereads}
+    # Only those read from HeLab's TXY now: one held from HeLab's that falls back to MATLAB's (its HeLab TXY
+    # cleared) is not a conversion (IO-R2).
+    converted = {item[0] for item in helab_rereads if origins.get(item[0])}
     missing = sorted(set(held) - set(names) - held_helab)
     if missing:
         mismatch("missing", missing)
