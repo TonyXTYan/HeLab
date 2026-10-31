@@ -16,7 +16,7 @@ Plots follow Live (L3): the main window publishes each dataset a Live tab shows 
 
 ## Notifications
 
-Events worth telling someone about (a low-count shot during Live, from Shot trends' Notify during Live; Live stopping on an error, `LiveController._live_halt`) go through `helab/utils/events.py` and nothing else (`events.notify`, GUI thread): hooks attach with `events.hub().add_hook` and get every event (`Event.shown` says whether it was shown); a desktop notification (`QSystemTrayIcon.showMessage`, else the status bar and the log) is asked per event, delivered once per key (once per shot), with no time limit (Tony, 2026-10-26: a shot takes about 30 s).
+Events worth telling someone about (a low-count shot during Live, from Shot trends' Notify during Live; Live stopping on an error, `LiveController._live_halt`) go through `helab/utils/events.py` and nothing else (`events.notify`, GUI thread): hooks attach with `events.hub().add_hook` and get every event (`Event.shown` says whether it was shown); a desktop notification (`QSystemTrayIcon.showMessage`, else the status bar and the log) is asked per event, delivered once per key (once per shot), with no time limit (Tony, 2026-10-26: a shot takes about 30 s). With store-v4 live (caching v2, switch off; checkpoint 3, landed `c2d0ece`), Live's saves, like loads, schedule `raw_fill` for the folder, and a raw file overwritten in place since it was cached (by `raw_fill` or an auto-convert) notifies once per shot per session (`events.RAW_OVERWRITTEN`, Q28.6), with a log warning and Folder details' amber Problems line ([cache-store](cache-store.md#store-v4-caching-v2-behind-the-switch)).
 
 ## Auto-convert
 

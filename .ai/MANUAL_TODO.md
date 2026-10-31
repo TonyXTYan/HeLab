@@ -217,6 +217,16 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   from a terminal, and on Windows): the second start shows "HeLab is already running…" and quits; after
   quitting the first, or killing it, a new start opens normally.
 
+## Caching v2 checkpoint 3 (added 2026-10-31, block 44)
+
+- [ ] **M44.1 Caching v2's dialogs on screen** (switch on, test settings and a temp cache folder only:
+  `floor-env.sh`): see the store-v3 question once ("An older disk cache", Q44.1), each Settings › Cache row
+  (Raw pulses, Older cache (store-v3)) and its buttons, Make room's text with raw pulses and only copies,
+  and Folder details' amber line after overwriting a raw file in a temp folder.
+- [ ] **M44.2 Cache export into MATLAB**: run `helab cache export d1.hlb --to mat` on a layer from the
+  sample set's via-layer run (or a temp store) and the format page's MATLAB lines
+  ([`docs/hlb-format.md`](../docs/hlb-format.md): `load`, `jsondecode(s.header)`).
+
 ## Post-2025 plates, in the lab (added 2026-10-29, block 25)
 
 - [ ] **M25.2 TDC input 7:** what is connected, is it enabled, at what threshold, and did anything

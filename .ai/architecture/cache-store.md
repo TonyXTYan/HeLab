@@ -8,7 +8,7 @@ on Ground, update it in the same commit as the code; on a floor, propose the cha
 
 ## Caching
 
-**Caching:** The disk cache is `DIR_CACHES/store-v3` (`helab/utils/cache_store.py`, `CacheStore`): SQLite records in `records.sqlite` (WAL, JSON text) and one Blosc-compressed dataset file per folder in `datasets/` (caching v2's `store-v4`, Q19.4, [`roadmaps/caching-v2.md`](../../roadmaps/caching-v2.md), is built behind a switch that stays off until stage 2: [below](#store-v4-caching-v2-behind-the-switch); the rest of this file describes store-v3 as built). **Only helpers (and `helab convert`, a headless process without the GUI) open it**; the GUI sends `store_options()` (`helab/utils/folder_cache.py`) with each request and never opens the store, at startup or in Settings. Reads answer found / missing / error, and an error is never "nothing saved". Every write checks a save guard taken when its job started (per-kind generations, the folder's epoch, and for datasets a `job_seq`), so a save that was already running can't bring back removed data or overwrite newer data; a save whose guard names a folder re-keyed since (a nested root found) is `SaveRejected("cleared", REKEYED)` and its file retired at once, like any other rejected save (cache-5). Replaced dataset files are retired, never deleted at once; a `cache_admin sweep` helper on the local lane deletes them later (it also expires pending saves and results held over an hour, and deletes store files no row names once they are over an hour old, `_sweep_orphans`: in store-v4 the same rule covers `raw/`'s layer files, no new removal) (at startup, then by the deadline each helper reports, via one `FolderCache` timer), and at startup also deletes the old diskcache folders (`data_ram_cache`, `status_cache`, `os_file_system_cache`). **Apart from the housekeeping AGENTS.md lists, nothing is removed without the user asking.** Maintenance goes through `FolderCache.cache_admin(action, …)` (the actions are `ADMIN_ACTIONS` in `helab/io_ops/admin.py`; `clear_prefs` is Settings → Cache's Clear folder preferences; results on `cacheAdminResult`). Every removal sends `removed` (kinds, paths); `FolderCache.removed()` resets exactly those flags and saved results in memory, and ignores results read before the removal.
+**Caching:** The disk cache is `DIR_CACHES/store-v3` (`helab/utils/cache_store.py`, `CacheStore`): SQLite records in `records.sqlite` (WAL, JSON text) and one Blosc-compressed dataset file per folder in `datasets/` (caching v2's `store-v4`, Q19.4, [`roadmaps/caching-v2.md`](../../roadmaps/caching-v2.md), is built behind a switch that stays off until stage 2: [below](#store-v4-caching-v2-behind-the-switch); the rest of this file describes store-v3 as built). **Only helpers, `helab convert` (a headless process without the GUI) and, read only, `helab cache` open it**; the GUI sends `store_options()` (`helab/utils/folder_cache.py`) with each request and never opens the store, at startup or in Settings. Reads answer found / missing / error, and an error is never "nothing saved". Every write checks a save guard taken when its job started (per-kind generations, the folder's epoch, and for datasets a `job_seq`), so a save that was already running can't bring back removed data or overwrite newer data; a save whose guard names a folder re-keyed since (a nested root found) is `SaveRejected("cleared", REKEYED)` and its file retired at once, like any other rejected save (cache-5). Replaced dataset files are retired, never deleted at once; a `cache_admin sweep` helper on the local lane deletes them later (it also expires pending saves and results held over an hour, and deletes store files no row names once they are over an hour old, `_sweep_orphans`: in store-v4 the same rule covers `raw/`'s layer files, no new removal) (at startup, then by the deadline each helper reports, via one `FolderCache` timer), and at startup also deletes the old diskcache folders (`data_ram_cache`, `status_cache`, `os_file_system_cache`). **Apart from the housekeeping AGENTS.md lists, nothing is removed without the user asking.** Maintenance goes through `FolderCache.cache_admin(action, …)` (the actions are `ADMIN_ACTIONS` in `helab/io_ops/admin.py`; `clear_prefs` is Settings → Cache's Clear folder preferences; results on `cacheAdminResult`). Every removal sends `removed` (kinds, paths); `FolderCache.removed()` resets exactly those flags and saved results in memory, and ignores results read before the removal.
 
 ## Disk budget and pending saves
 
@@ -60,9 +60,9 @@ Cache dirs resolve via `QSettings` (`dir_caches` / `dir_temps`) to `DIR_CACHES` 
 
 ## store-v4 (caching v2, behind the switch)
 
-Built on `agent/caching-v2` (stage 0 and checkpoint 2, landed `ad86bd3`; design: the
-[addendum](../sessions/2026-10-31-claude-caching-v2/design-stage1.md)). **Off by default, and stays off
-until stage 2 and Tony's go (Q28.3).**
+Built on `agent/caching-v2` (stage 0 and checkpoint 2, landed `ad86bd3`; checkpoint 3, landed `c2d0ece`;
+design: the [addendum](../sessions/2026-10-31-claude-caching-v2/design-stage1.md)). Stage 1 is complete
+behind the switch. **Off by default, and stays off until stage 2 and Tony's go (Q28.3).**
 
 - **The switch:** the `store_v4` settings row (bool, default off, no control). `cache_store.store_root()`
   reads it once per process (`live_layout`, through `cache_setting.store_v4_enabled(app_settings())`), so
@@ -86,7 +86,7 @@ until stage 2 and Tony's go (Q28.3).**
   dtypes `|i1 |u1 <i8 <f8`, codec, chunks with offset, length, size and CRC32), then Blosc chunks of at most 64 MiB
   that tile the body. Unknown header fields are ignored; a newer `format`, an unknown dtype or codec, or any
   damage is `HlbError`, never data. The raw layer's encoding: [converter](converter.md).
-- **Raw layers** (step 5's store side, inert until `raw_fill`): `write_raw_file`, `start_raw_job` (`gen_raw`,
+- **Raw layers:** `write_raw_file`, `start_raw_job` (`gen_raw`,
   `raw:<key>`, the root's epoch, the folder's `job_seq`), `save_raw_batch` (one transaction and fit check per
   batch; a later job's version replaces, changes in place named in `overwritten` for Q28.6; over the budget
   nothing is saved and nothing waits, Q42.1), `mark_raw_seen` (`gone_at` marks an only copy, by when its
@@ -94,17 +94,60 @@ until stage 2 and Tony's go (Q28.3).**
   `older_stores` (Q28.5). Make room's order: other folders' datasets, then raw layers whose files were seen,
   then only copies, named (D8). A root's Clear takes its raw layers; Don't cache with "remove cached data"
   takes the folder's seen raw layers and keeps only copies (Q42.4); the admin's `clear_raw`, `removed` kind
-  `raw`.
+  `raw`; Settings › Cache's Clear all takes `raw` too.
+- **Filling them** (`raw_fill`, `helab/io_ops/raw_fill.py`; checkpoint 3): a background-lane operation after a
+  valid `cache_saved` (Load, auto-load, presets' and reopened plots' loads, Live's saves), one per folder
+  ([io-and-browsing](io-and-browsing.md)); never for listings or scans, a Don't cache folder, a folder
+  without a data root, or in store-v3. Batches of at most 50 shots or 64 MB of raw text (`BATCH_SHOTS`,
+  `BATCH_BYTES`), each `.hlb` published just before its batch's save (an unsaved file is an orphan the sweep
+  deletes); each entry's `read_at` (when the file was read) is the evidence C2-10's ordering uses. It yields
+  after about 30 s of work (`more`) and is queued again at the back. Over the budget it saves nothing and
+  asks nothing (Q42.1). A raw file that is blank or doesn't end with a newline waits, as in the converter
+  (`raw.not_done`'s checks that need no profile; C3-2). Each shot encodes under the converter's ticker
+  (`_Ticker`, `compute_budget` of its size), so heartbeats go on during a large encode (C3-1). It isn't
+  retried after an error until the next save asks. **A conversion** into the cache or beside, with a data
+  root and store-v4 live and online, saves its shots' raw rows through the same `raw_fill.save_batch`, by
+  50 shots or 64 MB (`convert._RawRows`; [converter](converter.md)).
+- **An overwritten raw file** (Q28.6): a raw file changed in place since it was cached is replaced, and the
+  save names it (`raw_overwritten`, `events.RAW_OVERWRITTEN`): a desktop notification once per shot per
+  session, a log warning naming the folder, and Folder details' Problems line in amber ("N raw file(s)
+  overwritten since cached", the files in its tooltip; `FolderCache.raw_overwrites`, session only).
 - **store-v3 under v4:** once v4 is live, only `LegacyStore` (`helab/utils/legacy_store.py`) opens store-v3:
   `mode=ro`, else `mode=rw` with `query_only`, `SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE`; never `makedirs`, `_migrate`
   or a write (`test_only_legacy_store_ever_opens_store_v3_once_store_v4_is_live` watches every open and hashes
   v3's files). The user's state (flags, converter flags, constants, presets, roots, volume and mount hints, the
   budget) is imported once at v4's creation (Q22.4; retried while v3 can't be read; a v3 appearing later isn't
-  imported; roots forgotten in v4 meanwhile stay forgotten). **Keep** (until step 6's question is answered):
-  records and results are read from v4 first, then from v3 for a key v4 never removed that kind for (a
+  imported; roots forgotten in v4 meanwhile stay forgotten). **Keep** (also while the question below is
+  unanswered): records and results are read from v4 first, then from v3 for a key v4 never removed that kind for (a
   `None` save's tombstone `legacy-hidden:<kind>:<key>`; purges by age in `meta.legacy_purged`), answered under
   v4's `store_id` with `legacy: true`; read-through only, no copy into v4 yet (A42.1). v3's live bytes count in
   v4's fit checks (`meta.legacy_bytes`, measured at each inventory). Ignore and Clear never open v3.
+- **The store-v3 question** (Q19.4, Q22.3, Q44.1; `CacheDialogs`): with store-v4 live and a store-v3 not
+  answered yet, asked once a session: "An older disk cache" with Keep using it / Ignore it / Clear it…. The
+  choice goes in `meta.legacy_v3` with v3's `store_id` (admin `legacy_choice`), and Settings › Cache's Older
+  cache row changes it later. It holds for the store-v3 it was made for: after Clear, a store-v3 there again
+  is unanswered, and under Keep one with another `store_id` is; Ignore holds for whatever is there, never
+  opened to tell (C3-3). **Clear** (`clear_legacy`; Settings › Cache's Clear…, or Make room's "Clear old
+  stores…", Q28.5) asks first, is refused while `cache_locks.other_instances` names another HeLab ("Another
+  HeLab is running…"), renames store-v3 aside (`store-v3.clearing-<8 hex>`) and deletes it, never through a
+  link ("isn't a folder here"; store-v3 itself refuses it), returns the bytes actually removed and sends
+  `removed` kind `legacy`. What a Clear cut short leaves is listed by `measure_legacy` (`leftover`,
+  `leftover_bytes`) and shown in the Older cache row; only the next asked Clear removes it, never
+  housekeeping (C3-4).
+- **Make room under v4** names what it would remove: raw pulses ("raw pulses of N folders") and only copies
+  ("only copy: their raw files are gone from …"), and while store-v3 counts in the budget it also offers
+  "Clear old stores…"; `room_paths` is exactly what it named (`room_items`). `trim` (a lowered budget) still
+  removes datasets only (A42.2).
+- **Reading `.hlb` outside HeLab:** `helab.utils.hlb.read(path)`, `raw_layer.columns(layer, bin_time=25e-12)`
+  (`channel`, absolute `time_bins`, `time_s`, in stored order), and `helab cache dump FILE` / `helab cache
+  export FILE|--folder FOLDER --to npz|mat|csv` (`helab/cache_cli.py`, dispatched in `helab/main.py` after
+  the frozen helper entry point, beside convert's): read only; `--folder` keys the folder by its nearest
+  `.helab-root` and reads store-v4 through a `mode=ro`, `NO_CKPT_ON_CLOSE`, `query_only` connection (the
+  store's files stay byte-identical); never writes into a `store-v*` folder, never replaces a file without
+  `--force`; a store it can't open is "can't be opened read only (…)", exit 2 (C3-6); exit codes 0 done,
+  1 nothing to export, 2 an error. It loads no PyQt6 module, except that `--folder` without `--cache`
+  imports `helab.utils.constants` for `cache_dir()` (QtCore only; A44.2). The format page, for users:
+  [`docs/hlb-format.md`](../../docs/hlb-format.md) (Q44.2).
 - **Cache moves with two stores:** `cache_move` verifies every store folder present (`store_ids_at`, the record's
   `store_ids` beside `store_id`), the live layout (sent by `CacheMover` as `layout`) is the primary
   (`primary`), `checkpoint` writes the primary only, and a v3 beside a v4 is read through `LegacyStore`. Older

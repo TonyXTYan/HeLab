@@ -153,21 +153,29 @@ design:
    conversion; both on hold for Tony's go) and the Q18.4 tags (built, `c718c71`).
    **Done** (landed `ad86bd3`): A19.2's fence (A19.1 earlier, with the converted-TXY index), cache-4,
    cache-5, cache-6.
-1. The raw layer: parser output as stored pulses; the checker proves layer = file. Steps (the brief's):
+1. The raw layer: parser output as stored pulses; the checker proves layer = file. **Done behind the
+   switch** (checkpoint 3 landed `c2d0ece`): the switch stays off until stage 2 and Tony's go (Q28.3).
+   Steps (the brief's):
    - [x] the design addendum (T~1–T~3 decided as Q42.1–Q42.3);
    - [x] the `.hlb` container and the raw layer's codec, layer = file proved (`b3945f1`);
    - [x] store-v4's core behind the switch: the carried-over tables, `makers`, `LegacyStore`, the import,
      Keep's read-through, cache moves with two stores (`cbf6e16`, `627d1ab`; checkpoint 2, landed `ad86bd3`);
    - [x] step 5's store side: raw layers, save units and guards, Make room's order, the sweep's orphan rule
      over `raw/`, v3's bytes in the usage (`d207b61`, inert);
-   - [ ] step 5's rest: `raw_fill` (passing `RawEntry.read_at`; each `.hlb` published just before its batch's
-     save), raw rows from `convert`, the maker id in each `.hlb` header, Q28.6's notice, cache-1;
-   - [ ] step 6: the store-v3 question and Settings › Cache rows (raw pulses; Clear all includes `raw`); Make
-     room's dialog names only copies (Q42.4);
-   - [ ] step 7: the integration check with the switch on, in temp stores;
-   - [ ] **cache export and the `.hlb` format documented** (Q42.5, Tony 2026-10-31): the format written up
+   - [x] step 5's rest: `raw_fill` (passing `RawEntry.read_at`; each `.hlb` published just before its batch's
+     save), raw rows from `convert`, the maker id in each `.hlb` header, Q28.6's notice, cache-1 (`fc25864`,
+     `34ec22c`);
+   - [x] step 6: the store-v3 question and Settings › Cache rows (raw pulses; Clear all includes `raw`); Make
+     room's dialog names only copies (Q42.4); wording as built (Q44.1) (`fe7957b`);
+   - [x] step 7: the integration check with the switch on, in temp stores (`393f999`,
+     `tests/test_caching_v2_session.py`);
+   - [x] **cache export and the `.hlb` format documented** (Q42.5, Tony 2026-10-31): the format written up
      with sample code (`helab.utils.hlb.read`), `helab cache dump FILE` and `helab cache export FILE|--folder
-     FOLDER --to npz|mat|csv`; read only, no new dependency.
+     FOLDER --to npz|mat|csv`; read only, no new dependency (`8627566`); the format page is
+     [`docs/hlb-format.md`](../docs/hlb-format.md) (Q44.2).
+   - Review: checkpoint 3's C3-1–C3-6 fixed ([review](../.ai/sessions/2026-10-31-claude-caching-v2/review-checkpoint3.md)).
+     Follow-ups: A42.1, A42.2, A44.1 (export of stage 2's TXY layers), A44.2 (a Qt-free `helab cache`);
+     on screen and in MATLAB: M44.1, M44.2.
 2. TXY layers per profile hash and the loading order above; identity by raw fingerprint +
    profile hash; every source mode disk cached.
 3. Convert on read: loads and Live convert from the raw layer; HeLab writes TXY text only beside
@@ -189,8 +197,11 @@ In [DECISIONS_TODO](../.ai/DECISIONS_TODO.md):
   warning (Q28.6).
 - Block 42 (the floor, 2026-10-31): Q42.1 a raw batch over the budget isn't saved and never asks; Q42.2
   zstd 9 stays unless M42.1 finds it too slow; Q42.3 `datasets` through stage 1; Q42.4 Don't cache's
-  removal takes seen raw layers, keeps only copies; Q42.5 cache export (all decided). Open: Q42.6
-  (AGENTS.md's wording). Follow-ups: A42.1, A42.2, A40.3.
+  removal takes seen raw layers, keeps only copies; Q42.5 cache export; Q42.6 AGENTS.md's wording (all
+  decided). Follow-ups: A42.1, A42.2, A40.3.
+- Block 44 (checkpoint 3, 2026-10-31): Q44.1 the store-v3 question's and Settings › Cache's wording as
+  built; Q44.2 the format page at `docs/hlb-format.md` (both decided). Follow-ups: A44.1, A44.2; M44.1,
+  M44.2.
 
 Decided: Q19.2 (under Q12.3), Q19.3–Q19.10, Q22.1–Q22.11 (Q22.7: keep 8 GB and zstd 9 + byte
 shuffle), Q26.1 (byte units by OS), Q26.2 (one `converted-txy/index.sqlite` instead of a JSON

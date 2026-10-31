@@ -90,6 +90,7 @@ git submodule update --init --checkout testdata   # optional, private: HeLab's t
 ```bash
 helab                          # or: python -m helab   (macOS venv/bin/helab, Windows venv\Scripts\helab.exe)
 helab convert --watch FOLDER [--once] [--output temp|cache|beside]   # headless TXY converter
+helab cache dump FILE.hlb | export FILE.hlb|--folder FOLDER --to npz|mat|csv   # read only
 pytest -n 12 --reruns 5 --reruns-delay 1   # full suite; at most the machine's cores (CI: -n 4)
 pytest tests/test_foo.py       # one file
 mypy helab/ --strict && mypy tests --strict && pyright helab tests
@@ -168,9 +169,9 @@ Each rule names the area file with the detail.
 
 **The disk cache** ([cache-store](.ai/architecture/cache-store.md),
 [data-roots](.ai/architecture/data-roots.md)):
-- Only helpers (and `helab convert`, a headless process without the GUI) open the store
-  (`DIR_CACHES/store-v3`, `CacheStore`; with the `store_v4` switch on, `store-v4`, and store-v3 then
-  only through `LegacyStore`, read only; wording for Tony to confirm, Q42.6); the GUI sends
+- Only helpers, `helab convert` (a headless process without the GUI) and, read only, `helab cache`
+  open the store (`DIR_CACHES/store-v3`, `CacheStore`; with the `store_v4` switch on, `store-v4`, and
+  store-v3 then only through `LegacyStore`, read only); the GUI sends
   `store_options()` with each request. A read answers found / missing / error, and an error is
   never "nothing saved".
 - Disk caching needs a data root (a hidden `.helab-root` at or above the folder; keys
@@ -254,8 +255,8 @@ that needs Python uses `weakref.finalize` (`tests/test_destroyed_connections.py`
 | Package / module | What | Detail |
 |---|---|---|
 | `helab/main.py`, `helab/__main__.py` | entry; frozen helper dispatch first | [release-and-ci](.ai/architecture/release-and-ci.md) |
-| `helab/io_helper.py`, `helab/io_ops/` | helper process: browse, scanning, loading, save_held, live, convert (`helab_txy`: HeLab's TXY in loads), icons, markers, admin, results, listings, trace_check; `infra`, `stores`, `fingerprints`, `metadata`, `summary`, `identity`, `events` | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
-| `helab/convert_cli.py` | `helab convert --watch` (headless converter) | [converter](.ai/architecture/converter.md) |
+| `helab/io_helper.py`, `helab/io_ops/` | helper process: browse, scanning, loading, save_held, live, convert (`helab_txy`: HeLab's TXY in loads), raw_fill (caching v2), icons, markers, admin, results, listings, trace_check; `infra`, `stores`, `fingerprints`, `metadata`, `summary`, `identity`, `events` | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
+| `helab/convert_cli.py`, `helab/cache_cli.py` | `helab convert --watch` (headless converter); `helab cache dump\|export` (caching v2's `.hlb` files, read only; [format](docs/hlb-format.md)) | [converter](.ai/architecture/converter.md), [cache-store](.ai/architecture/cache-store.md) |
 | `helab/utils/io_service.py` | `IOService`: lanes, slots, pausing, offline gate | [io-and-browsing](.ai/architecture/io-and-browsing.md) |
 | `helab/utils/folder_cache.py` | `FolderCache`: session memory, jobs, RAM budget, presets and results state, store identity | [cache-store](.ai/architecture/cache-store.md) |
 | `helab/utils/cache_store.py`, `cache_paths.py`, `data_roots.py`, `cache_move.py`; `store_v4.py`, `legacy_store.py`, `hlb.py` | the store, location keys, markers, cache-folder move; store-v4 behind its switch, store-v3 read only under it, the `.hlb` container | [cache-store](.ai/architecture/cache-store.md), [data-roots](.ai/architecture/data-roots.md) |

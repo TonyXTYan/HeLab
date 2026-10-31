@@ -109,9 +109,10 @@ Tony in Chat, 2026-10-31 evening, on Quick Fixes 8 and Caching v2 checkpoint 3 (
 - **Q43.4** the cache move's refusal while a converter runs: "A HeLab converter (helab convert) is running
   (N). Stop it before moving the cache."
 - **Q42.6** AGENTS.md's store-v4 wording kept as applied.
-- **Caching v2 checkpoint 3's Q~1 and Q~2** (numbered when it lands): the store-v3 question's and Settings ›
-  Cache's wording as built ("An older disk cache"; Keep using it / Ignore it / Clear it, asked first); the
-  `.hlb` format page goes to `docs/hlb-format.md`, linked from the README and `cache-store.md`.
+- **Q44.1** (checkpoint 3's Q~1) the store-v3 question's and Settings › Cache's wording as built ("An older
+  disk cache"; Keep using it / Ignore it / Clear it, asked first; rows "Raw pulses", "Older cache
+  (store-v3)"). **Q44.2** (Q~2) the `.hlb` format page is [`docs/hlb-format.md`](../docs/hlb-format.md),
+  linked from the README and `cache-store.md` (both applied at block 44's docs pass).
 - **The Windows flake** `test_io_service_run.py::test_writing_held_data_out_counts_as_progress` (known-issues):
   yes, a Quick Fixer hunts its cause.
 - **Floors:** close IO Fixes and Plot Identity (landed; branches kept).
@@ -363,6 +364,6 @@ that block it become Q items here, as the converter's did (Q6.6–Q6.11).
   [reproducible workflows](../roadmaps/reproducible-workflows.md#dependencies-and-open-decisions).
 - [TXY converter](../roadmaps/txy-converter.md#open-decisions): Q items (Q6.7, Q6.9–Q6.11, Q12.6,
   Q14.2, Q14.4, Q15.3, block 23, Q25.2, Q25.4), plus one smaller question there.
-- [Caching v2](../roadmaps/caching-v2.md#open-decisions): Q items (Q19.1 to confirm, Q27.3, Q42.6;
-  blocks 28 and 42's Q42.1–Q42.5 decided); its design is in the store-v4 design note and stage 1's
+- [Caching v2](../roadmaps/caching-v2.md#open-decisions): Q items (Q19.1 to confirm, Q27.3;
+  blocks 28, 42 and 44 decided); its design is in the store-v4 design note and stage 1's
   [addendum](sessions/2026-10-31-claude-caching-v2/design-stage1.md).

@@ -386,6 +386,24 @@ From Quick Fixes 8's [handoff](sessions/2026-10-31-claude-quick-fixes-8/handoff.
 - **A43.2 "Another HeLab may have changed them"** before `read_presets()` (`PresetsInspector.py:207`,
   `views/plots/presets.py:267`, `:613`): with one app per computer (Q39.1) and `helab convert` writing no
   presets, keep the cheap re-reads and drop that reason from the comments.
+- **A43.3 Reset all settings while Work Offline is on** (Q43.1, Tony 2026-10-31; app-1; numbered at block
+  44's docs pass): only while Work Offline is on, the Reset confirmation asks whether to keep Work Offline
+  (the default button, as the cache folder's location is kept) or go online now. Rivet's, on Ground
+  (Quick Fixes 8; in progress at numbering).
+- **A43.4 The cache move's refusal while a converter runs** (Q43.4, Tony 2026-10-31): `cache_locks.lock_for_move`'s
+  "Another HeLab is running (N windows)." becomes "A HeLab converter (helab convert) is running (N). Stop it
+  before moving the cache." (only `helab convert` can hold it now, Q39.1). Rivet's, on Ground (Quick Fixes 8).
+
+## Caching v2 checkpoint 3 (block 44)
+
+From the Caching v2 floor's [handoff](sessions/2026-10-31-claude-caching-v2/handoff.md) (Vault; checkpoint 3
+landed `c2d0ece`, stage 1 complete, the switch off). A42.1 and A42.2 stay open.
+
+- **A44.1 `helab cache export` of stage 2's TXY layers** (`kind` `txy`): the same CLI, the layer's columns.
+  With stage 2.
+- **A44.2 A Qt-free `helab cache`**: `helab cache export --folder` without `--cache` imports
+  `helab.utils.constants` (QtCore) for `cache_dir()`; a Qt-free reader of the cache-folder setting would
+  make all of `helab cache` Qt-free. Minor: no widgets and no GUI start either way.
 
 ## Not AI work (stays in MANUAL_TODO)
 

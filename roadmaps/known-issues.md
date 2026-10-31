@@ -54,7 +54,9 @@ How to use it:
   helper folders into it is what's left (2026-10-15; updated 2026-10-29).
 - [ ] SMB audit leftovers (2026-10-20): a Windows-suited "seen twice" interval
   (Windows caches attributes 10 s); details scans for visible rows only; icons kept
-  across Refresh; the startup "database is locked" on a fresh store; refuse a
+  across Refresh; the startup "database is locked" on a fresh store (also seen as a warning, "Clean up
+  disk cache failed … database is locked", in the full suite's output: a test's private store-v3, Caching
+  v2 checkpoint 3; not a failure or a RERUN); refuse a
   network or synced temp folder at startup, as the cache folder is.
 - [ ] With the default of one background lane, folder details and status checks
   (including manual ones) wait for the selected load. As planned; revisit if
@@ -151,8 +153,10 @@ How to use it:
   (job 123411955603, `agent/txy-index`); passed on retry. Again: `agent/runner-tools` CI 40989399407
   (Windows); Ground CI 41084197666 (Windows Tests 2/2, job 124161029996, two marks 0.96 ms and 1.5 ms);
   Ground CI 41158349537 (Quick Fixes 8, Windows Tests 2/2, job 124410096333, twice); `agent/caching-v2`
-  CI 41164715526 (Windows Tests 2/2, job 124429733436, marks 1.4 ms and 5.2 ms). A Windows timing flake;
-  IOService untouched by those branches.
+  CI 41164715526 (Windows Tests 2/2, job 124429733436, marks 1.4 ms and 5.2 ms); Ground CI 41182171527
+  (`23ab189`, Windows Tests 2/2, job 124481666642); `agent/caching-v2` CI 41186805673 (`9abdb58`, Windows
+  Tests 2/2, job 124495315262, twice, marks 0.72/1.36 ms and 0.73/1.36 ms). A Windows timing flake;
+  IOService untouched by those branches. Tony, 2026-10-31: a Quick Fixer hunts its cause.
 - [ ] `test_root_discovery.py::test_volume_check_alone_refreshes_hints_without_visiting_markers`:
   xdist worker gw2 crashed on macOS CI 40866574094 attempt 1 (job 123422851726, `agent/txy-index`
   `9691873`; `INTERNALERROR> AssertionError: (…, <WorkerController gw2>)`, exit code 3, no RERUN);
@@ -283,6 +287,13 @@ lines are in TonyXTYan/HeLab#10):
   zip). Tony chose no hotfix to `main` (2026-10-31): v0.0.8's release is the first with zips. Running
   `release_draft --validate-only` on PR builds would have shown it before the merge: since `c201c01`
   every 3.13 build checks its own archive (`release_draft --check`, A39.1).
+- [x] `test_raw_fill.py::test_encoding_a_large_raw_file_keeps_heartbeats_going` (new with C3-1): failed
+  after 5 RERUNs on macOS CI 41186805673 (`agent/caching-v2` `9abdb58`, Tests 1/2), 2–4 heartbeats where it
+  asked for ≥ 5. The test counted heartbeats in a fixed 0.3 s window at a 0.02 s interval, and a loaded
+  runner's ticker thread got fewer turns; the code was fine. Fixed in the test (`375562e`, landed
+  `c2d0ece`): the slow encode lasts until three heartbeats have come, with a 10 s deadline; 25 of 25 runs
+  under a 12-process CPU load with reruns off, and it fails without C3-1's ticker. CI 41188263711: no
+  RERUN.
 - [x] `test_cache_switch.py` left three `sqlite3.Connection`s unclosed (`ResourceWarning: unclosed
   database`; found by the TXY Index floor on `9f0b21f`). Fixed on `agent/caching-v2` (`46f481f`, landed
   `ad86bd3`): the leaks were the tests' own `with sqlite3.connect(...)` blocks (29 in 11 files; sqlite3's

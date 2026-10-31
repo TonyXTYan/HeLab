@@ -34,7 +34,7 @@ no Qt, plotting library or `helab.utils.constants`: every module below but `back
 | `split` | Within-shot pieces at safe gaps for any backend, merged byte for byte (`reconstruct_split`); see Backends. |
 | `pipeline` | `convert_raw(bytes, profile, backend) -> bytes | None` (None: no file, as the 2019 wrapper for no hits); `convert_shot`: HeLab's own (timed; 0-byte TXY for no hits; pieces with an executor); `APP_BACKEND` = `numpy`. |
 | `provenance` | The converted-TXY index (`converted-txy/index.sqlite`: `TxyIndex`, `read_shots`, set-aside, `IndexUnavailable`); `Provenance`, one row per shot (raw fingerprint, profile name/version/hash/tag, backend, TXY size, mtime and SHA-256), `stale`, the file names. |
-| `raw_layer` | Caching v2's raw layer (stage 1, `agent/caching-v2`, landed `ad86bd3`): `RawPulses` ↔ the layer's arrays and `facts` (trigger time, first channel, rows, final newline, so `not_done` from facts equals `not_done(bytes)`); the compact `i8-i64d-1` encoding (int8 channels, int64 time deltas; row 0 first, then stable time order) when the strict path read the file, channels ≤ 127 and times < 2^62, else `f64-1` in file order; zstd 9 + byte shuffle (Q22.7, Q42.2) in the `.hlb` container (`helab.utils.hlb`); `RAW_PARSER_VERSION` (1), bumped only when `parse_raw`'s output changes. |
+| `raw_layer` | Caching v2's raw layer (stage 1, `agent/caching-v2`, landed `ad86bd3`): `RawPulses` ↔ the layer's arrays and `facts` (trigger time, first channel, rows, final newline, so `not_done` from facts equals `not_done(bytes)`); the compact `i8-i64d-1` encoding (int8 channels, int64 time deltas; row 0 first, then stable time order) when the strict path read the file, channels ≤ 127 and times < 2^62, else `f64-1` in file order; zstd 9 + byte shuffle (Q22.7, Q42.2) in the `.hlb` container (`helab.utils.hlb`); `RAW_PARSER_VERSION` (1), bumped only when `parse_raw`'s output changes; `columns(layer, bin_time=BIN_TIME)` (`BIN_TIME` 25e-12 s, the profiles' TDC bin) gives the export columns `channel`, `time_bins` (absolute) and `time_s` in stored order, for `helab cache export` (checkpoint 3, landed `c2d0ece`; format page [`docs/hlb-format.md`](../../docs/hlb-format.md)). |
 | `samples` | The sample manifest (`~/HeLab-samples/txy-v1/manifest.json`, SHA-256 checked on read); held-in/held-out positions. |
 | `check` | `check_txy(ours, reference)`: identical, or the first differing line (`ENDED`, `NO_FINAL_NEWLINE`) and both hit counts; `ReferenceFault` and `prove_fault`; `convert_via_layer` (raw bytes → layer → TXY, in memory). |
 | `timing` | `time_shot`/`time_shots` with `Parallelism` (serial, processes, threads, within-shot through `split`); `summarise` (SI MB/s per stage, latency). |
@@ -243,6 +243,16 @@ newline, off the trigger channel, or no rows, which now waits like the others, Q
 `shot_unconvertible` `damaged` with its `problem`: no TXY, one notification per file, skipped while
 unchanged, never holding up later shots. Heartbeats while a shot computes stop after its budget
 (`compute_budget`: 60 s plus 1 s per MB), so a hung backend times out (Gannet L4).
+
+**Raw rows** (caching v2, checkpoint 3, landed `c2d0ece`; switch off): a conversion into the cache or
+beside, with a data root and store-v4 live and online, saves its shots' raw layers as a `raw_fill` would
+(`convert._RawRows`, one raw guard taken as it starts, through `raw_fill.save_batch`), in batches of at most
+50 shots or 64 MB of raw text (`raw_fill.BATCH_SHOTS`, `BATCH_BYTES`; C3-1). A file that `not_done` would
+hold back isn't converted, so no unfinished row is saved. Each shot's encode runs under the converter's
+`_Ticker` with `compute_budget` of its size, so a large raw file keeps the heartbeats going (C3-1). It never
+fails the conversion: a store that can't take the rows (busy, a Clear since, the budget, Don't cache) sends
+one `cache_warning` or nothing, and the rest of that run's rows go unsaved
+([cache-store](cache-store.md#store-v4-caching-v2-behind-the-switch)).
 
 #### Events (`helab/io_ops/events.py`)
 
