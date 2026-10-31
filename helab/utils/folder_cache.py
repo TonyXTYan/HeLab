@@ -2865,14 +2865,15 @@ class FolderCache(QObject):
         verification, so saves get the I/O (a save waiting for a load it doesn't join then
         starts); none of those start again (``quitting``)."""
         self.quitting = True
-        # Nothing but saves starts now and the hold spares them (io-1): it has nothing left to hold.
-        self.resume_after_mismatch()
         if self._root_verify_owner:
             self.service.cancel(self._root_verify_owner)
         for job in list(self.jobs.values()):
             if job.operation in ("load", "cached", "list", "details", "scan", "icons", "resolve") and not (
                     job.operation == "load" and job.saves()):
                 self._cancel_job(job)
+        # Nothing but saves starts now and the hold spares them (io-1): it has nothing left to hold. Lifted
+        # after the cancelling, so none of the loads and scans it held starts a helper only to be stopped.
+        self.resume_after_mismatch()
 
     def cancel(self, owner: str, operation: str | None = None, path: str | None = None) -> None:
         # A write held for an identity probe ends cancelled, as a queued helper would.

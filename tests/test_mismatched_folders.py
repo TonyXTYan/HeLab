@@ -147,6 +147,28 @@ def test_quitting_lifts_the_hold(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) 
     service.shutdown()
 
 
+def test_quitting_starts_none_of_the_loads_and_scans_the_hold_held(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Probe's IO-R1 (review of io-1): quitting lifts the hold only after it has cancelled the loads and
+    scans it held, so none of them starts a helper just to be stopped."""
+    service = held_service(monkeypatch)
+    service.configure_concurrency(4)
+    cache = get_folder_cache(service)
+    found(cache, "/1")
+    found(cache, "/2")
+    assert service.mismatch_hold
+    assert cache.submit("other", 0, "/held-load", "load", {})
+    assert cache.submit("bulk", 0, "/held-scan", "scan", {"scan_manual": True}, force=True)
+    assert {r.path for r in service.pending} >= {"/held-load", "/held-scan"} and not service.active
+    started: list[str] = []
+    service.resultReady.connect(lambda request, event: started.append(request.path)
+                                if event["kind"] == "started" else None)
+    cache.cancel_for_quit()
+    assert not service.mismatch_hold and not started and not service.active
+    service.shutdown()
+
+
 def test_holds_at_two_four_eight_until_answered_and_skipping_from_eight(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
