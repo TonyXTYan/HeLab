@@ -53,8 +53,9 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
     if action == "sweep":
         old = remove_old_caches(os.path.dirname(os.path.abspath(root)), Heartbeat(send, "cleaning up"))
     # A constants or converter-flag write trusts only the volume hints this session verified, like the other local
-    # writes keyed by a source folder (scan history, subfolder status); the other actions name
-    # no source folder.
+    # writes keyed by a source folder (scan history, subfolder status). ``prefs`` (the folder flags)
+    # names a source folder too but trusts every hint, by design (cache-store.md: "flags still trust
+    # every hint"); the other actions name no source folder.
     verified_volumes = params.get("verified_volumes") if action in ("constants", "convert_prefs") else None
     with stores._cache_store(root, local_lane=True, verified_volumes=verified_volumes,
                              offline=bool(cache_options.get("offline"))) as store:
