@@ -10,7 +10,9 @@ One run lists the folder once (marking each cached shot seen, or gone: its layer
 copy, kept, Q22.6), skips shots already cached from the same file and parser (so a killed run
 resumes for the price of one listing), and reads the rest as the converter does: settled files only
 (unmodified for the settle time, not dated in the future), the same ``fstat`` before and after the
-read, else the shot waits for a later run. It saves them in batches of at most ``BATCH_SHOTS`` shots
+read, and finished (``raw.not_done``'s checks that need no profile: not blank, ending with a newline;
+a TDC that paused mid-file longer than the settle time isn't cached half-written, C3-2), else the shot
+waits for a later run. It saves them in batches of at most ``BATCH_SHOTS`` shots
 or ``BATCH_BYTES`` of raw text (one transaction and one fit check each, ``CacheStore.save_raw_batch``),
 each batch's ``.hlb`` files published just before its save. A batch that doesn't fit the budget is
 not saved and nothing asks (T~1): the run stops. A raw file overwritten in place since it was cached
@@ -18,7 +20,8 @@ not saved and nothing asks (T~1): the run stops. A raw file overwritten in place
 
 It yields: after about ``WORK_SECONDS`` of work it ends with ``more`` set, and the app queues the next
 run at the back of the background lane, so scans and Live's saves never wait behind a large folder.
-Heartbeats go out while it lists and reads, and after each shot's encoding.
+Heartbeats go out while it lists and reads, and from a ticker while each shot encodes (zstd 9 on a large
+file outlasts the no-progress timeout on a slow PC, C3-1).
 
 Every source-folder call stays in this process, traced and guarded like the other helpers'.
 """
@@ -97,22 +100,33 @@ def _read_settled(item: _Listed, beat: Heartbeat) -> bytes | None:
     return data
 
 
+def _unfinished(data: bytes) -> bool:
+    """``raw.not_done``'s checks that need no profile: blank, or not ending with a newline (still being
+    written). The trigger-first check needs the profile's trigger channel, which a fill doesn't have."""
+    return not data.strip() or not data.endswith(b"\n")
+
+
 def save_batch(store: Any, path: str, items: Sequence[RawRead], guard: Any, cache_options: Mapping[str, Any],
                send: Emit, beat: Heartbeat | None = None) -> Any:
     """Encode ``items`` as raw layers, publish their ``.hlb`` files and save them in one batch
     (``CacheStore.save_raw_batch``); sends ``raw_overwritten`` for each file changed in place. Shared with
-    ``convert`` (a conversion saves the raw rows of the shots it read). Returns the ``RawSave``."""
+    ``convert`` (a conversion saves the raw rows of the shots it read). Each shot encodes under the
+    converter's ticker for at most ``compute_budget`` of its size, so a long encode is progress and a hung
+    one still times out. Returns the ``RawSave``."""
     from helab.convert import raw_layer
+    from helab.io_ops.convert import _Ticker, compute_budget
     from helab.utils import store_v4
     from helab.utils.cache_store import RawEntry
     maker = store_v4.session_maker()
     entries: list[RawEntry] = []
     for item in items:
-        layer = raw_layer.encode(item.data)
-        sha256 = hashlib.sha256(item.data).hexdigest()
-        file = store.write_raw_file(raw_layer.to_hlb(
-            layer, maker={"maker": maker["maker"], "record": maker["record"]},
-            meta={"name": item.name, "size": item.size, "mtime_ns": item.mtime_ns, "sha256": sha256}))
+        with _Ticker(send, "raw layer", compute_budget(len(item.data))):
+            layer = raw_layer.encode(item.data)
+            sha256 = hashlib.sha256(item.data).hexdigest()
+            packed = raw_layer.to_hlb(layer, maker={"maker": maker["maker"], "record": maker["record"]},
+                                      meta={"name": item.name, "size": item.size, "mtime_ns": item.mtime_ns,
+                                            "sha256": sha256})
+        file = store.write_raw_file(packed)
         entries.append(RawEntry(item.shot, item.name, item.size, item.mtime_ns, sha256, raw_layer.RAW_PARSER_VERSION,
                                 layer.encoding, layer.facts.to_json(), layer.pulses, file, read_at=item.read_at))
         if beat is not None:
@@ -209,8 +223,8 @@ def raw_fill(path: str, cache_options: Mapping[str, Any], send: Emit = emit, *,
             except OSError:
                 waiting += 1
                 continue
-            if data is None:
-                waiting += 1  # (Changed since the listing: a later run reads it.)
+            if data is None or _unfinished(data):
+                waiting += 1  # (Changed since the listing, or not finished: a later run reads it.)
                 continue
             batch.append(RawRead(item.shot, item.name, item.size, item.mtime_ns, data, read_at))
             batch_bytes += len(data)

@@ -830,13 +830,14 @@ def convert_folder(path: str, request: ConvertRequest, send: Emit = emit) -> Non
 class _RawRows:
     """A conversion's raw layers (caching v2, store-v4): the shots it read and converted, saved in
     batches under one raw guard taken as it starts (``io_ops.raw_fill.save_batch``), as a ``raw_fill`` would
-    have saved them. Only for a folder with a data root whose output is the cache folder or beside the raw
+    have saved them: at most ``BATCH_SHOTS`` shots or ``BATCH_BYTES`` of raw text each (C3-1). Only for a folder with a data root whose output is the cache folder or beside the raw
     files, online. It never fails the conversion: a store that can't take them (busy, a Clear since, the
     budget, Don't cache) sends one ``cache_warning`` or nothing, and the rest of this run's go unsaved."""
 
     def __init__(self, path: str, cache: Mapping[str, Any], guard: Any, send: Emit) -> None:
         self.path, self.cache, self.guard, self.send = path, cache, guard, send
         self.batch: list[Any] = []
+        self.batch_bytes = 0
 
     @classmethod
     def start(cls, path: str, places: _Places, request: ConvertRequest, send: Emit) -> _RawRows | None:
@@ -856,17 +857,18 @@ class _RawRows:
             return None
 
     def add(self, shot: int, name: str, size: int, mtime_ns: int, data: bytes, read_at: float) -> None:
-        from helab.io_ops.raw_fill import BATCH_SHOTS, RawRead
+        from helab.io_ops import raw_fill
         if self.guard is None:
             return
-        self.batch.append(RawRead(shot, name, size, mtime_ns, data, read_at))
-        if len(self.batch) >= BATCH_SHOTS:
+        self.batch.append(raw_fill.RawRead(shot, name, size, mtime_ns, data, read_at))
+        self.batch_bytes += len(data)
+        if len(self.batch) >= raw_fill.BATCH_SHOTS or self.batch_bytes >= raw_fill.BATCH_BYTES:
             self.flush()
 
     def flush(self) -> None:
         from helab.io_ops.raw_fill import save_batch
         from helab.utils.cache_store import SaveRejected, StoreError
-        batch, self.batch = self.batch, []
+        batch, self.batch, self.batch_bytes = self.batch, [], 0
         if not batch or self.guard is None:
             return
         try:

@@ -159,6 +159,62 @@ def test_a_conversion_into_the_cache_saves_its_raw_rows(source: Path, tmp_path: 
     assert rows(v4_options, other) == {}
 
 
+def test_a_conversions_raw_rows_are_saved_by_bytes_too(source: Path, tmp_path: Path, v4_options: dict[str, Any],
+                                                        monkeypatch: pytest.MonkeyPatch) -> None:
+    """C3-1 (Assay): a folder of large shots isn't held until 50 have gathered (about 1 GB at 20 MB a shot):
+    a conversion's raw rows are saved once ``BATCH_BYTES`` of raw text has gathered, as ``raw_fill``'s are."""
+    from helab.io_ops import raw_fill as module
+    monkeypatch.setattr(module, "BATCH_BYTES", len(raw_text(1)) + 1)  # (Two shots' worth reach it.)
+    batches: list[list[int]] = []
+    save_batch = module.save_batch
+
+    def counted(store: Any, path: str, items: Any, *args: Any, **kwargs: Any) -> Any:
+        batches.append([item.shot for item in items])
+        return save_batch(store, path, items, *args, **kwargs)
+    monkeypatch.setattr(module, "save_batch", counted)
+    request: dict[str, Any] = {"path": str(source), "profile": MATLAB_2019.to_dict(), "temps": str(tmp_path / "temps"),
+                               "seen": None, "destination": "cache", "workers": 1, "cache": v4_options}
+    convert_folder(str(source), request, lambda event: None)  # type: ignore[arg-type]
+    assert batches == [[1, 2], [3]] and set(rows(v4_options, source)) == {1, 2, 3}
+
+
+def test_encoding_a_large_raw_file_keeps_heartbeats_going(source: Path, v4_options: dict[str, Any],
+                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    """C3-1 (Assay): zstd 9 on a few hundred MB takes longer than the no-progress timeout on a slow PC; the
+    encode runs under the converter's ticker (``compute_budget``), for ``raw_fill`` and conversions alike."""
+    from helab.io_ops import raw_fill as module
+    from helab.io_ops.infra import Heartbeat
+    monkeypatch.setattr(Heartbeat, "INTERVAL", 0.02)
+    encode = raw_layer.encode
+
+    def slow(data: bytes) -> Any:
+        time.sleep(0.3)  # (A long encode: no read, no shot finished meanwhile.)
+        return encode(data)
+    monkeypatch.setattr(raw_layer, "encode", slow)
+    sent: list[dict[str, Any]] = []
+    with opened(v4_options, source) as store:
+        guard = store.start_raw_job(str(source))
+        data = raw_text(1)
+        item = module.RawRead(1, "d1.txt", len(data), OLD * 10**9, data, time.time())
+        module.save_batch(store, str(source), [item], guard, v4_options, sent.append)  # type: ignore[arg-type]
+    assert sum(event["kind"] == "heartbeat" for event in sent) >= 5
+
+
+def test_a_fill_leaves_a_raw_file_that_isnt_finished_waiting(source: Path, v4_options: dict[str, Any]) -> None:
+    """C3-2 (Assay): the TDC paused mid-file longer than the settle time. Its layer isn't cached (as the
+    converter, ``raw.not_done``: blank or no final newline), so finishing it later isn't reported as
+    overwritten (Q28.6's warning means a finished file changed)."""
+    whole = raw_text(4)
+    write_raw(source, 4, whole[:-7])  # (Cut mid-line.)
+    write_raw(source, 5, b"\r\n\r\n")  # (Blank.)
+    first = done(fill(source, v4_options))
+    assert (first["saved"], first["waiting"]) == (3, 2) and set(rows(v4_options, source)) == {1, 2, 3}
+    write_raw(source, 4, whole, mtime=OLD + 100)
+    sent = fill(source, v4_options)
+    assert done(sent)["saved"] == 1 and not any(event["kind"] == "raw_overwritten" for event in sent)
+    assert set(rows(v4_options, source)) == {1, 2, 3, 4}
+
+
 # FolderCache
 
 @pytest.fixture
