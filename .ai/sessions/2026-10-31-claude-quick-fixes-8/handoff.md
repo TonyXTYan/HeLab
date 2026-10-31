@@ -267,3 +267,11 @@ With one app per computer, the only other process sharing the app folder and sto
 - **No RERUN:** windows Tests 2/2 (4258), macos 1/2 (4263) and 2/2 (4276), ubuntu 1/2 (4259) and 2/2
   (4277), and all three Converter backends jobs (715 / 713 / 715).
 - **A39.1 passed on all three builds:** "built cleanly at 82c9db3b77…".
+
+### Run 41165963510 (`a64013b`, with 1f86ca2): success, all 12 job logs read
+
+- **No RERUN and no crashed worker in any job.**
+  - Tests passed: windows 1/2 4246, 2/2 4258; macos 4263, 4276; ubuntu 4260, 4277.
+  - Converter backends: 713 / 715 / 715.
+- **A39.1 passed on all three builds:** "built cleanly from 0.0.7a1 at a64013be9c…".
+- This record is committed locally only (doc-only: no push, so no CI run).
