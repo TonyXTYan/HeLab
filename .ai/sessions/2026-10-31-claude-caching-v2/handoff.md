@@ -339,7 +339,98 @@ Q28.6's notice. **`converter.md`**: a conversion in store-v4 saves its shots' ra
 
 A mutation (Clear's default leaving out raw) fails it.
 
-## Proposed doc changes (for the Coordinator)
+## Step 8: doc proposals for checkpoint 3 (steps 5–7, the export, cache-1)
+
+The list below ("Proposed doc changes") was applied at checkpoint 2's docs commit (`7180751`); these are what
+came after it. The switch stays off, so none of this is user-visible yet.
+
+- **AGENTS.md** (wording only):
+  - Code map, the `helab/convert_cli.py` row becomes: "`helab/convert_cli.py`, `helab/cache_cli.py` |
+    `helab convert --watch` (headless converter); `helab cache dump|export` (caching v2's `.hlb` files, read
+    only)".
+  - Setup and commands, under `helab convert …`: "`helab cache dump FILE.hlb | export FILE.hlb|--folder FOLDER
+    --to npz|mat|csv   # read only`".
+  - The "frozen helper entry point … (after `freeze_support()`, before the `convert` dispatch)" rule stays
+    true (`cache`'s dispatch follows convert's).
+  - Housekeeping: nothing new. `clear_legacy` is the user's choice, asked first, and sends `removed`
+    (kind `legacy`).
+- **cache-store.md**, "store-v4":
+  - The header line: "(stage 0 and checkpoints 2 and 3, landed …)".
+  - **Raw layers**: drop "inert until `raw_fill`" and add: "`raw_fill` (`helab/io_ops/raw_fill.py`) fills
+    them on the background lane after a valid `cache_saved`. Batches are at most 50 shots or 64 MB, each `.hlb`
+    published just before its batch's save; `read_at` is the evidence; it yields after about 30 s (`more`).
+    Over the budget it saves nothing and asks nothing (Q42.1). A conversion in store-v4 saves its shots' raw
+    rows through the same `save_batch`. A raw file changed since it was cached is replaced, and Q28.6's
+    notice says so (`raw_overwritten`: once per shot per session, a log warning, Folder details' amber
+    Problems line)."
+  - **store-v3 under v4**: replace "(until step 6's question is answered)" with: "The question (Keep using it /
+    Ignore it / Clear it…) is asked once a session while unanswered (`CacheDialogs`); the choice goes in
+    `meta.legacy_v3` (admin `legacy_choice`). **Clear** (`clear_legacy`, Settings › Cache or Make room's
+    Clear old stores…, Q28.5) asks first, is refused while another HeLab runs (`cache_locks.other_instances`),
+    renames store-v3 aside and deletes it, never through a link, and sends `removed` kind `legacy`."
+  - Removals: "`removed` kinds `raw` (rows in `raw`) and `legacy`; Clear all takes `raw` too."
+  - A new bullet, **Reading `.hlb` outside HeLab**: "`helab.utils.hlb.read(path)`, `raw_layer.columns`, and
+    `helab cache dump|export` (`helab/cache_cli.py`: read only; a folder through a `mode=ro`,
+    `NO_CKPT_ON_CLOSE` connection; never into a `store-v*` folder, never replacing without `--force`). The
+    format page: `docs/hlb-format.md`."
+- **The format page**: [hlb-format.md](hlb-format.md) to `docs/hlb-format.md` (Q~2), linked from the README and
+  `cache-store.md`.
+- **data-roots.md** (cache-1): "When a data root's identity changes (re-marked, or its marker replaced), RAM drops
+  its folders' flags and `write_beside` (`FolderCache._root_prefs_gone`, beside `_root_constants_gone`), so the
+  old root's flags don't stick to the new one's folders."
+- **io-and-browsing.md**: the lanes text in step 5's section above. Add `raw_fill` to the operations list
+  (`SOURCE_OPERATIONS`, `CACHE_ONLY`, `PAUSABLE`), and `raw_overwritten` and `raw_fill_done` to the events.
+- **app-runtime-and-ui.md**: Settings › Cache's Raw pulses and Older cache rows (store-v4 only; IDs
+  `cache_clear_raw`, `cache_legacy_choice`, `cache_clear_legacy`); the store-v3 question in `CacheDialogs`; Make
+  room naming raw pulses and only copies, with "Clear old stores…"; Folder details' amber raw-overwritten line.
+- **converter.md**: "A conversion into the cache or beside, with a data root and store-v4 live and online, saves
+  its shots' raw layers (`convert._RawRows`, through `raw_fill.save_batch`)." And `raw_layer.columns`,
+  `BIN_TIME`.
+- **testing.md**:
+  - `tests/test_caching_v2_session.py` is stage 1's switch-on integration check. It watches
+    `sqlite3.connect` and `CacheStore.__init__` for any open of store-v3 outside `LegacyStore`, and hashes v3.
+  - `tests/test_cache_cli.py::test_helab_cache_starts_no_qt`: a subprocess, asserting no PyQt6 module loaded.
+  - The `v4_live` fixture in `tests/test_raw_fill.py` (`cache_store._reset_live_layout(4)`).
+- **The plan** (`roadmaps/caching-v2.md`, stage 1): tick step 5's rest (`fc25864`, `34ec22c`), step 6
+  (`fe7957b`), step 7 (`393f999`) and the export (`8627566`). "Stage 1 built; the switch stays off until stage 2
+  and Tony's go."
+- **known-issues**: none new. The full suite's "Clean up disk cache failed … database is locked" warning (a
+  test's private store-v3, switch off) is the SMB audit leftovers' "startup 'database is locked' on a fresh
+  store"; it is a warning, not a failure or a RERUN.
+- **README**: a short "Exporting cached raw pulses" section under usage (Q~2): `helab cache export --folder
+  FOLDER --to mat`, with a link to the format page. Once the switch is on, that is.
+
+### New items (provisional)
+
+- **Q~1 The store-v3 question's and Settings › Cache's wording** (for Tony to confirm; user-visible once the switch
+  is on):
+  - The title is "An older disk cache".
+  - The text: "The cache folder also holds an older HeLab's disk cache (store-v3, 6.0 MB)."
+  - The detail: "Keep using it: HeLab reads its records and saved analysis where the new cache has none, and it
+    counts toward the disk budget. Ignore it: it stays on disk, unused. Clear it: it is removed, after asking.
+    Settings → Cache can change this later."
+  - The buttons: Keep using it / Ignore it / Clear it….
+  - Clear's question: "Remove the disk cache of an older HeLab (store-v3, …)? This HeLab no longer reads it; an
+    older HeLab started later would begin an empty one. This can't be undone."
+  - Settings › Cache rows: "Raw pulses", "Older cache (store-v3)".
+  - Proposed: as built.
+- **Q~2 Where the `.hlb` format page lives**:
+  - (a) `docs/hlb-format.md`, linked from the README and `cache-store.md`;
+  - (b) a README section;
+  - (c) `.ai/architecture/` only.
+  - Proposed: (a). Users read it, and its MATLAB part is for lab members. The README gets a two-line pointer
+    once the switch is on.
+- **M~2 On screen, switch on, test settings and a temp cache folder only** (`floor-env.sh`): see the store-v3
+  question once, each Settings › Cache row and its buttons, Make room's text with raw pulses and only copies,
+  and Folder details' amber line after overwriting a raw file in a temp folder.
+- **M~3 MATLAB**: run `helab cache export d1.hlb --to mat` on a layer from the sample set's via-layer run (or a
+  temp store) and the format page's MATLAB lines (`load`, `jsondecode(s.header)`).
+- **A~5** `helab cache export` of stage 2's TXY layers (`kind` `txy`): same CLI, the layer's columns.
+- **A~6** `helab cache export --folder` without `--cache` imports `helab.utils.constants` (QtCore) for
+  `cache_dir()`. A Qt-free reader of the cache-folder setting would make all of `helab cache` Qt-free. Minor:
+  no widgets and no GUI start either way.
+
+## Proposed doc changes (for the Coordinator; checkpoint 2's, applied at `7180751`)
 
 - **known-issues** (cache-4): replace the `test_cache_switch.py` leak entry with: "Fixed on
   `agent/caching-v2` (`46f481f`): the leaks were the tests' own `with sqlite3.connect(...)` blocks (29 in
@@ -383,6 +474,7 @@ A mutation (Clear's default leaving out raw) fails it.
 - **known-issues** (the fixes' CI 41164715526): add to the `test_io_service_run.py::test_writing_held_data_out_counts_as_progress`
   entry "Again: `agent/caching-v2` CI 41164715526 (Windows Tests 2/2, job 124429733436, marks 1.4 ms and 5.2 ms)".
   Its only RERUN; IOService untouched by this floor.
+- (Merged at `7180751`: A~3 → A42.1, A~4 → A42.2, M~1 → M42.1; A~2 is in known-issues' pickle entry.)
 - **A~2** `pack_dataset`'s 2.1 GB limit stays for v4's `datasets` in stage 1 (blosc-pickle); stage 2's `.hlb`
   segments end it.
 - **A~4** `trim` (the user lowers the budget) in Make room's order in store-v4 (today datasets only).
