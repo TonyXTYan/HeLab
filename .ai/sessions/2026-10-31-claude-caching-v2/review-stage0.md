@@ -101,3 +101,36 @@ To keep Vault's later commits out of the run, I tested an export of `baee813` (`
 - The S0-1 scratch test: passes, meaning the failure reproduces.
 
 On a fix diff I re-check only that diff, its tests and the touched files' type checks.
+
+## Re-check of the fix (`64280e0..03fc012`)
+
+**Open findings: none.** S0-1 is fixed. S0-2 is deferred to known-issues (CoCo's call), and the handoff
+proposes it.
+
+- **S0-1: fixed.** `helab_txy._young_partial` keeps every `….partial` modified within `convert.PARTIAL_MAX_AGE`
+  (1 h), as housekeeping does. A failed stat counts as young, so the file stays. Clear (`clear_converted`) and
+  Settings › Cache's clearable count (`converted_usage`) both go through `_cleared(entries, now)`, so the two
+  agree: a young partial counts in `bytes` but not in `clearable`, and its folder stays. A conversion that started
+  before the Clear still never renames (the fence), and `write_atomic` removes its own temporary. This removes
+  less than before, the safe direction; no removal rule changes.
+- **Tests prove it.** I reverted `helab/io_ops/helab_txy.py` alone to `64280e0` in an export of `03fc012`:
+  - `test_a_clear_still_running_leaves_a_later_conversions_temporary_alone` fails with `FileNotFoundError` from the
+    rename (`txy.py:120`). This is S0-1's failure, now reached through the real `clear_converted`.
+  - `test_the_helper_measures_and_clears_converted_txy` fails at its usage assertion (`:217`).
+  - Both pass on `03fc012`.
+- **Handoff.** Lines 54-57 and the Gaps entry now say that in Live a failed conversion stops auto-convert until
+  Retry. A~1 is marked done, and the cache-store.md wording is proposed.
+- **S0-2's proposed fix needs one change** when CoCo applies the known-issues text: adding `cleared` to
+  `CONVERT_SETTLING` would list those shots under "Being written: … (converted once written)", which is wrong too.
+  Better wording: "leave `cleared` out of `stuck()`, with its own line or none".
+- **Cosmetic, not a finding:** `helab_txy.py:502`, a 180-character docstring line, missed the rewrap. No lint
+  checks line length; the file already has lines up to 126.
+
+**Checks.**
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-assay` on the export of `03fc012`, running
+  `test_convert_helab.py`, `test_converter_tab.py`, `test_helper_events.py`, `test_txy_sources.py` and
+  `test_headless_imports.py` (every test file that calls `clear_converted`, `converted_usage` or `converted_summary`,
+  plus `PURE`): **177 passed in 12.83 s, no RERUN.**
+- `mypy --strict` on the 3 touched files, and on `helab_txy.py` with `--platform win32`: no issues.
+- `pyright` on the same files, also with `--pythonplatform Windows`, in the floor root (`helab/`, `tests/` equal
+  `03fc012`): 0 errors.
