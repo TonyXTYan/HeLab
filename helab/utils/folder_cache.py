@@ -21,6 +21,7 @@ from helab.analysis.constant_layers import clean_layer, folder_layer
 from helab.utils.ram_buffers import Buffers, dataset_buffers
 from helab.utils import app_log, file_kinds, large_folder, txy_sources
 from helab.utils.cache_store import APPROVAL_SHARE, KINDS, store_root
+from helab.utils.store_v4 import DIRNAME as STORE_V4_DIRNAME
 from helab.utils.constants import (
     DEFAULT_CHECK_LEVEL, DEFAULT_DISK_BUDGET, DEFAULT_LIVE_AUTOSAVE, DEFAULT_LIVE_INTERVAL, DEFAULT_RAM_STEPS,
     DISK_CACHE_ENABLED, cache_dir, cache_dir_enabled, cache_dir_refused, ram_step_bytes,
@@ -160,6 +161,10 @@ def set_disk_budget(budget: int) -> None:
 _offline = False
 
 
+# The owner of a folder's raw fill (caching v2), with its path: one per folder (``schedule_raw_fill``).
+RAW_FILL_OWNER = "raw_fill:"
+
+
 def store_options() -> dict[str, Any]:
     """What a helper needs to open the disk cache, and its budget in bytes; {} when the
     cache is off for this session. The GUI process never opens the store."""
@@ -231,6 +236,10 @@ class FolderCache(QObject):
     # A folder's files dated ahead of this computer's clock (path, seconds): once per share or volume
     # (the helper's ``location``) per session (``clock_skew_seen``).
     clockSkew = pyqtSignal(str, float)
+    # A raw file of this folder was overwritten in place since store-v4 cached it (Q22.5, Q28.6).
+    rawOverwritten = pyqtSignal(str)
+    # What store-v4 last said about store-v3 beside it (``legacy``): its question, Settings › Cache's row.
+    legacyChanged = pyqtSignal()
     # The saves the quit window waits for changed (``quit_saves``).
     quitSavesChanged = pyqtSignal()
     # Work Offline turned on (True) or off (False): ``set_offline``.
@@ -541,6 +550,15 @@ class FolderCache(QObject):
         self.foreground_owners: set[str] = set()
         # Shares and volumes whose clock this session found ahead of ours (``clockSkew``).
         self.clock_skew_seen: set[str] = set()
+        # Caching v2's raw fills (store-v4 only): the owners running (one per folder, ``RAW_FILL_OWNER``
+        # + its path) and the folders to fill again once theirs ends; raw files overwritten in place
+        # since they were cached, this session, by folder and shot (Q28.6).
+        self._raw_fills: set[str] = set()
+        self._raw_fill_again: set[str] = set()
+        self.raw_overwrites: dict[str, dict[int, dict[str, Any]]] = {}
+        # store-v3 beside store-v4 (``CacheStore.measure_legacy``: present, choice, bytes, counted), as the
+        # last inventory or answer said; None in store-v3 or before any.
+        self.legacy: dict[str, Any] | None = None
         service.is_foreground = self._is_foreground
         service.owners_of = self._owners_of
         service.before_start = self._before_start
@@ -632,6 +650,7 @@ class FolderCache(QObject):
         known = self.data_roots.get(path)
         if known is not None and known[0] != identifier:
             self._root_constants_gone(path)  # Another root at this folder now (any event saying so).
+            self._root_prefs_gone(path)
             self._root_results_gone(path)
         if known != (identifier, label) or cleared:
             self.data_roots[path] = (identifier, label)
@@ -706,6 +725,7 @@ class FolderCache(QObject):
     def _root_gone(self, path: str) -> None:
         if path in self.data_roots:
             self._root_constants_gone(path)
+            self._root_prefs_gone(path)
             self._root_results_gone(path)
         if self.data_roots.pop(path, None) is not None:
             self.dataRootsChanged.emit(path)
@@ -1159,6 +1179,72 @@ class FolderCache(QObject):
         self.pins.pop(owner, None)
         self._evict()
 
+    # Caching v2's raw fills (store-v4; ``io_ops.raw_fill``)
+
+    def schedule_raw_fill(self, path: str) -> None:
+        """Queue ``path``'s raw fill on the background lane, once its data was saved to the disk cache
+        (Q19.10, Q22.1): only in store-v4, never offline, quitting, or for a Don't cache folder; one per
+        folder (``IOService`` drops a second; one running is filled again when it ends)."""
+        options = store_options()
+        if (not options or options.get("offline") or self.quitting or self.service.closed
+                or os.path.basename(os.path.normpath(str(options["directory"]))) != STORE_V4_DIRNAME
+                or self.folder_prefs(path).get("no_cache")):
+            return
+        owner = RAW_FILL_OWNER + path
+        if owner in self._raw_fills:
+            self._raw_fill_again.add(path)
+            return
+        if self.service.submit(owner, 0, path, "raw_fill", {"cache": options},
+                               timeout=self.service.NO_PROGRESS_TIMEOUT):
+            self._raw_fills.add(owner)
+
+    def _on_raw_fill_event(self, producer: IORequest, event: dict[str, Any]) -> None:
+        kind, path = event["kind"], producer.path
+        if kind == "raw_overwritten":
+            self._raw_overwritten(path, event)
+        elif kind == "raw_fill_done":
+            self._note_usage(event.get("usage"), event.get("usage_seq"))
+            if "next_deadline" in event:
+                self._schedule_sweep(event["next_deadline"])
+            if event["more"]:
+                self._raw_fill_again.add(path)  # (It yielded: the rest at the back of the lane.)
+            if event["reason"] and event["reason"] not in ("store_v3",):
+                logging.info("Raw pulse caching %s: %s", path, event["reason"])
+        elif kind == "error":
+            logging.warning("Raw pulse caching %s: %s", path, event.get("message", ""))
+        if kind in ("done", "error", "cancelled"):
+            self._raw_fills.discard(producer.owner)
+            if path in self._raw_fill_again and kind == "done":
+                self._raw_fill_again.discard(path)
+                QTimer.singleShot(0, lambda: self.schedule_raw_fill(path))
+            else:
+                self._raw_fill_again.discard(path)
+
+    def _note_legacy(self, legacy: object) -> None:
+        """store-v3's state as store-v4 said it (``legacyChanged``: the question, Settings › Cache)."""
+        found = dict(legacy) if isinstance(legacy, dict) else None
+        if found != self.legacy:
+            self.legacy = found
+            self.legacyChanged.emit()
+
+    def _raw_overwritten(self, path: str, event: Mapping[str, Any]) -> None:
+        """Q28.6: a raw file overwritten in place since store-v4 cached it (it only happens when the TDC is
+        misconfigured, Q22.5): said once per shot per session, by a notification, a log warning and its
+        folder's Folder details line (``raw_overwrites``). Live goes on."""
+        shot = int(event["shot"])
+        seen = self.raw_overwrites.setdefault(path, {})
+        if shot in seen:
+            return
+        seen[shot] = {"raw_name": str(event["raw_name"]), "old": list(event["old"]), "new": list(event["new"]),
+                      "at": time.time()}
+        message = (f"Raw file {event['raw_name']} in {os.path.basename(os.path.normpath(path)) or path} was overwritten "
+                   "since HeLab cached it: it is read again. The TDC may be misconfigured.")
+        logging.warning("%s (%s)", message, path)
+        from helab.utils import events
+        events.notify(events.RAW_OVERWRITTEN, message, title="HeLab: raw file overwritten",
+                      key=(events.RAW_OVERWRITTEN, path, shot), desktop=True, path=path, shot=shot)
+        self.rawOverwritten.emit(path)
+
     def folder_prefs(self, path: str) -> dict[str, Any]:
         """A folder's flags (never its parent's or subfolders'): no_cache, no_auto_load."""
         saved = self.prefs.get(path) or {}
@@ -1486,6 +1572,26 @@ class FolderCache(QObject):
             del self.folder_constant_records[folder]
             if before:
                 self.constantsChanged.emit(folder)
+
+    def _root_prefs_gone(self, path: str) -> None:
+        """Beside :meth:`_root_constants_gone` (cache-1): the old root's folder flags (Don't cache, Don't
+        auto-load) and converter flags (``write_beside``) no longer apply to the folders it held (not those
+        inside a nested root below), so the next listing's answer under the new identity stands; a flag
+        write still running (this session's choice) keeps its folder's."""
+        writing = {write[0] for write in self._pref_writes.values()}
+        changed: set[str] = set()
+        for folder in [folder for folder in self.prefs if self._root_holds(path, folder) and folder not in writing]:
+            before = self.folder_prefs(folder)
+            del self.prefs[folder]
+            self._confirmed_prefs.pop(folder, None)
+            if self.folder_prefs(folder) != before:
+                changed.add(folder)
+        for folder in [folder for folder in self.convert_prefs if self._root_holds(path, folder)]:
+            if self.write_beside(folder):
+                changed.add(folder)
+            del self.convert_prefs[folder]
+        for folder in sorted(changed):
+            self.folderPrefsChanged.emit(folder)
 
     def _root_results_gone(self, path: str) -> None:
         """Beside :meth:`_root_constants_gone`: the old root's saved-result counts no longer apply to
@@ -3594,6 +3700,9 @@ class FolderCache(QObject):
             self.pending_results = merged_results
             self.pendingSavesChanged.emit()
             self._schedule_sweep(event["inventory"].get("next_deadline"))
+            self._note_legacy(event["inventory"].get("legacy"))
+        elif kind == "admin_result" and action in ("legacy_choice", "clear_legacy"):
+            self._note_legacy(event.get("legacy"))
         elif kind == "admin_result" and action in ("adopt", "discard"):
             # Matched by pending_id: a late answer about an older save never touches a newer one.
             pending_id = producer.payload["params"].get("pending_id")
@@ -3706,6 +3815,7 @@ class FolderCache(QObject):
                 # A root this session hadn't seen at that folder: what RAM holds there came from
                 # whichever root was nearest, gone too. (A known one: ``_root_seen``/``_root_gone``.)
                 self._root_constants_gone(str(event["path"]))
+                self._root_prefs_gone(str(event["path"]))
                 self._root_results_gone(str(event["path"]))
             if event.get("location"):
                 self._duplicate_settled(str(event["location"]))  # Forgotten, removed or replaced.
@@ -3801,6 +3911,7 @@ class FolderCache(QObject):
                            else "Cache update waiting for your answer")
             self.diskCacheChanged.emit(path)
         if valid and kind == "cache_saved":
+            self.schedule_raw_fill(path)  # (Caching v2: its raw files into store-v4, in the background.)
             state = self._cache_states.setdefault(path, CacheStatus())
             state.info, state.error = dict(event["cache_info"]), ""
             for entry in self.datasets.values():
@@ -3849,6 +3960,9 @@ class FolderCache(QObject):
                 self.quitSavesChanged.emit()
             return
         if self._on_root_event(producer, event) or self._on_verification_event(producer, event):
+            return
+        if producer.owner in self._raw_fills:
+            self._on_raw_fill_event(producer, event)
             return
         if event["kind"] == "clock_skew":
             location = str(event.get("location") or event["path"])
@@ -4249,6 +4363,8 @@ class FolderCache(QObject):
                         self.remember_folder_icon(path)
         elif job.operation == "convert" and kind == "convert_summary":
             self._remember_convert(job, event)
+        elif job.operation == "convert" and kind == "raw_overwritten":
+            self._raw_overwritten(job.path, event)  # (Its raw rows: a file changed in place, Q28.6.)
         elif job.operation == "convert" and kind == "shot_unconvertible":
             self.convert_reasons.setdefault(job.path, {})[str(event["raw_name"])] = str(
                 event.get("message") or event["reason"])

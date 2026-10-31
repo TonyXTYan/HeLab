@@ -19,6 +19,10 @@ if "--helab-io-helper" in sys.argv:
 if len(sys.argv) > 1 and sys.argv[1] == "convert":
     from helab.convert_cli import main as convert_main
     raise SystemExit(convert_main(sys.argv[2:]))
+# ``helab cache dump|export …`` (caching v2's .hlb files, read only): before any Qt widgets, caches or Dash too.
+if len(sys.argv) > 1 and sys.argv[1] == "cache":
+    from helab.cache_cli import main as cache_main
+    raise SystemExit(cache_main(sys.argv[2:]))
 
 # Query provenance before importing Qt, opening settings/caches or starting Dash.
 if "--version" in sys.argv:

@@ -39,7 +39,7 @@ HANDLERS = ("list_folder", "folder_icons", "scan", "save_scan_history", "save_su
             "save_held", "load", "read_cached", "cache_move_job", "cache_admin", "result_find", "result_save",
             "verify_known_roots",
             "verify_volumes", "trace_check", "create_root", "reassign_root", "remove_root", "save_marker_copy",
-            "saved_list_folder", "newest_root_folder", "convert_folder")
+            "saved_list_folder", "newest_root_folder", "convert_folder", "raw_fill")
 
 
 @pytest.fixture(autouse=True)
@@ -159,6 +159,7 @@ ROUTES: list[tuple[dict[str, Any], str, tuple[Any, ...], dict[str, Any]]] = [
      {"cache_options": CACHE, "limits": {"ram": 9}, "allow_large": True, "verified_volumes": [["/v", "dev"]]}),
     ({"operation": "cache_move", "move": {"to": OTHER}}, "cache_move_job", ({"to": OTHER},), {}),
     (CONVERT, "convert_folder", (PATH, CONVERT), {}),
+    ({"operation": "raw_fill", "path": PATH, "cache": CACHE}, "raw_fill", (PATH, CACHE), {}),
     # Work Offline's listing and start folder (cache-only browsing): the disk cache only.
     ({"operation": "saved_list", "path": PATH, "cache": CACHE, "verified_volumes": [["/v", "dev"]]},
      "saved_list_folder", (PATH,), {"cache_options": CACHE, "verified_volumes": [["/v", "dev"]]}),

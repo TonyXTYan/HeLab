@@ -165,6 +165,22 @@ def decode(layer: RawLayer) -> RawPulses:
     return RawPulses(channels=channels, times=times)
 
 
+BIN_TIME = 25e-12  # HeLab's profiles' TDC bin (``profile.bin_time``), for ``columns``' seconds.
+
+
+def columns(layer: RawLayer, bin_time: float = BIN_TIME) -> dict[str, npt.NDArray[Any]]:
+    """A layer as plain columns for export (``helab cache export``): ``channel``, ``time_bins`` (absolute
+    TDC bins: int64 for ``COMPACT``, float64 with NaN for ``FLOAT``) and ``time_s`` (float64, ``bin_time``
+    per bin), in the layer's stored order (``COMPACT``: row 0 first, then by time; ``FLOAT``: file order)."""
+    check(layer)
+    if layer.encoding == COMPACT:
+        channel: npt.NDArray[Any] = layer.arrays["channel"].copy()
+        time_bins: npt.NDArray[Any] = np.cumsum(layer.arrays["time"], dtype=np.int64)
+    else:
+        channel, time_bins = layer.arrays["channels"].copy(), layer.arrays["times"].copy()
+    return {"channel": channel, "time_bins": time_bins, "time_s": time_bins.astype(np.float64) * bin_time}
+
+
 def not_done(facts: Facts, channel_trigger: int) -> tuple[str, str] | None:
     """``raw.not_done`` of the file the facts were taken from: the same code and message."""
     if facts.blank:

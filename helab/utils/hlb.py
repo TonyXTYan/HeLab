@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import struct
 import zlib
 from typing import Any, Mapping
@@ -94,6 +95,12 @@ def pack(arrays: Mapping[str, npt.NDArray[Any]], *, kind: str, meta: Mapping[str
     if len(header) > MAX_HEADER:
         raise HlbError(f"The header is {len(header)} bytes, over {MAX_HEADER}")
     return b"".join((MAGIC, _LENGTH.pack(len(header), zlib.crc32(header)), header, *body))
+
+
+def read(path: str | os.PathLike[str]) -> tuple[dict[str, Any], dict[str, npt.NDArray[Any]]]:
+    """A ``.hlb`` file's header and arrays, every part checked (``HlbError`` otherwise). Read only."""
+    with open(path, "rb") as handle:
+        return unpack(handle.read())
 
 
 def read_header(data: bytes) -> dict[str, Any]:

@@ -25,6 +25,7 @@ from helab.io_ops.loading import load, read_cached
 from helab.io_ops.results import result_find, result_save
 from helab.io_ops.markers import (create_root, reassign_root, remove_root, save_marker_copy, verify_known_roots,
                                   verify_volumes)
+from helab.io_ops.raw_fill import raw_fill
 from helab.io_ops.save_held import save_held
 from helab.io_ops.scanning import save_scan_history, save_subtrees, scan
 from helab.io_ops.stores import _deadline, _removed_event, _usage
@@ -34,13 +35,13 @@ from helab.io_ops.trace_check import trace_check
 # Operations that need the disk cache on: the app's ``IOService.CACHE_OPERATIONS`` and the two marker
 # writes that update its ``roots`` (tests/test_helper_dispatch.py checks they agree).
 CACHE_ONLY = ("cached", "saved_list", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
-              "volumes_verify", "root_reassign", "root_remove", "result_find", "result_save")
+              "volumes_verify", "root_reassign", "root_remove", "result_find", "result_save", "raw_fill")
 
 
 # Requests acting on the source folder they name (``path``, or an icon batch's ``paths``), which
 # ``_guard`` checks first under tests; the others name a folder only as a cache key.
 SOURCE_OPERATIONS = frozenset({"list", "icons", "scan", "details", "load", "root_create", "root_reassign",
-                               "root_remove", "marker_save", "convert"})
+                               "root_remove", "marker_save", "convert", "raw_fill"})
 
 
 # Work Offline (cache-only browsing): requests whose cache options say ``offline`` never run these;
@@ -125,6 +126,8 @@ def main() -> None:
                  memory_origins=request.get("memory_origins"))
         elif operation == "convert":
             convert_folder(request["path"], request)
+        elif operation == "raw_fill":  # (Caching v2: a folder's raw files into store-v4's raw layers.)
+            raw_fill(request["path"], request["cache"])
         elif operation == "cached":
             read_cached(request["path"], request["output"], cache_options=request.get("cache"),
                         limits=request.get("limits"), allow_large=bool(request.get("allow_large")),

@@ -20,6 +20,7 @@ import json
 import math
 import os
 import pathlib
+import shutil
 import sqlite3
 import stat
 import time
@@ -454,6 +455,8 @@ def room_items(paths: Sequence[str], raw_paths: Sequence[str] = (), only_copy: S
 
 
 RAW_ITEM, ONLY_COPY_ITEM = "raw:", "raw-only:"
+# A store-v3 being cleared is renamed ``store-v3.clearing-<8 hex>`` first (``clear_legacy``, C3-4).
+LEGACY_CLEARING = ".clearing-"
 
 
 @dataclass(frozen=True)
@@ -805,7 +808,7 @@ class CacheStore:
         itself, after Ignore or Clear, or when there is none or it can't be read now."""
         if self.layout < store_v4.LAYOUT:
             return None
-        if store_v4.legacy_choice(self._meta()) not in (None, "keep"):
+        if self._legacy_choice() not in (None, "keep"):
             return None
         if self._legacy is None and not self._legacy_tried:
             self._legacy_tried = True
@@ -814,6 +817,34 @@ class CacheStore:
                 with contextlib.suppress(LegacyUnavailable):
                     self._legacy = LegacyStore(self.legacy_root)
         return self._legacy
+
+    def _legacy_choice(self, meta: dict[str, Any] | None = None) -> str | None:
+        """The store-v3 choice (``store_v4.legacy_choice``) for the store-v3 here now (C3-3). After Clear, a
+        store-v3 present again is one an older HeLab made since: unanswered (kept meanwhile, and asked about
+        again). Under Keep, ``measure_legacy`` compares the ``store_id`` it reads anyway. Ignore holds for
+        whatever store-v3 is here: an ignored one is never opened to tell."""
+        choice = store_v4.legacy_choice(self._meta() if meta is None else meta)
+        if choice == "clear":
+            from helab.utils.legacy_store import present
+            if present(self.legacy_root):
+                return None
+        return choice
+
+    def _legacy_leftovers(self) -> list[dict[str, Any]]:
+        """``store-v3.clearing-<8 hex>`` folders beside this store: a Clear of store-v3 renamed it aside and
+        couldn't remove all of it (a file held open, say on Windows; C3-4). HeLab's own, already asked for:
+        Settings › Cache's Older cache row shows them with its Clear…; never removed without asking."""
+        from helab.utils.legacy_store import DIRNAME
+        prefix = DIRNAME + LEGACY_CLEARING
+        found: list[dict[str, Any]] = []
+        with contextlib.suppress(OSError):
+            for entry in sorted(os.scandir(os.path.dirname(self.legacy_root)), key=lambda item: item.name):
+                suffix = entry.name[len(prefix):]
+                if (entry.name.startswith(prefix) and len(suffix) == 8
+                        and all(char in "0123456789abcdef" for char in suffix)
+                        and entry.is_dir(follow_symlinks=False)):
+                    found.append({"name": entry.name, "bytes": _folder_bytes(entry.path)})
+        return found
 
     def _legacy_hidden(self, kind: str, key: str) -> bool:
         """Whether store-v4 has removed ``kind`` (a record kind, or ``results``) for ``key`` since it was
@@ -2777,7 +2808,7 @@ class CacheStore:
             return 0
         meta = self._meta()
         measured = meta.get("legacy_bytes")
-        if store_v4.legacy_choice(meta) not in (None, "keep") or not isinstance(measured, dict):
+        if self._legacy_choice(meta) not in (None, "keep") or not isinstance(measured, dict):
             return 0
         from helab.utils.legacy_store import present
         return int(measured.get("bytes", 0)) if present(self.legacy_root) else 0
@@ -3098,10 +3129,15 @@ class CacheStore:
         """store-v3 beside this store-v4, for Settings › Cache and the budget under Keep (gap 8): whether
         it is there, the choice, and its size. Kept (Keep, or not answered): its live bytes measured
         through ``LegacyStore`` and recorded in ``meta.legacy_bytes`` with its write count (fit checks
-        read that, never v3). After Ignore: the folder's bytes on disk, v3 not opened."""
+        read that, never v3). After Ignore: the folder's bytes on disk, v3 not opened. A Clear cut short
+        adds ``leftover`` (``_legacy_leftovers``) and ``leftover_bytes``."""
         from helab.utils.legacy_store import present
-        choice = store_v4.legacy_choice(self._meta())
+        meta = self._meta()
+        choice = self._legacy_choice(meta)
         found: dict[str, Any] = {"present": present(self.legacy_root), "choice": choice, "bytes": 0}
+        leftover = self._legacy_leftovers()
+        if leftover:
+            found.update({"leftover": leftover, "leftover_bytes": sum(item["bytes"] for item in leftover)})
         if not found["present"]:
             return found
         legacy = self._kept_legacy()
@@ -3114,12 +3150,81 @@ class CacheStore:
                         "v3_store_id": legacy.store_id}
         except LegacyUnavailable as exc:
             return {**found, "error": str(exc)}
+        answered = meta.get("legacy_v3")
+        answered_id = answered.get("v3_store_id") if isinstance(answered, dict) else None
+        if choice == "keep" and answered_id and answered_id != legacy.store_id:
+            found["choice"] = None  # (Kept, but another store-v3 than the one answered for: asked again, C3-3.)
         if not self.read_only:
             with contextlib.suppress(sqlite3.Error, StoreError):
                 with self.transaction():
                     self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_bytes', ?)",
                                        (_dumps(measured),))
         return {**found, "bytes": measured["bytes"], "store_id": legacy.store_id, "counted": True}
+
+    def set_legacy_choice(self, choice: str) -> dict[str, Any]:
+        """The user's answer about store-v3 (step 6, Q19.4): ``keep`` (read for what store-v4 lacks, counted
+        in the budget) or ``ignore`` (left on disk, never opened). Recorded in ``meta.legacy_v3`` with v3's
+        ``store_id``, so a store-v3 an older HeLab makes again later is asked about again where that can be
+        told without opening an ignored one (``_legacy_choice``, C3-3). Returns ``measure_legacy()`` under
+        the new choice."""
+        self._needs_v4()
+        if choice not in ("keep", "ignore"):
+            raise ValueError(f"Not a store-v3 choice: {choice!r}")
+        legacy_id: str | None = None
+        from helab.utils.legacy_store import present
+        if present(self.legacy_root):
+            with contextlib.suppress(LegacyUnavailable):
+                with LegacyStore(self.legacy_root) as legacy:
+                    legacy_id = legacy.store_id
+        try:
+            with self.transaction():
+                self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_v3', ?)",
+                                   (_dumps({"choice": choice, "v3_store_id": legacy_id, "set_at": time.time()}),))
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        if choice == "ignore" and self._legacy is not None:
+            self._legacy.close()
+            self._legacy = None
+        self._legacy_tried = False
+        return self.measure_legacy()
+
+    def clear_legacy(self) -> int:
+        """Remove store-v3 (the user asked: Settings › Cache's Clear…, the store-v3 question's Clear, Make
+        room's Clear old stores…; Q28.5), and record the choice ``clear``; its bytes. The caller has checked
+        that no other HeLab runs (``cache_locks.other_instances``, as a cache move does). The folder is first
+        renamed aside, so a removal cut short never leaves a half store-v3 to read; never through a link. What
+        an earlier Clear left aside (``_legacy_leftovers``: a file held open) goes too, and what is still left
+        is reported by ``measure_legacy`` (C3-4); the bytes returned are those actually removed."""
+        self._needs_v4()
+        from helab.utils.legacy_store import present
+        root = self.legacy_root
+        if self._legacy is not None:
+            self._legacy.close()
+            self._legacy = None
+        targets = [os.path.join(os.path.dirname(root), item["name"]) for item in self._legacy_leftovers()]
+        if os.path.lexists(root):
+            if os.path.islink(root) or not os.path.isdir(root):
+                raise StoreError("store-v3 isn't a folder here: left as it is")
+            aside = f"{root}{LEGACY_CLEARING}{uuid.uuid4().hex[:8]}"
+            try:
+                os.rename(root, aside)
+            except OSError as exc:
+                raise StoreError(f"store-v3 couldn't be removed ({exc}); is an older HeLab still using it?") from exc
+            targets.append(aside)
+        removed = 0
+        for target in targets:
+            before = _folder_bytes(target)
+            shutil.rmtree(target, ignore_errors=True)
+            removed += before - (_folder_bytes(target) if os.path.lexists(target) else 0)
+        try:
+            with self.transaction():
+                self._conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('legacy_v3', ?)",
+                                   (_dumps({"choice": "clear", "v3_store_id": None, "set_at": time.time()}),))
+        except sqlite3.Error as exc:
+            raise StoreError(f"Disk cache could not be written: {exc}") from exc
+        self._legacy_tried = False
+        assert not present(root)
+        return removed
 
     def _size_or_zero(self, file: str) -> int:
         try:

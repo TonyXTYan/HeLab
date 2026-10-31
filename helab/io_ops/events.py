@@ -13,7 +13,7 @@ are as JSON carries them; nested payloads (a dataset's ``cache_info``, a folder 
 """
 from __future__ import annotations
 
-from typing import Any, Literal, NotRequired, Sequence, TypedDict, Union
+from typing import Any, Literal, NotRequired, Required, Sequence, TypedDict, Union
 
 # Fields several events carry, spread into them by the helper (``**``).
 
@@ -106,6 +106,7 @@ class AdminResultFields(TypedDict, total=False):
     recorded: bool
     results: int  # saved results removed (R2)
     raw: int  # store-v4's raw layer rows removed (``clear_raw``, caching v2)
+    legacy: dict[str, Any]  # store-v3 beside store-v4 after ``legacy_choice``/``clear_legacy`` (``measure_legacy``)
     result_id: str  # an adopted result's saved row (R2)
     folder_results: dict[str, ResultCountField]  # an adoption's folders' saved results after it (R2)
     store: str  # the store an adoption answered from (its ``store_id``)
@@ -702,6 +703,36 @@ class SweptEvent(UsageFields):
     next_deadline: float | None
 
 
+class RawOverwrittenEvent(TypedDict):
+    """A raw file overwritten in place since store-v4 cached it (``raw_fill``, a conversion; Q22.5): its
+    layer was replaced; ``old`` and ``new`` are [size, mtime_ns, sha256]. The app says so once per shot per
+    session (Q28.6)."""
+    kind: Literal["raw_overwritten"]
+    path: str
+    shot: int
+    raw_name: str
+    old: list[Any]
+    new: list[Any]
+
+
+class RawFillDoneEvent(UsageFields, total=False):
+    """A ``raw_fill`` run's end: the shots ``saved`` (new or replaced), ``kept`` (already cached), ``refused``
+    (a later job's version stood), ``waiting`` (not settled, or changed while read), ``gone`` (cached, but
+    gone from the folder: only copies now); ``more``: it yielded with shots left (queue another run).
+    ``reason`` when it saved nothing or stopped: ``store_v3`` (raw layers are store-v4's), ``no_data_root``,
+    ``no_cache``, ``read_only``, ``over_budget`` (a batch didn't fit: nothing asks, T~1)."""
+    kind: Required[Literal["raw_fill_done"]]
+    path: Required[str]
+    reason: Required[str]
+    saved: Required[int]
+    kept: Required[int]
+    refused: Required[int]
+    waiting: Required[int]
+    gone: Required[int]
+    more: Required[bool]
+    next_deadline: float | None
+
+
 class SweptReadOnlyEvent(TypedDict):
     """A sweep of a store opened read-only: only the old cache folders were removed."""
     kind: Literal["swept"]
@@ -1070,7 +1101,7 @@ HelperEvent = Union[
     TxyUnmarkedEvent, MarkerSaveRefusedEvent, VolumesVerifiedEvent, RootsVerifiedEvent,
     ResultFoundEvent, ResultMissingEvent, ResultSavedEvent, ResultNotSavedEvent, ResultPendingEvent,
     ConvertPrefsEvent, ConvertPlanEvent, ShotConvertedEvent, ShotWaitingEvent, ShotUnconvertibleEvent, ShotKeptEvent,
-    ConvertProgressEvent, ConvertSummaryEvent, PartialRemovedEvent,
+    ConvertProgressEvent, ConvertSummaryEvent, PartialRemovedEvent, RawOverwrittenEvent, RawFillDoneEvent,
 ]
 
 # Every kind a helper sends.
@@ -1092,4 +1123,5 @@ KINDS = frozenset({
     "result_pending",
     "convert_prefs", "convert_plan", "shot_converted", "shot_waiting", "shot_unconvertible", "shot_kept",
     "convert_progress", "convert_summary", "partial_removed",
+    "raw_overwritten", "raw_fill_done",
 })

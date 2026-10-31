@@ -24,7 +24,8 @@ UNVERIFIED_CONSTANTS = "its drive isn't verified yet this session"
 ADMIN_ACTIONS = ("inventory", "clear", "purge", "trim", "adopt", "discard", "sweep", "budget", "prefs",
                  "convert_prefs", "clear_prefs", "clear_converted_txy", "mark_used",
                  "constants", "presets", "forget_root", "root_same", "clear_root", "clear_results",
-                 "clear_root_results", "adopt_result", "discard_result", "identity", "clear_raw")
+                 "clear_root_results", "adopt_result", "discard_result", "identity", "clear_raw", "legacy_choice",
+                 "clear_legacy")
 
 
 def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, **params: Any) -> None:
@@ -228,6 +229,14 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
             raw = store.remove_raw(None if paths is None else [str(path) for path in paths])
             send(_raw_removed_event(raw.paths, raw.rows, raw.bytes))
             result.update({"raw": raw.rows, "bytes": raw.bytes})
+        elif action == "legacy_choice":
+            # The store-v3 question's or Settings › Cache's answer: keep (read through) or ignore it.
+            result["legacy"] = store.set_legacy_choice(str(params["choice"]))
+        elif action == "clear_legacy":
+            # The user asked (after seeing its size; the app checked no other HeLab runs): store-v3 goes.
+            gone = store.clear_legacy()
+            send({"kind": "removed", "kinds": ["legacy"], "paths": None, "bytes": gone})
+            result.update({"bytes": gone, "legacy": store.measure_legacy()})
         elif action == "clear_root":
             # Everything cached below one data root on this computer but its saved results (Clear
             # cached analysis, Tony 2026-10-22); roots, flags and marker stay.

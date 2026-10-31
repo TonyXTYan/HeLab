@@ -162,9 +162,9 @@ class IOService(QObject):
                         "result_find", "result_save")
     # Operations that open the disk cache whatever their payload says.
     CACHE_OPERATIONS = ("cached", "saved_list", "invalidate", "subtree_save", "scan_history", "cache_admin", "roots_verify",
-                        "volumes_verify", "result_find", "result_save")
+                        "volumes_verify", "result_find", "result_save", "raw_fill")
     LOCAL_CAP = 2
-    PAUSABLE = ("load", "list", "details", "scan", "icons", "roots_verify", "convert")
+    PAUSABLE = ("load", "list", "details", "scan", "icons", "roots_verify", "convert", "raw_fill")
     # Held while cached data doesn't match several folders (``mismatch_hold``): loads and scans.
     # Browsing, cached reads, cache writes, saves, Live checks and icons go on (``mismatch_spared``).
     MISMATCH_HELD = ("load", "details", "scan")
@@ -185,7 +185,7 @@ class IOService(QObject):
               "root_reassign": "Make a copy's data root", "root_remove": "Remove .helab-root",
               "marker_save": "Save .helab-root to folder", "trace_check": "Check I/O trace folder",
               "result_find": "Read cached analysis", "result_save": "Save analysis to disk cache",
-              "convert": "Convert raw files to TXY"}
+              "convert": "Convert raw files to TXY", "raw_fill": "Cache raw pulses"}
     NOUNS = {"load": "load", "cached": "cached data read", "saved_list": "saved listing read", "list": "folder listing", "details": "folder details scan",
              "scan": "folder status check", "resolve": "folder lookup", "invalidate": "cache clear",
              "scan_history": "scan-history save", "icons": "folder icon lookup",
@@ -195,7 +195,7 @@ class IOService(QObject):
              "root_reassign": "data-root reassignment", "root_remove": ".helab-root removal",
              "marker_save": ".helab-root save", "trace_check": "I/O trace folder check",
              "result_find": "cached analysis read", "result_save": "analysis save",
-             "convert": "TXY conversion"}
+             "convert": "TXY conversion", "raw_fill": "raw pulse caching"}
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
