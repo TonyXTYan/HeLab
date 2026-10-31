@@ -1202,6 +1202,13 @@ class CacheStore:
                 self._conn.execute("INSERT OR REPLACE INTO folder_prefs (path, no_cache, no_auto_load, set_at) "
                                    "VALUES (?, ?, ?, ?)", (path, int(no_cache), int(no_auto_load), set_at))
                 removal = self.remove(("datasets",), [path], _stored_keys=True) if remove_cached and no_cache else None
+                if removal is not None and self.layout >= store_v4.LAYOUT:
+                    # store-v4: its raw layers whose files were seen go too; an only copy stays, since nothing
+                    # named it to the user (C2-9, Q22.6; step 6's dialog may name and offer them).
+                    keys, count, size = self._remove_raw_rows(" WHERE path = ? AND gone_at IS NULL", (path,),
+                                                              time.time())
+                    removal = dataclasses.replace(removal, raw_paths=tuple(self._source_path(key) for key in keys),
+                                                  raw_rows=count, raw_bytes=size)
                 return {"no_cache": no_cache, "no_auto_load": no_auto_load, "set_at": set_at}, removal
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc

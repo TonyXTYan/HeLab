@@ -298,3 +298,25 @@ def test_an_older_listing_or_batch_landing_late_never_clears_the_only_copy_mark(
         assert (row.gone_at, row.seen_at) == (None, 300.0)
         store.mark_raw_seen(RUN, {}, 250.0)  # (An older listing that missed it: not gone.)
         assert (store.raw_rows(RUN).value or {})[1].gone_at is None
+
+
+def test_dont_cache_with_remove_cached_data_takes_raw_layers_seen_and_keeps_only_copies(tmp_path: Path) -> None:
+    """C2-9 (Assay; CoCo's decision, Q22.6, for Tony to confirm): the folder's raw layers whose files were seen
+    go with its datasets; an only copy stays, since nothing named it to the user."""
+    directory = str(tmp_path / "caches" / "store-v4")
+    with CacheStore(directory) as store:
+        entries = [entry(store, shot) for shot in (1, 2)]
+        store.save_raw_batch(RUN, entries, store.start_raw_job(RUN), now=10.0)
+        store.mark_raw_seen(RUN, {1: (entries[0].size, entries[0].mtime_ns)}, 20.0)  # (Shot 2: the only copy.)
+        guard = store.start_raw_job(RUN)
+        _, removal = store.set_prefs_removing(RUN, True, False, 30.0, remove_cached=True)
+        assert removal is not None and (removal.raw_paths, removal.raw_rows) == ((RUN,), 1)
+        assert set(store.raw_rows(RUN).value or {}) == {2} and entries[0].file in retired(store)
+        with pytest.raises(SaveRejected):  # (Fenced, and the folder isn't cached any more anyway.)
+            store.save_raw_batch(RUN, [entry(store, 1)], guard)
+        store.save_raw_batch(X, [entry(store, 1)], store.start_raw_job(X))
+    events: list[Any] = []
+    cache_admin({"directory": directory}, "prefs", events.append, path=X, no_cache=True, remove_cached=True,
+                set_at=40.0)
+    raw = [event for event in events if event["kind"] == "removed" and event["kinds"] == ["raw"]]
+    assert raw and raw[0]["paths"] == [X] and raw[0]["raw"] == 1

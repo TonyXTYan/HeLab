@@ -156,7 +156,8 @@ def cache_admin(cache_options: dict[str, Any], action: str, send: Emit = emit, *
                 float(params.get("set_at") or time.time()), remove_cached=bool(params.get("remove_cached")))
             send({"kind": "folder_prefs", "path": path, "prefs": saved})
             if flag_removal is not None:
-                send(_removed_event(flag_removal))
+                for event in _removal_events(flag_removal):  # (store-v4: its raw layers too, C2-9.)
+                    send(event)
         elif action == "convert_prefs":
             # The converter's flags for one folder (``write_beside``, Q9.7): set when given, newest
             # choice wins; without it, read. A folder without a data root has none (an error).
