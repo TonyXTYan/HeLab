@@ -310,11 +310,14 @@ def main(argv: list[str]) -> int:
                     break
             else:
                 summary = log.summary
+                # --again: each shot once more, by the first pass that can convert; --watch's first pass
+                # (seen=[]) only records, so "always" stays for the pass after it.
+                if request["seen"] != []:
+                    request["redo"] = "stale"
                 request["seen"] = summary.get("waiting", [])
                 request["done"] = summary.get("current", [])
                 request["skip"] = summary.get("unconvertible", [])
                 request["kept"] = summary.get("kept", [])
-                request["redo"] = "stale"
                 if args.once:
                     if summary.get("waiting"):
                         LOG.info("%d raw file%s still waiting: run again later", len(summary["waiting"]),

@@ -7,6 +7,8 @@ All live in the per-user app folder, outside every cache folder:
 - ``move.lock``: held by the helper process doing a move step (move, cleanup, abort or
   recovery), which can outlive the HeLab that started it; startup waits for it too.
 - ``instances/<pid>.lock``: held by each running HeLab for its whole life.
+- ``running.lock``: held by the one HeLab app running on this computer (Q39.1), for its life; a
+  second start finds it held and stops. (``helab convert`` doesn't take it.)
 
 They are OS file locks (``flock``; ``msvcrt.locking`` on Windows): exclusive, and released by
 the OS when their process ends, so a crashed HeLab never leaves one stuck and no takeover is
@@ -117,6 +119,16 @@ def instances_dir(app_dir: str) -> str:
 
 def instance_lock(app_dir: str) -> FileLock:
     return FileLock(os.path.join(instances_dir(app_dir), f"{os.getpid()}.lock"))
+
+
+def take_running(app_dir: str) -> tuple[FileLock | None, str]:
+    """This app's claim to be the one HeLab running on this computer (Q39.1), to hold for its life;
+    or None and the running one's pid as it wrote it ("" if unknown). One that ended, crashed
+    included, holds nothing, whatever pid its file still names."""
+    lock = FileLock(os.path.join(app_dir, "running.lock"))
+    if lock.try_lock(str(os.getpid())):
+        return lock, ""
+    return None, read_token(lock.path)
 
 
 def other_instances(app_dir: str) -> list[int]:

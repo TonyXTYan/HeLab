@@ -316,6 +316,20 @@ review of PR #10, six rounds).
   override (agents, tests) has its own. Then drop what only served several at once where the area
   review names it (`.ai/sessions/2026-10-31-claude-area-review/cache.md`).
 
+- **A39.4 Folder details: TXY left out and TXY per converter** (Q38.3, Tony 2026-10-31): the load line says
+  "N left out (TXY source)" for shots the folder's TXY source leaves out (a `load_counts` key and
+  `FolderExplorer.load_count_details`, `924109a`), keeping "removed" for files really gone; and a line with
+  the folder's TXY counts by kind, from the listing's names only (memory, no I/O): MATLAB's
+  `d_txy_forc` and each HeLab tag's `d_txy_helab_<tag>_` (e.g. "TXY: 120 MATLAB · 118 p19v1"; detail in
+  the tooltip).
+
+- **A39.5 TXY and shares** (Q39.2, Tony 2026-10-31; the converter and I/O areas): writing TXY beside the
+  raw files on a share (`helab/utils/cache_location.py` and the data roots' share detection) warns once
+  per folder that conversion belongs on the machine that owns the data, the user confirming: the folder's
+  beside setting, `helab convert --output beside`, and Live's auto-convert. A share folder with no TXY of
+  any kind offers in Folder details to convert into HeLab's cache (recommended) or temp folder, says the
+  converter should run on the acquisition PC, and keeps "Convert beside on the share…" behind the warning.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

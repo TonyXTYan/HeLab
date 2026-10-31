@@ -34,7 +34,10 @@ version bump on that branch.
   Q19.x, Q22.x, 2026-10-29).
 - [ ] Say when a raw file's reading stops early (A37.1, Q37.1; Tony, 2026-10-31): the parser stops at
   the first unreadable token as MATLAB's `textscan` does, silently today.
-- [ ] Offer a restart after a temp folder change, or apply it live (Q36.2, open).
+- [ ] TXY and shares (Q39.2, Tony 2026-10-31; A39.5): writing TXY to a share warns that conversion
+  belongs on the machine that owns the data; a share folder without TXY offers to convert into HeLab's
+  cache (recommended) or temp, and still allows beside after the warning.
+- [ ] One running HeLab per computer, from source or a build (Q39.1, A39.3).
 - [ ] Quick Fixes 7's open items (block 38): Q38.1–Q38.3 (beside conversion without a no-replace
   rename, Live switching a held shot to HeLab's TXY, Folder details' wording), A38.1, A38.2 and M38.1
   (whether the lab share can add a file without replacing one).

@@ -49,6 +49,10 @@ Tony in Chat, 2026-10-31, on starting caching v2 (block 28; "other sounds good")
   old store versions?").
 - **Q28.6** an overwritten raw file: a system notification once per shot per session, a Folder details
   line and a log line.
+- **Q28.4** provenance (Q27.2) as a `makers` table: one row per HeLab session (version, commit, modified,
+  machine as a random id in the app folder plus the hostname, Python/NumPy/SciPy), and each stored row
+  keeps that row's id. Not per TXY file: HeLab's TXY are named by their frozen profile tag and recorded in
+  `converted-txy/index.sqlite` (Tony: "do we really need this for every txy file…?"; then "ok").
 
 Tony in Chat, 2026-10-31, on what needs him (block 39):
 
@@ -65,10 +69,18 @@ Tony in Chat, 2026-10-31, on what needs him (block 39):
 - **Reviewers** (Tony "ok"): one Reviewer per floor, at landing; it checks again only once every finding is
   fixed, and then reads only the fix diff; wide reviews (several areas, or Codex on the PR) only at
   release milestones; a re-review is the same Reviewer, never a new set.
-- **Q39.2 TXY and shares** (Tony; details proposed, to confirm): writing TXY to a share gets an explicit
+- **Q39.2 TXY and shares** (Tony; the details below confirmed, "39.2 ok") (A39.5): writing TXY to a share gets an explicit
   warning, since auto-convert should run where the data is local (the acquisition PC). A share folder with
   no TXY of any kind offers to convert into HeLab's cache or temp folder (recommended), says the converter
   should run on the machine that owns the data, and still lets the user convert beside on the share.
+  As built: the beside setting and `helab convert --output beside` on a share warn once per folder (the
+  user confirms); a share folder without TXY offers "Convert to HeLab's cache (recommended)" or temp in
+  Folder details, with "Convert beside on the share…" behind the warning; Live's auto-convert on a share
+  is allowed with the same one-time warning.
+- **Q38.3 yes**, plus counts per converter: Folder details says "N left out (TXY source)" for shots a TXY
+  source leaves out, keeping "removed" for files really gone, and shows how many TXY of each kind the
+  folder has, MATLAB's and each HeLab profile tag's (Tony: "and we can show status of how many txy of each
+  converter profile tag too?") (A39.4).
 
 ## Quick Fixes 7 (block 38)
 
@@ -83,10 +95,6 @@ Codex's review of PR #10, six rounds; detail in its `notes.md`).
   (as `convert_plan`'s `fallback` does when the folder's flag is off). Proposed: (a); (b) or (c) only if
   M38.1 shows the lab share needs it (macOS FAT and Linux's local file systems work; Windows refuses an
   existing name itself).
-- **Q38.3** (wording) After switching to HeLab only, Folder details' load line counts the shots it leaves
-  out (only MATLAB's TXY) as "N files removed", though no file went (`924109a`). Proposed: "N left out
-  (TXY source)", apart from files really gone (a `load_counts` key and
-  `FolderExplorer.load_count_details`).
 
 ## UI polish (block 36)
 
@@ -161,16 +169,6 @@ beside TXY are byte-identical across versions (frozen tags; another calibration 
 profiles carry a schema; settings fall back to defaults. Tony: "3. fine, our TXY carry a converter
 tag"; the marker is JSON with unknown fields ignored, so metadata can be added without a version
 bump. Q27.1–Q27.5 are decided (Recently decided).
-
-## Caching v2 readiness (block 28; [review](sessions/2026-10-29-claude-caching-v2-readiness/readiness.md))
-
-Tony asked (2026-10-29) whether caching v2 / store-v4 can be built unattended (mandate mode). The
-review: ready for stages 0–1 after these answers and a few design fixes; stage 2 in a later run.
-
-- **Q28.4 Provenance in stage 1's schema** (Q27.2; explained to Tony in Chat 2026-10-31, his answer
-  open): every row records a `made_by` (HeLab version,
-  commit, modified, machine, Python/NumPy/SciPy); a machine is a random id in the app folder plus
-  the hostname. Proposed: yes.
 
 ## Post-2025 plates (block 25; [investigation](sessions/2026-10-29-claude-txy-2025-plates/investigation.md))
 
