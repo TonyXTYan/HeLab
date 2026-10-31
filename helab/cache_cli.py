@@ -128,7 +128,10 @@ def _export_folder(args: argparse.Namespace) -> int:
         cache = pathlib.Path(cache_dir())
     store = cache / DIRNAME
     key = folder_key(args.folder)
-    conn = _read_only(store / "records.sqlite")
+    try:
+        conn = _read_only(store / "records.sqlite")
+    except sqlite3.Error as exc:  # (Unreadable here, or a WAL store without its -shm in a read-only folder.)
+        raise CliError(f"{store}: can't be opened read only ({exc})") from None
     try:
         rows = [(int(shot), str(file)) for shot, file in conn.execute(
             "SELECT shot, file FROM raw_layers WHERE path = ? ORDER BY shot", (key,))]

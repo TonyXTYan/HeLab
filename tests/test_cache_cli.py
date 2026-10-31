@@ -167,3 +167,22 @@ def test_the_format_pages_reader_without_helab_reads_what_helab_writes(tmp_path:
     channel, bins = arrays["channel"], np.cumsum(arrays["time"])
     columns = expected()
     assert np.array_equal(channel, columns["channel"]) and np.array_equal(bins, columns["time_bins"])
+
+
+def test_a_store_that_cant_be_opened_is_an_error_not_a_traceback(tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+                                                                 capsys: pytest.CaptureFixture[str]) -> None:
+    """C3-6 (Assay): a ``records.sqlite`` the read-only connection can't open (no permission, or a WAL store
+    without its ``-shm`` in a read-only folder: ``connect`` raises, as patched here on every OS) is exit 2
+    with a message, never an exception out of ``main`` (exit 1 would say "nothing to export")."""
+    import sqlite3
+    source = tmp_path / "data" / "run"
+    source.mkdir(parents=True)
+    store = tmp_path / "caches" / "store-v4"
+    store.mkdir(parents=True)
+    (store / "records.sqlite").write_bytes(b"")
+
+    def refused(*args: Any, **kwargs: Any) -> sqlite3.Connection:
+        raise sqlite3.OperationalError("unable to open database file")
+    monkeypatch.setattr(sqlite3, "connect", refused)
+    assert cache_cli.main(["export", "--folder", str(source), "--cache", str(tmp_path / "caches")]) == 2
+    assert "can't be opened read only (unable to open database file)" in capsys.readouterr().err
