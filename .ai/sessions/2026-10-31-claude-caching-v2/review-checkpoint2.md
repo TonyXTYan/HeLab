@@ -483,3 +483,42 @@ On an export of `feba1ff`:
 - The fails-without-fix table above, and the C2-11 scratch test.
 
 On the C2-11 and C2-12 fixes I re-check only those diffs.
+
+## Pass 5: the fix diff `3c239a9..9f7821b`
+
+**Open findings: none.** C2-11 and C2-12 are fixed, so every checkpoint 2 finding (C2-1 to C2-12) is closed.
+
+| Finding | Commit | Without the fix | With it |
+|---|---|---|---|
+| C2-11 | `0579fa1` (`cache_store.py`) | 1 failed | 1 passed |
+| C2-12 | `3f98958` (test only) | 1 failed | 1 passed |
+
+- **C2-11: fixed.** On a replace, the new row keeps the old row's `gone_at` when it is at or after the batch's
+  `read_at`. An equal time keeps the mark, consistent with `mark_raw_seen`. A read after the listing clears it.
+  The test covers both cases.
+  - How verified: the export of `9f7821b`, with `cache_store.py` put back as it was before `0579fa1`; the test failed,
+    and passed with the fix.
+- **C2-12: fixed.** The via-layer test refuses `open` and `os.open` only on its own thread, passes other threads'
+  calls to the real functions, and checks that another thread can still write a file. The earlier warning (an
+  exception on `HeLab-artifact-cleanup`) is gone from this run.
+  - How verified: being test-only, "without the fix" is modelled by making the guard refuse every thread again
+    (`if True:`). The test then fails at its new check, and passes as committed.
+- **Handoff:** it records both fixes, and that `raw_fill` must pass `RawEntry.read_at`. `trim` still removes
+  datasets only; A~4 proposes giving it Make room's order, which is not a finding of mine.
+
+### Checks (pass 5)
+
+On an export of `9f7821b` (both files above confirmed equal to `9f7821b` after the checks):
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-assay` (the full suite, `test_raw_layer.py`
+  and `test_raw_layers_store.py` included): **8742 passed, 673 skipped, 2 warnings, 3 failed, 15 rerun in
+  151.30 s.**
+  - All 3 failures and all 15 RERUNs are the three git-provenance tests (the export has no `.git`; 5 reruns each).
+    They passed in the floor checkout with no RERUN, and neither they nor `build_info.py` changed since.
+  - No other RERUN.
+  - The 2 warnings are the known pyqtgraph ones.
+  - Vault's 8746 passed and 672 skipped match, once the export's 3 and 1 are added back.
+- `mypy helab/ --strict` (199 files), `mypy tests --strict` (179), `--platform win32`: no issues.
+- `pyright helab tests` and `--pythonplatform Windows`: 0 errors.
+
+Checkpoint 2 has no open review findings. For Tony to confirm (not findings): C2-9's "only copies stay", and T~1 to
+T~3.
