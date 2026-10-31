@@ -545,7 +545,7 @@ def compute_correlations(context: AnalysisContext) -> CorrelationData:
     else:
         found = crop_box(chosen, keep_fraction(values), context.cancelled)
         box_key = json.dumps({"keep": keep_fraction(values), "mask": mask_record(mask),
-                              "shots": [values.get(spec.name) for spec in SHOT_SPECS]})
+                              "shots": [values.get(spec.name) for spec in SHOT_SPECS], "data": view.chain_key})
         lower, upper, box_kept = steady_box(found, state.box, box_key)
         state.box = (box_key, lower, upper)
         box = CropBox(lower, upper, 0, len(chosen), found.keep, 0)
@@ -553,7 +553,7 @@ def compute_correlations(context: AnalysisContext) -> CorrelationData:
     # t_r and the origin.
     lower_t, upper_t, _ = search_range(values)
     detection_key = json.dumps({"constants": constants.as_record(VELOCITY_KEYS), "search": [lower_t, upper_t],
-                                "mask": mask_record(mask)}, sort_keys=True)
+                                "mask": mask_record(mask), "data": view.chain_key}, sort_keys=True)
     found_velocities = velocities_for(chosen, constants, values, state.detection, detection_key)
     data = replace(data, warnings=data.warnings + found_velocities.warnings, box=box, box_kept=box_kept,
                    release=found_velocities.release, release_how=found_velocities.release_how,

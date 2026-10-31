@@ -18,7 +18,12 @@ MATLAB lacks; ``txy_sources``). Each shot read from HeLab's TXY has its ``origin
 source is never taken for another's. ``revision`` starts at 1
 for a loaded dataset and goes up by one each time shots are added to it
 (``with_shots``, for Live); results are bound to identity *and* revision (``ViewKey``).
-``revise`` makes Live's next dataset of the folder the next revision of its view.
+``revise`` makes Live's next dataset of the folder the next revision of its view. The signature
+doesn't tell a folder's loads apart (every TXY choice's dataset of it has the MATLAB TXY's, and a
+folder without MATLAB TXY has ``sha256("[]")`` whatever it holds), so each view chain has its own
+``chain`` token: a fresh load, another TXY choice or another profile is another identity, never an
+earlier revision (plots-1). What a view holds is its ``held`` record (``Held``), compared with
+the ``Dataset`` a tab shows by its data, not its signature (``Held.shown_in``).
 
 A view may have no shots: Live started before the folder's first shot.
 
@@ -30,14 +35,18 @@ file has a new mtime either way.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import os
 import time
 import weakref
 from dataclasses import dataclass, field
+from functools import cached_property
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 from urllib.parse import quote
+from uuid import uuid4
 
 import numpy as np
 import numpy.typing as npt
@@ -69,6 +78,9 @@ class ViewIdentity:
     signature: str  # "" when the dataset has none (e.g. a resumed partial load)
     # Which TXY (``txy_sources.identity_source``): "" for the priority sources, else the source's name.
     source: str = ""
+    # Which chain of revisions: ``build_view``'s own token, kept by ``with_shots`` ("": a placeholder
+    # view's). Not in a result's reuse key, which compares the data itself (coverage and origins).
+    chain: str = ""
 
     @property
     def name(self) -> str:
@@ -127,6 +139,18 @@ class DatasetView:
     @property
     def key(self) -> ViewKey:
         return ViewKey(self.identity, self.revision)
+
+    @property
+    def chain_key(self) -> list[str]:
+        """Which data this view's chain is, for what a plot keeps across Live's reruns (plots-3): its
+        TXY source and choice, its chain and the profile hashes of its HeLab shots."""
+        hashes = sorted({origin.removeprefix(txy_sources.HELAB_ORIGIN) for origin in self.origins.values()})
+        return [self.identity.source, self.txy_choice, self.identity.chain, *hashes]
+
+    @cached_property
+    def held(self) -> Held:
+        """What this revision holds (``Held``), as a ``Dataset`` of the same data has it (``held_of``)."""
+        return Held.of(self.shots, self.fingerprints, self.origins)
 
     @property
     def signature(self) -> str:
@@ -218,6 +242,33 @@ def _frozen(shots: dict[int, Events]) -> Mapping[int, Events]:
     return MappingProxyType(shots)
 
 
+@dataclass(frozen=True)
+class Held:
+    """What a view or a ``Dataset`` holds, to tell whether a plot shows the data a tab shows (memory
+    only): its shot numbers and its data (each shot's fingerprint and origin), as SHA-256 of their
+    JSON. ``own``: a plot's own TXY choice's data (its TXY row not "as the folder's tab")."""
+    shots: str
+    data: str
+    own: bool = False
+
+    @staticmethod
+    def of(shots: Iterable[int], fingerprints: Mapping[int, Fingerprint], origins: Mapping[int, str]) -> Held:
+        numbers = sorted(int(shot) for shot in shots)
+        rows = [[shot, list(fingerprints[shot]) if shot in fingerprints else None, origins.get(shot, "")]
+                for shot in numbers]
+        return Held(_digest(numbers), _digest(rows))
+
+    def shown_in(self, dataset: Dataset) -> bool:
+        """Whether ``dataset`` holds this data: the same shots from the same files; for a plot's own
+        TXY choice (whose files the tab's choice needn't read), the same shots."""
+        other = held_of(dataset)
+        return self.shots == other.shots if self.own else self.data == other.data
+
+
+def _digest(value: Any) -> str:
+    return hashlib.sha256(json.dumps(value, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def root_key(folder: str, identifier: str, path: str) -> str:
     """``root://<uuid>/<relative>``, exactly as the store keys folders below a data root: each part
     of the relative path percent-quoted (``cache_paths``: ``run 1`` is ``run%201``; codebase review
@@ -272,7 +323,7 @@ def build_view(dataset: Dataset, root: tuple[str, str, str] | None = None) -> Da
         data_root = DataRootRef(identifier, label, folder, root_key(folder, identifier, dataset.path))
     shots = {int(shot): read_only(array) for shot, array in sorted(dataset.data.items())}
     identity = ViewIdentity(dataset.path, data_root.key if data_root else "", dataset.signature,
-                            txy_sources.identity_source(txy_sources.source_of(metadata)))
+                            txy_sources.identity_source(txy_sources.source_of(metadata)), uuid4().hex)
     times = parse_raw_times(metadata.get("raw_times"))
     origins = txy_sources.origins_of(metadata)
     return DatasetView(identity, 1, _frozen(shots), MappingProxyType(fingerprints_of(metadata)),
@@ -285,6 +336,17 @@ def build_view(dataset: Dataset, root: tuple[str, str, str] | None = None) -> Da
 
 # One view per Dataset object, so repeated runs on the same shown data share one input.
 _views: weakref.WeakKeyDictionary[Dataset, DatasetView] = weakref.WeakKeyDictionary()
+# Each Dataset object's ``Held`` (its shots and their records aren't changed in place).
+_held: weakref.WeakKeyDictionary[Dataset, Held] = weakref.WeakKeyDictionary()
+
+
+def held_of(dataset: Dataset) -> Held:
+    """What ``dataset`` holds: the ``held`` of a view of the same data (memory only)."""
+    held = _held.get(dataset)
+    if held is None:
+        metadata = dataset.metadata
+        held = _held[dataset] = Held.of(dataset.data, fingerprints_of(metadata), txy_sources.origins_of(metadata))
+    return held
 
 
 def view_of(dataset: Dataset, root: tuple[str, str, str] | None = None) -> DatasetView:

@@ -2146,6 +2146,43 @@ def test_the_answer_is_no_unless_yes(monkeypatch: pytest.MonkeyPatch, capsys: py
         assert capsys.readouterr().err == "Write? [y/N] "
 
 
+@pytest.mark.parametrize("argv, converted", [(("--once",), [1]), ((), [0, 1, 0, 0])], ids=["once", "watch"])
+def test_again_converts_each_shot_once_more(source: Path, tmp_path: Path, private_store: str,
+                                            monkeypatch: pytest.MonkeyPatch, argv: tuple[str, ...],
+                                            converted: list[int]) -> None:
+    """convert-1 (area review): ``--watch``'s first pass only records (seen=[]), so ``--again`` holds for
+    the pass after it, which converts the current shot once more; later passes leave it current. Shots
+    converted per pass, ``helab convert`` run in this process until the fourth pass (``--once``: one)."""
+    from helab import convert_cli
+    from helab.utils import app_log
+    write_raw(source, 1, raw_bytes(10_000))
+    assert len(of(run(source, request_for(source, tmp_path, private_store)), "shot_converted")) == 1
+    passes: list[int] = []
+    real = convert.convert_folder
+
+    def counting(path: str, request: ConvertRequest, send: Any) -> None:
+        request["temps"], request["workers"] = str(tmp_path / "temps"), 1
+        events: list[dict[str, Any]] = []
+
+        def both(event: Any) -> None:
+            events.append(event)
+            send(event)
+        real(path, request, both)
+        passes.append(len(of(events, "shot_converted")))
+
+    def sleep(seconds: float, real_sleep: Callable[[float], None] = time.sleep) -> None:
+        if threading.current_thread() is not threading.main_thread():
+            real_sleep(seconds)  # (Not the watch loop's: its sleep is the one patched.)
+        elif len(passes) >= 4:
+            raise KeyboardInterrupt
+    monkeypatch.setattr(convert_cli, "_start_cache", lambda: (options(private_store), None))
+    monkeypatch.setattr(app_log, "start_log_file", lambda folder: None)
+    monkeypatch.setattr(convert, "convert_folder", counting)
+    monkeypatch.setattr(time, "sleep", sleep)
+    assert convert_cli.main(["--watch", str(source), "--output", "temp", "--again", "--interval", "0.01", *argv]) == 0
+    assert passes == converted
+
+
 @pytest.mark.parametrize("method", ["rename", "copy"])
 def test_the_index_moves_with_the_cache_folder_and_its_shots_stay_current(
         source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, method: str) -> None:

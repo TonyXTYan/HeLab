@@ -193,6 +193,9 @@ def test_startup_waits_out_a_move_then_recovers_and_registers(tmp_path: Path, mo
         waits.append(True)
         helper.kill()  # ...until it ends.
         helper.wait()
+        # And until its lock is free: Windows frees a killed process's locks a little later, so startup
+        # found it still held and waited again (CI 41162160704: "[True, True, True] == [True]").
+        assert free_soon(lambda: not cache_locks.locked_elsewhere(cache_locks.move_lock(app).path))
     message, instance = startup(app, lambda token: cache_move.recover(app, lambda: setting[0], write), wait)
     try:
         assert waits == [True] and "finished" in message and setting == [str(target)]

@@ -35,7 +35,7 @@ from helab.utils.constants import (
     APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, DEFAULT_LOAD_MODE, DIR_TEMPS, LOAD_MODE_LABELS,
     QSPLITTER_STYLESHEET, TOOLBAR_STYLESHEET_LR, cache_dir_refused, read_check_level,
     read_disk_budget, read_io_concurrency, read_live_autosave, read_live_interval, read_load_mode,
-    app_folder, read_plot_auto_reload, read_ram_budget,
+    app_folder, read_convert_profile, read_plot_auto_reload, read_ram_budget, read_txy_source,
 )
 from helab.utils.number_format import byte_size, byte_unit
 from helab.utils.settings_defaults import (
@@ -43,6 +43,7 @@ from helab.utils.settings_defaults import (
     setting_default)
 from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
+from helab.views.CacheTab import read_result_reuse
 from helab.views.ClockSkewWarning import ClockSkewWarning
 from helab.views.OldLogs import OldLogs
 from helab.views.ElidedLabel import ElidedLabel
@@ -924,6 +925,10 @@ class HelabMainWindow(QMainWindow):
         cache.check_level = read_check_level(settings)
         self._apply_live_settings(settings)
         cache.set_lab_constants(read_lab_constants(settings))
+        # What only Save applies, again from the settings: Reset, then Cancel, has already cleared them.
+        cache.set_convert_profile(read_convert_profile(settings))
+        cache.set_tab_source(read_txy_source(settings))
+        cache.set_result_reuse(read_result_reuse(settings))
         if read_disk_budget(settings) != store_options().get("budget"):
             # Saved without Save (e.g. Reset, then Cancel): the store is told until it has it.
             # (After Save it already has it: Settings saves a new disk budget only then.)
@@ -1270,7 +1275,13 @@ class HelabMainWindow(QMainWindow):
     # macOS's default font (Load Scripts… and Delete… start to be at 240), below the 320 px default so the
     # default split holds where the system's font is wider (Windows), set rather than taken from the contents.
     MIN_SETTINGS_WIDTH = 250
+    # The plots' least width when the panels' widths don't fit the window (app-2: a split saved on a wider
+    # screen narrows both panels in proportion, rather than leaving the plots 0 px). Below what the default
+    # split leaves in Windows CI's 976 px splitter (268 px), so the default 380/320 holds there (Q33.2).
+    MIN_PLOTS_WIDTH = 240
     _split_shown = True  # (False from ``_setup_central_widgets`` until the first show applies the widths.)
+    # Panels the window narrowed (splitter index: (width shown, width chosen)), not saved as the user's.
+    _narrowed: dict[int, tuple[int, int]] = {}
 
     @classmethod
     def read_split(cls, settings: QSettings) -> tuple[int, int]:
@@ -1298,9 +1309,32 @@ class HelabMainWindow(QMainWindow):
         super().showEvent(a0)
         if not self._split_shown:
             self._split_shown = True
-            self.splitter.setSizes([self.left_panel_width,
-                                    max(0, self.splitter.width() - self.left_panel_width - self.right_panel_width),
-                                    self.right_panel_width])
+            self._set_split(self.left_panel_width, self.right_panel_width, self.splitter.width())
+
+    @classmethod
+    def fitted(cls, left: int, right: int, total: int) -> tuple[int, int]:
+        """The panels' widths ``left`` and ``right`` (0: collapsed) in a splitter ``total`` wide: as they are
+        when the plots keep MIN_PLOTS_WIDTH; else each shown panel keeps its least width and the room above
+        those is shared in proportion to what each had above its own (one held at its least width narrows
+        the other)."""
+        room = total - cls.MIN_PLOTS_WIDTH
+        if left + right <= room:
+            return left, right
+        least_left, least_right = min(left, cls.MIN_PANEL_WIDTH), min(right, cls.MIN_SETTINGS_WIDTH)
+        above_left, above_right = left - least_left, right - least_right
+        spare = max(0, room - least_left - least_right)
+        share = round(spare * above_left / (above_left + above_right)) if above_left + above_right else 0
+        return least_left + share, least_right + min(spare - share, above_right)
+
+    def _set_split(self, left: int, right: int, total: int) -> None:
+        """The panels ``left`` and ``right`` wide (0: collapsed), the plots the rest of ``total``. Where the
+        plots would get less than MIN_PLOTS_WIDTH, the shown panels are narrowed in proportion (to no less
+        than their least widths) for this window only: the widths chosen stay the ones saved."""
+        chosen = {0: left, 2: right}
+        left, right = self.fitted(left, right, total)
+        self.splitter.setSizes([left, max(0, total - left - right), right])
+        sizes = self.splitter.sizes()
+        self._narrowed = {index: (sizes[index], width) for index, width in chosen.items() if sizes[index] < width}
 
     def save_split(self) -> None:
         """Keep the panels' widths for the next start (as HeLab quits). A shown panel's width is its own; a
@@ -1308,9 +1342,19 @@ class HelabMainWindow(QMainWindow):
         self._remember_panel_widths()
         app_settings().setValue(MAIN_SPLIT_SETTING, f"{self.left_panel_width},{self.right_panel_width}")
 
+    def _chosen_sizes(self) -> list[int]:
+        """The splitter's sizes, a panel the window narrowed (``_set_split``) and still that wide at the
+        width chosen for it."""
+        sizes = self.splitter.sizes()
+        for index, (shown, chosen) in self._narrowed.items():
+            if sizes[index] == shown:
+                sizes[index] = chosen
+        return sizes
+
     def _remember_panel_widths(self) -> None:
-        """The panels' widths to restore (toggle back, next start): each shown panel's current width."""
-        left, _, right = self.splitter.sizes()
+        """The panels' widths to restore (toggle back, next start): each shown panel's current width, or the
+        one chosen for it while the window narrows it."""
+        left, _, right = self._chosen_sizes()
         if left >= self.MIN_PANEL_WIDTH:
             self.left_panel_width = min(left, self.MAX_PANEL_WIDTH)
         if right >= self.MIN_SETTINGS_WIDTH:
@@ -1373,13 +1417,7 @@ class HelabMainWindow(QMainWindow):
 
     def toggle_left_panel(self, checked: bool) -> None:
         if checked: # Expand the left panel
-            # self.splitter.setSizes([self.left_panel_width, self.splitter.sizes()[1], self.splitter.sizes()[2]])
-            self.splitter.setSizes([
-                self.left_panel_width,
-                # self.splitter.sizes()[1],
-                self.width()-self.left_panel_width-self.right_panel_width,
-                self.right_panel_width
-            ])
+            self._set_split(self.left_panel_width, self._chosen_sizes()[2], self.splitter.width())
             self.toggle_left_panel_action.setIcon(ToolIcons.ICON_LEFT_COLLAPSE)
             self.toggle_left_panel_action.setChecked(True)
             self.view_toggle_left_panel.setChecked(True)
@@ -1449,21 +1487,15 @@ class HelabMainWindow(QMainWindow):
 
     def toggle_right_panel(self, checked: bool) -> None:
         if checked:
-            self.splitter.setSizes([
-                self.splitter.sizes()[0],
-                self.width()-self.left_panel_width-self.right_panel_width,
-                self.right_panel_width
-            ])
+            self._set_split(self._chosen_sizes()[0], self.right_panel_width, self.splitter.width())
             self.sidebar_toolbar_right.actions()[0].setIcon(ToolIcons.ICON_RIGHT_COLLAPSE)
             self.toggle_right_panel_action.setChecked(True)
             self.view_toggle_right_panel.setChecked(True)
         else:
             self._remember_panel_widths()
-            self.splitter.setSizes([
-                self.splitter.sizes()[0],
-                self.width()-self.left_panel_width,
-                0
-            ])
+            # Its width goes to the plots; the folders keep the width shown (which the window may narrow).
+            left, middle, right = self.splitter.sizes()
+            self.splitter.setSizes([left, middle + right, 0])
             self.sidebar_toolbar_right.actions()[0].setIcon(ToolIcons.ICON_RIGHT_EXPAND)
             self.toggle_right_panel_action.setChecked(False)
             self.view_toggle_right_panel.setChecked(False)

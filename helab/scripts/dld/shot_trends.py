@@ -387,7 +387,9 @@ def low_alert(data: Trends, path: str) -> tuple[Any, str] | None:
 
 
 # Per plot (``AnalysisResult.owner``): the input it last drew (identity, revision), so only a
-# newer revision of the same data (Live's next) can notify. GUI thread; ``plot_closed`` drops it.
+# newer revision of the same data (Live's next) can notify. Each view chain has its own identity
+# (``ViewIdentity.chain``), so a new chain's revisions notify from its second on, whatever the old
+# one's. GUI thread; ``plot_closed`` drops it.
 _drawn: dict[str, tuple[ViewIdentity, int]] = {}
 
 

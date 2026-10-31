@@ -356,6 +356,60 @@ def test_review_from_settings_is_modal_only_while_settings_is_open(
         window.hide()
 
 
+@pytest.mark.parametrize("then", ["save", "cancel"])
+def test_reset_all_settings_resets_the_txy_converter_tab_and_what_it_applies(
+        main_window: HelabMainWindow, monkeypatch: pytest.MonkeyPatch, then: str) -> None:
+    """app-1 (area review): Reset all settings shows the TXY converter tab's defaults, so Save writes them
+    rather than the old choices; and whether Save or Cancel follows, the session converts with the default
+    profile, tabs read the default source and saved results are reused or not, as the settings now say."""
+    from PyQt6.QtWidgets import QDialog
+    from helab.convert.profile import BUILTIN_PROFILES, DEFAULT_PROFILE
+    from helab.utils import txy_sources
+    from helab.utils.constants import read_convert_backend, read_convert_output, read_txy_source
+    from helab.utils.folder_cache import get_folder_cache
+    from helab.utils.io_service import get_io_service
+    from helab.utils.settings_defaults import (CONVERT_BACKEND_SETTING, CONVERT_OUTPUT_SETTING,
+                                               CONVERT_PROFILE_SETTING, RESULT_REUSE_SETTING, TXY_SOURCE_SETTING,
+                                               read_setting, setting_default)
+    from helab.utils.settings_store import app_settings
+    cache = get_folder_cache(get_io_service())
+    settings = app_settings()
+    for key, value in ((CONVERT_PROFILE_SETTING, "plates-2022"), (CONVERT_BACKEND_SETTING, "reference"),
+                       (CONVERT_OUTPUT_SETTING, "temp"), (TXY_SOURCE_SETTING, "matlab-only"),
+                       (RESULT_REUSE_SETTING, True)):
+        settings.setValue(key, value)
+    cache.set_convert_profile(BUILTIN_PROFILES["plates-2022"])
+    cache.set_tab_source("matlab-only")
+    cache.set_result_reuse(True)
+    shown: list[tuple[Any, ...]] = []
+
+    def reset_then(dialog: SettingsDialog) -> int:
+        dialog.cache_tab.confirm = lambda title, text, verb: True
+        tab = dialog.converter_tab
+        dialog.reset_settings()
+        shown.append((tab.profile_combo.currentData(), tab.backend_combo.currentData(),
+                       tab.output_combo.currentData(), tab.source_combo.currentData()))
+        if then == "save":
+            dialog.save_settings()
+            return int(QDialog.DialogCode.Accepted)
+        return int(QDialog.DialogCode.Rejected)
+    monkeypatch.setattr(SettingsDialog, "exec", reset_then)
+    monkeypatch.setattr(QApplication, "activeModalWidget", staticmethod(lambda: None))
+    try:
+        main_window.show_settings_dialog()
+        defaults = (DEFAULT_PROFILE, setting_default(CONVERT_BACKEND_SETTING), setting_default(CONVERT_OUTPUT_SETTING),
+                    txy_sources.DEFAULT_SOURCE)
+        assert shown == [defaults]
+        assert (str(read_setting(settings, CONVERT_PROFILE_SETTING, typed=True) or DEFAULT_PROFILE),
+                read_convert_backend(settings), read_convert_output(settings), read_txy_source(settings)) == defaults
+        assert cache.convert_profile().name == DEFAULT_PROFILE and cache.tab_source() == txy_sources.DEFAULT_SOURCE
+        assert cache.result_reuse is False  # (Off by default.)
+    finally:
+        cache.set_convert_profile(BUILTIN_PROFILES[DEFAULT_PROFILE])
+        cache.set_tab_source(txy_sources.DEFAULT_SOURCE)
+        cache.set_result_reuse(False)
+
+
 def test_help_menu_records_the_io_trace_for_this_session(
     main_window: HelabMainWindow, qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Any,
 ) -> None:

@@ -119,31 +119,34 @@ def release_complete(release: Draft | None, commit: str) -> bool:
 def validate_archives(artifacts: dict[str, Path], tag: str, commit: str) -> dict[str, Fingerprint]:
     if set(artifacts) != set(ASSET_NAMES):
         raise ValueError("All three platform archives are required")
-    result: dict[str, Fingerprint] = {}
-    for name, path in artifacts.items():
-        with zipfile.ZipFile(path) as archive:
-            entries = [item for item in archive.infolist() if item.filename.endswith("/helab/_build_info.json")]
-            # The macOS zip keeps the app's symlinks: since the cython kernel ships, PyInstaller makes
-            # Contents/Frameworks/helab a folder whose data files link to Contents/Resources. A link's
-            # entry holds its target's path, which must be another stamp here; the files are checked.
-            links = [item for item in entries if stat.S_ISLNK(item.external_attr >> 16)]
-            stamps = [item for item in entries if item not in links]
-            if not stamps:
-                raise ValueError(f"{name} has no packaged build stamp")
-            names = set(archive.namelist())
-            for link in links:
-                target = posixpath.normpath(posixpath.join(posixpath.dirname(link.filename),
-                                                           archive.read(link).decode()))
-                if target not in names or not target.endswith("/helab/_build_info.json"):
-                    raise ValueError(f"{name}'s build stamp {link.filename} links outside the stamps")
-            for stamp in stamps:
-                data = _object(json.loads(archive.read(stamp)))
-                if data.get("version") != tag.removeprefix("v") or data.get("commit") != commit or data.get("dirty") is not False:
-                    raise ValueError(f"{name} was not built cleanly from the release version/commit")
-        with path.open("rb") as stream:
-            digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
-        result[name] = Fingerprint(path.stat().st_size, digest)
-    return result
+    return {name: validate_archive(name, path, tag, commit) for name, path in artifacts.items()}
+
+
+def validate_archive(name: str, path: Path, tag: str, commit: str) -> Fingerprint:
+    """One platform archive's build stamps, each built cleanly from ``tag``'s version at ``commit``; its
+    size and digest. (A PR's builds check theirs alone, ``--check``: A39.1.)"""
+    with zipfile.ZipFile(path) as archive:
+        entries = [item for item in archive.infolist() if item.filename.endswith("/helab/_build_info.json")]
+        # The macOS zip keeps the app's symlinks: since the cython kernel ships, PyInstaller makes
+        # Contents/Frameworks/helab a folder whose data files link to Contents/Resources. A link's
+        # entry holds its target's path, which must be another stamp here; the files are checked.
+        links = [item for item in entries if stat.S_ISLNK(item.external_attr >> 16)]
+        stamps = [item for item in entries if item not in links]
+        if not stamps:
+            raise ValueError(f"{name} has no packaged build stamp")
+        names = set(archive.namelist())
+        for link in links:
+            target = posixpath.normpath(posixpath.join(posixpath.dirname(link.filename),
+                                                       archive.read(link).decode()))
+            if target not in names or not target.endswith("/helab/_build_info.json"):
+                raise ValueError(f"{name}'s build stamp {link.filename} links outside the stamps")
+        for stamp in stamps:
+            data = _object(json.loads(archive.read(stamp)))
+            if data.get("version") != tag.removeprefix("v") or data.get("commit") != commit or data.get("dirty") is not False:
+                raise ValueError(f"{name} was not built cleanly from the release version/commit")
+    with path.open("rb") as stream:
+        digest = "sha256:" + hashlib.file_digest(stream, "sha256").hexdigest()
+    return Fingerprint(path.stat().st_size, digest)
 
 
 class ReleaseAPI(Protocol):
@@ -291,16 +294,26 @@ class GitHubReleases:
         self._request("POST", endpoint, file=path)
 
 
-def main() -> None:
+def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repository")
-    parser.add_argument("--tag", required=True)
+    parser.add_argument("--tag")
     parser.add_argument("--commit", required=True)
     parser.add_argument("--prerelease", choices=["true", "false"], default="true")
-    parser.add_argument("--artifacts", type=Path, required=True)
+    parser.add_argument("--artifacts", type=Path)
     parser.add_argument("--body", type=Path)
     parser.add_argument("--validate-only", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument("--check", type=Path, metavar="ARCHIVE",
+                        help="check one platform archive's build stamps against --commit and this checkout's "
+                        "version, with no tag or draft (each build's own check, before any release)")
+    args = parser.parse_args(argv)
+    if args.check is not None:
+        from helab._version import __version__
+        validate_archive(args.check.name, args.check, f"v{__version__}", args.commit)
+        print(f"{args.check.name}: built cleanly from {__version__} at {args.commit}")
+        return
+    if not args.tag or args.artifacts is None:
+        parser.error("--tag and --artifacts are required (or --check ARCHIVE)")
     artifacts = {name: args.artifacts / name for name in ASSET_NAMES}
     if args.validate_only:
         validate_archives(artifacts, args.tag, args.commit)

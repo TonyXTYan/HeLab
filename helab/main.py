@@ -147,6 +147,28 @@ def _recover_in_helper(settings: QSettings, token: str) -> tuple[str, bool]:
 
 # This instance's lock, held for the app's life.
 _INSTANCE_LOCK: list[object] = []
+# The one-running-HeLab lock, held until the process ends (not at quit: it may still be saving).
+_RUNNING_LOCK: list[object] = []
+
+
+def _another_running() -> bool:
+    """Whether another HeLab app runs on this computer (its app folder's ``running.lock``; an override's
+    folder has its own), which a message box then says; else this one holds the lock from now on. A lock
+    that can't be checked (the app folder unwritable) doesn't stop HeLab: it is logged."""
+    from helab.utils.cache_locks import take_running
+    try:
+        lock, pid = take_running(app_folder())
+    except OSError as exc:
+        logging.warning(f"Couldn't check for another running HeLab: {exc}")
+        return False
+    if lock is not None:
+        _RUNNING_LOCK.append(lock)
+        return False
+    text = (f"HeLab is already running on this computer{f' (process {pid})' if pid.isdigit() else ''}. Use its "
+            "window, or quit it before starting HeLab again.")
+    logging.warning(text)
+    QMessageBox.information(None, "HeLab is running", text)
+    return True
 
 
 def main() -> None:
@@ -166,6 +188,10 @@ def main() -> None:
     # --geometry WxH+X+Y: this run's window size and place (a test runner's fixed coordinates).
     geometry, argv = HelabMainWindow.take_geometry(sys.argv)
     app = QApplication(argv)
+    # One HeLab per computer (Q39.1): a second start stops here, having opened no store, started no
+    # helper and written no setting.
+    if _another_running():
+        sys.exit(1)
     app.setStyle("Fusion")
     # app.setStyleSheet("QWidget { background-color: #fafafa; }")
     if "SF Mono" in QFontDatabase.families():

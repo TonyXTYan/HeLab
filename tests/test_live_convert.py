@@ -217,18 +217,26 @@ def test_a_raw_file_arriving_during_live_is_converted_once_written_not_before(
     explorer.close_cleanup()
 
 
-def test_a_converted_shot_asks_for_lives_next_check(qtbot: QtBot, service: IOService, tmp_path: Path) -> None:
+@pytest.mark.parametrize("interval", [0.02, 0.0])
+def test_a_converted_shot_asks_for_lives_next_check(
+    qtbot: QtBot, service: IOService, tmp_path: Path, interval: float,
+) -> None:
     """After a conversion writes a shot, Live's next check starts at once (it reads HeLab's TXY): the
-    check queued with the conversion runs, then the next one without the wait."""
+    check running beside the conversion ends, then the next one comes without the wait.
+
+    ``interval`` 0: every tick finds the conversion's interval over, as a slow machine's late ticks do
+    (CI 41158349537, macOS: a RERUN). A tick then queues a conversion with the check ``cycle`` answers,
+    so one is already queued, with no check out, before the next tick sends one."""
     explorer, path = watching_raw_folder(qtbot, tmp_path)
     cache = explorer.model.cache
+    cache.live_interval = interval
     session = explorer.live
     assert session is not None
     cycle(qtbot, explorer, path, tmp_path)  # (Records.)
     write_raw(Path(path), 1, raw_bytes(10_000))
     cycle(qtbot, explorer, path, tmp_path)  # (Seen once.)
-    qtbot.waitUntil(lambda: ("convert", path) in cache.jobs)
-    assert session.request == "check" and not session.check_soon  # Queued with the conversion.
+    qtbot.waitUntil(lambda: ("convert", path) in cache.jobs and session.request == "check")
+    assert not session.check_soon
     assert [event["shot"] for event in of(run_convert(cache, path), "shot_converted")] == [1]
     assert session.check_soon
     cache.live_interval = 30.0  # Long: only a requested check comes soon.

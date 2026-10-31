@@ -49,6 +49,9 @@ if TYPE_CHECKING:
     from helab.views.plots.presets import PresetBar
     from helab.views.plots.workspace import PlotWorkspace
 
+# How an outdated saved result's note ends while the run that replaces it goes on.
+RERUNNING = ": rerunning"
+
 
 def identify_parameters(settings: QWidget) -> QWidget:
     """IDs and names for a plot's settings (pyqtgraph's parameter trees, helab/utils/accessible.py):
@@ -481,7 +484,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.reloaded_at = time.monotonic()
         self.released = None
         when = datetime.fromtimestamp(result.finished_at).strftime("%Y-%m-%d %H:%M") if result.finished_at else "?"
-        self._cache_note = f"saved result from {when} is outdated ({'; '.join(result.outdated)}): rerunning"
+        self._cache_note = f"saved result from {when} is outdated ({'; '.join(result.outdated)}){RERUNNING}"
         self._show_content(content, result, specs, warnings)
 
     def _cached_saved(self, result: AnalysisResult, size: int) -> None:
@@ -556,6 +559,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.job_id = ""
         self.follow.end(time.monotonic())
         view, self._job_view = self._job_view, None
+        # The run an outdated saved result waited for has ended (failed, cancelled or not shown): it stays.
+        self._cache_note = self._cache_note.removesuffix(RERUNNING)
         if self.released is not None:
             self.released.set_state("")  # A reload's run ended; a failure shows in the amber line.
         if result.state == "cancelled":
@@ -614,7 +619,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.released = None  # Drawn again: its picture goes.
             self._nowhere = False
         self._check_constants()
-        self._show_content(content, result, specs, warnings)
+        self._show_content(content, result, specs, warnings, view)
         self._follow_next()
 
     def _still_released(self) -> None:
@@ -657,8 +662,13 @@ class AnalysisInstance(LinkedAnalysisInstance):
             return
         self._show_content(content, result, specs, warnings)
 
-    def _show_content(self, content: QWidget, result: AnalysisResult, specs: List[Any], warnings: str) -> None:
+    def _show_content(self, content: QWidget, result: AnalysisResult, specs: List[Any], warnings: str,
+                      view: Optional[DatasetView] = None) -> None:
+        """Show ``result``'s plot ``content``; ``view``: the data it ran on (default: the shown result's,
+        none for an outdated saved result's, which is no data a tab shows)."""
         self._content = content
+        if view is None and result is self.shown and not result.outdated:
+            view = self._shown_view
         if self.dock_widget is None:
             content.deleteLater()
             return
@@ -680,7 +690,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if warnings:
                 settings = " · ".join(filter(None, (settings, f"⚠ {warnings}")))
                 record = f"{record}\nWarning: {warnings}"
-            self.workspace.set_plot_result(self.dock_widget, content, result, settings, record, chosen)
+            self.workspace.set_plot_result(self.dock_widget, content, result, settings, record, chosen, view,
+                                           not self.on_tab_choice())
         elif self.dock_widget.widget() is not content:
             old = self.dock_widget.widget()
             self.dock_widget.setWidget(content)
