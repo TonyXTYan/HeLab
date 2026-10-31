@@ -1,8 +1,9 @@
 # HeLab's `.hlb` files (draft of the format page)
 
-Draft, 2026-10-31 (Vault). Tony's request: "build export cache options and document the file format with sample
-code". This page is the format half; [design-export.md](design-export.md) is the export half. Where the final page
-lives is CoCo's call (proposed: `docs/hlb-format.md`, linked from the README and `cache-store.md`).
+2026-10-31 (Vault). Tony's request: "build export cache options and document the file format with sample code".
+Built: `helab.utils.hlb.read`, `helab.convert.raw_layer.columns`, and `helab cache dump|export` (`helab/cache_cli.py`).
+Where the final page lives is CoCo's call (proposed: `docs/hlb-format.md`, linked from the README and
+`cache-store.md`). The "without HeLab" sample below runs as a test (`tests/test_cache_cli.py`).
 
 ## What a `.hlb` file is
 
@@ -85,12 +86,12 @@ or deletes it**.
 ### Python, with HeLab
 
 ```python
-from helab.utils import hlb                       # (the export item adds hlb.read(path))
-header, arrays = hlb.unpack(open("d1.hlb", "rb").read())   # every part checked; hlb.HlbError if not
+from helab.utils import hlb
+header, arrays = hlb.read("d1.hlb")               # every part checked; hlb.HlbError if not
 from helab.convert import raw_layer
 layer, header = raw_layer.from_hlb(open("d1.hlb", "rb").read())
-pulses = raw_layer.decode(layer)                  # .channels, .times (float64, TDC bins)
-seconds = pulses.times * 25e-12
+columns = raw_layer.columns(layer)                # channel, time_bins (absolute), time_s
+pulses = raw_layer.decode(layer)                  # or: .channels, .times (float64, TDC bins), as the converter reads them
 ```
 
 ### Python, without HeLab (NumPy and python-blosc only)
@@ -130,10 +131,21 @@ seconds = bins * 25e-12
 *Checked* against a file HeLab wrote (`tests/data/convert/cases/basic/d1.txt`'s layer): the same channels and times
 as `raw_layer.decode`.
 
+### From the command line (read only)
+
+```
+helab cache dump d1.hlb                                   # the header as JSON (arrays without their chunk lists)
+helab cache export d1.hlb --to npz|mat|csv [--out PATH]   # channel, time_bins, time_s, header
+helab cache export --folder /data/2026-10-31/run --to mat # every raw layer store-v4 holds for that folder
+```
+
+A file's export goes to the current folder (`d1.npz`), a folder's to `./helab-export-<name>/d<N>.<ext>`; nothing is
+replaced without `--force`, and nothing is ever written into a store. `--bin-time` changes the seconds per bin.
+
 ### MATLAB
 
-MATLAB has no Blosc reader, so export the file first (the export item): `helab cache export d1.hlb --to mat` writes
-a `.mat` with `channel` and `time_bins` (absolute, int64), `time_s` (double) and `header` (the JSON text):
+MATLAB has no Blosc reader, so export the file first: `helab cache export d1.hlb --to mat` writes a `.mat` with
+`channel` (int8), `time_bins` (absolute, int64), `time_s` (double) and `header` (the JSON text):
 
 ```matlab
 s = load('d1.mat');
