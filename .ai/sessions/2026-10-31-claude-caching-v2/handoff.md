@@ -170,7 +170,7 @@ Outside the brief's owned paths, approved by CoCo: `helab/convert/raw_layer.py` 
 
 Checks at `627d1ab` (macOS, M4 Max): `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest`:
 **8699 passed, 672 skipped, 2 warnings in 136.77s; no RERUN** (the known pyqtgraph warnings); `mypy helab/
---strict` (199 files), `mypy tests --strict` (179), `--platform win32`: no issues; `pyright helab tests` and
+--strict` (199 files), `mypy tests --strict` (178), `--platform win32`: no issues; `pyright helab tests` and
 `--pythonplatform Windows`: 0 errors. Logs: `.ai/temp/step4/`.
 
 ## Proposed doc changes (for the Coordinator)
