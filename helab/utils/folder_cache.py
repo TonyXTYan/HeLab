@@ -2547,8 +2547,9 @@ class FolderCache(QObject):
         self.mismatchesChanged.emit()
 
     def cancel_held_io(self) -> None:
-        """Cancel every load and scan (queued, running or held), then stop holding them."""
-        self.service.cancel_operations(self.service.MISMATCH_HELD)
+        """Cancel every load and scan the hold holds (queued, running or held; not saves or Live
+        checks), then stop holding them."""
+        self.service.cancel_held()
         self.resume_after_mismatch()
 
     def skip_mismatches(self) -> None:
@@ -2851,6 +2852,8 @@ class FolderCache(QObject):
         verification, so saves get the I/O (a save waiting for a load it doesn't join then
         starts); none of those start again (``quitting``)."""
         self.quitting = True
+        # Nothing but saves starts now and the hold spares them (io-1): it has nothing left to hold.
+        self.resume_after_mismatch()
         if self._root_verify_owner:
             self.service.cancel(self._root_verify_owner)
         for job in list(self.jobs.values()):

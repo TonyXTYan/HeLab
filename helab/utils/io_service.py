@@ -166,7 +166,7 @@ class IOService(QObject):
     LOCAL_CAP = 2
     PAUSABLE = ("load", "list", "details", "scan", "icons", "roots_verify", "convert")
     # Held while cached data doesn't match several folders (``mismatch_hold``): loads and scans.
-    # Browsing, cached reads, cache writes and icons go on.
+    # Browsing, cached reads, cache writes, saves, Live checks and icons go on (``mismatch_spared``).
     MISMATCH_HELD = ("load", "details", "scan")
     # Maintenance nothing waits for: other background work queued later still goes first.
     LAST = ("roots_verify",)
@@ -427,19 +427,27 @@ class IOService(QObject):
             self.mismatch_hold = held
             self.reschedule()
 
-    def held_by_mismatch(self, request: IORequest) -> bool:
-        return self.mismatch_hold and request.operation in self.MISMATCH_HELD
+    @staticmethod
+    def mismatch_spared(request: IORequest) -> bool:
+        """A load the mismatch hold never holds: a save (``FolderCache.save``, Live's included), which
+        writes data already shown, and a Live check, which reads only the watched folder's new shots
+        and stops on its own when that folder doesn't match (area review io-1, 2026-10-31)."""
+        return request.operation == "load" and bool(request.payload.get("save") or request.payload.get("live"))
 
-    def cancel_operations(self, operations: tuple[str, ...]) -> None:
-        """Cancel every queued or running request of these operations; a finished load still
-        writing its disk cache is left to finish."""
+    def held_by_mismatch(self, request: IORequest) -> bool:
+        return (self.mismatch_hold and request.operation in self.MISMATCH_HELD
+                and not self.mismatch_spared(request))
+
+    def cancel_held(self) -> None:
+        """Cancel every queued or running load and scan the mismatch hold holds (``held_by_mismatch``
+        with the hold on); a finished load still writing its disk cache is left to finish."""
         for request in list(self.pending):
-            if request.operation in operations:
+            if request.operation in self.MISMATCH_HELD and not self.mismatch_spared(request):
                 self.pending.remove(request)
                 request.cancelled.set()
                 self.resultReady.emit(request, {"kind": "cancelled"})
         for request in list(self.active):
-            if request.operation in operations and not request.completed:
+            if request.operation in self.MISMATCH_HELD and not self.mismatch_spared(request) and not request.completed:
                 self._retire(request)
                 self.resultReady.emit(request, {"kind": "cancelled"})
         self.activityChanged.emit()

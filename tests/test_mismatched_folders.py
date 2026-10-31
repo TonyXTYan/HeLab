@@ -71,7 +71,7 @@ def test_held_loads_and_scans_pause_and_wait_while_browsing_goes_on(
     service.shutdown()
 
 
-def test_cancel_operations_cancels_loads_and_scans_but_not_browsing_or_cache_saves(
+def test_cancel_held_cancels_loads_and_scans_but_not_browsing_or_cache_saves(
     qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     service = held_service(monkeypatch)
@@ -87,9 +87,47 @@ def test_cancel_operations_cancels_loads_and_scans_but_not_browsing_or_cache_sav
     cancelled: list[str] = []
     service.resultReady.connect(
         lambda request, event: cancelled.append(request.path) if event["kind"] == "cancelled" else None)
-    service.cancel_operations(service.MISMATCH_HELD)
+    service.cancel_held()
     assert sorted(cancelled) == ["/queued", "/scan"]
     assert {r.path for r in service.active} == {"/browse", "/saving"} and not service.pending
+    service.shutdown()
+
+
+def test_the_hold_spares_saves_and_live_checks(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """io-1 (area review, 2026-10-31): a save (Live's too) and a Live check are neither held nor
+    paused nor cancelled by the hold; only ordinary loads and scans are."""
+    service = held_service(monkeypatch)
+    service.configure_concurrency(4)
+    service.submit("tab", 0, "/live", "load", {"live": True})
+    check = service.active[0]
+    check.output = str(tmp_path)
+    service.set_mismatch_hold(True)
+    assert not check.pause_requested and not (tmp_path / "pause").exists()
+    service.submit("save", 0, "/saved", "load", {"save": True, "save_memory": True})
+    service.submit("other", 0, "/plain", "load")
+    service.submit("bulk", 0, "/scan", "scan")
+    assert {r.path for r in service.active} == {"/live", "/saved"}
+    assert {r.path for r in service.pending} == {"/plain", "/scan"}
+    service._apply_pauses(time.monotonic() + service.RESUME_DELAY)
+    assert not any(r.pause_requested for r in service.active)
+    cancelled: list[str] = []
+    service.resultReady.connect(
+        lambda request, event: cancelled.append(request.path) if event["kind"] == "cancelled" else None)
+    service.cancel_held()
+    assert sorted(cancelled) == ["/plain", "/scan"]
+    assert {r.path for r in service.active} == {"/live", "/saved"}
+    service.shutdown()
+
+
+def test_quitting_lifts_the_hold(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """io-1: quitting starts nothing but saves, so the hold has nothing left to hold, and a save
+    queued behind it would otherwise keep the quit window waiting."""
+    service, cache = frozen(monkeypatch)
+    found(cache, "/1")
+    found(cache, "/2")
+    assert service.mismatch_hold
+    cache.cancel_for_quit()
+    assert not service.mismatch_hold
     service.shutdown()
 
 
@@ -110,10 +148,10 @@ def test_holds_at_two_four_eight_until_answered_and_skipping_from_eight(
     assert not service.mismatch_hold
     found(cache, "/4")
     assert service.mismatch_hold and warnings == [2, 4]
-    cancelled: list[tuple[str, ...]] = []
-    monkeypatch.setattr(service, "cancel_operations", lambda operations: cancelled.append(operations))
+    cancelled: list[bool] = []
+    monkeypatch.setattr(service, "cancel_held", lambda: cancelled.append(True))
     cache.cancel_held_io()
-    assert cancelled == [IOService.MISMATCH_HELD] and not service.mismatch_hold
+    assert cancelled == [True] and not service.mismatch_hold
     for index in range(5, 9):
         found(cache, f"/{index}")
     assert warnings == [2, 4, 8] and service.mismatch_hold
