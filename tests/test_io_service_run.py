@@ -85,3 +85,27 @@ def test_a_helper_that_dies_leaves_what_it_said_in_the_log(
     assert {"kind": "error", "message": "I/O helper exited unexpectedly"} in events
     assert "ImportError: no blosc" in caplog.text
     service.shutdown()
+
+
+def test_shutdown_stops_its_helpers_itself_not_only_from_the_reapers(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The area review's second unverified note (io.md): the reaper threads that kill cancelled helpers are
+    daemon threads, which may not run before the interpreter exits after quitting, so a helper (a finishing
+    save's cache write) could outlive HeLab. ``shutdown`` signals each one itself (``kill`` never waits)."""
+    service = IOService()
+    service.timer.stop()
+    monkeypatch.setattr(service, "_run", lambda request: None)
+    monkeypatch.setattr(service, "_reap", lambda request: None)  # (The reapers never got to run.)
+    helper = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        service.submit("tab", 0, "/saving", "load", {"save": True})
+        request = service.active[0]
+        request.process = helper
+        request.completed = True  # Delivered its data; writing the disk cache.
+        service.shutdown()
+        assert helper.wait(timeout=10) != 0
+    finally:
+        if helper.poll() is None:
+            helper.kill()
+            helper.wait()

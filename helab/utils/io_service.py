@@ -1122,6 +1122,16 @@ class IOService(QObject):
             self.folder_cache.shutdown()
         for owner in {r.owner for r in (*self.pending, *self.active)}:
             self.cancel(owner)
+        # Signalled here too: the reapers are daemon threads, which may not run before the interpreter exits,
+        # and a helper left running (a finishing save's cache write) would outlive HeLab. ``kill`` and ``poll``
+        # never wait; the reapers still confirm each exit.
+        for request in self.retired:
+            process = request.process
+            try:
+                if process is not None and process.poll() is None:
+                    process.kill()
+            except OSError:
+                logging.exception("Could not stop I/O helper: %s %s", request.operation, request.path)
         self.closed = True
         self.timer.stop()
         while not self.messages.empty():
