@@ -11,6 +11,12 @@ source is deleted only after it is recorded. Recovery (:func:`recover`) checks t
 themselves and uses the step only where they can't tell. Every action is idempotent, so a
 crash during recovery is recovered the same way next time.
 
+**Two stores** (caching v2): a cache folder may hold store-v3 and store-v4. The whole folder moves;
+the newest layout present is the **primary** store (``primary``): its ``store_id`` tells the folders
+apart, and only it is checkpointed before a copy (store-v3 beside a store-v4 is never written: it is
+copied with its ``-wal`` as it stands). The record keeps every store's id (``store_ids``) and the
+copy is verified store by store. Connections here never checkpoint on close.
+
 The pure-Python parts run in an isolated helper (check, move, cleanup, abort) or at startup;
 nothing here starts Qt. ``crash`` hooks let tests stop a move after any meaningful transition.
 """
@@ -26,7 +32,8 @@ from typing import Any, Callable
 
 from helab.io_ops.events import MoveCheckFields
 from helab.utils import cache_location
-from helab.utils.cache_store import LAYOUT_VERSION, RESULTS_DIRNAME, STORE_DIRNAME, store_root
+from helab.utils import store_v4
+from helab.utils.cache_store import LAYOUT_VERSION, STORE_DIRNAME
 from helab.utils.number_format import byte_size
 
 RECORD_NAME = "cache-move.json"
@@ -116,22 +123,48 @@ def _fsync_dir(path: str) -> None:
 
 # The store, read without opening it for writing
 
-def _connect_read_only(cache_dir: str) -> sqlite3.Connection | None:
-    """The store's database for reading only, or None if there is none (never created here).
-    Opened normally with ``query_only``: a read-only open of a WAL database fails without its
-    shared-memory file, which a copy doesn't carry."""
-    database = os.path.join(store_root(cache_dir), "records.sqlite")
+# The store folders a cache folder may hold, newest layout first, with their layouts.
+STORES = ((store_v4.DIRNAME, store_v4.LAYOUT), (STORE_DIRNAME, LAYOUT_VERSION))
+
+
+def _database(cache_dir: str, dirname: str) -> str:
+    return os.path.join(cache_dir, dirname, "records.sqlite")
+
+
+def primary(cache_dir: str) -> str:
+    """The folder name of the newest store in ``cache_dir`` (store-v3 when there is none)."""
+    return next((name for name, _ in STORES if os.path.isfile(_database(cache_dir, name))), STORE_DIRNAME)
+
+
+def _connect_read_only(cache_dir: str, dirname: str | None = None) -> sqlite3.Connection | None:
+    """A store's database for reading only (the primary one unless ``dirname``), or None if there is
+    none (never created here). Opened normally with ``query_only``: a read-only open of a WAL database
+    fails without its shared-memory file, which a copy doesn't carry; and never checkpointing on
+    close, so reading never rewrites the database."""
+    database = _database(cache_dir, dirname or primary(cache_dir))
     if not os.path.isfile(database):
         return None
     conn = sqlite3.connect(database, timeout=5)
+    conn.setconfig(sqlite3.SQLITE_DBCONFIG_NO_CKPT_ON_CLOSE, True)
     conn.execute("PRAGMA query_only = 1")
     return conn
 
 
-def store_id_at(cache_dir: str) -> str | None:
-    """The ``store_id`` of the store in ``cache_dir`` if it holds one with this layout, else None."""
+def _passenger(cache_dir: str, dirname: str) -> bool:
+    """store-v3 beside a store-v4: read only through ``LegacyStore`` (caching v2), never checkpointed."""
+    return dirname == STORE_DIRNAME and os.path.isfile(_database(cache_dir, store_v4.DIRNAME))
+
+
+def _store_id(cache_dir: str, dirname: str, layout: int) -> str | None:
+    if _passenger(cache_dir, dirname):
+        from helab.utils.legacy_store import LegacyStore, LegacyUnavailable
+        try:
+            with LegacyStore(os.path.join(cache_dir, dirname)) as legacy:
+                return legacy.store_id
+        except LegacyUnavailable:
+            return None
     try:
-        conn = _connect_read_only(cache_dir)
+        conn = _connect_read_only(cache_dir, dirname)
         if conn is None:
             return None
         try:
@@ -141,21 +174,53 @@ def store_id_at(cache_dir: str) -> str | None:
             conn.close()
     except (sqlite3.Error, ValueError):
         return None
-    if meta.get("layout_version") != LAYOUT_VERSION or not isinstance(meta.get("store_id"), str):
+    if meta.get("layout_version") != layout or not isinstance(meta.get("store_id"), str):
         return None
     return str(meta["store_id"])
+
+
+def store_ids_at(cache_dir: str) -> dict[str, str]:
+    """Every readable store's ``store_id`` in ``cache_dir``, by folder name."""
+    return {name: found for name, layout in STORES if (found := _store_id(cache_dir, name, layout)) is not None}
+
+
+def store_id_at(cache_dir: str) -> str | None:
+    """The ``store_id`` of the primary store in ``cache_dir`` if it holds one with its layout, else None."""
+    name = primary(cache_dir)
+    return _store_id(cache_dir, name, dict(STORES)[name])
 
 
 def valid_at(cache_dir: str, store_id: str) -> bool:
     return store_id_at(cache_dir) == store_id
 
 
-def verify(cache_dir: str, store_id: str) -> str:
-    """Why the copy in ``cache_dir`` isn't the store ``store_id``, or "" if it is: its database
-    passes ``integrity_check``, has the same id and layout, and every file the datasets, pending
-    saves, saved results and pending results name exists with its recorded size."""
+def verify(cache_dir: str, store_id: str, store_ids: dict[str, str] | None = None) -> str:
+    """Why the copy in ``cache_dir`` isn't the cache ``store_id`` (its primary store's), or "" if it is:
+    each store (the primary; and every one ``store_ids`` names, from the move's record) has a database
+    passing ``integrity_check``, with the same id and layout, and every file its rows name exists with
+    its recorded size."""
+    wanted = {primary(cache_dir): store_id, **(store_ids or {})}
+    for name, expected in wanted.items():
+        problem = _verify_store(cache_dir, name, expected)
+        if problem:
+            return problem
+    return ""
+
+
+def _verify_store(cache_dir: str, dirname: str, store_id: str) -> str:
+    files: list[tuple[str, int]]
+    if _passenger(cache_dir, dirname):
+        from helab.utils.legacy_store import LegacyStore, LegacyUnavailable
+        try:
+            with LegacyStore(os.path.join(cache_dir, dirname)) as legacy:
+                if not legacy.integrity_ok():
+                    return "the copied database is damaged"
+                files = legacy.named_files()
+        except LegacyUnavailable as exc:
+            return f"the copied database can't be read ({exc})"
+        return _check_files(cache_dir, dirname, store_id, files)
     try:
-        conn = _connect_read_only(cache_dir)
+        conn = _connect_read_only(cache_dir, dirname)
         if conn is None:
             return "the copied cache has no database"
         try:
@@ -163,9 +228,9 @@ def verify(cache_dir: str, store_id: str) -> str:
                 return "the copied database is damaged"
             files = conn.execute("SELECT file, bytes FROM datasets UNION ALL "
                                  "SELECT file, bytes FROM pending_saves").fetchall()
-            # (Saved results' files are ``results/<name>``, beside ``datasets/``; a store from
-            # before result caching has no such tables.)
-            for table in ("results", "pending_results"):
+            # (Saved results' files are ``results/<name>``, beside ``datasets/``, and raw layers'
+            # ``raw/<name>``; a store from before result caching has no such tables.)
+            for table in ("results", "pending_results", "raw_layers"):
                 if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
                                 (table,)).fetchone() is not None:
                     files += conn.execute(f"SELECT file, bytes FROM {table}").fetchall()
@@ -173,13 +238,16 @@ def verify(cache_dir: str, store_id: str) -> str:
             conn.close()
     except sqlite3.Error as exc:
         return f"the copied database can't be read ({exc})"
-    if store_id_at(cache_dir) != store_id:
+    return _check_files(cache_dir, dirname, store_id, files)
+
+
+def _check_files(cache_dir: str, dirname: str, store_id: str, files: list[tuple[str, int]]) -> str:
+    if _store_id(cache_dir, dirname, dict(STORES)[dirname]) != store_id:
         return "the copied database is not the same cache"
-    root = store_root(cache_dir)
+    root = os.path.join(cache_dir, dirname)
     datasets = os.path.join(root, "datasets")
     for file, size in files:
-        path = (os.path.join(root, *file.split("/")) if file.startswith(RESULTS_DIRNAME + "/")
-                else os.path.join(datasets, file))
+        path = (os.path.join(root, *file.split("/")) if "/" in file else os.path.join(datasets, file))
         try:
             if os.path.getsize(path) != int(size):
                 return f"a copied data file has the wrong size ({file})"
@@ -188,10 +256,17 @@ def verify(cache_dir: str, store_id: str) -> str:
     return ""
 
 
+def _record_ids(record: dict[str, Any]) -> dict[str, str] | None:
+    """The move's other stores' ids (a record from before two stores has none)."""
+    found = record.get("store_ids")
+    return {str(k): str(v) for k, v in found.items()} if isinstance(found, dict) else None
+
+
 def checkpoint(cache_dir: str) -> None:
-    """Write everything committed into ``records.sqlite`` and empty the WAL, so the copy
-    needs no ``-wal`` file. Every helper has stopped, so nothing else holds it."""
-    database = os.path.join(store_root(cache_dir), "records.sqlite")
+    """Write everything committed into the primary store's ``records.sqlite`` and empty the WAL, so
+    the copy needs no ``-wal`` file. Every helper has stopped, so nothing else holds it. (An older
+    store beside it is copied as it stands, its ``-wal`` included: never written from here.)"""
+    database = _database(cache_dir, primary(cache_dir))
     if not os.path.isfile(database):
         return
     try:
@@ -323,7 +398,7 @@ def start(source: str, target: str, app_dir: str, method: str, move_id: str = ""
     if os.path.exists(target) and (not os.path.isdir(target) or os.listdir(target)):
         raise MoveError(f"'{os.path.basename(os.path.normpath(target))}' isn't empty anymore")
     record = {"from": source, "to": target, "method": method, "step": "started", "store_id": store_id,
-              "id": move_id or os.urandom(8).hex(), "staging": staging_path(target)}
+              "store_ids": store_ids_at(source), "id": move_id or os.urandom(8).hex(), "staging": staging_path(target)}
     write_record(app_dir, record)
     return record
 
@@ -373,7 +448,7 @@ def move(record: dict[str, Any], app_dir: str, progress: Callable[[int, int], No
     crash("copied")
     if cancelled():
         raise MoveCancelled()
-    problem = verify(target, record["store_id"])
+    problem = verify(target, record["store_id"], _record_ids(record))
     if problem:
         raise MoveError(f"The copy failed verification: {problem}.")
     crash("verify")

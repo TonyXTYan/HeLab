@@ -173,6 +173,8 @@ def test_a_real_window_and_settings_read_only_listed_keys_with_their_defaults(
         # Read when a launch opens its folder (never under pytest unless a test asks; the list of before
         # Q18.3 only to move it over) and when Live auto-convert converts a shot.
         settings_defaults.LIVE_LAUNCH_FOLDER_SETTING, settings_defaults.LIVE_LAUNCH_FOLDERS_SETTING,
-        settings_defaults.CONVERT_LOW_HITS_SETTING}
+        settings_defaults.CONVERT_LOW_HITS_SETTING,
+        # Read once per process, at the first ``cache_store.store_root`` (an earlier test may have).
+        settings_defaults.STORE_V4_SETTING}
     for key, default in reads:
         assert default == setting(key).default, key

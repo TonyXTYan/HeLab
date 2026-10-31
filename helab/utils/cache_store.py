@@ -26,6 +26,8 @@ from typing import (Any, Callable, Generator, Generic, Iterable, Literal, Mappin
 import uuid
 
 from helab.io_ops.events import PresetRowFields, ResultCountField, UsageFields
+from helab.utils import store_v4
+from helab.utils.legacy_store import LegacyStore, LegacyUnavailable
 
 LAYOUT_VERSION = 3
 STORE_DIRNAME = "store-v3"
@@ -309,10 +311,12 @@ class ResultRow(TypedDict):
 
 @dataclass(frozen=True)
 class ResultFound:
-    """A saved result found: its row and data file's bytes; ``exact`` False for an outdated one."""
+    """A saved result found: its row and data file's bytes; ``exact`` False for an outdated one;
+    ``legacy``: read from store-v3 under Keep (store-v4 had none; its ``result_id`` is v3's)."""
     row: ResultRow
     data: bytes
     exact: bool
+    legacy: bool = False
 
 
 @dataclass(frozen=True)
@@ -432,8 +436,43 @@ class Sweep:
     next_deadline: float | None = None
 
 
+# The live store's layout in this process (caching v2's switch, Q28.3): read once, at the first
+# ``store_root``, from the ``store_v4`` settings row; never again, so a running HeLab never changes
+# store under its helpers. Helpers never read it: they open the folder they are sent.
+_live_layout: int | None = None
+
+
+def live_layout() -> int:
+    global _live_layout
+    if _live_layout is None:
+        from helab.utils.cache_setting import store_v4_enabled
+        from helab.utils.settings_store import app_settings
+        _live_layout = store_v4.LAYOUT if store_v4_enabled(app_settings()) else LAYOUT_VERSION
+    return _live_layout
+
+
+def _reset_live_layout(layout: int | None = None) -> None:
+    """Tests: the layout the next ``store_root`` uses (None: read the setting again)."""
+    global _live_layout
+    _live_layout = layout
+
+
 def store_root(caches_dir: str) -> str:
-    return os.path.join(caches_dir, STORE_DIRNAME)
+    """The live store's folder in the cache folder: store-v3, or store-v4 with the switch on. Under v4
+    this process's session maker goes into its environment first, for the helpers it starts."""
+    layout = live_layout()
+    if layout >= store_v4.LAYOUT:
+        store_v4.session_maker()
+    return store_root_for(caches_dir, layout)
+
+
+def store_root_for(caches_dir: str, layout: int) -> str:
+    return os.path.join(caches_dir, store_v4.DIRNAME if layout >= store_v4.LAYOUT else STORE_DIRNAME)
+
+
+def layout_of(root: str) -> int:
+    """A store folder's layout, from its name: ``store-v4`` is layout 4, anything else 3."""
+    return store_v4.LAYOUT if os.path.basename(os.path.normpath(root)) == store_v4.DIRNAME else LAYOUT_VERSION
 
 
 def remove_old_caches(caches_dir: str, progress: Callable[[], None] = lambda: None) -> list[str]:
@@ -504,7 +543,7 @@ class CacheStore:
     def __init__(self, root: str, *, busy_timeout: float | None = None,
                  path_key: Callable[[str], str] | None = None,
                  source_path: Callable[[str], str] | None = None,
-                 root_mode: bool = False) -> None:
+                 root_mode: bool = False, maker: dict[str, Any] | None = None) -> None:
         busy_timeout = BUSY_TIMEOUT if busy_timeout is None else busy_timeout
         self._busy_timeout = busy_timeout
         self.root = root
@@ -513,9 +552,15 @@ class CacheStore:
         self._location_key: Callable[[str], str] = lambda path: path
         # A root location's folder on this computer now, or the location itself if not mounted.
         self._location_source: Callable[[str], str] = lambda location: location
-        self._expected_layout = ROOT_LAYOUT_VERSION if root_mode else LAYOUT_VERSION
+        # The layout is the folder's: store-v3 or store-v4 (caching v2, ``store_v4``).
+        self.layout = layout_of(root)
+        self._expected_layout = self.layout
         self._root_mode = root_mode
+        self._maker = maker
+        self._legacy: LegacyStore | None = None
+        self._legacy_tried = False
         self.datasets_dir = os.path.join(root, "datasets")
+        self.raw_dir = os.path.join(root, store_v4.RAW_DIRNAME)
         self.results_dir = os.path.join(root, RESULTS_DIRNAME)
         self.database = os.path.join(root, "records.sqlite")
         self.read_only = False
@@ -572,15 +617,20 @@ class CacheStore:
             probe = self._connect(busy_timeout, read_only=True)
             try:
                 version = _layout_version(probe)
+                # (A store-v4 of a newer format: read, never rewritten.)
+                newer_format = version == store_v4.LAYOUT and _store_format(probe) > store_v4.FORMAT
             finally:
                 probe.close()
-            if version is not None and version > self._expected_layout:
+            if version is not None and version > self._expected_layout or (
+                    version == self._expected_layout and newer_format):
                 self.read_only = True
                 return self._connect(busy_timeout, read_only=True)
             if version is not None and version < self._expected_layout:
                 raise sqlite3.DatabaseError(f"unsupported layout version {version}")
         os.makedirs(self.datasets_dir, exist_ok=True)
         os.makedirs(self.results_dir, exist_ok=True)
+        if self.layout >= store_v4.LAYOUT:
+            os.makedirs(self.raw_dir, exist_ok=True)
         conn = self._connect(busy_timeout, read_only=False)
         try:
             if _layout_version(conn) is None:
@@ -593,9 +643,13 @@ class CacheStore:
                     for statement in ROOT_SCHEMA.split(";"):
                         if statement.strip():
                             conn.execute(statement)
+                    if self.layout >= store_v4.LAYOUT:
+                        for statement in store_v4.SCHEMA:
+                            conn.execute(statement)
                     defaults: dict[str, object] = {
                         "layout_version": self._expected_layout, "store_id": uuid.uuid4().hex, "created_at": time.time(),
-                        **{f"gen_{kind}": 0 for kind in KINDS}, "gen_results": 0}
+                        **{f"gen_{kind}": 0 for kind in KINDS}, "gen_results": 0,
+                        **(store_v4.META_DEFAULTS if self.layout >= store_v4.LAYOUT else {})}
                     # Another helper may have created it meanwhile: keep its values.
                     conn.executemany("INSERT OR IGNORE INTO meta (key, value) VALUES (?, ?)",
                                      [(key, _dumps(value)) for key, value in defaults.items()])
@@ -607,13 +661,51 @@ class CacheStore:
             if version != self._expected_layout:
                 raise sqlite3.DatabaseError(f"unsupported layout version {version}")
             _migrate(conn)
+            if self.layout >= store_v4.LAYOUT:
+                store_v4.migrate(conn)
+                # The user's own state in store-v3, once (Q22.4; v3 read only, through LegacyStore).
+                store_v4.import_legacy(conn, self.legacy_root, time.time())
         except BaseException:
             conn.close()
             raise
         return conn
 
     def close(self) -> None:
+        if self._legacy is not None:
+            self._legacy.close()
+            self._legacy = None
         self._conn.close()
+
+    # store-v3 beside a store-v4 (caching v2): read only, through LegacyStore alone.
+
+    @property
+    def legacy_root(self) -> str:
+        from helab.utils.legacy_store import legacy_root
+        return legacy_root(self.root)
+
+    def _kept_legacy(self) -> LegacyStore | None:
+        """store-v3, read only, while it is kept (Keep, or not answered yet: Q22.3); None under v3
+        itself, after Ignore or Clear, or when there is none or it can't be read now."""
+        if self.layout < store_v4.LAYOUT:
+            return None
+        if store_v4.legacy_choice(self._meta()) not in (None, "keep"):
+            return None
+        if self._legacy is None and not self._legacy_tried:
+            self._legacy_tried = True
+            from helab.utils.legacy_store import present
+            if present(self.legacy_root):
+                with contextlib.suppress(LegacyUnavailable):
+                    self._legacy = LegacyStore(self.legacy_root)
+        return self._legacy
+
+    def _maker_id(self) -> str:
+        """In store-v4, this session's maker row (written inside the caller's write transaction) and
+        its id; "" in store-v3, which keeps none."""
+        if self.layout < store_v4.LAYOUT:
+            return ""
+        if self._maker is None:
+            self._maker = store_v4.session_maker()
+        return store_v4.ensure_maker(self._conn, self._maker)
 
     def __enter__(self) -> CacheStore:
         return self
@@ -1130,7 +1222,7 @@ class CacheStore:
         try:
             with self.transaction(write=False):
                 meta = self._meta()
-                epochs = {path: self._epoch(path) for path in paths}
+                epochs = {key: self._epoch(key) for path in paths for key in self._epoch_keys(kinds, path)}
                 epochs.update({root: self._epoch(root) for path in paths if (root := _root_epoch(path))})
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be read: {exc}") from exc
@@ -1151,6 +1243,7 @@ class CacheStore:
                 epoch, job_seq = self._conn.execute(
                     "SELECT epoch, job_seq FROM folder_epochs WHERE path = ?", (path,)).fetchone()
                 epochs = {path: int(epoch)}
+                epochs.update({key: self._epoch(key) for key in self._epoch_keys(kinds, path)})
                 if root := _root_epoch(path):
                     epochs[root] = self._epoch(root)
                 meta = self._meta()
@@ -1158,12 +1251,18 @@ class CacheStore:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
         return SaveGuard({kind: int(meta[f"gen_{kind}"]) for kind in kinds}, epochs, int(job_seq))
 
+    def _epoch_keys(self, kinds: Iterable[Kind], path: str) -> list[str]:
+        """The ``folder_epochs`` rows ``kinds`` of ``path`` use: the folder's own in store-v3, and per kind
+        for records in store-v4 (cache-2: ``store_v4.epoch_key``)."""
+        return list(dict.fromkeys(store_v4.epoch_key(self.layout, kind, path) for kind in kinds))
+
     def _epoch(self, path: str) -> int:
         row = self._conn.execute("SELECT epoch FROM folder_epochs WHERE path = ?", (path,)).fetchone()
         return int(row[0]) if row else 0
 
     def _guard_holds(self, guard: SaveGuard, kind: Kind, path: str) -> bool:
-        if kind not in guard.generations or path not in guard.epochs:
+        epoch = store_v4.epoch_key(self.layout, kind, path)
+        if kind not in guard.generations or epoch not in guard.epochs:
             # A delayed write may have re-resolved a local mount path to a
             # different SMB share, or a nested root re-keyed the folder since the
             # guard was taken. Never replace the original keyed guard with a fresh
@@ -1175,7 +1274,7 @@ class CacheStore:
         # without it) no longer holds for any folder below that root.
         root = _root_epoch(path)
         return (int(meta[f"gen_{kind}"]) == guard.generations[kind]
-                and self._epoch(path) == guard.epochs[path]
+                and self._epoch(epoch) == guard.epochs[epoch]
                 and (root is None or self._epoch(root) == guard.epochs.get(root, 0)))
 
     def _check(self, guard: SaveGuard, kind: Kind, path: str) -> None:
@@ -1205,19 +1304,29 @@ class CacheStore:
         except (sqlite3.Error, StoreError) as exc:
             failure = _error(f"Disk cache could not be read: {exc}")
             return {path: failure for path in unique}
+        missing = [key for key in keys if key not in rows]
+        legacy = self._kept_legacy() if missing else None
+        unread: Read[dict[str, Any]] | None = None
+        if legacy is not None:
+            # Keep (Q22.3): what store-v4 has no row for, store-v3 may (read only).
+            try:
+                rows.update(legacy.records(table, missing))
+            except LegacyUnavailable as exc:
+                unread = _error(f"Disk cache could not be read: {exc}")  # (Never "nothing saved".)
         result: dict[str, Read[dict[str, Any]]] = {}
         for path in unique:
             key = self._path_key(path)
-            if key not in rows:
-                result[path] = _missing()
-                continue
-            try:
-                value = json.loads(rows[key])
-            except ValueError as exc:
-                result[path] = _error(f"Saved {kind} record is unreadable: {exc}")
-                continue
-            result[path] = _found(value) if isinstance(value, dict) else _error(f"Saved {kind} record is not an object")
+            result[path] = (self._record_answer(kind, rows[key]) if key in rows
+                            else unread if unread is not None else _missing())
         return result
+
+    @staticmethod
+    def _record_answer(kind: Kind, text: str) -> Read[dict[str, Any]]:
+        try:
+            value = json.loads(text)
+        except ValueError as exc:
+            return _error(f"Saved {kind} record is unreadable: {exc}")
+        return _found(value) if isinstance(value, dict) else _error(f"Saved {kind} record is not an object")
 
     def save_record(self, kind: Kind, path: str, record: Mapping[str, Any] | None, guard: SaveGuard, *,
                     saved_at: float | None = None) -> None:
@@ -1394,6 +1503,8 @@ class CacheStore:
             (path, file, size, int(record["ram_bytes"]), int(record["rows"]), int(record["shots"]),
              _dumps(record["fingerprint"]), _dumps(record["problematic"]), _dumps(info), now, job_seq,
              _dumps(record.get("raw_times", []))))
+        if self.layout >= store_v4.LAYOUT:  # (Which session made it, Q28.4.)
+            self._conn.execute("UPDATE datasets SET maker = ? WHERE path = ?", (self._maker_id(), path))
         if previous and previous[0] != file:
             self._retire(previous[0], now)
 
@@ -1820,6 +1931,8 @@ class CacheStore:
             "record = excluded.record, file = excluded.file, bytes = excluded.bytes, "
             "computed_at = excluded.computed_at, saved_at = excluded.saved_at, last_used = excluded.last_used",
             (result_id, key, lookup, family, analysis_id, action, record, file, size, computed_at, now, now))
+        if self.layout >= store_v4.LAYOUT:  # (Which session made it, Q28.4.)
+            self._conn.execute("UPDATE results SET maker = ? WHERE result_id = ?", (self._maker_id(), result_id))
         return None if previous is None else str(previous[0]), result_id
 
     def _insert_pending_result(self, key: str, lookup: str, family: str, analysis_id: str, action: str, label: str,
@@ -2020,17 +2133,26 @@ class CacheStore:
         if not self._results_table:
             return _missing()  # (A read-only store without results: none saved.)
         for attempt in range(2):
+            legacy: LegacyStore | None = None
             try:
                 with self.transaction(write=False):
                     row = self._result_row(key, "lookup = ?", (lookup,))
                     exact = row is not None
+                    if row is None and (legacy := self._kept_legacy()) is not None:
+                        # Keep (Q22.3): an exact match in store-v3 before an outdated one here.
+                        row = self._legacy_result(legacy, key, "lookup = ?", (lookup,))
+                        exact = row is not None
                     if row is None and family:
-                        row = self._result_row(key, "family = ? AND lookup <> ?", (family, lookup))
-            except (sqlite3.Error, StoreError, ValueError) as exc:
+                        row, legacy = self._result_row(key, "family = ? AND lookup <> ?", (family, lookup)), None
+                        if row is None and (legacy := self._kept_legacy()) is not None:
+                            row = self._legacy_result(legacy, key, "family = ? AND lookup <> ?", (family, lookup))
+            except (sqlite3.Error, StoreError, ValueError, LegacyUnavailable) as exc:
                 return _error(f"Disk cache could not be read: {exc}")
             if row is None:
                 return _missing()
             try:
+                if legacy is not None:
+                    return _found(ResultFound(row, legacy.read_file(row["file"]), exact, legacy=True))
                 with open(self._store_file(row["file"]), "rb") as handle:
                     return _found(ResultFound(row, handle.read(), exact))
             except FileNotFoundError:
@@ -2039,6 +2161,16 @@ class CacheStore:
             except OSError as exc:
                 return _error(f"Cached result file could not be read: {exc}")
         return _error("Cached result file is missing")  # (Not reached.)
+
+    def _legacy_result(self, legacy: LegacyStore, key: str, where: str, args: tuple[Any, ...]) -> ResultRow | None:
+        """``_result_row`` of store-v3 (Keep), its path given as this store shows it."""
+        row = legacy.result_row(key, where, args)
+        if row is None:
+            return None
+        return ResultRow(result_id=str(row[0]), path=self._source_path(str(row[1])), lookup=str(row[2]),
+                         family=str(row[3]), analysis_id=str(row[4]), action=str(row[5]), record=json.loads(row[6]),
+                         file=str(row[7]), bytes=int(row[8]), computed_at=float(row[9]), saved_at=float(row[10]),
+                         last_used=float(row[11]))
 
     def _folder_results(self, keys: Sequence[str]) -> dict[str, ResultCount]:
         """Each folder's saved results (count and files' bytes; zero if none), as of this
@@ -2053,6 +2185,13 @@ class CacheStore:
                     f"SELECT path, COUNT(*), COALESCE(SUM(bytes), 0) FROM results "
                     f"WHERE path IN ({','.join('?' * len(chunk))}) GROUP BY path", chunk):
                 counts[str(key)] = ResultCount(int(count), int(size), self.store_id, counts[str(key)].writes)
+        legacy = self._kept_legacy()
+        if legacy is not None:
+            # Keep (Q22.3): store-v3's results of these folders count too (read through, not copied).
+            with contextlib.suppress(LegacyUnavailable):
+                for key, (count, size) in legacy.result_counts(stored).items():
+                    have = counts[key]
+                    counts[key] = ResultCount(have.count + count, have.bytes + size, self.store_id, have.writes)
         return counts
 
     def result_counts(self, paths: Sequence[str]) -> dict[str, ResultCount]:
@@ -2230,8 +2369,10 @@ class CacheStore:
                         self._conn.execute("UPDATE meta SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) "
                                            "WHERE key = ?", (f"gen_{kind}",))
                 for path in selected or ():
-                    self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) "
-                                       "ON CONFLICT (path) DO UPDATE SET epoch = epoch + 1", (path,))
+                    # (One row per folder in store-v3; in store-v4 only the kinds removed: cache-2.)
+                    for key in self._epoch_keys(kinds, path):
+                        self._conn.execute("INSERT INTO folder_epochs (path, epoch) VALUES (?, 1) "
+                                           "ON CONFLICT (path) DO UPDATE SET epoch = epoch + 1", (key,))
         except sqlite3.Error as exc:
             raise StoreError(f"Disk cache could not be written: {exc}") from exc
         return Removal(kinds, None if selected is None else tuple(self._source_path(path) for path in selected),
@@ -2653,6 +2794,12 @@ def _migrate(conn: sqlite3.Connection) -> None:
     except BaseException:
         conn.execute("ROLLBACK")
         raise
+
+
+def _store_format(conn: sqlite3.Connection) -> int:
+    """A store-v4's ``meta.format`` (1 when not set)."""
+    row = conn.execute("SELECT value FROM meta WHERE key = 'format'").fetchone()
+    return 1 if row is None else int(json.loads(row[0]))
 
 
 def _layout_version(conn: sqlite3.Connection) -> int | None:
