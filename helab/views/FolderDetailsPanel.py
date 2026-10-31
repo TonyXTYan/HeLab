@@ -101,8 +101,8 @@ class FolderDetailsPanel(QScrollArea):
     reviewRootRequested = pyqtSignal(str)
     """Single-line rows that hide when empty; longer details are in each row's tooltip."""
 
-    ROWS = (("folder", "Folder"), ("state", "State"), ("files", "Files"), ("time", "Time"), ("rate", "Rate"),
-            ("data", "Data"), ("loaded", "Loaded"), ("source", "Source"), ("cache", "Disk cache"),
+    ROWS = (("folder", "Folder"), ("state", "State"), ("files", "Files"), ("txy", "TXY"), ("time", "Time"),
+            ("rate", "Rate"), ("data", "Data"), ("loaded", "Loaded"), ("source", "Source"), ("cache", "Disk cache"),
             ("convert", "Auto-convert"), ("errors", "Problems"),
             ("tab", "This tab"), ("io", "All I/O"))
 
@@ -362,6 +362,27 @@ class FolderDetailsPanel(QScrollArea):
                                   "of running time (files reused from memory or the disk cache are not counted)")
 
     @staticmethod
+    def _txy_row(meta: Mapping[str, Any]) -> tuple[str, str]:
+        """The folder's TXY by kind as the shown data's load found them (``load_counts``: Q38.3, A39.4), e.g.
+        "120 MATLAB · 118 m19v1"; ("", "") for data whose load didn't count them (from memory or the disk cache
+        unchanged, or saved before)."""
+        counts = meta.get("load_counts")
+        if not isinstance(counts, Mapping) or not isinstance(counts.get("txy_matlab"), int):
+            return "", ""
+        record = meta.get(txy_sources.TXY_FIELD)
+        tag = str(record.get("profile_tag") or "") if isinstance(record, Mapping) else ""
+        parts = [f"{counts['txy_matlab']:,} MATLAB"]
+        lines = ["MATLAB's TXY (d_txy_forc<N>.txt) in the folder"]
+        helab = counts.get("txy_helab")
+        if isinstance(helab, int) and tag:
+            parts.append(f"{helab:,} {tag}")
+            lines.append(f"HeLab's current TXY of the profile conversions use, tag {tag} (d_txy_helab_{tag}_<N>.txt), "
+                         "in HeLab's TXY folder or beside the raw files. Other profiles' aren't counted.")
+        else:
+            lines.append("HeLab's TXY not looked for: this folder's TXY source reads MATLAB's only.")
+        return " · ".join(parts), "\n".join([*lines, "Counted when this data was loaded"])
+
+    @staticmethod
     def _data_rows(explorer: FolderExplorer, meta: Mapping[str, Any], rows: dict[str, tuple[str, str]],
                    loading: bool, opened: bool, *, unchecked: bool = False) -> None:
         """The shown dataset: counts, size, when it was loaded, where from and its problem shots. Shown
@@ -380,6 +401,7 @@ class FolderDetailsPanel(QScrollArea):
                 f"{found:,} TXY found · {loaded:,} loaded", f"{failed:,} unreadable" if failed else "",
                 f"{unsettled:,} still being written" if unsettled else "")))
             rows["files"] = (files, "Counts from when this data was loaded")
+            rows["txy"] = FolderDetailsPanel._txy_row(meta)
         rows["data"] = (f"{plural(number('rows'), 'data row')} · {fnum(number('bytes')).strip()}B in RAM",
                         "Rows (t, x, y) across the loaded TXY files, and the memory their arrays use")
         loaded_at = meta.get("loaded_at")

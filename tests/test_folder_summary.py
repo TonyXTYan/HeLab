@@ -213,6 +213,28 @@ def test_offline_folder_details_agree_with_the_summary(browser: FolderExplorer, 
     assert rows["loaded"][0].endswith("just now")
 
 
+def test_folder_details_count_the_txy_by_kind_and_what_the_source_leaves_out(browser: FolderExplorer) -> None:
+    """A39.4 (Q38.3): the TXY row counts the folder's TXY by kind as the load found them, MATLAB's and HeLab's of the
+    conversion profile's tag (not looked for when the source reads MATLAB's only); the load's counts say "left out
+    (TXY source)" apart from "removed". Data whose load counted none shows no row."""
+    counts = {"reused_memory": 0, "reused_disk": 0, "read": 118, "removed": 1, "left_out": 2,
+              "txy_matlab": 120, "txy_helab": 118}
+    meta: dict[str, Any] = {"loaded_at": time.time(), "files": 118, "total_files": 118, "load_counts": counts,
+                            "txy": {"source": "helab-only", "origins": {}, "profiles": {}, "profile_hash": "h",
+                                    "profile_tag": "m19v1", "folders": []}}
+    rows: dict[str, tuple[str, str]] = {}
+    FolderDetailsPanel._data_rows(browser, meta, rows, False, True)
+    text, tooltip = rows["txy"]
+    assert text == "120 MATLAB · 118 m19v1" and "d_txy_helab_m19v1_<N>.txt" in tooltip and "Other profiles" in tooltip
+    matlab_only = {**meta, "load_counts": {key: value for key, value in counts.items() if key != "txy_helab"}}
+    FolderDetailsPanel._data_rows(browser, matlab_only, rows, False, True)
+    assert rows["txy"][0] == "120 MATLAB" and "not looked for" in rows["txy"][1]
+    FolderDetailsPanel._data_rows(browser, {**meta, "load_counts": {"reused_memory": 118}}, rows, False, True)
+    assert rows["txy"] == ("", "")
+    browser.load_counts = counts
+    assert browser.load_count_details == ["1 file removed", "2 left out (TXY source)", "118 TXY files read"]
+
+
 @pytest.mark.parametrize("known_counts", [False, True])
 def test_scan_states_agree_in_summary_and_folder_details(
     browser: FolderExplorer, qtbot: QtBot, tmp_path: Path, known_counts: bool,
