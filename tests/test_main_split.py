@@ -181,3 +181,41 @@ def test_read_split_takes_two_widths_in_range_else_the_default(tmp_path: Path, s
     if saved:
         settings.setValue(MAIN_SPLIT_SETTING, saved)
     assert HelabMainWindow.read_split(settings) == expected
+
+
+def test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved(qtbot: QtBot) -> None:
+    """app-2 (area review): widths saved on a wide monitor, then a narrower window (a laptop, DPI scaling,
+    ``--geometry``): both panels narrow in proportion so the plots keep MIN_PLOTS_WIDTH (QSplitter gave them
+    0 px), also when a panel is shown again; quitting saves the widths chosen, not the narrowed ones. A width
+    the user then sets is saved."""
+    app_settings().setValue(MAIN_SPLIT_SETTING, "1500,600")
+    window = HelabMainWindow()
+    qtbot.addWidget(window)
+    window.resize(1600, 900)
+    window.show()
+    qtbot.waitUntil(lambda: isinstance(window.tab_widget.currentWidget(), FolderExplorer), timeout=10_000)
+    handles = 2 * window.splitter.handleWidth()
+
+    def room() -> None:
+        left, middle, right = window.splitter.sizes()
+        assert middle >= HelabMainWindow.MIN_PLOTS_WIDTH - handles, window.splitter.sizes()
+        assert left > right >= HelabMainWindow.MIN_SETTINGS_WIDTH, window.splitter.sizes()
+    try:
+        assert sum(window.splitter.sizes()) < 1500 + 600
+        room()
+        window.toggle_left_panel(False)
+        window.toggle_left_panel(True)
+        room()
+        window.toggle_right_panel(False)
+        window.toggle_right_panel(True)
+        room()
+    finally:
+        closed(qtbot, window)
+    assert read_setting(app_settings(), MAIN_SPLIT_SETTING) == "1500,600"
+    again = opened(qtbot)
+    try:
+        left, middle, right = again.splitter.sizes()
+        again.splitter.setSizes([left - 100, middle + 100, right])  # The user narrows the folders.
+    finally:
+        closed(qtbot, again)
+    assert read_setting(app_settings(), MAIN_SPLIT_SETTING) == f"{left - 100},600"
