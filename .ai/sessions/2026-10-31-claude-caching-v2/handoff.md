@@ -368,8 +368,12 @@ gave 8851 passed, 672 skipped, no RERUN; strict mypy (also win32) and pyright (a
   heartbeats where it asked for ≥ 5. The cause is the test itself: it counted heartbeats in a fixed 0.3 s
   window at a 0.02 s interval, and the loaded runner's ticker thread got fewer turns. The code was fine. The fix
   (the next commit) makes the slow encode last until three heartbeats have come, with a 10 s deadline. It passes
-  25 of 25 runs under a 12-process CPU load with reruns off, and fails without C3-1's ticker. Every other job in
-  that run was green.
+  25 of 25 runs under a 12-process CPU load with reruns off, and fails without C3-1's ticker.
+  - **Corrected (CoCo):** that run's other jobs passed, but not all without RERUNs. I had read only the failed job's
+    log; I have now read all nine. **Windows Tests 2/2 (job 124495315262) had 2 RERUNs** of
+    `tests/test_io_service_run.py::test_writing_held_data_out_counts_as_progress`, in both cases `assert 2 == 1`
+    (marks 0.72/1.36 ms and 0.73/1.36 ms). It is the known Windows timing flake in known-issues (also seen in
+    CI 41164715526); IOService is untouched by this floor. The other seven Tests and Converter logs had no RERUN.
 - **CI 41188263711** (`375562e`, the fixes with the test fix): green on all three OSes. I read every Tests and
   Converter job's log (9 jobs): **no RERUN**. Windows Tests 1/2 took 12.9 min, 2/2 took 10.9 min.
 
@@ -514,7 +518,8 @@ came after it. The switch stays off, so none of this is user-visible yet.
 
 - ~~A~1~~ done in stage 0 (S0-1, above).
 - **known-issues** (the fixes' CI 41164715526): add to the `test_io_service_run.py::test_writing_held_data_out_counts_as_progress`
-  entry "Again: `agent/caching-v2` CI 41164715526 (Windows Tests 2/2, job 124429733436, marks 1.4 ms and 5.2 ms)".
+  entry "Again: `agent/caching-v2` CI 41164715526 (Windows Tests 2/2, job 124429733436, marks 1.4 ms and 5.2 ms) and
+  CI 41186805673 (Windows Tests 2/2, job 124495315262, 2 RERUNs, marks 0.72/1.36 ms and 0.73/1.36 ms)".
   Its only RERUN; IOService untouched by this floor.
 - (Merged at `7180751`: A~3 → A42.1, A~4 → A42.2, M~1 → M42.1; A~2 is in known-issues' pickle entry.)
 - **A~2** `pack_dataset`'s 2.1 GB limit stays for v4's `datasets` in stage 1 (blosc-pickle); stage 2's `.hlb`
