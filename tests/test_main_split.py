@@ -183,7 +183,9 @@ def test_read_split_takes_two_widths_in_range_else_the_default(tmp_path: Path, s
     assert HelabMainWindow.read_split(settings) == expected
 
 
-@pytest.mark.parametrize("width", [1600, 1300], ids=["1600", "1300"])  # (1300: Windows CI's splitter, ~976 px.)
+# The splitter a window gets differs by OS and by what ran before in the worker (Windows CI: 976 px, and 676 px
+# in run 41161254527); 1300 and 1000 give about those here.
+@pytest.mark.parametrize("width", [1600, 1300, 1000], ids=["1600", "1300", "1000"])
 def test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved(qtbot: QtBot, width: int) -> None:
     """app-2 (area review): widths saved on a wide monitor, then a narrower window (a laptop, DPI scaling,
     ``--geometry``): both panels narrow in proportion so the plots keep MIN_PLOTS_WIDTH (QSplitter gave them
@@ -198,9 +200,10 @@ def test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved(qtbo
     handles = 2 * window.splitter.handleWidth()
 
     def room() -> None:
-        left, middle, right = window.splitter.sizes()
-        assert middle >= HelabMainWindow.MIN_PLOTS_WIDTH - handles, window.splitter.sizes()
-        assert left > right >= HelabMainWindow.MIN_SETTINGS_WIDTH, window.splitter.sizes()
+        sizes, total = window.splitter.sizes(), window.splitter.width()
+        why = f"{sizes} in a {total} px splitter ({window.width()} px window)"
+        assert (sizes[0], sizes[2]) == HelabMainWindow.fitted(1500, 600, total), why
+        assert sizes[1] >= HelabMainWindow.MIN_PLOTS_WIDTH - handles, why
     try:
         assert sum(window.splitter.sizes()) < 1500 + 600
         room()
@@ -216,10 +219,10 @@ def test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved(qtbo
     again = opened(qtbot)
     try:
         left, middle, right = again.splitter.sizes()
-        again.splitter.setSizes([left - 100, middle + 100, right])  # The user narrows the folders.
+        again.splitter.setSizes([left + 50, middle - 50, right])  # The user widens the folders.
     finally:
         closed(qtbot, again)
-    assert read_setting(app_settings(), MAIN_SPLIT_SETTING) == f"{left - 100},600"
+    assert read_setting(app_settings(), MAIN_SPLIT_SETTING) == f"{left + 50},600"
 
 
 @pytest.mark.parametrize("left, right, total, expected", [
