@@ -109,7 +109,11 @@ Logs kept whole in `.ai/temp/plot-identity/` (gitignored): `suite.log`, `suite2.
 - **CI run 41161383176** (`49dd945`): failed. Windows Tests (2/2) (job 124419526951): `1 failed, 4254
   passed, 364 skipped, 34 warnings, 5 rerun`: the ipv6 case again on every try (the same reason, line 63),
   so the `[::]` probe didn't help; reverted and skipped on Windows in `b1f6280` (above).
-- CI: CI_RESULTS
+- **CI run 41162571197** (`d2d5334`, the branch's code as handed off): **success, every job green on
+  macOS, Ubuntu and Windows, no RERUN in any log** (each Tests and Converter backends job's log read):
+  macOS Tests 1/2 4250 passed / 2/2 4273; Ubuntu 4247 / 4274; Windows 4233 / 4254 (365 skipped: the ipv6
+  case); Converter backends 713 / 713 / 711; Builds green. Since the last local full suite (`69b6bca`) only
+  `dash_server.py` and `test_dash_server.py` changed; this run is the full suite on all three OSes.
 
 ## Proposed doc changes (for CoCo)
 
