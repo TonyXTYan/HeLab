@@ -831,6 +831,8 @@ class CacheStore:
         """A listing saw that this folder no longer contains its marker."""
         with self.transaction():
             self._conn.execute("DELETE FROM roots WHERE location=?", (location,))
+            if self.layout >= store_v4.LAYOUT:
+                store_v4.note_forgotten(self._conn, [location])  # (Not brought back by a later import: C2-5.)
 
     def forget_root_tree(self, locations: list[str], identifier: str) -> list[str]:
         """Its marker was deleted: forget these locations of ``identifier`` and its locations below
@@ -841,6 +843,8 @@ class CacheStore:
             gone = [location for location in rows if any(
                 location == top or location.startswith(top.rstrip("/") + "/") for top in locations)]
             self._conn.executemany("DELETE FROM roots WHERE location=?", [(location,) for location in gone])
+            if self.layout >= store_v4.LAYOUT:
+                store_v4.note_forgotten(self._conn, gone)  # (Not brought back by a later import: C2-5.)
         return gone
 
     def confirm_root(self, location: str, identifier: str) -> bool:

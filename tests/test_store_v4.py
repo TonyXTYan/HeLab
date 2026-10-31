@@ -534,3 +534,24 @@ def test_keep_counts_a_v3_result_once_and_not_when_store_v4_has_its_lookup(tmp_p
         save_result(v4, RUN, "k1", computed_at=2.0)  # (Shadows v3's k1.)
         count = v4.result_counts([RUN])[RUN]
         assert count.count == 2 and count.bytes == len(b"result k1") + len(b"result old")
+
+
+@pytest.mark.no_auto_data_root
+def test_a_root_forgotten_before_a_retried_import_isnt_brought_back(tmp_path: Path,
+                                                                    monkeypatch: pytest.MonkeyPatch) -> None:
+    """C2-5 (Assay): store-v3 couldn't be read when store-v4 was made; meanwhile the user forgot a data root
+    in v4 (Settings › Data roots › Forget); the later import doesn't bring v3's record of it back."""
+    caches = tmp_path / "caches"
+    v3_with_state(caches)
+    location = f"vol://v/{A}"
+
+    def unreadable(self: LegacyStore, root: str) -> None:
+        raise LegacyUnavailable("busy")
+    monkeypatch.setattr(LegacyStore, "__init__", unreadable)
+    with CacheStore(str(caches / "store-v4")) as v4:
+        v4.record_root(location, A, "volume", "data", decision="confirmed")  # (Found again by discovery.)
+        v4.forget_root(location)
+    monkeypatch.undo()
+    with CacheStore(str(caches / "store-v4")) as v4:
+        assert "imported_v3" in v4._meta() and v4.read_prefs([FLAGGED])[FLAGGED].found  # (The rest came.)
+        assert v4.root_at(location) is None

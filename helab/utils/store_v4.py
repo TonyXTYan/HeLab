@@ -223,6 +223,9 @@ def import_legacy(conn: sqlite3.Connection, legacy_root: str, now: float) -> boo
     conn.execute("BEGIN IMMEDIATE")
     try:
         if not _imported(conn):
+            forgotten = _forgotten(conn)
+            if forgotten:  # (Columns: location first.)
+                rows["roots"] = [row for row in rows.get("roots", []) if row[0] not in forgotten]
             for table, found in rows.items():
                 columns = IMPORTED[table]
                 conn.executemany(f"INSERT OR IGNORE INTO {table} ({', '.join(columns)}) "
@@ -237,6 +240,26 @@ def import_legacy(conn: sqlite3.Connection, legacy_root: str, now: float) -> boo
         conn.execute("ROLLBACK")
         raise
     return True
+
+
+def note_forgotten(conn: sqlite3.Connection, locations: list[str]) -> None:
+    """Data roots forgotten in store-v4 before store-v3's import has run (inside the forget's
+    transaction): the import, retried later, leaves them forgotten (C2-5). The user's other state can't
+    come back that way: flags, constants and presets are never deleted, only set, and a row v4 has
+    stays (``INSERT OR IGNORE``)."""
+    if not locations or _imported(conn):
+        return
+    row = conn.execute("SELECT value FROM meta WHERE key = 'forgotten_before_import'").fetchone()
+    found = json.loads(row[0]) if row is not None else []
+    merged = sorted({*(found if isinstance(found, list) else []), *locations})
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES ('forgotten_before_import', ?)",
+                 (json.dumps(merged),))
+
+
+def _forgotten(conn: sqlite3.Connection) -> set[str]:
+    row = conn.execute("SELECT value FROM meta WHERE key = 'forgotten_before_import'").fetchone()
+    found = json.loads(row[0]) if row is not None else []
+    return {str(location) for location in found} if isinstance(found, list) else set()
 
 
 def _imported(conn: sqlite3.Connection) -> bool:
