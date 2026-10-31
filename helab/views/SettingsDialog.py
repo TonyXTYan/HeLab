@@ -425,4 +425,5 @@ class SettingsDialog(QDialog):
         self.cache_tab.live_autosave.setValue(read_live_autosave(settings))
         self.cache_tab.plot_auto_reload.setChecked(read_plot_auto_reload(settings))
         self.cache_tab.result_reuse.setChecked(read_result_reuse(settings))
+        self.converter_tab.load(settings)
         logging.debug("Settings reset to default")

@@ -35,7 +35,7 @@ from helab.utils.constants import (
     APP_BUILD_INFO, APP_COMMIT_HASH, APP_VERSION, DEFAULT_LOAD_MODE, DIR_TEMPS, LOAD_MODE_LABELS,
     QSPLITTER_STYLESHEET, TOOLBAR_STYLESHEET_LR, cache_dir_refused, read_check_level,
     read_disk_budget, read_io_concurrency, read_live_autosave, read_live_interval, read_load_mode,
-    app_folder, read_plot_auto_reload, read_ram_budget,
+    app_folder, read_convert_profile, read_plot_auto_reload, read_ram_budget, read_txy_source,
 )
 from helab.utils.number_format import byte_size, byte_unit
 from helab.utils.settings_defaults import (
@@ -43,6 +43,7 @@ from helab.utils.settings_defaults import (
     setting_default)
 from helab.utils.settings_store import app_settings
 from helab.views.CacheDialogs import CacheDialogs
+from helab.views.CacheTab import read_result_reuse
 from helab.views.ClockSkewWarning import ClockSkewWarning
 from helab.views.OldLogs import OldLogs
 from helab.views.ElidedLabel import ElidedLabel
@@ -924,6 +925,10 @@ class HelabMainWindow(QMainWindow):
         cache.check_level = read_check_level(settings)
         self._apply_live_settings(settings)
         cache.set_lab_constants(read_lab_constants(settings))
+        # What only Save applies, again from the settings: Reset, then Cancel, has already cleared them.
+        cache.set_convert_profile(read_convert_profile(settings))
+        cache.set_tab_source(read_txy_source(settings))
+        cache.set_result_reuse(read_result_reuse(settings))
         if read_disk_budget(settings) != store_options().get("budget"):
             # Saved without Save (e.g. Reset, then Cancel): the store is told until it has it.
             # (After Save it already has it: Settings saves a new disk budget only then.)
