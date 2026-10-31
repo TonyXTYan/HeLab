@@ -54,6 +54,7 @@ class Costly(DatasetAnalysis):
 
     def __init__(self) -> None:
         self.computed = 0
+        self.fail = False
         self.go = threading.Event()
         self.go.set()
 
@@ -74,6 +75,8 @@ class Costly(DatasetAnalysis):
 
     def compute(self, action_name: str, context: AnalysisContext) -> Any:
         assert self.go.wait(10)
+        if self.fail:
+            raise RuntimeError("no totals")
         self.computed += 1
         scale = int(context.parameters["scale"])
         return Summed(np.array([array.sum() * scale for array in context.view.shots.values()]), scale)
@@ -277,6 +280,26 @@ def test_a_changed_script_or_data_shows_the_saved_result_outdated_until_the_run_
     qtbot.waitUntil(lambda: saved(second), timeout=WAIT)
     assert cast(AnalysisResult, second.shown).source != FROM_DISK and label(second, "plot_error").strip() == ""
     assert script.computed == 1
+    close(window)
+
+
+def test_a_failed_rerun_beside_an_outdated_saved_result_says_it_no_longer_reruns(
+        qtbot: QtBot, cache: FolderCache, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The area review's nit: the amber line kept "…is outdated: rerunning" beside the failure."""
+    window = make_window(qtbot, cache, tmp_path, monkeypatch)
+    first = open_plot(window, qtbot, folder_view(tmp_path), Costly())
+    qtbot.waitUntil(lambda: saved(first), timeout=WAIT)
+    script = Costly()
+    script.go.clear()
+    second = open_plot(window, qtbot, folder_view(tmp_path, changed=2), script)
+    qtbot.waitUntil(lambda: second.shown is not None, timeout=WAIT)
+    assert "is outdated (data changed (1 shot changed)): rerunning" in label(second, "plot_error")
+    script.fail = True
+    script.go.set()
+    qtbot.waitUntil(lambda: not second.job_id and "failed: no totals" in label(second, "plot_error"), timeout=WAIT)
+    line = label(second, "plot_error")
+    assert "rerunning" not in line and "is outdated (data changed (1 shot changed))" in line
+    assert cast(AnalysisResult, second.shown).source == FROM_DISK
     close(window)
 
 

@@ -80,8 +80,8 @@ UNCHECKED_NOTE = "not saved: the drive couldn't be checked"
 
 
 def reuse_on(settings: Optional[QSettings] = None) -> bool:
-    """Settings → Cache › Reuse saved analysis results (on by default): off, no plot looks its runs
-    up or saves them."""
+    """Settings → Cache › Reuse saved analysis results (off by default, Q27.1): off, no plot looks its
+    runs up or saves them."""
     return bool(read_setting(settings if settings is not None else app_settings(), RESULT_REUSE_SETTING, typed=True))
 
 

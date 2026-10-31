@@ -49,6 +49,9 @@ if TYPE_CHECKING:
     from helab.views.plots.presets import PresetBar
     from helab.views.plots.workspace import PlotWorkspace
 
+# How an outdated saved result's note ends while the run that replaces it goes on.
+RERUNNING = ": rerunning"
+
 
 def identify_parameters(settings: QWidget) -> QWidget:
     """IDs and names for a plot's settings (pyqtgraph's parameter trees, helab/utils/accessible.py):
@@ -481,7 +484,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             self.reloaded_at = time.monotonic()
         self.released = None
         when = datetime.fromtimestamp(result.finished_at).strftime("%Y-%m-%d %H:%M") if result.finished_at else "?"
-        self._cache_note = f"saved result from {when} is outdated ({'; '.join(result.outdated)}): rerunning"
+        self._cache_note = f"saved result from {when} is outdated ({'; '.join(result.outdated)}){RERUNNING}"
         self._show_content(content, result, specs, warnings)
 
     def _cached_saved(self, result: AnalysisResult, size: int) -> None:
@@ -591,6 +594,7 @@ class AnalysisInstance(LinkedAnalysisInstance):
             if self.shown is not None:
                 # The last plot stays; the error shows above it until a run succeeds.
                 self.error = f"rev {result.input.revision} failed: {error} · showing rev {self.shown.input.revision}"
+                self._cache_note = self._cache_note.removesuffix(RERUNNING)  # An outdated saved result stays.
                 self._still_released()
                 self._show_follow()
                 self._follow_next()
