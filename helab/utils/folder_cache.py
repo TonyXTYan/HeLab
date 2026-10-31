@@ -2670,9 +2670,12 @@ class FolderCache(QObject):
             self._cancel_job(job)
         for key in [key for key in self.datasets if key[0] == path]:
             del self.datasets[key]
-        for request in self._deliveries:
-            if request.operation in ("load", "cached") and request.path == path:
+        for request in list(self._deliveries):
+            # Waiting, or answered from RAM: told, as ``_mismatch`` tells them, so no tab waits on "queued".
+            if request.operation in ("load", "cached") and request.path == path and not request.cancelled.is_set():
+                self._deliveries.remove(request)
                 request.cancelled.set()
+                self.resultReady.emit(request, {"kind": "cancelled"})
         self.datasetChanged.emit(path)
 
     def cancel_automatic_scans(self, owner: str) -> list[IORequest]:

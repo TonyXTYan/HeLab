@@ -130,3 +130,24 @@ def test_a_background_check_keeps_its_cached_reads_dataset_over_the_ram_budget(
         assert any(k.startswith("loaded") for k in load_events), load_events
     finally:
         service.shutdown()
+
+
+def test_clearing_a_folders_cache_tells_a_waiting_load_it_was_cancelled(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The area review's first unverified note (io.md): a tab's load waiting for another (here: the running load
+    of the choice before a Settings change) heard ``queued`` and then nothing when the folder's cache was cleared."""
+    service = service_for_test(monkeypatch)
+    cache = FolderCache(service)
+    try:
+        assert cache.submit("tab-a", 0, RUN, "load", {})
+        cache.set_tab_source("matlab-priority")
+        events = events_of(cache, "tab-c")
+        assert cache.submit("tab-c", 0, RUN, "load", {})
+        assert events == ["queued"]
+        cache._invalidate_data(RUN)
+        assert events == ["queued", "cancelled"]
+        qtbot.wait(100)
+        assert events == ["queued", "cancelled"] and not cache.requests("tab-c")
+    finally:
+        service.shutdown()
