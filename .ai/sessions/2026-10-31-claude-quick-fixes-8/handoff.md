@@ -238,3 +238,32 @@ With one app per computer, the only other process sharing the app folder and sto
   - with the fix it passes 3 of 3.
 - **Checks.** The file's 22 tests pass, three runs. The cause is the one CoCo named, so no known-issues
   line is needed.
+
+### Run 41164525298 (`82c9db3`): failure, every Tests, Converter and Build job log read
+
+- **windows Tests (1/2)** (job 124429158185): 1 failed, 4246 passed, 7 RERUN.
+  - **Mine (04a667a):** `test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[0-600-976-expected5]`,
+    5 RERUN and FAILED. Six workers crashed in it (gw3 to gw8, "node down: Not properly terminated").
+    - Cause: the autouse `icons` fixture made QIcons before any QApplication existed. gw3 had run only
+      converter tests, and this pure test was its first Qt one, so the process aborted. Each replacement
+      worker got the same test first and crashed the same way.
+    - Repro: that test alone in a fresh process (`-p no:xdist`) exits 134.
+    - Fix: 1f86ca2. The fixture takes pytest-qt's `qapp`, and each of the 8 `fitted` cases now passes
+      alone.
+    - Suite 8539 passed, no RERUN; the five type checks pass.
+  - `test_gui_responsiveness.py::test_timeout_retry_releases_dead_helper_slot_while_artifact_reader_is_blocked[2]`:
+    1 RERUN, `waitUntil timed out in 3000 milliseconds` at :292. Already in known-issues (line 121).
+  - **New:** `test_folder_icons.py::test_native_icon_delivery_is_shared_and_rendering_stays_memory_only`,
+    1 RERUN on gw0: "Painting an icon performed I/O or submitted work", then pytestqt "Failed to process
+    thread exception".
+    - gw0 hadn't run `test_main_split`, so it isn't the icons fixture.
+    - The test patches `os.stat` and `os.scandir` process-wide, so likely another thread in the worker
+      stat'ed meanwhile.
+    - Proposed known-issues line: "`test_folder_icons.py::test_native_icon_delivery_is_shared_and_rendering_stays_memory_only`:
+      'Painting an icon performed I/O or submitted work' raised on another thread (pytestqt 'Failed to
+      process thread exception'; Windows CI 41164525298, gw0; passed on rerun). It patches os.stat and
+      os.scandir for the whole process; a check limited to the GUI thread would tell painting's I/O
+      from another thread's."
+- **No RERUN:** windows Tests 2/2 (4258), macos 1/2 (4263) and 2/2 (4276), ubuntu 1/2 (4259) and 2/2
+  (4277), and all three Converter backends jobs (715 / 713 / 715).
+- **A39.1 passed on all three builds:** "built cleanly at 82c9db3b77…".
