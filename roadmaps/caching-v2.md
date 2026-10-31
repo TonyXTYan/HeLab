@@ -124,7 +124,9 @@ design:
   workflow.
 - **Everything stored says who made it:** each raw layer, TXY layer and saved result records
   HeLab's version, commit and modified flag, the machine, and the environment (Python, NumPy,
-  SciPy), so a result from another machine or version can be traced and judged.
+  SciPy), so a result from another machine or version can be traced and judged. As a `makers` table
+  (Q28.4, Tony 2026-10-31): one row per HeLab session, each stored row keeping its id; HeLab's TXY
+  files need none, being named by their frozen profile tag and recorded in `converted-txy/index.sqlite`.
 - **Saved results:** reuse needs the same release, or for a source build the same clean commit; a
   modified checkout neither reuses nor saves (or keeps its results apart). `reuse_saved_results` turns
   back on with this (Q27.1).
@@ -157,8 +159,9 @@ In [DECISIONS_TODO](../.ai/DECISIONS_TODO.md):
 
 - Q19.1 (keep HeLab's own TXY files once loads convert on read: Tony "default no", keeping
   beside writing and the options open; to confirm as written).
-- Q27.3 (dev versions), and block 28: what an unattended build of stages 0–1 needs (the go, the
-  branch, a switch, provenance fields, Make room and store-v3, the overwrite warning).
+- Block 28 is decided (Tony, 2026-10-31): stages 0 and 1 (Q28.1), store-v4 behind a switch until stage
+  2 (Q28.3), the `makers` table (Q28.4), Make room's "Clear old stores…" (Q28.5), the overwrite
+  warning (Q28.6).
 
 Decided: Q19.2 (under Q12.3), Q19.3–Q19.10, Q22.1–Q22.11 (Q22.7: keep 8 GB and zstd 9 + byte
 shuffle), Q26.1 (byte units by OS), Q26.2 (one `converted-txy/index.sqlite` instead of a JSON
