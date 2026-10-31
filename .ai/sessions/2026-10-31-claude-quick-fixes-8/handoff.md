@@ -148,3 +148,69 @@ With one app per computer, the only other process sharing the app folder and sto
 - **Tests.** Seven `fitted` cases, CI's 976 px among them, and the window test at 1600 and 1300 px. The
   1300 case fails on c4e5b25.
 - **Suite.** 8537 passed, 672 skipped, no RERUN. The five type checks pass.
+
+### Run 41160032390 (`903f2b6`): success, every Tests, Converter and Build job log read
+
+- **windows Tests (1/2)** (job 124415375251): 4243 passed, **1 RERUN**:
+  `test_one_running.py::test_the_running_lock_is_held_by_one_process_and_freed_when_it_ends`
+  (`assert (None is not None)` at :50, my new test). Cause:
+  - it waited with `free_soon(lambda: take_running(app))`, but `take_running` returns a tuple, and
+    `(None, "")` is truthy;
+  - so it never waited out Windows' late release of a killed process's lock, which is the case
+    `free_soon` exists for (POSIX releases at once, so macOS can't show it).
+  - Fixed in the local commit below: the test waits on the lock itself and unlocks the override folder's
+    lock it took. Passed 5 of 5 here.
+- **No RERUN:** windows Tests 2/2 (4259 passed), macos Tests 1/2 (4260) and 2/2 (4277), ubuntu Tests
+  1/2 (4257) and 2/2 (4278), and all three Converter backends jobs (715 / 713 / 715).
+- **A39.1 again passed on all three builds:** "built cleanly from 0.0.7a1 at 903f2b6158…".
+- **Run 1's RERUNs did not recur:** the `test_io_service_run` one (known) and the `test_live_convert` one
+  (new, proposed above).
+- The test fix and this record were held back at first, then pushed on CoCo's word as f128623.
+
+### Run 41161254527 (`f128623`): failure, every Tests, Converter and Build job log read
+
+- **windows Tests (1/2)** (job 124419124662): 1 failed, 4242 passed, 5 RERUN, all of them
+  `test_main_split.py::test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved[1300]`
+  (gw3): `[165, 232, 271]`, `assert 165 > 271` at :203, on all 6 tries. Conduit saw the same on
+  41161048586. Cause, repro and fix: below.
+- **windows Tests (2/2)** (124419124616): 4259 passed, **1 RERUN**:
+  `test_root_gui.py::test_the_gui_never_writes_the_saved_file_itself`.
+  - The gw2 worker crashed in it ("node down: Not properly terminated", a stack at
+    `test_root_gui.py:449`), and the test passed on gw4.
+  - This is known-issues line 169's crashed worker: another sighting, at CI 41161254527.
+- **No RERUN:** windows Converter (713 passed), macos Tests 1/2 (4260) and 2/2 (4277), ubuntu Tests 1/2
+  (4257) and 2/2 (4278), and macos and ubuntu Converter (715 / 715).
+- **A39.1 passed on all three builds:** "built cleanly from 0.0.7a1 at f12862359c…".
+
+### The cause: the split test's window depended on the worker's history (279fc8b, 04a667a)
+
+- **What varied.** The same `resize(1300, 900)` gave a 976 px splitter on Windows in 41160032390 and
+  676 px in 41161254527. The test's tests ran in the same order on their worker both times; the earlier
+  files on the worker differed (xdist's scheduling).
+- **Why that matters.** Without `IconsInitUtil.initialise_icons()` (`main.py` calls it before the
+  window), each side toolbar's buttons show their text, so the toolbars are as wide as "Toggle Folder
+  Details" and "Toggle Right Bottom Panel" in the system font.
+  - Here: 142 + 173 = 315 px of a 1300 px window.
+  - On Windows CI: about 624 px, since 1300 → 676 and 1600 → 976.
+  - With the icons: 72 px, so a 1228 px splitter here.
+- **Why it varied per run.** The icons are class attributes. Once any test in a worker sets them up
+  (`test_load_queue.py:309`, `test_accessible_names.py:484`, three tests in `test_folder_summary.py`),
+  they stay set for that worker's later tests, and xdist hands those tests to a different worker each run.
+- **Repro (macOS).**
+  - f128623's test at a 1000 px window (a 676 px splitter without icons, like Windows' 1300) fails with
+    `[172, 232, 273]`, `172 > 273`.
+  - With `initialise_icons()` first it passes.
+  - Probe: a 1300 px window gives a splitter of 985 without icons and 1228 with them.
+- **The app was right.** `fitted(1500, 600, 676)` is (165, 271): both panels sit near their least
+  widths (80, 250) and share the 106 px above them. The test's "folders wider than settings" and
+  "narrow the folders by 100" were wrong for such a splitter.
+- **Fixes.**
+  - 279fc8b: the window test checks the panels equal `fitted(1500, 600, splitter width)` and the plots
+    keep the floor, naming the splitter, window and toolbar widths on failure; the user widens the
+    folders instead; a 1000 px case is added.
+  - 04a667a: `test_main_split.py` sets the icons up for every test (autouse), as `main.py` does, so its
+    windows no longer depend on the worker; the `fitted` table gains CI's exact 676 px case.
+- **Suite.** 8539 passed, 672 skipped, no RERUN. The five type checks pass.
+- **Proposed** (A~, not done here): other tests that open a `HelabMainWindow` and depend on its widths
+  carry the same hidden dependence. A conftest autouse `initialise_icons()` would remove it everywhere;
+  it is outside this brief's files.

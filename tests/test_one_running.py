@@ -41,13 +41,16 @@ def test_the_running_lock_is_held_by_one_process_and_freed_when_it_ends(tmp_path
     finally:
         other.kill()
         other.wait()
-    lock, pid = free_soon(lambda: take_running(app))
+    # Waited for the lock itself: Windows frees a killed process's locks a little later (``free_soon``).
+    lock = free_soon(lambda: take_running(app)[0])
+    assert lock is not None
     try:
-        assert lock is not None and pid == "" and Path(app, "running.lock").read_text() == str(os.getpid())
+        assert Path(app, "running.lock").read_text() == str(os.getpid())
         assert take_running(app) == (None, str(os.getpid()))  # (Another lock, even in this process.)
-        assert take_running(str(tmp_path / "override"))[0] is not None  # Another app folder: its own.
+        override, _ = take_running(str(tmp_path / "override"))  # Another app folder: its own.
+        assert override is not None
+        override.unlock()
     finally:
-        assert lock is not None
         lock.unlock()
 
 
