@@ -130,6 +130,13 @@ Logs kept whole in `.ai/temp/plot-identity/` (gitignored): `suite.log`, `suite2.
   case); Converter backends 713 / 713 / 711; Builds green. Since the last local full suite (`69b6bca`) only
   `dash_server.py` and `test_dash_server.py` changed; this run is the full suite on all three OSes.
 
+- **After Optic's fixes and the merge of `dev/v0.0.8` (`e8e7ebc`, merge `75aba55`)**: full suite
+  `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest -rR`: **8550 passed, 672 skipped,
+  2 warnings in 170.22 s; no RERUN** (`suite3.log`; warnings: pyqtgraph's NumPy 2.5 `arr.shape`, unrelated).
+  Types (`types3.log`): mypy --strict helab (195 files) and tests (176) no issues; pyright helab tests 0
+  errors; mypy --strict --platform win32 no issues; pyright --pythonplatform Windows 0 errors. CI of
+  that push: in CoCo's report (every job log read).
+
 ## Proposed doc changes (for CoCo)
 
 - **`plots-and-scripts.md`, Dataset analyses**, after "identity = source path, `root://` key and
