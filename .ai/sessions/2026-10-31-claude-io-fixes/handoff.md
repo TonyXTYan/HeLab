@@ -70,6 +70,25 @@ A mid-point full run (at `10a9c3c`) found one mypy error in the A39.2 code: 4 fa
 20 reruns were those four `test_typing` tests failing on that one deterministic error (5 reruns each); no flaky
 test. Fixed in `f945f69`.
 
+## Landing state (head `7381e1e`: dev/v0.0.8 `e8e7ebc` merged)
+
+- **Full suite on the merge:** 8562 passed, 672 skipped, no RERUN.
+- **Type checks:** mypy (strict, also `--platform win32`) and pyright (also Windows) clean.
+- **CI 41164683012 on `7381e1e`:** success. Every job log was read, and none has a RERUN:
+
+| Job | macOS | Windows | Ubuntu |
+|---|---|---|---|
+| Tests (1/2) | 4277 passed | 4260 passed | 4273 passed |
+| Tests (2/2) | 4285 passed | 4267 passed | 4286 passed |
+| Converter backends | 715 passed | 713 passed | 715 passed |
+
+- **Earlier CI runs:**
+  - 41162160704 (`623ce20`) failed on Windows. My IO-R1 test compared literal paths with `FolderCache.key`'s
+    `D:\` ones; fixed in `38b4742`. Ground's `test_main_split[1300]`, `test_one_running` and `test_cache_mover`
+    also failed or reran there; all are fixed on Ground and merged here.
+  - 41161048586 (`4457bae`) failed on Windows: `test_main_split[1300]` (Ground's).
+- **Probe:** re-checks `0160e3a` and `7007436`, no open findings.
+
 ## Review fixes (Probe, review of `5457ccd`: 2 Low)
 
 - **IO-R1** (`af5a205`): `cancel_for_quit` lifted the hold before its cancel loop, so the held loads and scans
