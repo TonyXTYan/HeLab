@@ -580,10 +580,19 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
     new_shots = set(current) - set(baseline)
     modified_shots = {shot for shot in current.keys() & baseline.keys()
                       if current[shot] != baseline[shot]}
+    # Shots held before that this load is without: left out by the TXY source while their TXY is still
+    # there (or held from HeLab's, which the source no longer reads), else removed (Q38.3, A39.4).
+    gone = baseline.keys() - current.keys()
+    left_out = {shot for shot in gone if shot in matlab or shot in helab_found
+                or held_origins.get(shot) and not txy_sources.wants_helab(txy_source)}
     load_counts = {"reused_memory": len(in_memory), "reused_disk": 0,
                    "new": len(new_shots), "modified": len(modified_shots),
-                   "removed": len(baseline.keys() - current.keys()),
-                   "read": 0, "new_loaded": 0, "modified_loaded": 0}
+                   "removed": len(gone - left_out), "left_out": len(left_out),
+                   "read": 0, "new_loaded": 0, "modified_loaded": 0,
+                   # The folder's TXY by kind, as this load found them: MATLAB's, and HeLab's current ones of
+                   # the profile conversions use (looked for only when the source reads HeLab's).
+                   "txy_matlab": len(matlab),
+                   **({"txy_helab": len(helab_found)} if txy_sources.wants_helab(txy_source) else {})}
     read = 0 if cached else len(files) - len(in_memory | reused)
     if in_memory or (from_disk and not cached):
         parts = [f"{len(in_memory)} shots from {held_from}"] if in_memory else []

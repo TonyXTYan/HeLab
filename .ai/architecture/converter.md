@@ -29,13 +29,14 @@ no Qt, plotting library or `helab.utils.constants`: every module below but `back
 | `profile` | `DetectorProfile` (frozen, `kw_only`): every constant MATLAB hard-codes; JSON (`SCHEMA`, `_MIGRATIONS`); `content_hash`; the five built-ins in `BUILTIN_PROFILES` ([Profiles in the app](#profiles-in-the-app)). |
 | `reconstruct` | `reconstruct(pulses, profile, backend="reference")`; the registry (`register_backend`, `get_backend`, `available_backends`, `Backend.unavailable(profile)`, `releases_gil`, `_MODULES`); `NoRowsError`. |
 | `backends/reference` | The port, loop for loop, with the MATLAB line numbers (`L…` 2019, `L2023:…`); `MatchStats` for the x2 report. Readable, not fast. |
-| `txy` | `format_txy` (`%.8g`, `NaN`/`Inf`/`-Inf`, `\n` after every row on every platform) through `fastio`; it refuses anything but a 2-D float64 array (`ValueError`, any size, any memory layout), since hits are float64 by contract and the fast formatter reads bit patterns; `format_txy_by_value` is the general path; `write_txy`/`write_atomic`. |
+| `txy` | `format_txy` (`%.8g`, `NaN`/`Inf`/`-Inf`, `\n` after every row on every platform) through `fastio`; it refuses anything but a 2-D float64 array (`ValueError`, any size, any memory layout), since hits are float64 by contract and the fast formatter reads bit patterns; `format_txy_by_value` is the general path; `write_txy`/`write_atomic` (`before_rename=` runs before the rename, `after_rename=` right after it and before the folder's fsync: the converter lets go of the index's lock there, A19.2). |
 | `fastio` | The fast strict parse (SWAR digits, GIL-free in NumPy) and the TXY formatter; `raw` and `txy` use them. |
 | `split` | Within-shot pieces at safe gaps for any backend, merged byte for byte (`reconstruct_split`); see Backends. |
 | `pipeline` | `convert_raw(bytes, profile, backend) -> bytes | None` (None: no file, as the 2019 wrapper for no hits); `convert_shot`: HeLab's own (timed; 0-byte TXY for no hits; pieces with an executor); `APP_BACKEND` = `numpy`. |
 | `provenance` | The converted-TXY index (`converted-txy/index.sqlite`: `TxyIndex`, `read_shots`, set-aside, `IndexUnavailable`); `Provenance`, one row per shot (raw fingerprint, profile name/version/hash/tag, backend, TXY size, mtime and SHA-256), `stale`, the file names. |
+| `raw_layer` | Caching v2's raw layer (stage 1, `agent/caching-v2`, landed `ad86bd3`): `RawPulses` ↔ the layer's arrays and `facts` (trigger time, first channel, rows, final newline, so `not_done` from facts equals `not_done(bytes)`); the compact `i8-i64d-1` encoding (int8 channels, int64 time deltas; row 0 first, then stable time order) when the strict path read the file, channels ≤ 127 and times < 2^62, else `f64-1` in file order; zstd 9 + byte shuffle (Q22.7, Q42.2) in the `.hlb` container (`helab.utils.hlb`); `RAW_PARSER_VERSION` (1), bumped only when `parse_raw`'s output changes. |
 | `samples` | The sample manifest (`~/HeLab-samples/txy-v1/manifest.json`, SHA-256 checked on read); held-in/held-out positions. |
-| `check` | `check_txy(ours, reference)`: identical, or the first differing line (`ENDED`, `NO_FINAL_NEWLINE`) and both hit counts; `ReferenceFault` and `prove_fault`. |
+| `check` | `check_txy(ours, reference)`: identical, or the first differing line (`ENDED`, `NO_FINAL_NEWLINE`) and both hit counts; `ReferenceFault` and `prove_fault`; `convert_via_layer` (raw bytes → layer → TXY, in memory). |
 | `timing` | `time_shot`/`time_shots` with `Parallelism` (serial, processes, threads, within-shot through `split`); `summarise` (SI MB/s per stage, latency). |
 | `backends/numpy_backend` | `numpy`, the default (stage 2): vectorised match, an exact sequential pass only for interfering x1s. |
 | `backends/numba_backend`, `numba_kernels` | `numba` (not shipped, A9.1; optional): the loops under `@njit`, no fastmath, nogil; kernels imported only with numba; their cache folder set by the caller (`set_cache_folder`, absolute). |
@@ -44,7 +45,9 @@ no Qt, plotting library or `helab.utils.constants`: every module below but `back
 | `backends/mlx_gpu` | `mlx` (not shipped, A9.1; optional; Apple Silicon, macOS ≥ 14): first choices on the GPU in int32 differences, the greedy check and float64 output on the CPU. |
 
 `dev/txy/` holds the scripts that read the sample set (tests never do): `check_samples.py` (exit 1
-on any unexplained mismatch, or when nothing was checked), `reference_exceptions.py`,
+on any unexplained mismatch, or when nothing was checked; `--via-layer` converts through the raw layer in
+memory, writing nothing: 303 identical and the same 6 proved exceptions as the file path, 9.4 s for 309
+shots with numpy on an M4 Max), `reference_exceptions.py`,
 `matlab_variant.py` (MATLAB headless on copies under `.ai/temp/txy/`), `time_samples.py`,
 `x2_report.py`, `x2_retry.py`. A script that imports helab sets the folder overrides first
 (`source .ai/local/floor-env.sh` on a floor).
@@ -251,7 +254,7 @@ table summarises them.
 |---|---|---|
 | `convert_plan` | once, after the listing | `output` (`beside`/`cache`/`temp`), `fallback` (why not the one asked), `folder` (HeLab's folder: provenance, and the TXY unless beside), `txy_folder`, `key` (root key or ""), `profile` {name, version, hash, tag, calibrated}, `backend`, `workers`, `raw`, `todo` |
 | `shot_converted` | a TXY written | `shot`, `raw_name`, `raw_size`, `raw_mtime_ns`, `raw_sha256`, `output`, `txy`, `txy_size`, `provenance` (the index's path), `hits` (Live's low-count check reads this), `replaced` (why an older HeLab TXY was replaced, or ""), `profile`, `backend`, `seconds` {read, parse, reconstruct, format, write} |
-| `shot_waiting` | not converted yet | `shot`, `raw_name`, `raw_size`, `raw_mtime_ns`, `reason` (`settling`, `future`, `changed`, `no_final_newline`, `not_trigger_first`, `no_rows`, `read_failed`), `message` |
+| `shot_waiting` | not converted yet | `shot`, `raw_name`, `raw_size`, `raw_mtime_ns`, `reason` (`settling`, `future`, `changed`, `no_final_newline`, `not_trigger_first`, `no_rows`, `read_failed`, `cleared`: Clear converted TXY ran during the conversion, converted at the next check), `message` |
 | `shot_unconvertible` | settled, can't be converted | same fields; `reason` `damaged` (with `problem`: `no_final_newline`, `not_trigger_first` or `no_rows`), `failed`, or `no_rows` (`NoRowsError` while computing) |
 | `shot_kept` | beside: a HeLab TXY already there that this conversion doesn't stand behind | `shot`, `txy`, `reason` |
 | `convert_progress` | after each shot (≤ 4/s) | `done`, `todo`, `converted`, `raw_bytes` |
@@ -325,8 +328,23 @@ or **newer** (`user_version` > 1): a conversion sets it aside as `index-{damaged
 (`provenance.SET_ASIDE_PATTERN`, with its `-journal`/`-wal`/`-shm`) and starts a new one; housekeeping
 never removes those (Settings › Cache's Clear removes damaged ones, never a newer HeLab's). An index
 that can't be set aside (held open on Windows), is busy past 10 s or can't be written:
-`IndexUnavailable` fails the conversion before that shot's rename, to be tried again. Missing or
-damaged, shots only convert again.
+`IndexUnavailable` fails the conversion before that shot's rename, to be tried again (in Live, as any
+conversion error, auto-convert stops until Retry). Missing or damaged, shots only convert again.
+
+**Clear fences conversions already running** (A19.2, Caching v2 stage 0, landed `ad86bd3`): the index's
+`fence` table (one row: a random token, `cleared_at`), added within schema 1 (`CREATE TABLE IF NOT EXISTS`
+by the first Clear; `user_version` stays 1, so 0.0.7a1 reads and writes the index as before). Settings ›
+Cache's Clear converted TXY (`helab_txy.clear_converted`) first sets a new token (`TxyIndex.set_fence`), then
+lists and removes. A conversion into the cache or temp base reads the token as it starts
+(`provenance.fence_of`); each TXY's row is written only while the token is unchanged
+(`record(fence=…)`), then `hold(fence)` takes `BEGIN IMMEDIATE` and checks again, `write_atomic`
+renames, and `after_rename=index.release` lets go (a `finally` too). A Clear's token so lands either
+before the hold (the write is refused, `provenance.Cleared`, the temporary removed, the row forgotten)
+or after the rename (it waits on the lock, then finds and removes the TXY with its row). Each refused shot and every later shot of that conversion waits with
+reason `cleared` (`convert.CLEARED`) and converts at the next check. Not fenced: beside writes (Clear never
+removes them), a base with no index yet, a damaged or busy index, and 0.0.7a1's Clear or conversions. Clear
+leaves temporaries younger than `convert.PARTIAL_MAX_AGE` (1 h), which may be a later conversion's write in
+progress, and Settings › Cache's clearable count skips them too (`helab_txy._young_partial`; S0-1).
 
 #### Tags in HeLab's TXY names (Q18.4)
 
@@ -411,7 +429,8 @@ Headless, dispatched in `helab/main.py` before any Qt (frozen: `HeLab convert �
 windowed exe has no console, so lines go only to the log). Options: `--once` (one check: files
 unmodified for 60 s, to be read and to be called damaged), `--profile`, `--backend`, `--output temp|cache|beside` (beside for that run
 without the folder's flag, saving none; Q12.4), `--workers`, `--interval`, `--again` (convert even
-current shots). The same `convert_folder` as the helper operation; `--watch`'s first pass only
+current shots: each shot once more, in `--watch` too, at the pass after the recording pass; convert-1,
+`f592519`). The same `convert_folder` as the helper operation; `--watch`'s first pass only
 records and converts from the second, each pass sending the last summary's lists back. It
 registers as a running HeLab (no cache move while it runs), finds the data root once, opens the
 store like a helper, logs, stops cleanly on Ctrl-C; exit 0; 1 when `--once`'s conversion fails (`--watch` logs a failed pass

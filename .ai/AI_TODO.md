@@ -171,12 +171,11 @@ From the backend floors' and the bench's handoffs (`sessions/2026-10-29-claude-t
 
 ## Caching after the converter (block 19)
 
-**On hold: Tony's go (block 19).** Tony, 2026-10-29: no cache coding until his explicit go, "A19.1
-and A19.2 included"; don't start these without it.
+Tony's go came on 2026-10-31 (Q28.1), on the Caching v2 floor.
 
-- **A19.2 Clear converted TXY vs a running conversion** (audit K4; on hold): `clear_converted` takes
-  a fence a conversion checks before each write, or the docs say a running conversion may write
-  after it.
+- [x] **A19.2 Clear converted TXY vs a running conversion** (audit K4; done in `ce8eae7` and S0-1's fix,
+  Caching v2 stage 0, landed `ad86bd3`): `clear_converted` takes a fence a conversion checks before each
+  write, or the docs say a running conversion may write after it.
 
 ## Quick Fixes 6 (block 20)
 
@@ -300,23 +299,28 @@ review of PR #10, six rounds).
 
 ## The release check and Tony's answers (block 39)
 
-- **A39.1 Check release archives on PR builds** (CI; Ground or a floor): `main`'s release job is the only
-  place `release_draft --validate-only` runs, so 0.0.7a1's linked macOS build stamp showed only after the
+- [x] **A39.1 Check release archives on PR builds** (done in `c201c01`, Quick Fixes 8; `release_draft
+  --check` on every 3.13 build, passed on all three in its CI runs) (CI; Ground or a floor): `main`'s
+  release job is the only place `release_draft --validate-only` runs, so 0.0.7a1's linked macOS build
+  stamp showed only after the
   merge (run 41110274554; [known issues](../roadmaps/known-issues.md#fixed)). Run the archive check (the
   stamps, without the tag and the draft) on each PR's three builds against its build commit, so a
   packaging change that breaks it fails the PR.
 
-- **A39.2 Live takes HeLab's TXY for a shot held from MATLAB's** (Q38.2, Tony 2026-10-31; the I/O area):
+- [x] **A39.2 Live takes HeLab's TXY for a shot held from MATLAB's** (done in `10a9c3c`, `f945f69`, IO
+  Fixes, landed `471966b`) (Q38.2, Tony 2026-10-31; the I/O area):
   under HeLab priority, a HeLab TXY converted during Live replaces the shot held from MATLAB's TXY,
   read again as a changed shot (as a HeLab-held shot converted again is), instead of waiting for the
   folder's next load (`fefe6ab`).
 
-- **A39.3 One running HeLab per computer** (Q39.1, Tony 2026-10-31): a second HeLab (source or build)
+- [x] **A39.3 One running HeLab per computer** (done in `0335768`, `f128623`, Quick Fixes 8; what only
+  served several at once is listed in its [handoff](sessions/2026-10-31-claude-quick-fixes-8/handoff.md),
+  not removed: A43.2, Q43.4) (Q39.1, Tony 2026-10-31): a second HeLab (source or build)
   started while one runs says so and stops before opening anything; the lock in the app folder, so an
   override (agents, tests) has its own. Then drop what only served several at once where the area
   review names it (`.ai/sessions/2026-10-31-claude-area-review/cache.md`).
 
-- **A39.4 Folder details: TXY left out and TXY per converter** (Q38.3, Tony 2026-10-31): the load line says
+- [x] **A39.4 Folder details: TXY left out and TXY per converter** (done in `915aff5`, Quick Fixes 8) (Q38.3, Tony 2026-10-31): the load line says
   "N left out (TXY source)" for shots the folder's TXY source leaves out (a `load_counts` key and
   `FolderExplorer.load_count_details`, `924109a`), keeping "removed" for files really gone; and a line with
   the folder's TXY counts by kind, from the listing's names only (memory, no I/O): MATLAB's
@@ -329,6 +333,59 @@ review of PR #10, six rounds).
   beside setting, `helab convert --output beside`, and Live's auto-convert. A share folder with no TXY of
   any kind offers in Folder details to convert into HeLab's cache (recommended) or temp folder, says the
   converter should run on the acquisition PC, and keeps "Convert beside on the share…" behind the warning.
+
+## I/O fixes (block 40)
+
+From the IO Fixes floor's [handoff](sessions/2026-10-31-claude-io-fixes/handoff.md) (Conduit; landed `471966b`).
+
+- **A40.1 A helper still starting when HeLab quits** (no `process` yet in `IOService._run`) is stopped
+  only by `_run`'s daemon thread, so it may run until its first stdout write fails. Low risk. Fix: `_run`
+  checks `self.closed` right after `Popen` and kills.
+- **A40.2 An unreadable new HeLab TXY in `live_check`**: a switched or HeLab-held shot whose new HeLab TXY
+  turns out unreadable drops the held data and keeps the shot known-unreadable (as for a HeLab-held shot
+  converted again). Unlikely (temporary name and rename); keeping the held data until a readable TXY is
+  read would be safer (Probe agrees: a fresh load would take the same file).
+- **A40.3 A signature-only change rewrites the whole dataset** (io-5; the cache area, best with caching
+  v2's store work): every cached shot is unpacked and packed again, though no TXY is read.
+  `CacheStore.confirm_dataset(..., signature=None)` merging a given signature into `info` (JSON, no schema
+  change), and a confirm branch in `loading.load` for a cache whole but for the signature, would need
+  neither the dataset nor a rewrite.
+- **A40.4 Cancel all loads and scans' tip** (Q40.1): set `MissingShotsWindow.CANCEL_TIP` to "Cancel every
+  load and scan, running, paused or queued. Browsing, cached data, saves and Live go on; loads already
+  saving their cached data finish."
+
+## Plot identity (block 41)
+
+From the Plot Identity floor's [handoff](sessions/2026-10-31-claude-plot-identity/handoff.md) (Prism; landed
+`e3f94d9`).
+
+- **A41.1 An outdated saved result has no view**: `AnalysisInstance._cached_found` shows it without one.
+  If Release or the TXY row ever needs that result's own data, build a hollow view from the saved record
+  (coverage and origins). Not needed now.
+
+## Caching v2 (block 42)
+
+From the Caching v2 floor's [handoff](sessions/2026-10-31-claude-caching-v2/handoff.md) (Vault; stage 0 and
+checkpoint 2 landed `ad86bd3`). The floor's own remaining steps (5–7, and what step 5 owes) are in its
+handoff and the [plan](../roadmaps/caching-v2.md#stages-each-needs-tonys-go).
+
+- **A42.1 store-v3's saved results under Keep**: copy a v3 result into v4 when it is used (the addendum
+  said "by the next save of that folder's results"), or decide read-through is enough while v3 is kept
+  (built: read-through only).
+- **A42.2 `trim` in Make room's order**: a lowered budget in store-v4 removes datasets only; give it Make
+  room's order (datasets, raw layers seen, only copies named).
+
+## Quick Fixes 8 (block 43)
+
+From Quick Fixes 8's [handoff](sessions/2026-10-31-claude-quick-fixes-8/handoff.md) (Rivet on Ground).
+
+- **A43.1 Toolbar icons in every test window**: without `IconsInitUtil.initialise_icons()` the side
+  toolbars show their text, so a `HelabMainWindow`'s widths depend on which tests ran earlier on the xdist
+  worker (the cause of `test_main_split`'s Windows failures). A conftest autouse fixture would remove it
+  everywhere; it must take pytest-qt's `qapp` (icons before a `QApplication` abort the worker, `1f86ca2`).
+- **A43.2 "Another HeLab may have changed them"** before `read_presets()` (`PresetsInspector.py:207`,
+  `views/plots/presets.py:267`, `:613`): with one app per computer (Q39.1) and `helab convert` writing no
+  presets, keep the cheap re-reads and drop that reason from the comments.
 
 ## Not AI work (stays in MANUAL_TODO)
 

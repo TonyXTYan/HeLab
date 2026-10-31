@@ -275,3 +275,42 @@ With one app per computer, the only other process sharing the app folder and sto
   - Converter backends: 713 / 715 / 715.
 - **A39.1 passed on all three builds:** "built cleanly from 0.0.7a1 at a64013be9c…".
 - This record is committed locally only (doc-only: no push, so no CI run).
+
+## Later items (after the IO Fixes landing; on Ground, not pushed: CoCo pushes Ground)
+
+| Item | Commit | Files |
+|---|---|---|
+| convert-2 path-too-long advice | 9d2a866 | `folder_cache.py`, `test_live_convert.py` |
+| A39.4 left out, TXY by kind | 915aff5, 094e1ab (test fix) | `loading.py`, `FolderExplorer.py`, `FolderDetailsPanel.py`, `test_txy_sources.py`, `test_folder_summary.py`, `test_folder_cache.py` |
+
+- **convert-2.**
+  - **Before:** the remembered `unconvertible` list was sent back as `skip` whenever the profile was
+    unchanged. A shot refused for its TXY path's length, or failed under a backend, then stayed
+    unconvertible after the user followed the advice, until a restart.
+  - **Now:** `_remember_convert` also records `_convert_where` (backend, destination, beside, the temp
+    folder, the store's directory), and `skip` is sent only when that matches.
+  - **Unchanged:** done shots still aren't checked again, and a shot tried again waits one check (the two
+    looks).
+  - **Tests:** a Live test, where the TXY write is refused with ENAMETOOLONG until the output goes to
+    temp, then the shot converts; and the lists test, now with real payloads. Both fail on the old code.
+- **A39.4.**
+  - **Left out:** `load_counts["left_out"]` counts shots held before that the source leaves out while
+    their TXY is there, or that were held from HeLab's when the source no longer reads HeLab's.
+    `removed` is kept for files really gone.
+  - **TXY by kind:** `txy_matlab` and `txy_helab` (HeLab's current TXY of the conversion profile's tag,
+    only when the source reads HeLab's).
+  - **Display:** Folder details' new TXY row reads "120 MATLAB · 118 m19v1", and the load's counts say
+    "N left out (TXY source)".
+  - **Tests:** three; they fail on the old code.
+- **My slip.** I committed 915aff5 after the related tests (271), not the full suite. Two
+  `test_folder_cache.py` tests compare `load_counts` exactly and failed on Ground (CoCo caught it at
+  7180751). Fixed in the next commit, after the full suite: 8808 passed, 672 skipped, no RERUN; the five
+  type checks pass.
+- **A~ (proposed).** Count HeLab's TXY of every tag, not only the conversion profile's.
+  - `helab_txy.find` already lists HeLab's folder and parses every name, so counting the names it sees
+    per tag is free there.
+  - It's Caching v2's file, so it is left for after that floor.
+  - The beside ones per tag could come from the listing's names in `loading._load`'s loop.
+- **Q~ (proposed).** The TXY row is shown only for data whose load counted it. Data shown from memory or
+  a disk-cache quick check, or saved before A39.4, has no row. Proposed: leave it so; the next full load
+  counts again.

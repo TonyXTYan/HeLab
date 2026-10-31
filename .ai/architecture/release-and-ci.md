@@ -43,7 +43,9 @@ with soft failures. `ci-test.yml` has two independent jobs per OS and Python (co
 2026-10-29): "Converter backends" (20 min) builds and requires cython (`native/build.py --ci`,
 `HELAB_REQUIRE_BACKENDS=cython`) and runs the converter tests that use a backend, listed by hand
 (`tests/test_convert_backend_*.py`, `test_convert_required_backends.py`, `test_convert_helab.py`,
-`test_convert_split.py`; a new test that runs every available backend joins the list); "Tests" runs the
+`test_convert_split.py`, `test_convert_testdata.py`, and since caching v2's checkpoint 2 `test_raw_layer.py`,
+the raw layer's layer-equals-file proof, so cython is proved there only; a new test that runs every
+available backend joins the list); "Tests" runs the
 whole suite in two groups, each a job of its own ("Tests (1/2)", "Tests (2/2)", Q16.2, A17.2):
 `pytest --test-group N/2` (see [testing](testing.md)); the caller's result, which the release gate
 needs, fails if either group does, and each macOS group uploads coverage for Codecov to merge. The
@@ -72,7 +74,11 @@ symlink is followed and must lead to another stamp (the macOS zip keeps HeLab.ap
 the cython kernel ships, `Contents/Frameworks/helab/` links its data files to `Contents/Resources/`;
 0.0.7a1's release job stopped on one, run 41110274554). API
 errors fail selection; they never mean "no release". Only authenticated main runs
-query release state. Build jobs may target an older tagged SHA during recovery;
+query release state. Every Python 3.13 build also checks its own archive (`release_draft --check ARCHIVE
+--commit SHA`, the stamps against `inputs.build-sha`, no tag or draft; A39.1, `c201c01`): the macOS zip with
+`ditto`, Windows and Ubuntu `dist/HeLab` zipped with `python -m zipfile -c`, which follows links as the
+artifact's copies do; skipped when `build-sha` isn't `github.sha` (a recovery build of an older tag, which
+the release job still validates). Build jobs may target an older tagged SHA during recovery;
 the normal test jobs still check the current workflow commit, and recovery builds
 add Python 3.13 tests of the tagged commit on each OS.
 

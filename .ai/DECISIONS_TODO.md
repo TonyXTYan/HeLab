@@ -82,6 +82,58 @@ Tony in Chat, 2026-10-31, on what needs him (block 39):
   folder has, MATLAB's and each HeLab profile tag's (Tony: "and we can show status of how many txy of each
   converter profile tag too?") (A39.4).
 
+Tony in Chat, 2026-10-31, on the I/O fixes and caching v2's checkpoint 2 (blocks 40, 42; "ok to all"):
+
+- **Q40.1 Cancel all loads and scans' tip** (`MissingShotsWindow.CANCEL_TIP`), since io-1 spares saves and
+  Live checks: "Cancel every load and scan, running, paused or queued. Browsing, cached data, saves and Live
+  go on; loads already saving their cached data finish." As proposed; the code isn't changed yet (A40.4).
+- **Q42.1 A raw batch over the budget** isn't saved and never asks; raw filling pauses at 80 % like
+  automatic loads; only dataset saves ask Make room, and `pending_saves` stays datasets only.
+- **Q42.2 The raw layer's codec stays zstd 9** + byte shuffle (Q22.7); zstd 5 (+7 % size, 15× faster to
+  encode) only if timing on the lab PC (M42.1) finds 9 too slow.
+- **Q42.3 store-v4 carries store-v3's `datasets` table through stage 1**, so a v4 store caches datasets
+  for testing; stage 2 stops writing it.
+- **Q42.4 Don't cache with "remove cached data"** also removes the folder's raw layers whose raw files
+  were seen, and keeps only copies (raw file gone); step 6's dialog may name and offer the only copies
+  (C2-9; decided by CoCo per Q22.6, Tony OK).
+- **Q42.5 Cache export and the `.hlb` format** (Tony): build export options and document the `.hlb`
+  format with sample code: `helab.utils.hlb.read`; `helab cache dump FILE`; `helab cache export FILE|--folder
+  FOLDER --to npz|mat|csv`; read-only, no new dependency. On the Caching v2 floor
+  ([plan](../roadmaps/caching-v2.md#stages-each-needs-tonys-go), stage 1).
+
+## Caching v2 (block 42)
+
+From the Caching v2 floor's [handoff](sessions/2026-10-31-claude-caching-v2/handoff.md) (Vault; stage 0 and
+checkpoint 2 landed `ad86bd3`, the switch off).
+
+- **Q42.6 AGENTS.md's store-v4 wording** (applied at the docs commit, for Tony to confirm; wording only, no
+  new rule): the store bullet names store-v4 behind the `store_v4` switch and store-v3 then read only
+  through `LegacyStore`; `_migrate`'s bullet adds `store_v4.migrate`; the sweep's housekeeping line says
+  "dataset and layer files", the existing orphan rule over `raw/` too (no new removal); the `store_v4`
+  row stays off until stage 2 and Tony's go (Q28.3). Proposed: keep as applied.
+
+## Quick Fixes 8 (block 43)
+
+From Quick Fixes 8's [handoff](sessions/2026-10-31-claude-quick-fixes-8/handoff.md) (Rivet on Ground; the
+area review's app and convert fixes, A39.1, A39.3).
+
+- **Q43.1 Work Offline and Reset all settings** (app-1): Reset clears `work_offline`, but the session
+  stays offline with File › Work Offline checked, and the next start is online. (a) Reset keeps Work
+  Offline, like the cache folder's location, and the confirmation says so; (b) Reset turns Work Offline
+  off at once; (c) leave it. Proposed: (a): Work Offline is a mode turned on for a reason (no network),
+  not a preference to forget.
+- **Q43.2 Does `helab convert` count as a running HeLab?** (A39.3): a second app refuses to start, but
+  `helab convert --watch` may run beside the app, as before (it registers in `instances/` so a cache move
+  waits for it). Proposed: yes, it may run beside the app: it is the lab's headless converter, and the
+  app's auto-convert and the CLI already share the store and index safely.
+- **Q43.3 The plots' least width when saved widths don't fit** (app-2): 240 px (`MIN_PLOTS_WIDTH`). 400
+  would also narrow Q33.2's default 380/320 in a small window (Windows CI's 976 px splitter leaves the
+  plots 268 px). Proposed: 240 for now; raise it only if small screens should favour the plots over the
+  default panels.
+- **Q43.4 The cache move's refusal while a converter runs** (`cache_locks.lock_for_move`): "Another HeLab
+  is running (N windows)." can count only `helab convert` processes now (Q39.1). Proposed: "A HeLab
+  converter (helab convert) is running (N). Stop it before moving the cache."
+
 ## Quick Fixes 7 (block 38)
 
 From Quick Fixes 7's [handoff](sessions/2026-10-31-claude-quick-fixes-7/handoff.md) (Rivet on Ground,
@@ -132,7 +184,7 @@ From the `agent/txy-ui` and `agent/txy-live` handoffs (`sessions/2026-10-29-clau
 Tony asked (Q14.5) to rethink caching now that HeLab converts raw files; the plan is
 [caching v2](../roadmaps/caching-v2.md), and the rest of blocks 19 and 22 is decided (Recently
 decided). **Tony, 2026-10-29: keep planning; no cache code until he gives an explicit go** (A19.1
-and A19.2 included).
+and A19.2 included). The go came on 2026-10-31 (Q28.1); A19.2 landed with caching v2's stage 0.
 
 - **Q19.1 Keep HeLab's own TXY files once loads convert on read?** (a) no: only beside and export;
   (b) yes, as a cache in the budget; (c) yes, as now. Proposed: (a), at stage 2.
@@ -324,5 +376,6 @@ that block it become Q items here, as the converter's did (Q6.6–Q6.11).
   [reproducible workflows](../roadmaps/reproducible-workflows.md#dependencies-and-open-decisions).
 - [TXY converter](../roadmaps/txy-converter.md#open-decisions): Q items (Q6.7, Q6.9–Q6.11, Q12.6,
   Q14.2, Q14.4, Q15.3, block 23, Q25.2, Q25.4), plus one smaller question there.
-- [Caching v2](../roadmaps/caching-v2.md#open-decisions): Q items (Q19.1 to confirm, Q27.3, block
-  28); its design is in the store-v4 design note.
+- [Caching v2](../roadmaps/caching-v2.md#open-decisions): Q items (Q19.1 to confirm, Q27.3, Q42.6;
+  blocks 28 and 42's Q42.1–Q42.5 decided); its design is in the store-v4 design note and stage 1's
+  [addendum](sessions/2026-10-31-claude-caching-v2/design-stage1.md).

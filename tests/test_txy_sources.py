@@ -972,8 +972,40 @@ def test_helab_only_leaves_out_matlabs_shots_without_a_mismatch(tmp_path: Path, 
         assert "shots_missing" not in kinds_of(events), kwargs
         result = loaded(events)
         assert [entry[0] for entry in result["fingerprint"]] == [3] and sorted(result["txy"]["origins"]) == ["3"]
-        # (Counted as removed from the data shown: the shots the source leaves out.)
-        assert result["total_files"] == result["files"] == 1 and result["load_counts"]["removed"] == 2
+        # Left out by the source, their MATLAB TXY there: not "removed" (Q38.3, A39.4); the folder's TXY by kind.
+        counts = result["load_counts"]
+        assert result["total_files"] == result["files"] == 1 and (counts["left_out"], counts["removed"]) == (2, 0)
+        assert (counts["txy_matlab"], counts["txy_helab"]) == (3, 1), kwargs
+
+
+def test_a_file_really_gone_is_removed_and_one_the_source_leaves_out_is_left_out(tmp_path: Path,
+                                                                                 private_store: str) -> None:
+    """A39.4 (Q38.3): of the shots held before, those whose TXY is gone are "removed", those the TXY source
+    leaves out "left out": a MATLAB TXY deleted (loaded anyway, ``allow_missing``) and one HeLab only skips. Read
+    as MATLAB only, a shot held from HeLab's TXY is left out too, and HeLab's aren't counted (not looked for)."""
+    source = tmp_path / "run"
+    source.mkdir()
+    old = time.time() - 600
+    for shot in (1, 2, 3):
+        write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 1))))
+        os.utime(matlab_txy(source, shot), (old, old))
+    convert(source, tmp_path, private_store, shots=[3])
+    first = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.MATLAB_ONLY)))
+    (source / "d_txy_forc1.txt").unlink()  # Really gone.
+    held = {"memory": first["fingerprint"], "base_signature": first["signature"], "allow_missing": True}
+    only = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.HELAB_ONLY), **held))
+    counts = only["load_counts"]
+    # Shot 1 removed; shot 2 left out (its MATLAB TXY is there); shot 3 HeLab's.
+    assert (counts["removed"], counts["left_out"], counts["txy_matlab"], counts["txy_helab"]) == (1, 1, 2, 1)
+    # Shot 3 held from HeLab's TXY alone (its MATLAB TXY gone), then read as MATLAB only: left out, not removed.
+    (source / "d_txy_forc3.txt").unlink()
+    helab = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.HELAB_PRIORITY)))
+    assert sorted(helab["txy"]["origins"]) == ["3"] and [entry[0] for entry in helab["fingerprint"]] == [2, 3]
+    held = {"memory": helab["fingerprint"], "base_signature": helab["signature"],
+            "memory_origins": helab["txy"]["origins"]}
+    matlab = loaded(run_load(source, tmp_path, None, options(tmp_path, private_store, txy_sources.MATLAB_ONLY), **held))
+    counts = matlab["load_counts"]
+    assert (counts["removed"], counts["left_out"], counts["txy_matlab"]) == (0, 1, 1) and "txy_helab" not in counts
 
 
 def test_live_asks_the_store_for_a_key_once_a_session(tmp_path: Path, private_store: str,

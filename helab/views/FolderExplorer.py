@@ -1585,7 +1585,8 @@ class FolderExplorer(QWidget):
                 for key, label in (
                     ("reused_memory", "reused from memory"), ("reused_disk", "reused from cache"),
                     ("new_loaded", "new files loaded"), ("modified_loaded", "modified files loaded"),
-                    ("removed", "files removed"), ("read", "TXY files read")) if counts.get(key)]
+                    ("removed", "files removed"), ("left_out", "left out (TXY source)"),
+                    ("read", "TXY files read")) if counts.get(key)]
 
     @property
     def load_clock(self) -> LoadClock | None:

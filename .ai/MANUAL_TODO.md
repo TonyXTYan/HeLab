@@ -194,6 +194,29 @@ Mac (A5.1, 2026-10-28, Sonnet 5.5) is in
   on the share from macOS fails with the reason (`c194f37`) and Q38.1's (b) or (c) is worth building.
   Windows PCs are unaffected (`os.rename` refuses an existing name itself).
 
+## I/O fixes, Plot identity, Caching v2, Quick Fixes 8 (added 2026-10-31, blocks 40–43)
+
+- [ ] **M40.1 Live switching to HeLab's TXY, in the lab** (A39.2; with Live and auto-convert on under
+  HeLab priority and MATLAB's converter also running): shots first read from MATLAB's TXY switch to
+  HeLab's within two checks of their conversion; no "changed after it was read" note appears on the Live
+  line; the log has one INFO line per switched shot.
+- [ ] **M41.1 The Dash port beside another program** (Tony, Mac): with another program listening on
+  `0.0.0.0:8050` (e.g. a Dash app run with `host="0.0.0.0"`), open a 3D scatter in HeLab: its Open in
+  browser URL is on another port, and the other program still answers `http://127.0.0.1:8050`.
+- [ ] **M41.2 A profile change while a plot follows Live** (Tony, real data): a raw-only folder with
+  auto-convert and a plot following; switch Settings › TXY converter to another profile: the plot reruns at
+  once on the new profile's data, and Velocity distributions' title doesn't say "kept from rev N" on that
+  run.
+- [ ] **M42.1 Time the raw layer's codec on a lab PC** (Q42.2): `dev/txy/check_samples.py --via-layer`
+  (in memory, read only) on a copy of the sample set; zstd 9 measured 16 MB/s of raw text per M4 Max
+  thread (an estimated 4–5 MB/s on the Sandy Bridge PCs). Too slow for a folder's background fill: zstd 5.
+- [ ] **M43.1 Split widths from a wider screen** (app-2; a laptop or lab PC): start HeLab with a split
+  saved on a wide monitor, or quit at 1500,600 and start with `--geometry 1600x900+0+0`: the plots get
+  at least 240 px and both panels look usable (Q43.3); quitting without dragging keeps the wide widths.
+- [ ] **M43.2 One running HeLab** (A39.3; the packaged app on macOS, `open -n HeLab.app` or the binary
+  from a terminal, and on Windows): the second start shows "HeLab is already running…" and quits; after
+  quitting the first, or killing it, a new start opens normally.
+
 ## Post-2025 plates, in the lab (added 2026-10-29, block 25)
 
 - [ ] **M25.2 TDC input 7:** what is connected, is it enabled, at what threshold, and did anything

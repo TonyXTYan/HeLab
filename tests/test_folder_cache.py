@@ -1071,6 +1071,8 @@ def test_changed_folder_reads_only_new_or_modified_txy_files(
     assert loaded_event(events)["load_counts"] == {
         "reused_memory": 0, "reused_disk": 2, "new": 1, "modified": 1, "removed": 1,
         "read": 2, "new_loaded": 1, "modified_loaded": 1,
+        # (Shot 3 is really gone: removed, not left out. The folder's TXY by kind: A39.4.)
+        "left_out": 0, "txy_matlab": 4, "txy_helab": 0,
     }
     assert events[-1] == {"kind": "disk_cached", "disk_cached": True}
     for shot, expected in ((1, [[1, 1, 1]]), (2, [[20, 20, 20]]), (4, [[5, 5, 5]]), (5, [[50, 50, 50]])):
@@ -1118,7 +1120,7 @@ def test_load_skips_shots_already_in_memory_and_completes_disk_cache(
     assert loaded["source"] == "updated" and loaded["memory_shots"] == [1, 2]
     assert loaded["load_counts"] == {
         "reused_memory": 2, "reused_disk": 0, "new": 0, "modified": 1, "removed": 0,
-        "read": 1, "new_loaded": 0, "modified_loaded": 1,
+        "read": 1, "new_loaded": 0, "modified_loaded": 1, "left_out": 0, "txy_matlab": 3, "txy_helab": 0,
     }
     assert loaded["cache_reason"] == "Reused 2 shots from memory; 1 new or changed TXY file to read"
     assert events[-1] == {"kind": "disk_cached", "disk_cached": True}
