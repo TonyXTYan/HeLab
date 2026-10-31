@@ -284,3 +284,122 @@ C2-8.
 - The fails-without-fix table above, and the C2-7 and C2-8 scratch tests.
 
 On the C2-7 and C2-8 fixes (and C2-6's wiring, if it lands here) I'll re-check only those diffs.
+
+## Pass 3: the fix diff `ff1fe1a..630bf8e`, and `d207b61` (step 5's store side)
+
+**Open findings: 2 Low (C2-9, C2-10), both in `d207b61`. C2-6, C2-7 and C2-8 are fixed.**
+
+### Fixes
+
+| Finding | Commit | Without the fix | With it |
+|---|---|---|---|
+| C2-7 | `f28f9ff` (`cache_store.py`, `legacy_store.py`) | 1 failed | 1 passed |
+| C2-8 | `4270080` (`store_v4.py`) | 1 failed | 1 passed |
+| C2-6 | `630bf8e` (`CacheMover.py`) | 2 failed | 2 passed |
+
+(For each, I exported the commit, put its `helab/` files back as they were before it, and ran the tests it added.)
+
+- **C2-7: fixed.** Two cutoffs per kind, the latest and the latest that took failures, each only ever growing.
+  `records()` hides a v3 history with failures only when it was saved before the second. The latest cutoff is
+  always at least the failures one, so the SQL holds. My scratch case now stays hidden.
+- **C2-8: fixed.** At the import, a v3 `folder_prefs` or `convert_prefs` row set at or before `prefs_cleared_at`
+  comes in off, dated at the Clear (as `clear_prefs` leaves the rows it turns off). Later ones come in as set (the
+  test's `OTHER` at 500).
+- **C2-6: closed.** `CacheMover` sends `live_layout()` with every move step, so the move is keyed on the live store.
+  The GUI has already read the switch by then (`store_options`), so this reads no extra settings.
+
+### d207b61 checked, no finding
+
+- **Raw rows under their own guard.** `start_raw_job` takes `gen_raw`, the folder's `raw:` epoch and its root's,
+  and the folder's next `job_seq`. That `job_seq` is shared with dataset saves, which only compare against dataset
+  rows, so the bump is harmless.
+  - A guard naming another key is `REKEYED`; a moved generation or epoch is a "cleared" rejection, and the batch's
+    files are retired.
+  - Clear all (`remove_raw(None)` bumps `gen_raw`), a folder's `clear_raw` (fences folders with no rows too), and a
+    root's Clear (root epoch, plus its raw rows) each fence a running job. Other kinds' Clears don't.
+- **`save_raw_batch`.** One transaction and one fit check per batch. The same fingerprint and parser is kept. A
+  different version is replaced only by a job whose `job_seq` is at least the row's, and named in `overwritten` when
+  the size or mtime changed (Q28.6's input). Replaced and unused files are retired. Over budget: rolled back to the
+  savepoint, every file of the batch retired, `over_budget`, never pending (T~1). Don't cache is refused.
+- **Make room (D8).** Inside `make_room` only: other folders' datasets, then raw layers seen
+  (`gone_at IS NULL`), then only copies. One folder at a time, least recently used first, never the folder being
+  saved. Each step bumps `raw:` epochs. The plan names them (`raw:`/`raw-only:` items), and adoption still requires
+  exactly the plan the user agreed to, else rolls back. A test fails if only copies go first.
+- **Nothing removed without asking.** Raw rows go only through Make room (asked), `clear_raw`, Clear all and a
+  root's Clear (all user actions), plus the sweep's existing rules:
+  - retired files after their grace period;
+  - `raw/` files no row names, over an hour old, `tmp-*` included (`_listed_files` and `_known_files` extended).
+
+  `older_stores` lists `store-v<N>` folders below the live layout, with their bytes, without opening or removing
+  anything. No new housekeeping line.
+- **Budget (D9).** `_live` adds raw bytes and v3's recorded `legacy_bytes` while v3 is kept, so the fit checks
+  never open v3. The inventory subtracts both from `records_bytes`.
+- **Events.** `RemovedEvent.raw` and `AdminResultFields.raw` are typed in `events.py`. `_removal_events` sends the
+  raw `removed` event after a Make room or a root's Clear that took any.
+- **Write path.** `write_raw_file` uses a temporary name created with `O_EXCL`, `fsync`, `os.replace`, then fsyncs
+  the folder. `_store_file` maps `raw/`. `cache_move.verify` already names `raw_layers`' files (a test).
+
+### C2-9 · Low · Don't cache with "remove cached data" leaves the folder's raw layers in store-v4
+
+- `helab/utils/cache_store.py:1179-1205` (`set_prefs_removing` removes `("datasets",)` only).
+- **Scenario.** The switch is on. A folder has raw layers. The user turns on Don't cache and chooses to remove its
+  cached data. The datasets go, but the raw layers stay: they keep their bytes in the budget, remain readable, and
+  are later taken by Make room. That's not what the user asked for, and it's unlike a root's Clear, which takes raw
+  layers.
+- **Decision for CoCo or Tony.** Should Don't cache also take **only copies** (raw files gone from the share)? That
+  removes data the user can't read again, so the dialog would have to name it.
+- **Proposed.** Remove the folder's raw layers whose files were seen, inside the same transaction; keep only
+  copies unless the dialog names them. Send the raw `removed` event through `_removal_events`.
+- **How verified.** Scratch test (`.ai/temp/assay/test_zz_p3.py`, on code identical to `630bf8e`): after
+  `set_prefs_removing(RUN, True, False, 10.0, remove_cached=True)` the raw row is still there, and the removal
+  reports 0 raw rows.
+
+### C2-10 · Low · An older listing (or batch) landing late clears the only-copy mark
+
+- `helab/utils/cache_store.py:2625-2647` (`mark_raw_seen`: `gone_at = NULL` whatever `seen_at`, and
+  `gone_at = COALESCE(gone_at, ?)` whatever the row's `seen_at`); `:2574-2576` (`save_raw_batch`'s kept path also
+  sets `gone_at = NULL` with the save time).
+- **Scenario.**
+  1. A listing at t=200 finds `d1.txt` gone and sets `gone_at = 200`: the layer is now the only copy.
+  2. A slower listing that started at t=100, from a second helper (Live beside a raw fill), or a raw-fill batch
+     that read the file before it went, lands afterwards.
+  3. `gone_at` is cleared. Make room then removes that layer in its "re-readable" pass (D8 step 2), and its plan
+     lists it under `raw_paths`, not `only_copy_paths`. So the user loses the only copy without the dialog naming
+     it as one.
+
+  CoCo asked me to check "job_seq ordering" and "only-copy raw layers last and named". This is a path where
+  neither holds.
+- **Fix.** Order by time:
+  - clear `gone_at` only when the evidence is newer (`seen_at > gone_at`; for a batch, the time its file was read,
+    not the save time);
+  - set `gone_at` only when the listing is newer than the row's `seen_at`.
+
+  Add a test like the scratch one.
+- **How verified.** The same scratch file: `gone_at` is 200 after the t=200 listing, and `None` after the t=100
+  listing lands.
+
+### Notes for later steps (not findings)
+
+- **Step 6.** Settings › Cache's Clear all passes `kinds=list(KINDS)` (`CacheTab.py:538`), so it doesn't take raw
+  layers, although its text says "Removes everything in the disk cache". The admin's no-kinds Clear does take them.
+  When step 6 adds the raw row, Clear all should include `raw`. Make room's dialog has to name `only_copy_paths`.
+- **Step 5's `raw_fill`.** Publish each `.hlb` shortly before its batch's save. Files are orphans until the save, and
+  the sweep removes orphans over an hour old. A paused background job could pass that. `_size` then makes the batch
+  fail with `StoreError`, with no dangling row, but don't rely on that.
+
+### Checks (pass 3)
+
+On an export of `630bf8e`:
+- `pytest -n 4 --reruns 5 --reruns-delay 1 --basetemp=.ai/temp/pytest-assay` (the full suite, including
+  `test_raw_layers_store.py`, `test_store_v4.py`, `test_cache_mover.py` and the admin, events and move tests):
+  **8739 passed, 673 skipped, 3 failed, 15 rerun in 144.30 s.**
+  - All 3 failures and all 15 RERUNs are the three git-provenance tests (the export has no `.git`; 5 reruns each).
+  - Those three pass in the floor checkout: **3 passed, no RERUN**.
+  - No other RERUN.
+- `mypy helab/ --strict` (199 files), `mypy tests --strict` (179), `--platform win32`: no issues.
+- The CI RERUN that `050077c` notes (the Windows `test_io_service_run.py` timing flake) is proposed for its existing
+  known-issues entry. IOService isn't touched by this floor.
+- `pyright helab tests` and `--pythonplatform Windows` (on the export): 0 errors.
+- The scratch checks for C2-9 and C2-10 (`.ai/temp/assay/test_zz_p3.py`), and the fails-without-fix table above.
+
+On the C2-9 and C2-10 fixes I re-check only those diffs.
