@@ -632,6 +632,7 @@ class FolderCache(QObject):
         known = self.data_roots.get(path)
         if known is not None and known[0] != identifier:
             self._root_constants_gone(path)  # Another root at this folder now (any event saying so).
+            self._root_prefs_gone(path)
             self._root_results_gone(path)
         if known != (identifier, label) or cleared:
             self.data_roots[path] = (identifier, label)
@@ -706,6 +707,7 @@ class FolderCache(QObject):
     def _root_gone(self, path: str) -> None:
         if path in self.data_roots:
             self._root_constants_gone(path)
+            self._root_prefs_gone(path)
             self._root_results_gone(path)
         if self.data_roots.pop(path, None) is not None:
             self.dataRootsChanged.emit(path)
@@ -1473,6 +1475,26 @@ class FolderCache(QObject):
             del self.folder_constant_records[folder]
             if before:
                 self.constantsChanged.emit(folder)
+
+    def _root_prefs_gone(self, path: str) -> None:
+        """Beside :meth:`_root_constants_gone` (cache-1): the old root's folder flags (Don't cache, Don't
+        auto-load) and converter flags (``write_beside``) no longer apply to the folders it held (not those
+        inside a nested root below), so the next listing's answer under the new identity stands; a flag
+        write still running (this session's choice) keeps its folder's."""
+        writing = {write[0] for write in self._pref_writes.values()}
+        changed: set[str] = set()
+        for folder in [folder for folder in self.prefs if self._root_holds(path, folder) and folder not in writing]:
+            before = self.folder_prefs(folder)
+            del self.prefs[folder]
+            self._confirmed_prefs.pop(folder, None)
+            if self.folder_prefs(folder) != before:
+                changed.add(folder)
+        for folder in [folder for folder in self.convert_prefs if self._root_holds(path, folder)]:
+            if self.write_beside(folder):
+                changed.add(folder)
+            del self.convert_prefs[folder]
+        for folder in sorted(changed):
+            self.folderPrefsChanged.emit(folder)
 
     def _root_results_gone(self, path: str) -> None:
         """Beside :meth:`_root_constants_gone`: the old root's saved-result counts no longer apply to
@@ -3693,6 +3715,7 @@ class FolderCache(QObject):
                 # A root this session hadn't seen at that folder: what RAM holds there came from
                 # whichever root was nearest, gone too. (A known one: ``_root_seen``/``_root_gone``.)
                 self._root_constants_gone(str(event["path"]))
+                self._root_prefs_gone(str(event["path"]))
                 self._root_results_gone(str(event["path"]))
             if event.get("location"):
                 self._duplicate_settled(str(event["location"]))  # Forgotten, removed or replaced.
