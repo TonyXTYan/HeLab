@@ -298,13 +298,23 @@ review of PR #10, six rounds).
   "damaged" while it stays unconvertible, even when a later profile fails it for another reason; on a new
   summary it could keep only names whose current message starts with `DAMAGED_TEXT`.
 
-## The release check (block 39)
+## The release check and Tony's answers (block 39)
 
 - **A39.1 Check release archives on PR builds** (CI; Ground or a floor): `main`'s release job is the only
   place `release_draft --validate-only` runs, so 0.0.7a1's linked macOS build stamp showed only after the
   merge (run 41110274554; [known issues](../roadmaps/known-issues.md#fixed)). Run the archive check (the
   stamps, without the tag and the draft) on each PR's three builds against its build commit, so a
   packaging change that breaks it fails the PR.
+
+- **A39.2 Live takes HeLab's TXY for a shot held from MATLAB's** (Q38.2, Tony 2026-10-31; the I/O area):
+  under HeLab priority, a HeLab TXY converted during Live replaces the shot held from MATLAB's TXY,
+  read again as a changed shot (as a HeLab-held shot converted again is), instead of waiting for the
+  folder's next load (`fefe6ab`).
+
+- **A39.3 One running HeLab per computer** (Q39.1, Tony 2026-10-31): a second HeLab (source or build)
+  started while one runs says so and stops before opening anything; the lock in the app folder, so an
+  override (agents, tests) has its own. Then drop what only served several at once where the area
+  review names it (`.ai/sessions/2026-10-31-claude-area-review/cache.md`).
 
 ## Not AI work (stays in MANUAL_TODO)
 

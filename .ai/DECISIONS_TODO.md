@@ -50,6 +50,26 @@ Tony in Chat, 2026-10-31, on starting caching v2 (block 28; "other sounds good")
 - **Q28.6** an overwritten raw file: a system notification once per shot per session, a Folder details
   line and a log line.
 
+Tony in Chat, 2026-10-31, on what needs him (block 39):
+
+- **Q39.1 One running HeLab per computer**, from source or a build ("yes one running helab per computer,
+  either run from source or compiled"; it replaces the review's question whether several may share a
+  cache). A second start says one is running and stops. Proposed as built: the lock stays in the app
+  folder (`instances/`), so agents and tests, which set `HELAB_APP_DIR_OVERRIDE`, keep their own; M1.10
+  runs the two versions one after the other, so it holds (A39.3).
+- **Q38.2 yes:** Live switches a shot held from MATLAB's TXY to the HeLab TXY converted during Live,
+  reading it again as a changed shot (Tony: plots see one shot's TXY data; which converter made it is
+  HeLab's business, its TXY layer) (A39.2).
+- **Q36.2** leave the temp folder row as it is (a change applies at the next start). **Q36.3** keep the
+  settings panel's 250 px least width and look on a lab PC (M36.1).
+- **Reviewers** (Tony "ok"): one Reviewer per floor, at landing; it checks again only once every finding is
+  fixed, and then reads only the fix diff; wide reviews (several areas, or Codex on the PR) only at
+  release milestones; a re-review is the same Reviewer, never a new set.
+- **Q39.2 TXY and shares** (Tony; details proposed, to confirm): writing TXY to a share gets an explicit
+  warning, since auto-convert should run where the data is local (the acquisition PC). A share folder with
+  no TXY of any kind offers to convert into HeLab's cache or temp folder (recommended), says the converter
+  should run on the machine that owns the data, and still lets the user convert beside on the share.
+
 ## Quick Fixes 7 (block 38)
 
 From Quick Fixes 7's [handoff](sessions/2026-10-31-claude-quick-fixes-7/handoff.md) (Rivet on Ground,
@@ -63,10 +83,6 @@ Codex's review of PR #10, six rounds; detail in its `notes.md`).
   (as `convert_plan`'s `fallback` does when the folder's flag is off). Proposed: (a); (b) or (c) only if
   M38.1 shows the lab share needs it (macOS FAT and Linux's local file systems work; Windows refuses an
   existing name itself).
-- **Q38.2** Under HeLab priority, should Live switch a shot held from MATLAB's TXY to a HeLab TXY converted
-  during Live (read it again as a changed shot, like a HeLab-held shot converted again)? As built
-  (`fefe6ab`), it keeps MATLAB's until the folder's next load (Refresh, reopening, a restart). Proposed:
-  no, keep it (no mismatch, no surprise rereads during a run; the next load takes HeLab's).
 - **Q38.3** (wording) After switching to HeLab only, Folder details' load line counts the shots it leaves
   out (only MATLAB's TXY) as "N files removed", though no file went (`924109a`). Proposed: "N left out
   (TXY source)", apart from files really gone (a `load_counts` key and
@@ -76,13 +92,6 @@ Codex's review of PR #10, six rounds; detail in its `notes.md`).
 
 From the UI polish floor's [handoff](sessions/2026-10-30-claude-ui-polish/handoff.md) and Ibis's
 [review](sessions/2026-10-30-claude-ui-polish/review.md) (landed `c104502`).
-
-- **Q36.2** (v0.0.8, Tony) Settings › General's temp folder row says a change applies at the next start:
-  offer to restart, or apply it live like the cache folder's move? Proposed: leave it (rarely changed).
-- **Q36.3** The settings panel's least width is a fixed 250 px (nothing cut at macOS's default font; a
-  row may be cut below 320 px on a wider font until the panel is widened). Never cut on any font instead:
-  `max(250, min(the contents' least width, 320))`, but then a wider font can't go below 320. Proposed: keep
-  250 and look on a lab PC (M36.1).
 
 ## Converter stage 4, HeLab core (block 12)
 
