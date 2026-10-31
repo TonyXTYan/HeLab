@@ -119,6 +119,22 @@ def test_the_hold_spares_saves_and_live_checks(qtbot: QtBot, monkeypatch: pytest
     service.shutdown()
 
 
+def test_a_foreground_load_the_hold_paused_doesnt_hold_background_work(
+    qtbot: QtBot, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Area review io-6 (2026-10-31): the selected load paused by the hold isn't foreground work, so icons,
+    other tabs' listings and auto-convert go on while the user decides."""
+    service = held_service(monkeypatch)
+    service.configure_concurrency(2)
+    service.submit("tab", 0, "/data", "load")
+    service.set_mismatch_hold(True)
+    service._foreground_busy_at -= service.RESUME_DELAY
+    assert not service.hold_background()
+    service.submit("other", 0, "/icons", "icons", {"paths": ["/icons"]})
+    assert any(r.operation == "icons" for r in service.active)
+    service.shutdown()
+
+
 def test_quitting_lifts_the_hold(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
     """io-1: quitting starts nothing but saves, so the hold has nothing left to hold, and a save
     queued behind it would otherwise keep the quit window waiting."""

@@ -354,8 +354,9 @@ class IOService(QObject):
 
     def _foreground_busy(self, now: float) -> bool:
         # A Live check runs every few seconds and is mostly one stat or a names-only listing: it
-        # holds background work only while it reads a new file.
-        return any(r.lane == FOREGROUND and not r.completed
+        # holds background work only while it reads a new file. A load the mismatch hold pauses
+        # holds none: icons, listings and conversions go on while the user decides (io-6).
+        return any(r.lane == FOREGROUND and not r.completed and not self.held_by_mismatch(r)
                    and (r.operation == "load" and (not self.live(r) or r.current_file is not None)
                         or self._listing_progressing(r, now)) for r in self.active)
 
