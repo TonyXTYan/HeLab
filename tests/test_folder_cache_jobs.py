@@ -151,3 +151,25 @@ def test_clearing_a_folders_cache_tells_a_waiting_load_it_was_cancelled(
         assert events == ["queued", "cancelled"] and not cache.requests("tab-c")
     finally:
         service.shutdown()
+
+
+def test_a_late_done_after_an_error_reaches_no_tab(qtbot: QtBot, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The area review's third unverified note (io.md): ``IOService._tick`` sends a ``done`` for a completed
+    request whose helper is slow to exit, and an ``error`` completes a request too, so a load can report
+    ``error`` and then ``done``. The ``error`` ends the job (forgotten); the ``done`` is the producer's alone,
+    and no subscriber hears a second ending, nor does a newer job of the same folder."""
+    service = service_for_test(monkeypatch)
+    cache = FolderCache(service)
+    try:
+        events = events_of(cache, "tab")
+        assert cache.submit("tab", 0, RUN, "load", {})
+        first = next(r for r in service.pending if r.owner == cache.jobs[("load", RUN)].owner)
+        service.resultReady.emit(first, {"kind": "started"})
+        service.resultReady.emit(first, {"kind": "error", "message": "Folder not found"})
+        assert not cache.jobs and events == ["queued", "started", "error"]
+        assert cache.submit("tab", 1, RUN, "load", {})  # (A Retry: a new job of the same folder.)
+        newer = cache.jobs[("load", RUN)]
+        service.resultReady.emit(first, {"kind": "done"})  # The old helper's late synthetic ``done``.
+        assert events == ["queued", "started", "error", "queued"] and cache.jobs[("load", RUN)] is newer
+    finally:
+        service.shutdown()
