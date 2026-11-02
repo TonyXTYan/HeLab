@@ -1,0 +1,22 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/HeLab/venv/bin/python
+cachedir: .pytest_cache
+PyQt6 6.11.0 -- Qt runtime 6.11.2 -- Qt compiled 6.11.0
+rootdir: /workspace/HeLab-caching-v2-review
+configfile: pytest.ini
+plugins: dash-4.4.1, cov-7.1.0, qt-4.5.0, rerunfailures-16.7, timeout-2.4.0, xdist-3.8.0
+collecting ... collected 5 items / 4 deselected / 1 selected
+
+tests/test_branches_review_repros.py::test_segment_offset_bounds_are_checked_without_int64_overflow invalid offsets produced {1: array([[11.,  2.,  3.],
+       [99.,  2.,  3.]]), 2: array([], shape=(0, 3), dtype=float64), 3: array([[11.,  2.,  3.]]), 4: array([[99.,  2.,  3.]])}
+FAILED
+
+=================================== FAILURES ===================================
+________ test_segment_offset_bounds_are_checked_without_int64_overflow _________
+tests/test_branches_review_repros.py:103: in test_segment_offset_bounds_are_checked_without_int64_overflow
+    with pytest.raises(hlb.HlbError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE HlbError
+=========================== short test summary info ============================
+FAILED tests/test_branches_review_repros.py::test_segment_offset_bounds_are_checked_without_int64_overflow - Failed: DID NOT RAISE HlbError
+======================= 1 failed, 4 deselected in 0.28s ========================

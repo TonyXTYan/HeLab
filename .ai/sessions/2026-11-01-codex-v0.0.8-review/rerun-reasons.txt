@@ -1,0 +1,285 @@
+================================ rerun reasons =================================
+tests/test_typing.py::test_mypy_helab_tests_soft
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_strict
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_soft
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_tests_soft
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_soft
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_strict
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_strict
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_soft
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_tests_soft
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_soft
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_strict
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_tests_soft
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_strict
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_tests_soft
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_soft
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_pyright_helab
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'pyright'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_pyright_tests
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'pyright'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_tests_strict
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_pyright_tests
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'pyright'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_pyright_helab
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'pyright'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_tests_strict
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_pyright_tests
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'pyright'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_pyright_helab
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'pyright'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_tests_strict
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_pyright_helab
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'pyright'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_pyright_tests
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'pyright'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_tests_strict
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_pyright_tests
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'pyright'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_pyright_helab
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'pyright'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_typing.py::test_mypy_helab_tests_strict
+E                   FileNotFoundError: [Errno 2] No such file or directory: 'mypy'
+/usr/lib/python3.13/subprocess.py:1972: FileNotFoundError
+tests/test_cache_admin.py::test_failed_listing_history_write_keeps_the_listing_guard
+E       AssertionError: assert 'The volume o... yet verified' == 'Cache was cl...ing completed'
+E         
+E         - Cache was cleared before saving completed
+E         + The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_failed_listing_history_wr0/unavailable is not yet verified
+tests/test_cache_admin.py:906: AssertionError
+tests/test_cache_admin.py::test_failed_listing_history_write_keeps_the_listing_guard
+E       AssertionError: assert 'The volume o... yet verified' == 'Cache was cl...ing completed'
+E         
+E         - Cache was cleared before saving completed
+E         + The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_failed_listing_history_wr1/unavailable is not yet verified
+tests/test_cache_admin.py:906: AssertionError
+tests/test_cache_admin.py::test_failed_listing_history_write_keeps_the_listing_guard
+E       AssertionError: assert 'The volume o... yet verified' == 'Cache was cl...ing completed'
+E         
+E         - Cache was cleared before saving completed
+E         + The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_failed_listing_history_wr2/unavailable is not yet verified
+tests/test_cache_admin.py:906: AssertionError
+tests/test_cache_admin.py::test_failed_listing_history_write_keeps_the_listing_guard
+E       AssertionError: assert 'The volume o... yet verified' == 'Cache was cl...ing completed'
+E         
+E         - Cache was cleared before saving completed
+E         + The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_failed_listing_history_wr3/unavailable is not yet verified
+tests/test_cache_admin.py:906: AssertionError
+tests/test_cache_admin.py::test_failed_listing_history_write_keeps_the_listing_guard
+E       AssertionError: assert 'The volume o... yet verified' == 'Cache was cl...ing completed'
+E         
+E         - Cache was cleared before saving completed
+E         + The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_failed_listing_history_wr4/unavailable is not yet verified
+tests/test_cache_admin.py:906: AssertionError
+tests/test_convert_helab.py::test_a_killed_helpers_workers_exit
+E       AssertionError: assert [psutil.Proce...d='05:18:12')] == []
+E         
+E         Left contains 3 more items, first extra item: psutil.Process(pid=7726, name='python', status='zombie', started='05:18:12')
+E         
+E         Full diff:
+E         - []
+tests/test_convert_helab.py:1077: AssertionError
+tests/test_convert_helab.py::test_a_killed_helpers_workers_exit
+E       AssertionError: assert [psutil.Proce...d='05:18:29')] == []
+E         
+E         Left contains 3 more items, first extra item: psutil.Process(pid=9338, name='python', status='zombie', started='05:18:29')
+E         
+E         Full diff:
+E         - []
+tests/test_convert_helab.py:1077: AssertionError
+tests/test_convert_helab.py::test_a_killed_helpers_workers_exit
+E       AssertionError: assert [psutil.Proce...d='05:18:46')] == []
+E         
+E         Left contains 3 more items, first extra item: psutil.Process(pid=10701, name='python', status='zombie', started='05:18:46')
+E         
+E         Full diff:
+E         - []
+tests/test_convert_helab.py:1077: AssertionError
+tests/test_convert_helab.py::test_a_killed_helpers_workers_exit
+E       AssertionError: assert [psutil.Proce...d='05:19:04')] == []
+E         
+E         Left contains 3 more items, first extra item: psutil.Process(pid=12024, name='python', status='zombie', started='05:19:04')
+E         
+E         Full diff:
+E         - []
+tests/test_convert_helab.py:1077: AssertionError
+tests/test_convert_helab.py::test_a_killed_helpers_workers_exit
+E       AssertionError: assert [psutil.Proce...d='05:19:21')] == []
+E         
+E         Left contains 3 more items, first extra item: psutil.Process(pid=13087, name='python', status='zombie', started='05:19:21')
+E         
+E         Full diff:
+E         - []
+tests/test_convert_helab.py:1077: AssertionError
+tests/test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such[at_once]
+E                           AssertionError: ["Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_offline_a_folder_never_li1/run is not yet verified): its plots wait for its data"]
+E                           assert ['Preset “p”:...for its data'] == ['Preset “p”:...for its data']
+E                             
+E                             At index 0 diff: "Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_offline_a_folder_never_li1/run is not yet verified): its plots wait for its data" != "Preset “p”: run can't be opened while working offline (not listed while online): its plots wait for its data"
+E                             
+E                             Full diff:
+tests/test_preset_folder_live.py:93: AssertionError
+tests/test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such[at_once]
+E                           AssertionError: ["Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_offline_a_folder_never_li2/run is not yet verified): its plots wait for its data"]
+E                           assert ['Preset “p”:...for its data'] == ['Preset “p”:...for its data']
+E                             
+E                             At index 0 diff: "Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_offline_a_folder_never_li2/run is not yet verified): its plots wait for its data" != "Preset “p”: run can't be opened while working offline (not listed while online): its plots wait for its data"
+E                             
+E                             Full diff:
+tests/test_preset_folder_live.py:93: AssertionError
+tests/test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such[at_once]
+E                           AssertionError: ["Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_offline_a_folder_never_li3/run is not yet verified): its plots wait for its data"]
+E                           assert ['Preset “p”:...for its data'] == ['Preset “p”:...for its data']
+E                             
+E                             At index 0 diff: "Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_offline_a_folder_never_li3/run is not yet verified): its plots wait for its data" != "Preset “p”: run can't be opened while working offline (not listed while online): its plots wait for its data"
+E                             
+E                             Full diff:
+tests/test_preset_folder_live.py:93: AssertionError
+tests/test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such[at_once]
+E                           AssertionError: ["Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_offline_a_folder_never_li4/run is not yet verified): its plots wait for its data"]
+E                           assert ['Preset “p”:...for its data'] == ['Preset “p”:...for its data']
+E                             
+E                             At index 0 diff: "Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_offline_a_folder_never_li4/run is not yet verified): its plots wait for its data" != "Preset “p”: run can't be opened while working offline (not listed while online): its plots wait for its data"
+E                             
+E                             Full diff:
+tests/test_preset_folder_live.py:93: AssertionError
+tests/test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such[at_once]
+E                           AssertionError: ["Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_offline_a_folder_never_li5/run is not yet verified): its plots wait for its data"]
+E                           assert ['Preset “p”:...for its data'] == ['Preset “p”:...for its data']
+E                             
+E                             At index 0 diff: "Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-0/popen-gw0/test_offline_a_folder_never_li5/run is not yet verified): its plots wait for its data" != "Preset “p”: run can't be opened while working offline (not listed while online): its plots wait for its data"
+E                             
+E                             Full diff:
+tests/test_preset_folder_live.py:93: AssertionError
+tests/test_offline_browsing.py::test_a_saved_analysis_result_shows_offline_without_computing
+E           pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+tests/test_offline_browsing.py:421: TimeoutError
+tests/test_offline_browsing.py::test_a_saved_analysis_result_shows_offline_without_computing
+E           pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+tests/test_offline_browsing.py:421: TimeoutError
+tests/test_offline_browsing.py::test_a_saved_analysis_result_shows_offline_without_computing
+E           pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+tests/test_offline_browsing.py:421: TimeoutError
+tests/test_offline_browsing.py::test_a_saved_analysis_result_shows_offline_without_computing
+E           pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+tests/test_offline_browsing.py:421: TimeoutError
+tests/test_offline_browsing.py::test_a_saved_analysis_result_shows_offline_without_computing
+verification_due
+    self._unchecked(item)
+    ~~~~~~~~~~~~~~~^^^^^^
+  File "/workspace/HeLab-v0.0.8/helab/views/plots/cached_results.py", line 337, in _unchecked
+    self._note("")
+    ~~~~~~~~~~^^^^
+  File "/workspace/HeLab-v0.0.8/helab/views/plots/instance.py", line 547, in _cached_status
+    parts = [part for part in self.status_label.text().split(" · ") if part and part != f"⚠ {previous}"]
+                              ~~~~~~~~~~~~~~~~~~~~~~^^
+RuntimeError: wrapped C/C++ object of type QLabel has been deleted
+________________________________________________________________________________
+tests/test_offline_browsing.py::test_a_saved_analysis_result_shows_offline_without_computing
+E           pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+tests/test_offline_browsing.py:421: TimeoutError
+tests/test_offline_browsing.py::test_a_saved_analysis_result_shows_offline_without_computing
+verification_due
+    self._unchecked(item)
+    ~~~~~~~~~~~~~~~^^^^^^
+  File "/workspace/HeLab-v0.0.8/helab/views/plots/cached_results.py", line 337, in _unchecked
+    self._note("")
+    ~~~~~~~~~~^^^^
+  File "/workspace/HeLab-v0.0.8/helab/views/plots/instance.py", line 547, in _cached_status
+    parts = [part for part in self.status_label.text().split(" · ") if part and part != f"⚠ {previous}"]
+                              ~~~~~~~~~~~~~~~~~~~~~~^^
+RuntimeError: wrapped C/C++ object of type QLabel has been deleted
+________________________________________________________________________________
+tests/test_offline_browsing.py::test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_every_tab
+E       pytestqt.exceptions.TimeoutError: waitUntil timed out in 10000 milliseconds
+tests/test_offline_browsing.py:501: TimeoutError
+tests/test_offline_browsing.py::test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_every_tab
+E       pytestqt.exceptions.TimeoutError: waitUntil timed out in 10000 milliseconds
+tests/test_offline_browsing.py:501: TimeoutError
+tests/test_offline_browsing.py::test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_every_tab
+E       pytestqt.exceptions.TimeoutError: waitUntil timed out in 10000 milliseconds
+tests/test_offline_browsing.py:501: TimeoutError
+tests/test_offline_browsing.py::test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_every_tab
+verification_due
+    self._unchecked(item)
+    ~~~~~~~~~~~~~~~^^^^^^
+  File "/workspace/HeLab-v0.0.8/helab/views/plots/cached_results.py", line 337, in _unchecked
+    self._note("")
+    ~~~~~~~~~~^^^^
+  File "/workspace/HeLab-v0.0.8/helab/views/plots/instance.py", line 547, in _cached_status
+    parts = [part for part in self.status_label.text().split(" · ") if part and part != f"⚠ {previous}"]
+                              ~~~~~~~~~~~~~~~~~~~~~~^^
+RuntimeError: wrapped C/C++ object of type QLabel has been deleted
+________________________________________________________________________________
+tests/test_offline_browsing.py::test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_every_tab
+E       pytestqt.exceptions.TimeoutError: waitUntil timed out in 10000 milliseconds
+tests/test_offline_browsing.py:501: TimeoutError
+tests/test_offline_browsing.py::test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_every_tab
+E       pytestqt.exceptions.TimeoutError: waitUntil timed out in 10000 milliseconds
+tests/test_offline_browsing.py:501: TimeoutError
+tests/test_result_cache_badge.py::test_a_plots_save_shows_the_badge_without_listing_and_a_clear_hides_it
+E           pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+tests/test_result_cache_badge.py:192: TimeoutError
+tests/test_result_cache_badge.py::test_a_plots_save_shows_the_badge_without_listing_and_a_clear_hides_it
+E           pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+tests/test_result_cache_badge.py:192: TimeoutError
+tests/test_result_cache_badge.py::test_a_plots_save_shows_the_badge_without_listing_and_a_clear_hides_it
+E           pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+tests/test_result_cache_badge.py:192: TimeoutError
+tests/test_result_cache_badge.py::test_a_plots_save_shows_the_badge_without_listing_and_a_clear_hides_it
+E           pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+tests/test_result_cache_badge.py:192: TimeoutError
+tests/test_result_cache_badge.py::test_a_plots_save_shows_the_badge_without_listing_and_a_clear_hides_it
+E           pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+tests/test_result_cache_badge.py:192: TimeoutError
+tests/test_result_cache_plots.py::test_a_saved_result_is_shown_after_a_restart_without_computing
+E       pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+tests/test_result_cache_plots.py:205: TimeoutError

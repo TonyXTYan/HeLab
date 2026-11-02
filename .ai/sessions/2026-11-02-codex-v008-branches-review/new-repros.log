@@ -1,0 +1,59 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/HeLab/venv/bin/python
+cachedir: .pytest_cache
+PyQt6 6.11.0 -- Qt runtime 6.11.2 -- Qt compiled 6.11.0
+rootdir: /workspace/HeLab-caching-v2-review
+configfile: pytest.ini
+plugins: dash-4.4.1, cov-7.1.0, qt-4.5.0, rerunfailures-16.7, timeout-2.4.0, xdist-3.8.0
+collecting ... collected 4 items
+
+tests/test_branches_review_repros.py::test_a_view_cannot_return_changed_layer_data_with_its_old_fingerprint view fingerprint [[1, 10, 100]] data {1: array([[99.,  2.,  3.]])}
+FAILED
+tests/test_branches_review_repros.py::test_fractional_shot_ids_are_rejected_instead_of_silently_merged invalid shot IDs were accepted as {1: array([[99.,  2.,  3.]])}
+FAILED
+tests/test_branches_review_repros.py::test_a_helab_file_cannot_make_a_missing_matlab_file_recoverable MATLAB original gone; gone_at is None
+FAILED
+tests/test_branches_review_repros.py::test_replacing_a_root_drops_its_txy_source_override QObject::startTimer: current thread's event dispatcher has already been destroyed
+new root's expected source helab-priority actual source matlab-only
+FAILED
+
+=================================== FAILURES ===================================
+____ test_a_view_cannot_return_changed_layer_data_with_its_old_fingerprint _____
+tests/test_branches_review_repros.py:36: in test_a_view_cannot_return_changed_layer_data_with_its_old_fingerprint
+    assert data is None or 1 not in data or np.array_equal(data[1], original), (
+E   AssertionError: old view fingerprint was attached to newer data from another view's layer
+E   assert ({1: array([[99.,  2.,  3.]])} is None or 1 not in {1: array([[99.,  2.,  3.]])} or False)
+E    +  where False = <function array_equal at 0x7f14f09327f0>(array([[99.,  2.,  3.]]), array([[11.,  2.,  3.]]))
+E    +    where <function array_equal at 0x7f14f09327f0> = np.array_equal
+_______ test_fractional_shot_ids_are_rejected_instead_of_silently_merged _______
+tests/test_branches_review_repros.py:46: in test_fractional_shot_ids_are_rejected_instead_of_silently_merged
+    with pytest.raises(hlb.HlbError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE HlbError
+_______ test_a_helab_file_cannot_make_a_missing_matlab_file_recoverable ________
+tests/test_branches_review_repros.py:72: in test_a_helab_file_cannot_make_a_missing_matlab_file_recoverable
+    assert "matlab" in remaining, "budget trim deleted the only MATLAB copy without naming it"
+E   AssertionError: budget trim deleted the only MATLAB copy without naming it
+E   assert 'matlab' in {}
+_____________ test_replacing_a_root_drops_its_txy_source_override ______________
+tests/test_branches_review_repros.py:91: in test_replacing_a_root_drops_its_txy_source_override
+    assert actual == default, "the new root inherited the old root's per-folder TXY override"
+E   AssertionError: the new root inherited the old root's per-folder TXY override
+E   assert 'matlab-only' == 'helab-priority'
+E     
+E     - helab-priority
+E     + matlab-only
+=========================== short test summary info ============================
+FAILED tests/test_branches_review_repros.py::test_a_view_cannot_return_changed_layer_data_with_its_old_fingerprint - AssertionError: old view fingerprint was attached to newer data from another view's layer
+assert ({1: array([[99.,  2.,  3.]])} is None or 1 not in {1: array([[99.,  2.,  3.]])} or False)
+ +  where False = <function array_equal at 0x7f14f09327f0>(array([[99.,  2.,  3.]]), array([[11.,  2.,  3.]]))
+ +    where <function array_equal at 0x7f14f09327f0> = np.array_equal
+FAILED tests/test_branches_review_repros.py::test_fractional_shot_ids_are_rejected_instead_of_silently_merged - Failed: DID NOT RAISE HlbError
+FAILED tests/test_branches_review_repros.py::test_a_helab_file_cannot_make_a_missing_matlab_file_recoverable - AssertionError: budget trim deleted the only MATLAB copy without naming it
+assert 'matlab' in {}
+FAILED tests/test_branches_review_repros.py::test_replacing_a_root_drops_its_txy_source_override - AssertionError: the new root inherited the old root's per-folder TXY override
+assert 'matlab-only' == 'helab-priority'
+  
+  - helab-priority
+  + matlab-only
+============================== 4 failed in 0.52s ===============================

@@ -1,0 +1,31 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/HeLab/venv/bin/python
+cachedir: .pytest_cache
+PyQt6 6.11.0 -- Qt runtime 6.11.2 -- Qt compiled 6.11.0
+rootdir: /workspace/HeLab-v007-baseline
+configfile: pytest.ini
+plugins: dash-4.4.1, cov-7.1.0, qt-4.5.0, rerunfailures-16.7, timeout-2.4.0, xdist-3.8.0
+timeout: 75.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 1 item
+
+tests/test_result_cache_badge.py::test_a_plots_save_shows_the_badge_without_listing_and_a_clear_hides_it FAILED [100%]
+
+=================================== FAILURES ===================================
+____ test_a_plots_save_shows_the_badge_without_listing_and_a_clear_hides_it ____
+tests/test_result_cache_badge.py:192: in test_a_plots_save_shows_the_badge_without_listing_and_a_clear_hides_it
+    qtbot.waitUntil(lambda: saved(instance), timeout=WAIT)
+E   pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+----------------------------- Captured stderr call -----------------------------
+Fontconfig error: No writable cache directories
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+WARNING:root:Read cached analysis failed: /tmp/pytest-of-agent/pytest-12/test_a_plots_save_shows_the_ba0/data/run — The volume of /tmp/pytest-of-agent/pytest-12/test_a_plots_save_shows_the_ba0/data/run is not yet verified
+This plugin does not support propagateSizeHints()
+------------------------------ Captured log call -------------------------------
+WARNING  root:io_service.py:1013 Read cached analysis failed: /tmp/pytest-of-agent/pytest-12/test_a_plots_save_shows_the_ba0/data/run — The volume of /tmp/pytest-of-agent/pytest-12/test_a_plots_save_shows_the_ba0/data/run is not yet verified
+=========================== short test summary info ============================
+FAILED tests/test_result_cache_badge.py::test_a_plots_save_shows_the_badge_without_listing_and_a_clear_hides_it - pytestqt.exceptions.TimeoutError: waitUntil timed out in 30000 milliseconds
+============================== 1 failed in 31.11s ==============================

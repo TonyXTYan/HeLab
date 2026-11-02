@@ -1,0 +1,82 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/HeLab/venv/bin/python
+cachedir: .pytest_cache
+PyQt6 6.11.0 -- Qt runtime 6.11.2 -- Qt compiled 6.11.0
+rootdir: /workspace/HeLab-v007-baseline
+configfile: pytest.ini
+plugins: dash-4.4.1, cov-7.1.0, qt-4.5.0, rerunfailures-16.7, timeout-2.4.0, xdist-3.8.0
+collecting ... collected 3 items
+
+tests/test_cache_admin.py::test_failed_listing_history_write_keeps_the_listing_guard FAILED [ 33%]
+tests/test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such[tab_settled] PASSED [ 66%]
+tests/test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such[at_once] FAILED [100%]
+
+=================================== FAILURES ===================================
+__________ test_failed_listing_history_write_keeps_the_listing_guard ___________
+tests/test_cache_admin.py:906: in test_failed_listing_history_write_keeps_the_listing_guard
+    assert json.loads(completed.stdout.strip().splitlines()[-1])["message"] == \
+E   AssertionError: assert 'The volume of /tmp/pytest-of-agent/pytest-9/test_failed_listing_history_wr0/unavailable is not yet verified' == 'Cache was cleared before saving completed'
+E     
+E     - Cache was cleared before saving completed
+E     + The volume of /tmp/pytest-of-agent/pytest-9/test_failed_listing_history_wr0/unavailable is not yet verified
+----------------------------- Captured stderr call -----------------------------
+WARNING:root:Scan history /tmp/pytest-of-agent/pytest-9/test_failed_listing_history_wr0/unavailable: Save cancelled
+------------------------------ Captured log call -------------------------------
+WARNING  root:folder_cache.py:3859 Scan history /tmp/pytest-of-agent/pytest-9/test_failed_listing_history_wr0/unavailable: Save cancelled
+_________ test_offline_a_folder_never_listed_is_named_as_such[at_once] _________
+tests/test_preset_folder_live.py:93: in test_offline_a_folder_never_listed_is_named_as_such
+    assert said == ["Preset “p”: run can't be opened while working offline (not listed while online): "
+E   AssertionError: ["Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run is not yet verified): its plots wait for its data"]
+E   assert ["Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run is not yet verified): its plots wait for its data"] == ["Preset “p”: run can't be opened while working offline (not listed while online): its plots wait for its data"]
+E     
+E     At index 0 diff: "Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run is not yet verified): its plots wait for its data" != "Preset “p”: run can't be opened while working offline (not listed while online): its plots wait for its data"
+E     
+E     Full diff:
+E       [
+E     -     "Preset “p”: run can't be opened while working offline (not listed while "
+E     +     "Preset “p”: run can't be opened now (The volume of "
+E     +     '/tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run is not '
+E     -     'online): its plots wait for its data',
+E     ?      ^^^ ^
+E     +     'yet verified): its plots wait for its data',
+E     ?      ^^^^^^^ ^^ +
+E       ]
+----------------------------- Captured stderr call -----------------------------
+This plugin does not support propagateSizeHints()
+WARNING:root:Browse saved listing failed: /tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run — The volume of /tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run is not yet verified
+------------------------------ Captured log call -------------------------------
+WARNING  root:io_service.py:1013 Browse saved listing failed: /tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run — The volume of /tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run is not yet verified
+--------------------------- Captured stderr teardown ---------------------------
+This plugin does not support propagateSizeHints()
+WARNING:root:Disk cache presets: Cancelled
+WARNING:root:Presets: cancelled
+WARNING:root:Volume verification: Cancelled
+WARNING:root:Disk cache presets: Cancelled
+WARNING:root:Presets: cancelled
+---------------------------- Captured log teardown -----------------------------
+WARNING  root:folder_cache.py:3620 Disk cache presets: Cancelled
+WARNING  root:folder_cache.py:1970 Presets: cancelled
+WARNING  root:folder_cache.py:3713 Volume verification: Cancelled
+WARNING  root:folder_cache.py:3620 Disk cache presets: Cancelled
+WARNING  root:folder_cache.py:1970 Presets: cancelled
+=========================== short test summary info ============================
+FAILED tests/test_cache_admin.py::test_failed_listing_history_write_keeps_the_listing_guard - AssertionError: assert 'The volume of /tmp/pytest-of-agent/pytest-9/test_failed_listing_history_wr0/unavailable is not yet verified' == 'Cache was cleared before saving completed'
+  
+  - Cache was cleared before saving completed
+  + The volume of /tmp/pytest-of-agent/pytest-9/test_failed_listing_history_wr0/unavailable is not yet verified
+FAILED tests/test_preset_folder_live.py::test_offline_a_folder_never_listed_is_named_as_such[at_once] - AssertionError: ["Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run is not yet verified): its plots wait for its data"]
+assert ["Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run is not yet verified): its plots wait for its data"] == ["Preset “p”: run can't be opened while working offline (not listed while online): its plots wait for its data"]
+  
+  At index 0 diff: "Preset “p”: run can't be opened now (The volume of /tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run is not yet verified): its plots wait for its data" != "Preset “p”: run can't be opened while working offline (not listed while online): its plots wait for its data"
+  
+  Full diff:
+    [
+  -     "Preset “p”: run can't be opened while working offline (not listed while "
+  +     "Preset “p”: run can't be opened now (The volume of "
+  +     '/tmp/pytest-of-agent/pytest-9/test_offline_a_folder_never_li1/run is not '
+  -     'online): its plots wait for its data',
+  ?      ^^^ ^
+  +     'yet verified): its plots wait for its data',
+  ?      ^^^^^^^ ^^ +
+    ]
+========================= 2 failed, 1 passed in 2.85s ==========================

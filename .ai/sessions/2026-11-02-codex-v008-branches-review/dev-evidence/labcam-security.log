@@ -1,0 +1,24 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/HeLab/venv/bin/python
+cachedir: .pytest_cache
+PyQt6 6.11.0 -- Qt runtime 6.11.2 -- Qt compiled 6.11.0
+rootdir: /workspace/HeLab-v008-recheck
+configfile: pytest.ini
+plugins: dash-4.4.1, cov-7.1.0, qt-4.5.0, rerunfailures-16.7, timeout-2.4.0, xdist-3.8.0
+collecting ... collected 1 item
+
+tests/test_labcam_review_repro.py::test_a_foreign_origin_cannot_persist_labcam_settings status 200 response b'{"message": "power: low"}' settings {'settings': {'power_mode': 'low'}}
+FAILED
+
+=================================== FAILURES ===================================
+_____________ test_a_foreign_origin_cannot_persist_labcam_settings _____________
+tests/test_labcam_review_repro.py:34: in test_a_foreign_origin_cannot_persist_labcam_settings
+    assert response.status in (401, 403), "anonymous foreign-origin request changed persistent settings"
+E   AssertionError: anonymous foreign-origin request changed persistent settings
+E   assert 200 in (401, 403)
+E    +  where 200 = <http.client.HTTPResponse object at 0x7ff0417b0df0>.status
+=========================== short test summary info ============================
+FAILED tests/test_labcam_review_repro.py::test_a_foreign_origin_cannot_persist_labcam_settings - AssertionError: anonymous foreign-origin request changed persistent settings
+assert 200 in (401, 403)
+ +  where 200 = <http.client.HTTPResponse object at 0x7ff0417b0df0>.status
+============================== 1 failed in 0.94s ===============================

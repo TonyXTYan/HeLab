@@ -1,0 +1,160 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/HeLab/venv/bin/python
+cachedir: .pytest_cache
+PyQt6 6.11.0 -- Qt runtime 6.11.2 -- Qt compiled 6.11.0
+rootdir: /workspace/HeLab-v008-recheck
+configfile: pytest.ini
+plugins: dash-4.4.1, cov-7.1.0, qt-4.5.0, rerunfailures-16.7, timeout-2.4.0, xdist-3.8.0
+timeout: 60.0s
+timeout method: thread
+timeout func_only: False
+created: 3/3 workers
+3 workers [70 items]
+
+scheduling tests via LoadScheduling
+
+tests/test_main_split.py::test_the_default_split_gives_the_plots_the_room_and_a_plot_keeps_it 
+tests/test_folder_icons.py::test_icon_jobs_are_bounded_and_cancelled_on_navigation 
+tests/test_folder_icons.py::test_native_icon_delivery_is_shared_and_rendering_stays_memory_only[alone] 
+[gw1] [  1%] PASSED tests/test_folder_icons.py::test_icon_jobs_are_bounded_and_cancelled_on_navigation 
+tests/test_folder_icons.py::test_visible_icon_requests_do_not_enable_basic_scanning 
+[gw0] [  2%] PASSED tests/test_folder_icons.py::test_native_icon_delivery_is_shared_and_rendering_stays_memory_only[alone] 
+tests/test_folder_icons.py::test_native_icon_delivery_is_shared_and_rendering_stays_memory_only[another thread stats a file meanwhile] 
+[gw0] [  4%] PASSED tests/test_folder_icons.py::test_native_icon_delivery_is_shared_and_rendering_stays_memory_only[another thread stats a file meanwhile] 
+tests/test_folder_icons.py::test_icon_errors_keep_folder_available_until_manual_refresh 
+[gw0] [  5%] PASSED tests/test_folder_icons.py::test_icon_errors_keep_folder_available_until_manual_refresh 
+tests/test_folder_icons.py::test_refresh_rejects_icons_from_cancelled_lookup 
+[gw0] [  7%] PASSED tests/test_folder_icons.py::test_refresh_rejects_icons_from_cancelled_lookup 
+tests/test_folder_icons.py::test_icon_cache_is_bounded_and_invalid_png_uses_fallback 
+[gw0] [  8%] PASSED tests/test_folder_icons.py::test_icon_cache_is_bounded_and_invalid_png_uses_fallback 
+[gw1] [ 10%] PASSED tests/test_folder_icons.py::test_visible_icon_requests_do_not_enable_basic_scanning 
+tests/test_folder_icons.py::test_real_icon_helper_transports_png 
+tests/test_main_split.py::test_the_users_widths_last_to_the_next_start 
+[gw1] [ 11%] PASSED tests/test_folder_icons.py::test_real_icon_helper_transports_png 
+tests/test_folder_icons.py::test_macos_custom_folder_and_volume_icons 
+[gw1] [ 12%] SKIPPED tests/test_folder_icons.py::test_macos_custom_folder_and_volume_icons 
+tests/test_main_split.py::test_a_qt_test_has_the_apps_toolbar_icons 
+[gw1] [ 14%] PASSED tests/test_main_split.py::test_a_qt_test_has_the_apps_toolbar_icons 
+tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[79,400-expected4] 
+[gw1] [ 15%] PASSED tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[79,400-expected4] 
+[gw0] [ 17%] PASSED tests/test_main_split.py::test_the_users_widths_last_to_the_next_start 
+tests/test_main_split.py::test_a_collapsed_panel_saves_the_width_it_had 
+tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[500,4001-expected5] 
+[gw1] [ 18%] PASSED tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[500,4001-expected5] 
+tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[80,4000-expected6] 
+[gw1] [ 20%] PASSED tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[80,4000-expected6] 
+tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[80,249-expected7] 
+[gw1] [ 21%] PASSED tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[80,249-expected7] 
+tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[80,250-expected8] 
+[gw1] [ 22%] PASSED tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[80,250-expected8] 
+[gw0] [ 24%] PASSED tests/test_main_split.py::test_a_collapsed_panel_saves_the_width_it_had 
+tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[500,400-expected0] 
+[gw0] [ 25%] PASSED tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[500,400-expected0] 
+tests/test_main_split.py::test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved[1600] 
+tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[-expected1] 
+[gw0] [ 27%] PASSED tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[-expected1] 
+tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[500-expected2] 
+[gw0] [ 28%] PASSED tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[500-expected2] 
+tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[a,b-expected3] 
+[gw0] [ 30%] PASSED tests/test_main_split.py::test_read_split_takes_two_widths_in_range_else_the_default[a,b-expected3] 
+tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[1500-0-976-expected4] 
+[gw0] [ 31%] PASSED tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[1500-0-976-expected4] 
+tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[0-600-976-expected5] 
+[gw0] [ 32%] PASSED tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[0-600-976-expected5] 
+tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[300-250-500-expected6] 
+[gw0] [ 34%] PASSED tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[300-250-500-expected6] 
+tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[2000-260-976-expected7] 
+[gw0] [ 35%] PASSED tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[2000-260-976-expected7] 
+[gw1] [ 37%] PASSED tests/test_main_split.py::test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved[1600] 
+tests/test_main_split.py::test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved[1300] 
+tests/test_mismatched_folders.py::test_held_loads_and_scans_pause_and_wait_while_browsing_goes_on 
+[gw0] [ 38%] PASSED tests/test_mismatched_folders.py::test_held_loads_and_scans_pause_and_wait_while_browsing_goes_on 
+tests/test_mismatched_folders.py::test_cancel_held_cancels_loads_and_scans_but_not_browsing_or_cache_saves 
+[gw0] [ 40%] PASSED tests/test_mismatched_folders.py::test_cancel_held_cancels_loads_and_scans_but_not_browsing_or_cache_saves 
+tests/test_mismatched_folders.py::test_the_hold_spares_saves_and_live_checks 
+[gw0] [ 41%] PASSED tests/test_mismatched_folders.py::test_the_hold_spares_saves_and_live_checks 
+tests/test_mismatched_folders.py::test_a_foreground_load_the_hold_paused_doesnt_hold_background_work 
+[gw0] [ 42%] PASSED tests/test_mismatched_folders.py::test_a_foreground_load_the_hold_paused_doesnt_hold_background_work 
+tests/test_mismatched_folders.py::test_quitting_lifts_the_hold 
+[gw0] [ 44%] PASSED tests/test_mismatched_folders.py::test_quitting_lifts_the_hold 
+tests/test_mismatched_folders.py::test_quitting_starts_none_of_the_loads_and_scans_the_hold_held 
+[gw0] [ 45%] PASSED tests/test_mismatched_folders.py::test_quitting_starts_none_of_the_loads_and_scans_the_hold_held 
+[gw1] [ 47%] PASSED tests/test_main_split.py::test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved[1300] 
+tests/test_main_split.py::test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved[1000] 
+tests/test_mismatched_folders.py::test_holds_at_two_four_eight_until_answered_and_skipping_from_eight 
+[gw0] [ 48%] PASSED tests/test_mismatched_folders.py::test_holds_at_two_four_eight_until_answered_and_skipping_from_eight 
+tests/test_mismatched_folders.py::test_a_scan_finding_missing_cached_shots_lists_the_folder 
+[gw0] [ 50%] PASSED tests/test_mismatched_folders.py::test_a_scan_finding_missing_cached_shots_lists_the_folder 
+tests/test_mismatched_folders.py::test_clearing_a_mismatched_folders_cached_data_resolves_it 
+[gw0] [ 51%] PASSED tests/test_mismatched_folders.py::test_clearing_a_mismatched_folders_cached_data_resolves_it 
+tests/test_mismatched_folders.py::test_helper_scan_reports_cached_shots_the_folder_no_longer_has 
+[gw2] [ 52%] PASSED tests/test_main_split.py::test_the_default_split_gives_the_plots_the_room_and_a_plot_keeps_it 
+tests/test_main_split.py::test_a_settings_row_wider_than_the_panel_doesnt_widen_it 
+[gw1] [ 54%] PASSED tests/test_main_split.py::test_widths_saved_on_a_wider_screen_leave_the_plots_room_and_stay_saved[1000] 
+tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[380-320-976-expected0] 
+[gw1] [ 55%] PASSED tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[380-320-976-expected0] 
+[gw2] [ 57%] PASSED tests/test_main_split.py::test_a_settings_row_wider_than_the_panel_doesnt_widen_it 
+tests/test_main_split.py::test_the_default_split_holds_in_a_wider_font 
+tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[1500-600-976-expected1] 
+[gw1] [ 58%] PASSED tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[1500-600-976-expected1] 
+tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[1500-600-1277-expected2] 
+[gw1] [ 60%] PASSED tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[1500-600-1277-expected2] 
+tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[1500-600-676-expected3] 
+[gw1] [ 61%] PASSED tests/test_main_split.py::test_widths_that_dont_fit_are_shared_above_each_panels_least_width[1500-600-676-expected3] 
+tests/test_mismatched_folders.py::test_a_held_load_waits_for_the_answer 
+[gw1] [ 62%] PASSED tests/test_mismatched_folders.py::test_a_held_load_waits_for_the_answer 
+tests/test_mismatched_folders.py::test_review_shows_the_window_with_that_folder_selected This plugin does not support propagateSizeHints()
+
+[gw1] [ 64%] PASSED tests/test_mismatched_folders.py::test_review_shows_the_window_with_that_folder_selected 
+tests/test_mismatched_folders.py::test_working_offline_load_as_it_is_now_is_off 
+[gw1] [ 65%] PASSED tests/test_mismatched_folders.py::test_working_offline_load_as_it_is_now_is_off 
+tests/test_store_v3_question.py::test_the_choice_is_recorded_and_clear_removes_store_v3_only 
+[gw1] [ 67%] PASSED tests/test_store_v3_question.py::test_the_choice_is_recorded_and_clear_removes_store_v3_only 
+tests/test_store_v3_question.py::test_a_store_v3_that_is_a_link_is_never_cleared_through_it 
+[gw1] [ 68%] PASSED tests/test_store_v3_question.py::test_a_store_v3_that_is_a_link_is_never_cleared_through_it 
+tests/test_store_v3_question.py::test_the_admin_answers_with_the_new_state_and_says_what_it_removed 
+[gw1] [ 70%] PASSED tests/test_store_v3_question.py::test_the_admin_answers_with_the_new_state_and_says_what_it_removed 
+tests/test_store_v3_question.py::test_an_unanswered_store_v3_is_asked_about_once_a_session 
+[gw1] [ 71%] PASSED tests/test_store_v3_question.py::test_an_unanswered_store_v3_is_asked_about_once_a_session 
+tests/test_store_v3_question.py::test_clear_old_stores_asks_first_and_never_while_another_helab_runs 
+[gw0] [ 72%] PASSED tests/test_mismatched_folders.py::test_helper_scan_reports_cached_shots_the_folder_no_longer_has 
+[gw1] [ 74%] PASSED tests/test_store_v3_question.py::test_clear_old_stores_asks_first_and_never_while_another_helab_runs 
+tests/test_mismatched_folders.py::test_window_lists_folders_newest_first_and_answers_them This plugin does not support propagateSizeHints()
+
+[gw0] [ 75%] PASSED tests/test_mismatched_folders.py::test_window_lists_folders_newest_first_and_answers_them 
+tests/test_store_v3_question.py::test_make_room_names_raw_pulses_and_only_copies_and_removes_exactly_them 
+[gw1] [ 77%] PASSED tests/test_store_v3_question.py::test_make_room_names_raw_pulses_and_only_copies_and_removes_exactly_them 
+tests/test_mismatched_folders.py::test_closed_window_stays_closed_until_the_next_warning_and_skip_shows_from_eight 
+tests/test_store_v3_question.py::test_make_room_offers_clear_old_stores_while_store_v3_counts 
+[gw1] [ 78%] PASSED tests/test_store_v3_question.py::test_make_room_offers_clear_old_stores_while_store_v3_counts This plugin does not support propagateSizeHints()
+
+[gw0] [ 80%] PASSED tests/test_mismatched_folders.py::test_closed_window_stays_closed_until_the_next_warning_and_skip_shows_from_eight 
+tests/test_store_v3_question.py::test_the_tab_shows_raw_pulses_and_the_older_store_only_with_store_v4 
+[gw0] [ 81%] PASSED tests/test_store_v3_question.py::test_the_tab_shows_raw_pulses_and_the_older_store_only_with_store_v4 
+tests/test_store_v3_question.py::test_the_tab_wont_clear_the_older_store_while_another_helab_runs 
+[gw1] [ 82%] PASSED tests/test_store_v3_question.py::test_the_tab_wont_clear_the_older_store_while_another_helab_runs 
+tests/test_store_v3_question.py::test_what_a_clear_cut_short_leaves_is_shown_and_removed_only_when_asked 
+tests/test_store_v3_question.py::test_a_store_v3_made_again_is_asked_about_again_unless_ignored 
+[gw0] [ 84%] PASSED tests/test_store_v3_question.py::test_what_a_clear_cut_short_leaves_is_shown_and_removed_only_when_asked 
+[gw1] [ 85%] PASSED tests/test_store_v3_question.py::test_a_store_v3_made_again_is_asked_about_again_unless_ignored 
+tests/test_io_service_run.py::test_writing_held_data_out_counts_as_progress[alone] 
+[gw0] [ 87%] PASSED tests/test_io_service_run.py::test_writing_held_data_out_counts_as_progress[alone] 
+tests/test_io_service_run.py::test_writing_held_data_out_counts_as_progress[another thread starts a process meanwhile] 
+[gw1] [ 88%] PASSED tests/test_io_service_run.py::test_writing_held_data_out_counts_as_progress[another thread starts a process meanwhile] 
+tests/test_io_service_run.py::test_the_frozen_reader_reads_lines_written_just_before_the_helper_exited 
+[gw0] [ 90%] PASSED tests/test_io_service_run.py::test_the_frozen_reader_reads_lines_written_just_before_the_helper_exited 
+tests/test_io_service_run.py::test_a_helper_that_dies_leaves_what_it_said_in_the_log[dies] 
+[gw1] [ 91%] PASSED tests/test_io_service_run.py::test_a_helper_that_dies_leaves_what_it_said_in_the_log[dies] 
+tests/test_io_service_run.py::test_a_helper_that_dies_leaves_what_it_said_in_the_log[died before its request was written] 
+[gw0] [ 92%] PASSED tests/test_io_service_run.py::test_a_helper_that_dies_leaves_what_it_said_in_the_log[died before its request was written] 
+tests/test_io_service_run.py::test_shutdown_stops_its_helpers_itself_not_only_from_the_reapers 
+[gw1] [ 94%] PASSED tests/test_io_service_run.py::test_shutdown_stops_its_helpers_itself_not_only_from_the_reapers 
+tests/test_io_service_run.py::test_a_helper_still_starting_when_helab_quits_is_stopped 
+[gw0] [ 95%] PASSED tests/test_io_service_run.py::test_a_helper_still_starting_when_helab_quits_is_stopped 
+[gw2] [ 97%] PASSED tests/test_main_split.py::test_the_default_split_holds_in_a_wider_font 
+tests/test_main_split.py::test_the_settings_panel_goes_no_narrower_than_its_controls_need 
+[gw2] [ 98%] SKIPPED tests/test_main_split.py::test_the_settings_panel_goes_no_narrower_than_its_controls_need 
+tests/test_main_split.py::test_a_wider_window_widens_the_plots_only 
+[gw2] [100%] PASSED tests/test_main_split.py::test_a_wider_window_widens_the_plots_only 
+
+======================== 68 passed, 2 skipped in 7.39s =========================

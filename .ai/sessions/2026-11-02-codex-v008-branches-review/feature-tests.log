@@ -1,0 +1,222 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/HeLab/venv/bin/python
+cachedir: .pytest_cache
+PyQt6 6.11.0 -- Qt runtime 6.11.2 -- Qt compiled 6.11.0
+rootdir: /workspace/HeLab-caching-v2-review
+configfile: pytest.ini
+plugins: dash-4.4.1, cov-7.1.0, qt-4.5.0, rerunfailures-16.7, timeout-2.4.0, xdist-3.8.0
+timeout: 60.0s
+timeout method: thread
+timeout func_only: False
+created: 3/3 workers
+3 workers [102 items]
+
+scheduling tests via LoadScheduling
+
+tests/test_txy_layers_store.py::test_a_later_jobs_part_replaces_a_waiting_one_and_an_earlier_ones_is_dropped 
+tests/test_txy_layers_store.py::test_a_store_v4_from_stage_1_gets_stage_2s_tables 
+tests/test_txy_layers_store.py::test_a_segment_round_trips_and_damage_is_refused 
+[gw0] [  0%] PASSED tests/test_txy_layers_store.py::test_a_segment_round_trips_and_damage_is_refused 
+[gw1] [  1%] PASSED tests/test_txy_layers_store.py::test_a_later_jobs_part_replaces_a_waiting_one_and_an_earlier_ones_is_dropped 
+[gw2] [  2%] PASSED tests/test_txy_layers_store.py::test_a_store_v4_from_stage_1_gets_stage_2s_tables 
+tests/test_txy_layers_store.py::test_compaction_runs_when_due_and_only_if_it_fits 
+tests/test_txy_layers_store.py::test_mark_seen_makes_a_layer_an_only_copy_and_back 
+tests/test_txy_layers_store.py::test_a_unit_saves_its_layers_and_view_and_they_read_back 
+[gw2] [  3%] PASSED tests/test_txy_layers_store.py::test_mark_seen_makes_a_layer_an_only_copy_and_back 
+[gw1] [  4%] PASSED tests/test_txy_layers_store.py::test_compaction_runs_when_due_and_only_if_it_fits 
+tests/test_txy_layers_store.py::test_make_room_takes_rebuildable_layers_then_seen_then_raw_then_only_copies 
+tests/test_txy_layers_store.py::test_an_older_listing_landing_late_undoes_no_mark 
+[gw2] [  5%] PASSED tests/test_txy_layers_store.py::test_an_older_listing_landing_late_undoes_no_mark 
+[gw0] [  6%] PASSED tests/test_txy_layers_store.py::test_a_unit_saves_its_layers_and_view_and_they_read_back 
+tests/test_txy_layers_store.py::test_saves_append_only_new_and_changed_shots_and_retire_what_nothing_holds 
+[gw1] [  7%] PASSED tests/test_txy_layers_store.py::test_make_room_takes_rebuildable_layers_then_seen_then_raw_then_only_copies 
+[gw0] [  8%] PASSED tests/test_txy_layers_store.py::test_saves_append_only_new_and_changed_shots_and_retire_what_nothing_holds 
+tests/test_txy_layers_store.py::test_trim_follows_make_rooms_order_and_says_what_it_removed 
+tests/test_txy_layers_store.py::test_a_cache_move_verifies_txy_segments 
+[gw2] [  9%] PASSED tests/test_txy_layers_store.py::test_a_cache_move_verifies_txy_segments 
+[gw1] [ 10%] PASSED tests/test_txy_layers_store.py::test_trim_follows_make_rooms_order_and_says_what_it_removed 
+tests/test_txy_layers_store.py::test_a_shot_a_later_job_saved_is_kept 
+[gw0] [ 11%] PASSED tests/test_txy_layers_store.py::test_a_shot_a_later_job_saved_is_kept 
+tests/test_txy_layers_store.py::test_trim_keeps_only_copies_unless_its_plan_names_them 
+tests/test_txy_layers_store.py::test_store_v3_has_no_txy_layers 
+[gw2] [ 12%] PASSED tests/test_txy_layers_store.py::test_store_v3_has_no_txy_layers 
+[gw1] [ 13%] PASSED tests/test_txy_layers_store.py::test_trim_keeps_only_copies_unless_its_plan_names_them 
+tests/test_txy_layers_store.py::test_a_clear_since_the_job_started_rejects_its_unit_and_retires_its_files 
+[gw0] [ 14%] PASSED tests/test_txy_layers_store.py::test_a_clear_since_the_job_started_rejects_its_unit_and_retires_its_files 
+tests/test_txy_layers_store.py::test_clear_takes_txy_layers_everywhere_it_joins 
+tests/test_txy_layers_store.py::test_a_new_layer_is_first_seen_when_its_job_listed 
+[gw1] [ 15%] PASSED tests/test_txy_layers_store.py::test_clear_takes_txy_layers_everywhere_it_joins 
+[gw2] [ 16%] PASSED tests/test_txy_layers_store.py::test_a_new_layer_is_first_seen_when_its_job_listed 
+tests/test_txy_layers_store.py::test_policy_raw_writes_no_helab_layer_and_the_choices_follow_convert_prefs 
+[gw0] [ 17%] PASSED tests/test_txy_layers_store.py::test_policy_raw_writes_no_helab_layer_and_the_choices_follow_convert_prefs 
+tests/test_txy_layers_store.py::test_the_sweep_keeps_named_segments_and_deletes_old_unnamed_ones 
+tests/test_txy_layers_store.py::test_a_clear_of_the_folders_datasets_fences_its_layer_saves 
+[gw1] [ 18%] PASSED tests/test_txy_layers_store.py::test_the_sweep_keeps_named_segments_and_deletes_old_unnamed_ones 
+[gw2] [ 19%] PASSED tests/test_txy_layers_store.py::test_a_clear_of_the_folders_datasets_fences_its_layer_saves 
+tests/test_txy_layers_store.py::test_confirm_writes_only_the_views_info 
+[gw0] [ 20%] PASSED tests/test_txy_layers_store.py::test_confirm_writes_only_the_views_info 
+tests/test_txy_layers_store.py::test_a_nested_roots_rekey_moves_raw_and_txy_layers 
+tests/test_txy_loading.py::test_a_load_writes_layers_and_a_view_and_the_next_one_reuses_them 
+[gw1] [ 21%] PASSED tests/test_txy_layers_store.py::test_a_nested_roots_rekey_moves_raw_and_txy_layers 
+tests/test_txy_layers_store.py::test_one_waiting_unit_per_folder_merges_layers_and_adopts_each_part_under_its_guard 
+[gw0] [ 22%] PASSED tests/test_txy_layers_store.py::test_one_waiting_unit_per_folder_merges_layers_and_adopts_each_part_under_its_guard 
+tests/test_txy_loading.py::test_a_plots_own_choice_stays_ram_only_in_store_v3 
+tests/test_txy_loading.py::test_a_helab_shot_comes_from_the_raw_layer_equal_to_its_text 
+[gw1] [ 23%] PASSED tests/test_txy_loading.py::test_a_plots_own_choice_stays_ram_only_in_store_v3 
+tests/test_txy_loading.py::test_a_tab_load_follows_the_folders_own_source_and_says_so 
+[gw2] [ 24%] PASSED tests/test_txy_loading.py::test_a_load_writes_layers_and_a_view_and_the_next_one_reuses_them 
+tests/test_txy_loading.py::test_a_new_shot_appends_a_segment_of_that_shot_alone 
+[gw1] [ 25%] PASSED tests/test_txy_loading.py::test_a_tab_load_follows_the_folders_own_source_and_says_so 
+tests/test_txy_loading.py::test_setting_a_folders_choice_tells_the_app 
+[gw1] [ 26%] PASSED tests/test_txy_loading.py::test_setting_a_folders_choice_tells_the_app 
+[gw2] [ 27%] PASSED tests/test_txy_loading.py::test_a_new_shot_appends_a_segment_of_that_shot_alone 
+tests/test_txy_loading.py::test_a_signature_only_change_rewrites_nothing 
+tests/test_txy_loading.py::test_folder_cache_applies_a_folders_own_source_to_the_tab_only 
+[gw2] [ 28%] PASSED tests/test_txy_loading.py::test_a_signature_only_change_rewrites_nothing 
+[gw1] [ 29%] PASSED tests/test_txy_loading.py::test_folder_cache_applies_a_folders_own_source_to_the_tab_only 
+tests/test_txy_loading.py::test_a_cached_read_is_served_from_the_view 
+tests/test_txy_loading.py::test_store_v3s_dataset_seeds_the_layers_on_use_and_stays_as_it_was 
+[gw0] [ 30%] PASSED tests/test_txy_loading.py::test_a_helab_shot_comes_from_the_raw_layer_equal_to_its_text 
+[gw2] [ 31%] PASSED tests/test_txy_loading.py::test_a_cached_read_is_served_from_the_view 
+tests/test_txy_loading.py::test_lives_autosaves_append_a_segment_each_and_compact_when_they_pile_up 
+[gw1] [ 32%] PASSED tests/test_txy_loading.py::test_store_v3s_dataset_seeds_the_layers_on_use_and_stays_as_it_was 
+tests/test_txy_loading.py::test_a_listing_without_a_layers_files_makes_it_the_only_copy 
+tests/test_txy_loading.py::test_store_v4s_own_dataset_seeds_the_layers 
+[gw2] [ 33%] PASSED tests/test_txy_loading.py::test_a_listing_without_a_layers_files_makes_it_the_only_copy 
+[gw1] [ 34%] PASSED tests/test_txy_loading.py::test_store_v4s_own_dataset_seeds_the_layers 
+tests/test_txy_loading.py::test_lives_save_writes_only_what_its_layers_lack 
+[gw0] [ 35%] PASSED tests/test_txy_loading.py::test_lives_autosaves_append_a_segment_each_and_compact_when_they_pile_up 
+tests/test_txy_fixes.py::test_clear_data_cache_takes_a_folders_layers_and_views_in_store_v4 
+tests/test_txy_loading.py::test_a_store_v3_dataset_store_v4_removed_is_never_read_through 
+[gw1] [ 36%] PASSED tests/test_txy_loading.py::test_a_store_v3_dataset_store_v4_removed_is_never_read_through 
+[gw2] [ 37%] PASSED tests/test_txy_loading.py::test_lives_save_writes_only_what_its_layers_lack 
+tests/test_txy_loading.py::test_a_cached_read_follows_its_source_and_without_one_the_last_used_view 
+tests/test_txy_ui.py::test_the_clear_questions_name_only_copies_by_folder 
+[gw0] [ 38%] PASSED tests/test_txy_fixes.py::test_clear_data_cache_takes_a_folders_layers_and_views_in_store_v4 
+[gw2] [ 39%] PASSED tests/test_txy_loading.py::test_a_cached_read_follows_its_source_and_without_one_the_last_used_view 
+tests/test_txy_fixes.py::test_a_purge_by_age_takes_old_layers_but_not_only_copies 
+tests/test_txy_loading.py::test_folder_cache_sends_the_tabs_source_with_a_cached_read 
+[gw0] [ 40%] PASSED tests/test_txy_fixes.py::test_a_purge_by_age_takes_old_layers_but_not_only_copies 
+[gw2] [ 41%] PASSED tests/test_txy_loading.py::test_folder_cache_sends_the_tabs_source_with_a_cached_read 
+tests/test_txy_fixes.py::test_a_conversion_from_the_raw_layer_comes_before_any_file_and_keeps_heartbeats_going 
+tests/test_txy_loading.py::test_a_plots_own_choice_is_cached_quietly_in_store_v4 
+[gw2] [ 42%] PASSED tests/test_txy_loading.py::test_a_plots_own_choice_is_cached_quietly_in_store_v4 
+tests/test_txy_ui.py::test_a_folders_own_choices_are_kept_and_sent 
+[gw2] [ 43%] PASSED tests/test_txy_ui.py::test_a_folders_own_choices_are_kept_and_sent 
+[gw0] [ 44%] PASSED tests/test_txy_fixes.py::test_a_conversion_from_the_raw_layer_comes_before_any_file_and_keeps_heartbeats_going 
+tests/test_txy_ui.py::test_the_tab_shows_txy_data_and_the_policy_only_with_store_v4 
+[gw1] [ 45%] PASSED tests/test_txy_ui.py::test_the_clear_questions_name_only_copies_by_folder 
+tests/test_txy_ui.py::test_the_purge_question_counts_txy_and_raw_folders_in_store_v4 
+tests/test_txy_ui.py::test_the_explorers_dialogs_set_exactly_what_was_picked 
+[gw1] [ 46%] PASSED tests/test_txy_ui.py::test_the_purge_question_counts_txy_and_raw_folders_in_store_v4 
+[gw2] [ 47%] PASSED tests/test_txy_ui.py::test_the_explorers_dialogs_set_exactly_what_was_picked 
+tests/test_txy_ui.py::test_the_policy_is_saved_and_sent_with_store_v4_requests 
+tests/test_txy_ui.py::test_folder_details_names_a_folders_own_choices 
+[gw2] [ 48%] PASSED tests/test_txy_ui.py::test_folder_details_names_a_folders_own_choices 
+[gw0] [ 49%] PASSED tests/test_txy_ui.py::test_the_tab_shows_txy_data_and_the_policy_only_with_store_v4 
+tests/test_caching_v2_session.py::test_a_stage_2_session_with_layers_leaves_store_v3_as_it_was 
+[gw1] [ 50%] PASSED tests/test_txy_ui.py::test_the_policy_is_saved_and_sent_with_store_v4_requests 
+tests/test_txy_ui.py::test_policy_txy_keeps_no_raw_pulses 
+tests/test_cache_folder_record.py::test_the_app_records_its_cache_folder_and_helab_convert_does_not 
+[gw1] [ 50%] PASSED tests/test_txy_ui.py::test_policy_txy_keeps_no_raw_pulses 
+tests/test_txy_ui.py::test_lowering_the_budget_asks_from_the_helpers_plan_and_removes_exactly_it 
+[gw1] [ 51%] PASSED tests/test_txy_ui.py::test_lowering_the_budget_asks_from_the_helpers_plan_and_removes_exactly_it 
+tests/test_txy_ui.py::test_make_room_names_txy_layers_and_its_items_are_the_stores 
+[gw1] [ 52%] PASSED tests/test_txy_ui.py::test_make_room_names_txy_layers_and_its_items_are_the_stores 
+[gw0] [ 53%] PASSED tests/test_caching_v2_session.py::test_a_stage_2_session_with_layers_leaves_store_v3_as_it_was 
+tests/test_cache_cli.py::test_dump_prints_the_header_and_refuses_a_damaged_file 
+tests/test_cache_cli.py::test_a_store_that_cant_be_opened_is_an_error_not_a_traceback 
+[gw0] [ 54%] PASSED tests/test_cache_cli.py::test_dump_prints_the_header_and_refuses_a_damaged_file 
+[gw1] [ 55%] PASSED tests/test_cache_cli.py::test_a_store_that_cant_be_opened_is_an_error_not_a_traceback 
+tests/test_cache_cli.py::test_a_layer_exports_its_columns[npz] 
+tests/test_cache_cli.py::test_a_folders_txy_layer_exports_by_layer_or_tag 
+[gw0] [ 56%] PASSED tests/test_cache_cli.py::test_a_layer_exports_its_columns[npz] 
+tests/test_cache_cli.py::test_a_layer_exports_its_columns[mat] 
+[gw1] [ 57%] PASSED tests/test_cache_cli.py::test_a_folders_txy_layer_exports_by_layer_or_tag 
+tests/test_cache_cli.py::test_a_txy_segment_file_exports_with_its_shots 
+[gw1] [ 58%] PASSED tests/test_cache_cli.py::test_a_txy_segment_file_exports_with_its_shots 
+[gw0] [ 59%] PASSED tests/test_cache_cli.py::test_a_layer_exports_its_columns[mat] 
+tests/test_cache_cli.py::test_a_layer_exports_its_columns[csv] 
+[gw0] [ 60%] PASSED tests/test_cache_cli.py::test_a_layer_exports_its_columns[csv] 
+tests/test_cache_cli.py::test_helab_cache_finds_the_cache_folder_the_app_recorded 
+[gw1] [ 61%] PASSED tests/test_cache_cli.py::test_helab_cache_finds_the_cache_folder_the_app_recorded 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[magic] 
+[gw0] [ 62%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[magic] 
+tests/test_hlb.py::test_arrays_round_trip_with_their_dtypes_shapes_and_header 
+[gw1] [ 63%] PASSED tests/test_hlb.py::test_arrays_round_trip_with_their_dtypes_shapes_and_header 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[text mode copy] 
+[gw0] [ 64%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[text mode copy] 
+tests/test_hlb.py::test_arrays_are_cut_into_chunks_at_element_boundaries 
+[gw1] [ 65%] PASSED tests/test_hlb.py::test_arrays_are_cut_into_chunks_at_element_boundaries 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[empty] 
+[gw0] [ 66%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[empty] 
+tests/test_hlb.py::test_unknown_header_fields_are_ignored 
+[gw1] [ 67%] PASSED tests/test_hlb.py::test_unknown_header_fields_are_ignored 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[cut header] 
+tests/test_hlb.py::test_a_dtype_outside_the_allowed_set_is_never_written 
+[gw0] [ 68%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[cut header] 
+[gw1] [ 69%] PASSED tests/test_hlb.py::test_a_dtype_outside_the_allowed_set_is_never_written 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[huge header] 
+[gw0] [ 70%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[huge header] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[header crc] 
+[gw1] [ 71%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[header crc] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[header flipped] 
+[gw0] [ 72%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[header flipped] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[header not JSON] 
+[gw1] [ 73%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[header not JSON] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[newer format] 
+[gw0] [ 74%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[newer format] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[no arrays] 
+[gw1] [ 75%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[no arrays] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[no format] 
+[gw0] [ 76%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[no format] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[meta not an object] 
+[gw1] [ 77%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[meta not an object] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[big-endian] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[unknown dtype] 
+[gw0] [ 78%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[unknown dtype] 
+[gw1] [ 79%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[big-endian] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[bad shape] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[unknown codec] 
+[gw1] [ 80%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[bad shape] 
+[gw0] [ 81%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[unknown codec] 
+[gw2] [ 82%] PASSED tests/test_cache_folder_record.py::test_the_app_records_its_cache_folder_and_helab_convert_does_not 
+tests/test_caching_v2_session.py::test_a_session_with_store_v4_live_leaves_store_v3_as_it_was 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[duplicate] 
+[gw1] [ 83%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[duplicate] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[wrong shape] 
+[gw0] [ 84%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[wrong shape] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[negative offset] 
+[gw1] [ 85%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[negative offset] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[chunk outside] 
+[gw0] [ 86%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[chunk outside] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[gap] 
+[gw1] [ 87%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[gap] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[overlap] 
+[gw0] [ 88%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[overlap] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[trailing bytes] 
+[gw1] [ 89%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[trailing bytes] 
+[gw2] [ 90%] PASSED tests/test_caching_v2_session.py::test_a_session_with_store_v4_live_leaves_store_v3_as_it_was 
+tests/test_cache_cli.py::test_an_export_is_never_written_into_a_store 
+[gw2] [ 91%] PASSED tests/test_cache_cli.py::test_an_export_is_never_written_into_a_store 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[crc] 
+[gw0] [ 92%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[crc] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[size] 
+[gw1] [ 93%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[size] 
+tests/test_cache_cli.py::test_a_folders_raw_layers_export_from_store_v4_read_only 
+[gw2] [ 94%] PASSED tests/test_cache_cli.py::test_a_folders_raw_layers_export_from_store_v4_read_only 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[flipped data] 
+[gw0] [ 95%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[flipped data] 
+tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[truncated] 
+[gw1] [ 96%] PASSED tests/test_hlb.py::test_damage_or_a_newer_format_is_an_error_never_data[truncated] 
+tests/test_cache_cli.py::test_helab_cache_starts_no_qt 
+tests/test_hlb.py::test_a_header_change_that_stays_valid_json_is_an_error 
+[gw0] [ 97%] PASSED tests/test_hlb.py::test_a_header_change_that_stays_valid_json_is_an_error 
+tests/test_hlb.py::test_bytes_after_the_last_chunk_are_an_error 
+[gw1] [ 98%] PASSED tests/test_hlb.py::test_bytes_after_the_last_chunk_are_an_error 
+[gw2] [ 99%] PASSED tests/test_cache_cli.py::test_helab_cache_starts_no_qt 
+tests/test_cache_cli.py::test_the_format_pages_reader_without_helab_reads_what_helab_writes 
+[gw2] [100%] PASSED tests/test_cache_cli.py::test_the_format_pages_reader_without_helab_reads_what_helab_writes Fontconfig error: No writable cache directories
+
+
+============================= 102 passed in 4.95s ==============================

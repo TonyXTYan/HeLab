@@ -1,0 +1,57 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/HeLab/venv/bin/python
+cachedir: .pytest_cache
+PyQt6 6.11.0 -- Qt runtime 6.11.2 -- Qt compiled 6.11.0
+rootdir: /workspace/HeLab-v007-baseline
+configfile: pytest.ini
+plugins: dash-4.4.1, cov-7.1.0, qt-4.5.0, rerunfailures-16.7, timeout-2.4.0, xdist-3.8.0
+timeout: 75.0s
+timeout method: thread
+timeout func_only: False
+collecting ... collected 2 items
+
+tests/test_convert_helab.py::test_a_killed_helpers_workers_exit FAILED   [ 50%]
+tests/test_offline_browsing.py::test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_every_tab FAILED [100%]
+
+=================================== FAILURES ===================================
+______________________ test_a_killed_helpers_workers_exit ______________________
+tests/test_convert_helab.py:875: in test_a_killed_helpers_workers_exit
+    assert alive == []
+E   AssertionError: assert [psutil.Process(pid=28856, name='python', status='zombie', started='05:27:49'), psutil.Process(pid=28855, name='python', status='zombie', started='05:27:49'), psutil.Process(pid=28859, name='python', status='zombie', started='05:27:49')] == []
+E     
+E     Left contains 3 more items, first extra item: psutil.Process(pid=28856, name='python', status='zombie', started='05:27:49')
+E     
+E     Full diff:
+E     - []
+E     + [
+E     +     psutil.Process(pid=28856, name='python', status='zombie', started='05:27:49'),
+E     +     psutil.Process(pid=28855, name='python', status='zombie', started='05:27:49'),
+E     +     psutil.Process(pid=28859, name='python', status='zombie', started='05:27:49'),
+E     + ]
+----------------------------- Captured stderr call -----------------------------
+/usr/lib/python3.13/multiprocessing/resource_tracker.py:301: UserWarning: resource_tracker: There appear to be 5 leaked semaphore objects to clean up at shutdown: {'/mp-yjjxs170', '/mp-_aqgtmtq', '/mp-gq_piftb', '/mp-13ppe5q4', '/mp-09hp46qr'}
+  warnings.warn(
+_ test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_every_tab _
+tests/test_offline_browsing.py:501: in test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_every_tab
+    qtbot.waitUntil(lambda: explorer.model.rootPath() == str(tmp_path), timeout=10_000)
+E   pytestqt.exceptions.TimeoutError: waitUntil timed out in 10000 milliseconds
+----------------------------- Captured stderr call -----------------------------
+Fontconfig error: No writable cache directories
+This plugin does not support propagateSizeHints()
+WARNING:root:Browse saved listing failed: /tmp/helab_test_start_main_n6hq2bzp — No data root saved to browse offline
+------------------------------ Captured log call -------------------------------
+WARNING  root:io_service.py:1013 Browse saved listing failed: /tmp/helab_test_start_main_n6hq2bzp — No data root saved to browse offline
+=========================== short test summary info ============================
+FAILED tests/test_convert_helab.py::test_a_killed_helpers_workers_exit - AssertionError: assert [psutil.Process(pid=28856, name='python', status='zombie', started='05:27:49'), psutil.Process(pid=28855, name='python', status='zombie', started='05:27:49'), psutil.Process(pid=28859, name='python', status='zombie', started='05:27:49')] == []
+  
+  Left contains 3 more items, first extra item: psutil.Process(pid=28856, name='python', status='zombie', started='05:27:49')
+  
+  Full diff:
+  - []
+  + [
+  +     psutil.Process(pid=28856, name='python', status='zombie', started='05:27:49'),
+  +     psutil.Process(pid=28855, name='python', status='zombie', started='05:27:49'),
+  +     psutil.Process(pid=28859, name='python', status='zombie', started='05:27:49'),
+  + ]
+FAILED tests/test_offline_browsing.py::test_the_window_starts_offline_when_asked_last_time_and_work_online_relists_every_tab - pytestqt.exceptions.TimeoutError: waitUntil timed out in 10000 milliseconds
+============================== 2 failed in 27.21s ==============================

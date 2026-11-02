@@ -1,0 +1,18 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/HeLab/venv/bin/python
+cachedir: .pytest_cache
+PyQt6 6.11.0 -- Qt runtime 6.11.2 -- Qt compiled 6.11.0
+rootdir: /workspace/HeLab-v008-recheck
+configfile: pytest.ini
+plugins: dash-4.4.1, cov-7.1.0, qt-4.5.0, rerunfailures-16.7, timeout-2.4.0, xdist-3.8.0
+collecting ... collected 7 items
+
+tests/test_typing.py::test_mypy_helab_soft PASSED                        [ 14%]
+tests/test_typing.py::test_mypy_helab_strict PASSED                      [ 28%]
+tests/test_typing.py::test_mypy_helab_tests_soft PASSED                  [ 42%]
+tests/test_typing.py::test_mypy_helab_tests_strict PASSED                [ 57%]
+tests/test_typing.py::test_pyright_helab PASSED                          [ 71%]
+tests/test_typing.py::test_pyright_tests PASSED                          [ 85%]
+tests/test_typing.py::test_the_type_checks_get_more_time_than_cis_per_test_timeout PASSED [100%]
+
+========================= 7 passed in 86.38s (0:01:26) =========================

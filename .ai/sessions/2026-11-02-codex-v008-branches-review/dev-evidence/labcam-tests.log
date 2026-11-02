@@ -1,0 +1,40 @@
+============================= test session starts ==============================
+platform linux -- Python 3.13.5, pytest-9.1.1, pluggy-1.6.0 -- /workspace/HeLab/venv/bin/python
+cachedir: .pytest_cache
+PyQt6 6.11.0 -- Qt runtime 6.11.2 -- Qt compiled 6.11.0
+rootdir: /workspace/HeLab-v008-recheck/side_projects/labcam
+configfile: pytest.ini
+plugins: dash-4.4.1, cov-7.1.0, qt-4.5.0, rerunfailures-16.7, timeout-2.4.0, xdist-3.8.0
+timeout: 60.0s
+timeout method: signal
+timeout func_only: False
+collecting ... collected 26 items
+
+side_projects/labcam/tests/test_labcam.py::test_trace_level[30-ok-middle] PASSED [  3%]
+side_projects/labcam/tests/test_labcam.py::test_trace_level[8-off-high] PASSED [  7%]
+side_projects/labcam/tests/test_labcam.py::test_trace_level[52-off-low] PASSED [ 11%]
+side_projects/labcam/tests/test_labcam.py::test_trace_block_and_wavy PASSED [ 15%]
+side_projects/labcam/tests/test_labcam.py::test_locks PASSED             [ 19%]
+side_projects/labcam/tests/test_labcam.py::test_history_round_trip PASSED [ 23%]
+side_projects/labcam/tests/test_labcam.py::test_trace_dark_on_light_and_missing PASSED [ 26%]
+side_projects/labcam/tests/test_labcam.py::test_needle PASSED            [ 30%]
+side_projects/labcam/tests/test_labcam.py::test_dot_still_then_moving PASSED [ 34%]
+side_projects/labcam/tests/test_labcam.py::test_wavemeter_digits_and_vote PASSED [ 38%]
+side_projects/labcam/tests/test_labcam.py::test_region_round_trip PASSED [ 42%]
+side_projects/labcam/tests/test_labcam.py::test_config_corners_and_box PASSED [ 46%]
+side_projects/labcam/tests/test_labcam.py::test_sample_frame_scopes SKIPPED [ 50%]
+side_projects/labcam/tests/test_labcam.py::test_sample_frame_dot SKIPPED [ 53%]
+side_projects/labcam/tests/test_labcam.py::test_hand_in_front_holds_the_lock SKIPPED [ 57%]
+side_projects/labcam/tests/test_labcam.py::test_history_thins_rows_and_reads_gzip PASSED [ 61%]
+side_projects/labcam/tests/test_labcam.py::test_old_days_deleted_and_compressed PASSED [ 65%]
+side_projects/labcam/tests/test_labcam.py::test_compress_twice_at_once_keeps_every_day PASSED [ 69%]
+side_projects/labcam/tests/test_labcam.py::test_series_breaks_lines_across_gaps PASSED [ 73%]
+side_projects/labcam/tests/test_labcam.py::test_duration PASSED          [ 76%]
+side_projects/labcam/tests/test_labcam.py::test_relocate_finds_a_moved_instrument PASSED [ 80%]
+side_projects/labcam/tests/test_labcam.py::test_seven_segment_display PASSED [ 84%]
+side_projects/labcam/tests/test_labcam.py::test_power_modes PASSED       [ 88%]
+side_projects/labcam/tests/test_labcam.py::test_slanted_line_is_flat_and_corners_ordered PASSED [ 92%]
+side_projects/labcam/tests/test_labcam.py::test_screen_outline_found_from_a_rough_box PASSED [ 96%]
+side_projects/labcam/tests/test_labcam.py::test_drawn_box_snaps_to_the_screen_near_it PASSED [100%]
+
+======================== 23 passed, 3 skipped in 0.64s =========================
