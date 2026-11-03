@@ -486,7 +486,8 @@ def _load(path: str, output: str, send: Emit, store: CacheStore | None, guard: S
         _save_summary(store, path, summary, guard, send)
         if access is not None and not no_cache:
             # (store-v4: this listing's sources, for Make room's only copies, Q45.6.)
-            access.mark_seen(path, list(raw_entries), [*matlab, *helab_found], listed_at)
+            access.mark_seen(path, raw_entries, matlab,
+                             {shot: found.profile_hash for shot, found in helab_found.items()}, listed_at)
     # What this load would add to RAM: shots the caller doesn't hold already.
     if _too_large(large_folder.estimate(fingerprint, in_memory), limits, allow_large, send):
         return

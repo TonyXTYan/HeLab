@@ -29,7 +29,7 @@ def test_clear_data_cache_takes_a_folders_layers_and_views_in_store_v4(
     gone = data_folder(tmp_path / "other")
     run_load(gone, tmp_path, options)
     with opened(options, gone) as store:
-        store.mark_txy_seen(str(gone), {"txy": {}}, time.time() + 60)  # (Its TXY gone: the only copy.)
+        store.mark_txy_seen(str(gone), {"matlab": {}}, time.time() + 60)  # (Its TXY gone: the only copy.)
     for folder in (source, gone):
         events = send(monkeypatch, capsys, {"operation": "invalidate", "path": str(folder), "cache": options})
         assert any(event["kind"] == "removed" for event in events)
@@ -55,7 +55,7 @@ def test_a_purge_by_age_takes_its_kind_only_and_never_only_copies(tmp_path: Path
     kept = data_folder(tmp_path / "other")
     run_load(kept, tmp_path, options)
     with opened(options, kept) as store:
-        store.mark_txy_seen(str(kept), {"txy": {}}, time.time() + 60)  # (Its TXY gone: the only copy.)
+        store.mark_txy_seen(str(kept), {"matlab": {}}, time.time() + 60)  # (Its TXY gone: the only copy.)
     cutoff = time.time() + 3600
     with opened(options, kept) as store:
         inventory = store.inventory()

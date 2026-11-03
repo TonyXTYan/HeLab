@@ -124,6 +124,12 @@ How to use it:
 
 ## Tests and CI
 
+- [ ] **The PR-only compatibility jobs (Python 3.11, 3.12, 3.14) fail** (soft; HeLab requires 3.13). PR #11's CI
+  41648018025 (`f0bb9f9`), as on v0.0.7's PR (41104589243): 3.14's every job fails installing pygame (no 3.14
+  wheel: "SDL.h file not found"); 3.11 and 3.12 Tests fail widely, mostly `test_cache_move` (116), `test_store_v4`
+  (77), `test_typing` (33), `test_store_v3_question` (15). New since v0.0.7: 3.11's Converter backends fail 3
+  (`test_convert_helab`'s cache-move and WAL tests). Not looked into; the required 3.13 jobs were green with no
+  RERUN.
 - [x] `test_script_probe.py::test_without_the_offscreen_plugin_the_probe_runs_without_an_application` reran once
   on Ubuntu, Ground CI 41640562938 (Tests 2/3, job 125932836198, `72ab47a`, the Follow-ups landing): it expected the
   probe to crash, but the folder read "didn't load: its import didn't finish within 2 s", so under CI load the probe

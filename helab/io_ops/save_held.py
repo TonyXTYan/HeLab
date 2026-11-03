@@ -274,7 +274,8 @@ def save_held(path: str, send: Emit, cache_options: dict[str, Any] | None, held:
                 # (Live's save in store-v4: a segment of the shots its layers lack, one per save, Q45.7.)
                 if txy_guard is None:
                     return
-                access.mark_seen(path, list(raw_entries), [*matlab, *helab_found], listed_at)
+                access.mark_seen(path, raw_entries, matlab,
+                                 {shot: found.profile_hash for shot, found in helab_found.items()}, listed_at)
                 access.write(path, txy_guard, data, fingerprint, problematic,
                              _dataset_info(data, fingerprint, names, listed_at, counts, unsettled, had_dataset, None,
                                            record, signature),

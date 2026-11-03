@@ -413,3 +413,161 @@ def test_lives_autosaves_append_a_segment_each_and_compact_when_they_pile_up(tmp
     with opened(options, source) as store:
         data = store.read_txy_shots(str(source), "matlab").value or {}
     assert sorted(data) == list(range(1, COMPACT_SEGMENTS + 3)) and np.array_equal(data[5], [[5.0, 2, 3], [5.1, 2, 3]])
+
+
+# PR #11's review (C-1): a view's shots are its layer entries' as it saved them
+
+def test_a_view_leaves_out_a_shot_another_views_save_replaced_in_the_layer(tmp_path: Path) -> None:
+    """Two views share the MATLAB layer. Shot 2's TXY changes and the priority view's load saves it again, which
+    replaces the layer's entry; the External-only view, saved before, no longer has its data: a cached read of
+    it leaves shot 2 out rather than sending the new arrays under the old fingerprint."""
+    source = data_folder(tmp_path)
+    options = v4_options(tmp_path)
+    old = first(run_load(source, tmp_path, options, txy={"source": "matlab-only"}), "loaded")
+    old_print = {int(entry[0]): list(entry) for entry in old["fingerprint"]}
+    write_shot(source, 2, rows=5)  # (Its TXY rewritten: another size and date.)
+    later = time.time() - 300
+    os.utime(source / "d_txy_forc2.txt", (later, later))
+    assert first(run_load(source, tmp_path, options), "loaded")["load_counts"]["read"] >= 1  # (The priority view.)
+    with opened(options, source) as store:
+        entry = (store.txy_layers(str(source)).value or {})["matlab"].entries[2]
+        assert [entry.size, entry.mtime_ns] != old_print[2][1:]  # (The layer holds the new shot 2.)
+    output = tmp_path / "cached"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    read_cached(str(source), str(output), events.append, options, txy={"source": "matlab-only"})  # type: ignore[arg-type]
+    sent = {event["shot"]: event for event in events if event["kind"] == "shot"}
+    assert sorted(sent) == [1] and first(events, "loaded")["failed_files"] == 1
+    assert sent[1]["fingerprint"] == old_print[1] and len(np.load(sent[1]["artifact"])) == 2
+
+
+def test_a_view_saved_before_entry_keys_serves_its_matlab_shots(tmp_path: Path) -> None:
+    """A view an earlier build saved (five items a shot, no entry key): a MATLAB shot's key is its TXY file's
+    fingerprint, so it is served as before; the next save gives the view its keys."""
+    source = data_folder(tmp_path)
+    options = v4_options(tmp_path)
+    run_load(source, tmp_path, options)
+    with opened(options, source) as store:
+        key = store._path_key(str(source))
+        with store.transaction():
+            (text,) = store._conn.execute("SELECT fingerprint FROM txy_views WHERE path = ?", (key,)).fetchone()
+            assert all(len(item) == 6 for item in json.loads(text))
+            store._conn.execute("UPDATE txy_views SET fingerprint = ? WHERE path = ?",
+                                (json.dumps([item[:5] for item in json.loads(text)]), key))
+    output = tmp_path / "cached"
+    output.mkdir()
+    events: list[dict[str, Any]] = []
+    read_cached(str(source), str(output), events.append, options)  # type: ignore[arg-type]
+    assert sorted(event["shot"] for event in events if event["kind"] == "shot") == [1, 2]
+    again = first(run_load(source, tmp_path, options), "loaded")
+    assert again["cached"] and again["load_counts"]["read"] == 0
+    write_shot(source, 3)
+    run_load(source, tmp_path, options)
+    with opened(options, source) as store:
+        view = store.read_view(str(source), "", "").value
+        assert view is not None and all(len(item) == 6 for item in view.fingerprint)
+
+
+# PR #11's review (C-2): a listing checks each layer against its own source
+
+def test_helabs_txy_doesnt_make_a_gone_matlab_txys_layer_recoverable(tmp_path: Path) -> None:
+    """A MATLAB TXY goes while HeLab's TXY of that shot stays. A load of HeLab's TXY lists the folder: the MATLAB
+    layer's shot has no source of its own left, so the layer is the only copy (``gone_at``), whatever HeLab's
+    conversion of that shot; ordinary removal (a purge by age) then leaves it."""
+    from helab.convert.profile import MATLAB_2019
+    from helab.io_ops.convert import convert_folder
+    from test_convert_helab import raw_bytes, write_raw
+    source = tmp_path / "data" / "run"
+    source.mkdir(parents=True)
+    old = time.time() - 600
+    for shot in (1, 2):
+        write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 2))), mtime=old)
+        (source / f"d_txy_forc{shot}.txt").write_text(f"{shot}.0,2,3\n{shot}.1,2,3\n")
+        os.utime(source / f"d_txy_forc{shot}.txt", (old, old))
+    caches = tmp_path / "caches"
+    options = v4_options(tmp_path)
+    request: dict[str, Any] = {"path": str(source), "profile": MATLAB_2019.to_dict(), "temps": str(tmp_path / "temps"),
+                               "seen": None, "destination": "cache", "workers": 1, "cache": options}
+    convert_folder(str(source), request, lambda event: None)  # type: ignore[arg-type]
+    run_load(source, tmp_path, options, txy={"source": "matlab-only"})  # (The MATLAB layer.)
+    (source / "d_txy_forc1.txt").unlink()
+    helab = {"source": "helab-only", "profile_hash": MATLAB_2019.content_hash(), "profile_tag": "m19v1",
+             "cache_base": str(caches), "temps": str(tmp_path / "temps")}
+    assert first(run_load(source, tmp_path, options, txy=helab), "loaded")["files"] == 2
+    with opened(options, source) as store:
+        layers = store.txy_layers(str(source)).value or {}
+        assert layers["matlab"].gone_at is not None  # (Shot 1's MATLAB TXY is gone: the only copy.)
+        assert layers["helab:" + MATLAB_2019.content_hash()].gone_at is None  # (Its raw files are there.)
+        removal = store.purge_cached(time.time() + 3600, ("txy",))
+        left = store.txy_layers(str(source)).value or {}
+        assert "matlab" in left and (str(source), "matlab") not in removal.txy_seen  # (The only copy stays.)
+
+
+# PR #11's review (C-3): the profile's completion check before converting cached raw pulses
+
+def test_a_raw_layer_not_starting_on_the_trigger_is_rejected_as_its_file_is(tmp_path: Path) -> None:
+    """``raw_fill`` caches a raw file whose first line isn't on a trigger channel (it has no profile to check
+    with). A HeLab load converting on read rejects that file as damaged (``raw.not_done``); from the raw layer it
+    must too, not make an apparently valid shot with the wrong first row as time zero and keep it in a layer."""
+    from helab.convert.profile import MATLAB_2019
+    from helab.io_ops.raw_fill import raw_fill
+    from test_convert_helab import raw_bytes, write_raw
+    options = v4_options(tmp_path)
+    txy = {"source": "helab-only", "profile_hash": MATLAB_2019.content_hash(), "profile_tag": "m19v1",
+           "cache_base": str(tmp_path / "caches"), "temps": str(tmp_path / "temps"),
+           "profile_def": MATLAB_2019.to_dict()}
+    helab = "helab:" + MATLAB_2019.content_hash()
+    results: dict[str, dict[str, Any]] = {}
+    for name in ("from-file", "from-layer"):
+        source = tmp_path / "data" / name
+        source.mkdir(parents=True)
+        write_raw(source, 1, raw_bytes(10_000, 20_000))
+        write_raw(source, 2, raw_bytes(10_000, 20_000, trigger=0))  # (Its first line: channel 0, a hit's.)
+        if name == "from-layer":
+            sent: list[dict[str, Any]] = []
+            raw_fill(str(source), options, sent.append)  # type: ignore[arg-type]
+            assert first(sent, "raw_fill_done")["saved"] == 2  # (Both cached: no profile to check with.)
+        events = run_load(source, tmp_path, options, txy=txy)
+        results[name] = first(events, "loaded")
+        with opened(options, source) as store:
+            layer = (store.txy_layers(str(source)).value or {}).get(helab)
+            assert layer is not None and sorted(layer.entries) == [1], name  # (Shot 2 isn't kept.)
+    assert results["from-file"]["problematic"] == [2]
+    assert results["from-layer"]["problematic"] == results["from-file"]["problematic"]
+    assert results["from-layer"]["files"] == results["from-file"]["files"]
+
+
+def test_old_helab_view_is_read_again_once_then_keyed(tmp_path: Path) -> None:
+    """PR-1 (the landing review of C-1): a HeLab view an earlier build saved (five items a shot) can't say which
+    layer entries it saved. It serves no cached read; its next load reads its HeLab shots again ("Cached dataset
+    invalid"), once, and saves the view with keys; the load after it is served from the layers."""
+    from helab.convert.profile import MATLAB_2019
+    from helab.io_ops.txy_cache import view_key
+    from test_convert_helab import raw_bytes, write_raw
+    source = tmp_path / "data" / "run"
+    source.mkdir(parents=True)
+    for shot in (1, 2):
+        write_raw(source, shot, raw_bytes(*(10_000 * k for k in range(1, shot + 2))))
+    options = v4_options(tmp_path)
+    txy = {"source": "helab-only", "profile_hash": MATLAB_2019.content_hash(), "profile_tag": "m19v1",
+           "cache_base": str(tmp_path / "caches"), "temps": str(tmp_path / "temps"),
+           "profile_def": MATLAB_2019.to_dict()}
+    assert first(run_load(source, tmp_path, options, txy=txy), "loaded")["load_counts"]["converted"] == 2
+    with opened(options, source) as store:
+        key = store._path_key(str(source))
+        with store.transaction():
+            (text,) = store._conn.execute("SELECT fingerprint FROM txy_views WHERE path = ?", (key,)).fetchone()
+            store._conn.execute("UPDATE txy_views SET fingerprint = ? WHERE path = ?",
+                                (json.dumps([item[:5] for item in json.loads(text)]), key))
+    output = tmp_path / "cached"
+    output.mkdir()
+    with pytest.raises(ValueError, match="No cached data for this folder"):
+        read_cached(str(source), str(output), lambda event: None, options, txy=txy)
+    again = first(run_load(source, tmp_path, options, txy=txy), "loaded")
+    assert not again["cached"] and again["load_counts"]["read"] == 2
+    assert again["cache_reason"] == "Cached dataset invalid"
+    with opened(options, source) as store:
+        view = store.read_view(str(source), *view_key("helab-only", txy)).value
+        assert view is not None and all(len(item) == 6 for item in view.fingerprint)
+    last = first(run_load(source, tmp_path, options, txy=txy), "loaded")
+    assert last["cached"] and last["load_counts"]["read"] == 0

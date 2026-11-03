@@ -658,8 +658,9 @@ class TxyLayerRow:
 
 class ViewRecord(TypedDict):
     """What a save keeps of a composition (``txy_views``): ``fingerprint`` ``[shot, size, mtime_ns, kind,
-    layer]`` of each shot, ``problematic``, ``info`` (today's ``datasets.info``: listing, signature, the TXY
-    record) and ``raw_times``."""
+    layer, [entry size, entry mtime_ns, entry kind]]`` of each shot (the last: the layer entry's key the view
+    was saved with; a view saved before it has five items), ``problematic``, ``info`` (today's
+    ``datasets.info``: listing, signature, the TXY record) and ``raw_times``."""
     fingerprint: list[list[Any]]
     problematic: list[int]
     info: dict[str, Any]
@@ -3538,10 +3539,12 @@ class CacheStore:
         except (sqlite3.Error, StoreError):
             return []
 
-    def read_txy_shots(self, path: str, layer: str,
-                       shots: Iterable[int] | None = None) -> Read[dict[int, Any]]:
+    def read_txy_shots(self, path: str, layer: str, shots: Iterable[int] | None = None, *,
+                       keys: Mapping[int, tuple[int, int, str]] | None = None) -> Read[dict[int, Any]]:
         """Shots of a layer (every one, or ``shots`` it holds) as read-only float64 (n, 3) arrays, each from
-        the segment its entry names; a segment replaced meanwhile (compaction) is looked up once more."""
+        the segment its entry names; a segment replaced meanwhile (compaction) is looked up once more. With
+        ``keys`` (shot → the entry's (size, mtime_ns, kind) a view saved), a shot whose entry now has another
+        key (another view's save replaced it, C-1) is left out, checked on the row its segments are read by."""
         from helab.convert import txy_layer
         from helab.utils import hlb
         if self.layout < store_v4.LAYOUT:
@@ -3556,6 +3559,8 @@ class CacheStore:
                 return _missing()
             by_seq: dict[int, list[int]] = {}
             for shot, entry in row.entries.items():
+                if keys is not None and keys.get(shot) != (entry.size, entry.mtime_ns, entry.kind):
+                    continue
                 if wanted is None or shot in wanted:
                     by_seq.setdefault(entry.seq, []).append(shot)
             found: dict[int, Any] = {}
@@ -3698,9 +3703,13 @@ class CacheStore:
         return {"maker": self._maker["maker"], "record": self._maker["record"]}
 
     def mark_txy_seen(self, path: str, present: Mapping[str, Mapping[int, tuple[int, int]]], seen_at: float) -> int:
-        """A full listing of ``path`` taken at ``seen_at`` found these sources (``{"raw": {shot: (size,
-        mtime_ns)}, "txy": {...}}``): a layer with an entry whose source it didn't find is an only copy
-        (``gone_at``, Q45.6); one whose sources are all there is seen (``seen_at``). Each mark goes by when its
+        """A full listing of ``path`` taken at ``seen_at`` found these sources: ``"raw"`` the raw files
+        (``{shot: (size, mtime_ns)}``), and by layer name the TXY files of that layer's own source (``"matlab"``:
+        MATLAB's; ``"helab:<hash>"``: HeLab's of that profile). An entry keyed by its raw file is checked against
+        the raw files, one keyed by its TXY file against its own layer's TXY only (C-2: another profile's TXY of
+        the shot is no copy of it; a layer the listing names no TXY for has none). A layer with an entry whose
+        source it didn't find is an only copy (``gone_at``, Q45.6); one whose sources are all there is seen
+        (``seen_at``). Each mark goes by when its
         evidence was taken (C2-10's rule, S2-2): a sighting clears a gone mark only if newer than it, and a gone
         mark needs a listing newer than the last sighting, so an older listing landing late undoes nothing.
         The layers marked gone."""
@@ -3711,7 +3720,7 @@ class CacheStore:
             with self.transaction():
                 for layer, entries in self._conn.execute("SELECT layer, entries FROM txy_layers WHERE path = ?",
                                                          (key,)).fetchall():
-                    missing = any(entry.shot not in present.get(entry.kind, {})
+                    missing = any(entry.shot not in present.get("raw" if entry.kind == "raw" else str(layer), {})
                                   for entry in map(TxyEntry.from_json, json.loads(entries)))
                     if missing:
                         gone += self._conn.execute(

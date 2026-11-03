@@ -277,7 +277,7 @@ def five_groups(store: CacheStore) -> None:
     save(store, Y, part(store, MATLAB, {1: 400}))
     store.save_raw_batch(W, [raw_entry(store, 1, 400)], store.start_raw_job(W), now=1.0)
     save(store, Z, part(store, MATLAB, {1: 400}))
-    store.mark_txy_seen(Z, {"txy": {}}, later())
+    store.mark_txy_seen(Z, {"matlab": {}}, later())
     with store.transaction():
         for path, used in ((X, 1.0), (Y, 2.0), (Z, 3.0)):
             store._conn.execute("UPDATE txy_layers SET last_used = ? WHERE path = ?", (used, path))
@@ -372,12 +372,12 @@ def test_clear_takes_txy_layers_everywhere_it_joins(tmp_path: Path) -> None:
         assert store.txy_layers(X).value == {} and store.inventory()["txy"]["layers"] == 0
         save(store, RUN, part(store, MATLAB, {1: 10}))
         save(store, X, part(store, MATLAB, {1: 10}))
-        store.mark_txy_seen(X, {"txy": {}}, later())  # (X's files are gone: its layer is the only copy.)
+        store.mark_txy_seen(X, {"matlab": {}}, later())  # (X's files are gone: its layer is the only copy.)
         removal = store.clear_root(A)
         assert {pair for pair in removal.txy_seen} == {(RUN, MATLAB), (X, MATLAB)}
         save(store, RUN, part(store, MATLAB, {1: 10}))
         save(store, X, part(store, MATLAB, {1: 10}))
-        store.mark_txy_seen(X, {"txy": {}}, later())
+        store.mark_txy_seen(X, {"matlab": {}}, later())
         _, flagged = store.set_prefs_removing(X, True, False, 6.0, remove_cached=True)
         assert flagged is not None and flagged.txy_seen == () and store.txy_layers(X).value  # (Only copy stays.)
         _, flagged = store.set_prefs_removing(RUN, True, False, 6.0, remove_cached=True)
@@ -434,17 +434,17 @@ def test_a_store_v4_from_stage_1_gets_stage_2s_tables(tmp_path: Path) -> None:
     conn.close()
     with CacheStore(str(root)) as store:
         assert "seen_at" in {row[1] for row in store._conn.execute("PRAGMA table_info(txy_layers)")}
-        assert store.mark_txy_seen(RUN, {"txy": {}}, later()) == 1
+        assert store.mark_txy_seen(RUN, {"matlab": {}}, later()) == 1
 
 
 def test_mark_seen_makes_a_layer_an_only_copy_and_back(tmp_path: Path) -> None:
     with v4(tmp_path) as store:
         save(store, RUN, part(store, MATLAB, {1: 10, 2: 10}))
         gone_at = later()
-        assert store.mark_txy_seen(RUN, {"txy": {1: (1001, MTIME)}}, gone_at) == 1
+        assert store.mark_txy_seen(RUN, {"matlab": {1: (1001, MTIME)}}, gone_at) == 1
         assert (store.txy_layers(RUN).value or {})[MATLAB].gone_at == gone_at
         assert store.inventory()["txy"]["only_copy"] == 1
-        assert store.mark_txy_seen(RUN, {"txy": {1: (1001, MTIME), 2: (1002, MTIME)}}, gone_at + 1) == 0
+        assert store.mark_txy_seen(RUN, {"matlab": {1: (1001, MTIME), 2: (1002, MTIME)}}, gone_at + 1) == 0
         assert (store.txy_layers(RUN).value or {})[MATLAB].gone_at is None
 
 
@@ -455,12 +455,12 @@ def test_an_older_listing_landing_late_undoes_no_mark(tmp_path: Path) -> None:
     with v4(tmp_path) as store:
         save(store, RUN, part(store, MATLAB, {1: 10}))
         newer = later()
-        assert store.mark_txy_seen(RUN, {"txy": {}}, newer) == 1
-        store.mark_txy_seen(RUN, {"txy": {1: (1001, MTIME)}}, newer - 50)  # (Older, lands late.)
+        assert store.mark_txy_seen(RUN, {"matlab": {}}, newer) == 1
+        store.mark_txy_seen(RUN, {"matlab": {1: (1001, MTIME)}}, newer - 50)  # (Older, lands late.)
         assert (store.txy_layers(RUN).value or {})[MATLAB].gone_at == newer
         save(store, X, part(store, MATLAB, {1: 10}))
-        store.mark_txy_seen(X, {"txy": {1: (1001, MTIME)}}, newer)
-        assert store.mark_txy_seen(X, {"txy": {}}, newer - 50) == 0  # (Older than the last sighting.)
+        store.mark_txy_seen(X, {"matlab": {1: (1001, MTIME)}}, newer)
+        assert store.mark_txy_seen(X, {"matlab": {}}, newer - 50) == 0  # (Older than the last sighting.)
         assert (store.txy_layers(X).value or {})[MATLAB].gone_at is None
 
 
@@ -494,7 +494,7 @@ def test_a_new_layer_is_first_seen_when_its_job_listed(tmp_path: Path) -> None:
     with v4(tmp_path) as store:
         listed = time.time() - 100
         store.save_txy(RUN, "", "", [part(store, MATLAB, {1: 10})], None, store.start_txy_job(RUN), seen_at=listed)
-        assert store.mark_txy_seen(RUN, {"txy": {}}, listed + 50) == 1
+        assert store.mark_txy_seen(RUN, {"matlab": {}}, listed + 50) == 1
         assert (store.txy_layers(RUN).value or {})[MATLAB].gone_at == listed + 50
 
 
@@ -510,3 +510,22 @@ def test_a_clear_of_the_folders_datasets_fences_its_layer_saves(tmp_path: Path) 
                 store.save_txy(RUN, "", "", [late], None, guard)
             assert late.file in retired(store)
         assert save(store, RUN, part(store, MATLAB, {1: 10})).saved == (MATLAB,)  # (A job after the Clear saves.)
+
+
+def test_a_layers_txy_entries_count_only_their_own_layers_txy(tmp_path: Path) -> None:
+    """C-2 (PR #11's review): a shot's TXY of one source is no copy of another layer's entry. HeLab's TXY of
+    shot 1 leaves the MATLAB layer, whose TXY is gone, the only copy, and the other way round; raw-keyed
+    entries go by the raw files."""
+    with v4(tmp_path) as store:
+        save(store, RUN, part(store, MATLAB, {1: 10}))
+        save(store, RUN, part(store, HELAB, {1: 10}))
+        save(store, X, part(store, HELAB, {1: 10}, kind="raw"))
+        seen = later()
+        assert store.mark_txy_seen(RUN, {"raw": {1: (1, 1)}, HELAB: {1: (1001, MTIME)}}, seen) == 1
+        layers = store.txy_layers(RUN).value or {}
+        assert layers[MATLAB].gone_at == seen and layers[HELAB].gone_at is None
+        assert store.mark_txy_seen(RUN, {MATLAB: {1: (1001, MTIME)}}, seen + 1) == 1
+        layers = store.txy_layers(RUN).value or {}
+        assert layers[MATLAB].gone_at is None and layers[HELAB].gone_at == seen + 1
+        assert store.mark_txy_seen(X, {"raw": {1: (1, 1)}}, seen) == 0  # (Raw-keyed: its raw file is there.)
+        assert store.mark_txy_seen(X, {HELAB: {1: (1, 1)}}, seen + 1) == 1  # (Its raw file gone: HeLab's TXY isn't it.)

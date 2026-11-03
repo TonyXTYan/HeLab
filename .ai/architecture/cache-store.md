@@ -114,7 +114,8 @@ layers](#txy-layers-stage-2) below).
   deletes); each entry's `read_at` (when the file was read) is the evidence C2-10's ordering uses. It yields
   after about 30 s of work (`more`) and is queued again at the back. Over the budget it saves nothing and
   asks nothing (Q42.1). A raw file that is blank or doesn't end with a newline waits, as in the converter
-  (`raw.not_done`'s checks that need no profile; C3-2). Each shot encodes under the converter's ticker
+  (`raw.not_done`'s checks that need no profile; C3-2; the trigger check runs when a load converts from the
+  layer, C-3). Each shot encodes under the converter's ticker
   (`_Ticker`, `compute_budget` of its size), so heartbeats go on during a large encode (C3-1). It isn't
   retried after an error until the next save asks. **A conversion** into the cache or beside, with a data
   root and store-v4 live and online, saves its shots' raw rows through the same `raw_fill.save_batch`, by
@@ -185,16 +186,23 @@ raw file is listed; the two priority modes share one view; whole rows in Make ro
   - `txy_layers`: one row per folder and layer, `matlab` or `helab:<profile content hash>` (Q22.2), with
     `tags` (names seen, display only), per-shot `entries` `[shot, size, mtime_ns, kind, seq, rows,
     problematic, job_seq]`, sizes, `precision` (`g8` or `f64`), `maker`, `last_used`, and `gone_at` /
-    `seen_at` (the only-copy mark, by the time its evidence was taken, C2-10's rule; S2-2, S2-3).
+    `seen_at` (the only-copy mark, by the time its evidence was taken, C2-10's rule; S2-2, S2-3). A listing
+    checks a raw-keyed entry against the raw files and a TXY-keyed one against its own layer's TXY only
+    (`mark_txy_seen`'s `present` by layer name; C-2, `49726d1`): HeLab's TXY of a shot never makes a `matlab`
+    layer recoverable, nor the reverse.
     **Fingerprint kinds** (Q45.3): `raw` (the raw file's) for a HeLab shot whose raw file is listed, however
     it was read; `txy` (the TXY file's) for every `matlab` shot and a HeLab shot without a raw file.
   - `txy_segments`: a layer's append-only files (`txy/<uuid>.hlb`, `.hlb` kind `txy`,
     `helab/convert/txy_layer.py`); the highest `seq` holding a shot wins; `live_shots` / `all_shots`.
   - `txy_views`: what one source mode and tag loads for the folder (key `(path, identity source, tag)`; the
-    two priority modes share one), holding no data: each shot's layer and fingerprint, `problematic`,
+    two priority modes share one), holding no data: each shot's layer and fingerprint and the layer entry key it was saved with
+    (`[…, layer, [size, mtime_ns, kind]]`; C-1, `0d2b9c7`), `problematic`,
     `raw_times`, and the folder facts `datasets.info` held (listing, signature, TXY record). A view whose
     layer entry is gone or doesn't match is incomplete, and those shots come from the next step of the
-    loading order. Removing a layer deletes its folder's views (derived rows). A TXY list that isn't a mode
+    loading order: a shot whose entry another view's save replaced is left out of a cached read and read again
+    by a load (`read_txy_shots(keys=)`). A view saved before the key (five items) derives a MATLAB shot's key from
+    its TXY fingerprint; its HeLab shots serve no cached read and are read again once by its next load ("Cached
+    dataset invalid"), which saves the keys (PR #11's review, PR-1). Removing a layer deletes its folder's views (derived rows). A TXY list that isn't a mode
     (Q53.2) has its own view, keyed by its text and its HeLab entries' profile hashes joined by `>`
     (`txy_cache.view_key`). The view's TXY record of a list adds `entries`, `fallback_entries` and
     `fallback` (the shots taken beyond the own list, Q55.2); `wanted_key`/`saved_wanted` include the
@@ -290,7 +298,9 @@ Store-v4 only, the switch off (`912f928`, `4e86094`, `0cd133f`, `4e14535`, revie
 Live check whose source reads HeLab's TXY converts in the helper a shot that has a raw file and no current HeLab
 text of the profile asked for, and saves only a TXY layer entry, kind `raw` (keyed by the raw file); a load alone
 never writes text or a raw row (R~1, R~2: `raw_fill` still fills the raw layer after it). The order per shot is its
-TXY layer, the raw layer, a current HeLab text, then converting the raw file (Q50.5). A shot converts on read
+TXY layer, the raw layer, a current HeLab text, then converting the raw file (Q50.5). A raw layer is used only if
+`raw_layer.not_done` passes for the profile's trigger channel (`raw_fill` can't check it); otherwise the file is
+judged as `convert_raw_file` judges it (C-3, `eafc3fc`). A shot converts on read
 only when nothing in its list's chain has a TXY file of it, with the own list's first HeLab entry that can
 convert (Q55.1, Q55.2; landed `9bf99ff`). For the modes this is Q50.1 (a) (`ced04aa`): under HeLab priority only
 the shots MATLAB's TXY lacks; HeLab only always converts, MATLAB's sources never
