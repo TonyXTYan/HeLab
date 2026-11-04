@@ -252,7 +252,14 @@ How to use it:
   CI 41072414259 (job 124119750861, `2960680`); `agent/caching-v2` CI 41375836115 (`84ccaeb`, job
   125055805809) and CI 41379212072 (`6b0f998`, job 125066159186); `agent/v4-switch-on` CI 41490797588
   (`d3b4931`, 2026-11-03); `agent/txy-priority` CI 41587970080 (Windows Tests 1/3, job 125757887948,
-  `bf3fb85`, 2026-11-03).
+  `bf3fb85`, 2026-11-03); Ground CI 41660788301 (Windows Tests 1/3, job 126003261482, `3ab75b2`,
+  2026-11-03).
+- [ ] `test_io_lanes.py::test_tab_switch_moves_work_to_background_and_requeued_load_reuses_ram_shots`:
+  `KeyError: 'memory'` at line 262 (the requeued load's payload had no RAM shots), macOS Tests (3/3) on
+  Ground CI 41660788301 (job 126003261256, `3ab75b2`, 2026-11-03); passed on rerun. Likely cause, not
+  confirmed: the test puts three messages and calls `IOService._tick()` once, and a tick stops after
+  8 ms, so on a slow runner the `shot` message can still be queued when the tab switches. Probable fix:
+  tick until `service.messages` is empty.
 - [ ] `test_gui_responsiveness.py::test_stalled_process_keeps_heartbeat_and_shutdown_responsive`:
   `assert 0.2199… < 0.2` (line 228) on macOS CI (run 40764414177), passed on retry.
 - [ ] Tests that `chdir` while helpers can start: a helper inherits the working folder, which its

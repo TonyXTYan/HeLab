@@ -10,19 +10,20 @@ from __future__ import annotations
 import json
 import os
 import sys
+import threading
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import pytest
 from typing import Iterator
 
 from PyQt6 import sip
-from PyQt6.QtCore import QCoreApplication, QEvent
+from PyQt6.QtCore import QCoreApplication, QEvent, Qt
 from PyQt6.QtWidgets import QMessageBox
 from pytestqt.qtbot import QtBot
 
 from helab.analysis.dataset_view import view_of
-from helab.scripts.base import DatasetAnalysis
+from helab.scripts.base import DatasetAnalysis, ScriptMetadata
 from helab.utils.folder_cache import FolderCache
 from helab.utils.settings_defaults import SCRIPT_AUTO_RELOAD_SETTING, SCRIPT_FOLDERS_SETTING, read_setting
 from helab.utils.settings_store import app_settings
@@ -32,7 +33,7 @@ from helab.utils.cache_paths import Mount
 from helab.utils.settings_defaults import OPEN_PLOTS_SETTING
 from helab.views.plots import script_tree
 from helab.views.plots.arrangement import PlotReopen
-from helab.views.plots.script_tree import TreePanelWidget, loading_marker, marker_path, on_network, read_script_folders
+from helab.views.plots.script_tree import ProbeFailure, TreePanelWidget, loading_marker, marker_path, on_network, read_script_folders
 from test_presets_plots import (Window, Windows, cache, dataset, folder, fresh_presets, new_window,  # noqa: F401
                                       no_disk_cache, runner, set_values, windows)
 from test_scripts_reload import restored_imports  # noqa: F401
@@ -429,6 +430,197 @@ def test_removing_the_folder_a_reload_waits_for_ends_the_wait(
     assert window.scripts.reload_button.text() == "Reload" and window.scripts._waiting_on == []
     gate.set()
     qtbot.waitUntil(lambda: not instance.runner.in_flight(), timeout=10_000)
+
+
+Round = Tuple[List[str], Callable[[Dict[str, Optional[ProbeFailure]]], None]]
+
+
+def fake_probes(monkeypatch: pytest.MonkeyPatch, scripts: TreePanelWidget) -> List[Round]:
+    """Test imports on (Q49.3 (b)), each round's answer the test's to give: ``answer({folder: None})``."""
+    rounds: List[Round] = []
+    monkeypatch.setattr(script_tree, "PROBING", True)
+    monkeypatch.setattr(scripts._probes, "probe", lambda folders, answer: rounds.append((list(folders), answer)))
+    return rounds
+
+
+def imports_seen(monkeypatch: pytest.MonkeyPatch, scripts: TreePanelWidget) -> List[int]:
+    """For each real import of a folder: how many runs of its scripts were queued or computing then."""
+    seen: List[int] = []
+    manager = scripts.script_manager
+    add = manager.add_folder
+
+    def adding(folder_: str) -> bool:
+        seen.append(scripts._busy({folder_}))
+        return add(folder_)
+    monkeypatch.setattr(manager, "add_folder", adding)
+    return seen
+
+
+def lab_script(scripts: TreePanelWidget) -> Tuple[ScriptMetadata, DatasetAnalysis]:
+    (metadata,) = scripts.script_manager.get_scripts_in_group("Lab")
+    script_class = scripts.script_manager.get_script(metadata.script_id)
+    assert script_class is not None
+    script = script_class()
+    assert isinstance(script, DatasetAnalysis)
+    return metadata, script
+
+
+def test_a_plot_opened_while_its_folder_is_tested_waits_for_the_reload(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-4 (PR #11): a plot opened from the folder while Reload reads "Reload (checking)" is held from its
+    start: no compute of the old code runs under the real import, and it opens on the new code."""
+    window = new_window(qtbot, cache, windows)
+    scripts = window.scripts
+    write_script(tmp_path, "lab_live_p", "old", wait=BLOCKS.format(helper="lab_live_p"))
+    scripts.add_folder(str(tmp_path))
+    started = sys.modules["lab_live_p"].STARTED
+    rounds, seen = fake_probes(monkeypatch, scripts), imports_seen(monkeypatch, scripts)
+    window.view = view_of(dataset("run", range(1, 4)), cache.root_of(folder("run")))
+    scripts.reload_scripts()
+    assert scripts.reload_button.text() == "Reload (checking)" and len(rounds) == 1
+    instance = scripts.run_analysis(*lab_script(scripts), "Plot")
+    assert instance is not None
+    qtbot.waitUntil(lambda: started.is_set() or instance.status_label.text() == "Waiting for its script to reload…",
+                    timeout=10_000)
+    write_script(tmp_path, "lab_live_p", "new")
+    folders, answer = rounds[0]
+    old_gate = sys.modules["lab_live_p"].GATE
+    answer({folder_: None for folder_ in folders})
+    assert seen == [0]  # (Imported at once: no run of the old code under it.)
+    old_gate.set()  # (Had the old compute run, it would return now.)
+    qtbot.waitUntil(lambda: instance.shown is not None and shown_tag(instance) == "new", timeout=10_000)
+    assert seen == [0] and not started.is_set() and len(rounds) == 1
+    assert scripts.reload_button.text() == "Reload"
+
+
+@pytest.mark.parametrize("kept", ["test import failed", "folder removed"])
+def test_a_plot_held_from_its_start_whose_folder_keeps_its_code_runs_it(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+        kept: str) -> None:
+    """C4-1 (PR #11, round 2): a plot opened during the round is held before its first run; when the round
+    keeps its folder's code (its test import failed, or the folder was removed meanwhile), it runs that code
+    then (``keep_script``) and draws, saying why it kept it."""
+    window = new_window(qtbot, cache, windows)
+    scripts = window.scripts
+    write_script(tmp_path, "lab_live_s", "old")
+    scripts.add_folder(str(tmp_path))
+    rounds = fake_probes(monkeypatch, scripts)
+    window.view = view_of(dataset("run", range(1, 4)), cache.root_of(folder("run")))
+    scripts.reload_scripts()
+    instance = scripts.run_analysis(*lab_script(scripts), "Plot")
+    assert instance is not None and instance.status_label.text() == "Waiting for its script to reload…"
+    folders, answer = rounds[0]
+    if kept == "folder removed":
+        scripts.remove_folder(str(tmp_path))
+    answer({folder_: ProbeFailure("it hung") for folder_ in folders})
+    qtbot.waitUntil(lambda: instance.shown is not None, timeout=10_000)
+    assert shown_tag(instance) == "old" and "⚠ Script didn't reload" in instance._script_note
+    assert not scripts._probing and len(rounds) == 1
+
+
+def test_the_import_waits_for_a_run_that_started_while_its_folder_was_tested(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-4 (PR #11): a run of the folder's scripts queued during the round (any way) still computing when the
+    test imports answer: the real import waits for it ("Reload (waiting)"), keeping the answers (no second
+    round), then goes on. A reload asked meanwhile follows in its own round."""
+    window = new_window(qtbot, cache, windows)
+    scripts = window.scripts
+    write_script(tmp_path, "lab_live_q", "old", wait=BLOCKS.format(helper="lab_live_q"))
+    scripts.add_folder(str(tmp_path))
+    gate, started = sys.modules["lab_live_q"].GATE, sys.modules["lab_live_q"].STARTED
+    gate.set()
+    instance = open_plot(qtbot, window, cache)
+    gate.clear()
+    started.clear()
+    rounds, seen = fake_probes(monkeypatch, scripts), imports_seen(monkeypatch, scripts)
+    old_class = type(instance.script)
+    scripts.reload_scripts()
+    assert len(rounds) == 1
+    instance.runner.submit(old_class(), instance.metadata, "Plot", instance.view)  # (Not the plot's: held.)
+    qtbot.waitUntil(started.is_set, timeout=10_000)
+    write_script(tmp_path, "lab_live_q", "new")
+    folders, answer = rounds[0]
+    answer({folder_: None for folder_ in folders})
+    assert scripts.reload_button.text() == "Reload (waiting)" and seen == []
+    assert scripts.script_manager.get_script(f"{tmp_path / 'live.py'}::Live") is old_class  # Not yet.
+    scripts.reload_scripts()  # (Follows this round in its own.)
+    assert len(rounds) == 1
+    gate.set()
+    qtbot.waitUntil(lambda: len(rounds) == 2, timeout=10_000)
+    assert seen == [0] and scripts.reload_button.text() == "Reload (checking)"
+    folders, answer = rounds[1]
+    answer({folder_: None for folder_ in folders})
+    assert seen == [0, 0] and scripts.reload_button.text() == "Reload" and not scripts._probing
+    qtbot.waitUntil(lambda: instance.shown is not None and shown_tag(instance) == "new", timeout=10_000)
+
+
+def test_a_run_ending_as_the_reload_counts_it_doesnt_leave_the_reload_waiting(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C4-2 (PR #11, round 2): the run the answered round counts ends, its ``finished`` emitted, before the
+    count returns. The panel listens before it counts, so that ``finished`` reaches it and the import goes on
+    (it never stays "Reload (waiting)" with nothing left to wait for)."""
+    window = new_window(qtbot, cache, windows)
+    scripts = window.scripts
+    write_script(tmp_path, "lab_live_t", "old", wait=BLOCKS.format(helper="lab_live_t"))
+    scripts.add_folder(str(tmp_path))
+    gate, started = sys.modules["lab_live_t"].GATE, sys.modules["lab_live_t"].STARTED
+    gate.set()
+    instance = open_plot(qtbot, window, cache)
+    gate.clear()
+    started.clear()
+    rounds, seen = fake_probes(monkeypatch, scripts), imports_seen(monkeypatch, scripts)
+    scripts.reload_scripts()
+    instance.runner.submit(type(instance.script)(), instance.metadata, "Plot", instance.view)
+    qtbot.waitUntil(started.is_set, timeout=10_000)
+    ended = threading.Event()
+    # (Direct: called on the worker thread as it emits. PyQt6's stubs lack connect's type argument.)
+    instance.runner.finished.connect(lambda _result: ended.set(), Qt.ConnectionType.DirectConnection)  # type: ignore[call-arg]
+    busy = scripts._busy
+    counts: List[int] = []
+
+    def counting(folders: Set[str]) -> int:
+        count = busy(folders)
+        if not counts:
+            counts.append(count)
+            gate.set()
+            assert ended.wait(10)  # (The run ended and said so on the worker thread, before this count returns.)
+        return count
+    monkeypatch.setattr(scripts, "_busy", counting)
+    write_script(tmp_path, "lab_live_t", "new")
+    folders, answer = rounds[0]
+    answer({folder_: None for folder_ in folders})
+    assert counts == [1]
+    qtbot.waitUntil(lambda: seen == [0] and scripts.reload_button.text() == "Reload", timeout=10_000)
+    qtbot.waitUntil(lambda: instance.shown is not None and shown_tag(instance) == "new", timeout=10_000)
+    assert len(rounds) == 1 and not scripts._probing
+
+
+def test_removing_the_folder_a_tested_reload_waits_for_lets_it_go_on(
+        qtbot: QtBot, cache: FolderCache, windows: Windows, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """C-4 (PR #11): answered, the round waits for a run of its folder; the folder removed meanwhile, the
+    round ends without importing it (L2's wait, after the test imports)."""
+    window = new_window(qtbot, cache, windows)
+    scripts = window.scripts
+    write_script(tmp_path, "lab_live_r", "old", wait=BLOCKS.format(helper="lab_live_r"))
+    scripts.add_folder(str(tmp_path))
+    gate, started = sys.modules["lab_live_r"].GATE, sys.modules["lab_live_r"].STARTED
+    gate.set()
+    instance = open_plot(qtbot, window, cache)
+    gate.clear()
+    started.clear()
+    rounds, seen = fake_probes(monkeypatch, scripts), imports_seen(monkeypatch, scripts)
+    scripts.reload_scripts()
+    instance.runner.submit(type(instance.script)(), instance.metadata, "Plot", instance.view)
+    qtbot.waitUntil(started.is_set, timeout=10_000)
+    folders, answer = rounds[0]
+    answer({folder_: None for folder_ in folders})
+    assert scripts.reload_button.text() == "Reload (waiting)"
+    scripts.remove_folder(str(tmp_path))
+    assert scripts.reload_button.text() == "Reload" and scripts._waiting_on == [] and not scripts._probing
+    assert seen == [] and "Lab" not in scripts.groups
+    gate.set()
+    qtbot.waitUntil(lambda: not instance.runner.in_flight(), timeout=10_000)
+    assert seen == [] and len(rounds) == 1
 
 
 def test_a_helper_first_imported_in_a_run_isnt_a_change(qtbot: QtBot, tmp_path: Path,

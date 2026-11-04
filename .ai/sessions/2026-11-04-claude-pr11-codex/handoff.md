@@ -177,3 +177,110 @@ No blocker; one Low, three Info:
 
 - A~1: none needed for these fixes. Optional: `mark_txy_seen` could use the sizes and mtimes it is passed (always
   `(0, 0)` today) to tell a replaced TXY from the one a layer holds; not needed for C-2.
+
+## Round 2 (C-4): confirmed (`brief-c4.md`, base `2557480`)
+
+**C-4 (P1), `script_tree.py`: no recheck of in-flight runs after the asynchronous script probe.** Confirmed by a
+test before the fix. `_try_reload` checks `_busy` only before the round of test imports. The round's answer
+(`_probe_then`'s `answered` → `_finish_reload` → `_load_folder`) then imports at once. A plot opened from the folder
+during "Reload (checking)" (`run_analysis`, `reopen_plot`) computed on the old code while `load_directory` replaced its
+helper modules. In the test, the real import saw **1** run of the folder's scripts in flight.
+
+**Fix, `bac9ddf`: both of Codex's options.** Each covers what the other can't:
+- **Held from its start** (`_hold_if_reloading`, called in `run_analysis` and `reopen_plot` before `start`). A plot
+  is held this way when its folder is in the running round (`_round`) or waits to reload (`_pending`, also
+  "Reload (waiting)" with the probe off). It computes nothing on code about to be replaced, and doesn't delay the
+  reload. It takes the new code with the folder's other plots (`_adopt`), or keeps its code and says why
+  (`keep_script`, for a folder that failed its test import), as plots held by Reload do. A reopened plot keeps
+  waiting for its data (`adopt_script`'s rule).
+- **The backstop** (`_end_round`). When the round answers, the answers are kept (`_answered`) and the import
+  (`then`) runs only once no run of the round's still-listed folders' scripts is queued or computing, on any runner
+  (`_busy`). Until then:
+  - those folders' plots are held, so a plot opened any other way submits no more;
+  - the reload waits on each runner's `finished`, reading "Reload (waiting)". The wait is `_wait_for_runs`, now
+    shared with `_try_reload`, and the GUI thread never waits.
+
+  `_probing` stays set while the reload waits, so a reload asked meanwhile still waits in `_pending` and follows in
+  its own round. That round's plots are held again first, since this round's `_adopt` let them run. Removing a
+  folder while an answered round waits for it lets the round go on (`remove_folder` calls `_end_round`, as L2
+  does for "Reload (waiting)").
+- **The start's restore** (`restore_folders` → `_restored`) goes through the same `_end_round`. Its window is empty:
+  its folders' scripts aren't loaded until `_restored` imports them, so no plot or run of theirs can exist. The
+  recheck covers it all the same.
+
+**Tests** (`tests/test_live_scripts.py`, probes faked with `fake_probes`; `imports_seen` records `_busy` at each
+real import; all three failed before the fix):
+- `test_a_plot_opened_while_its_folder_is_tested_waits_for_the_reload`: the import sees 0 runs in flight (1 before
+  the fix). The plot never computes the old code and opens on the new code. One round only.
+- `test_the_import_waits_for_a_run_that_started_while_its_folder_was_tested`: a run queued during the round, still
+  computing at the answer. The reload reads "Reload (waiting)" and the old class stays loaded. It imports once the
+  run ends, with no second test-import round. A reload asked meanwhile follows in round 2.
+- `test_removing_the_folder_a_tested_reload_waits_for_lets_it_go_on`: the round ends without importing.
+
+Not tested on its own: `reopen_plot`'s hold (the same `_hold_if_reloading` line as `run_analysis`; the backstop
+test covers a run from any path).
+
+**Proposed doc change, `plots-and-scripts.md`, the try-import paragraph's "Rounds:".** After "a reload asked meanwhile
+waits in `_pending` for its own round", add:
+
+> When a round answers, its import waits (`_end_round`, the answers kept) until no run of its folders' scripts is
+> queued or computing, on any runner, reading "Reload (waiting)"; those plots are held meanwhile. A plot opened while
+> its folder is in a round or waits to reload is held from its start (`_hold_if_reloading`, in `run_analysis` and
+> `reopen_plot`), and takes the new code with the others (`_adopt`). A reload asked meanwhile holds its plots again
+> before its own round (C-4, PR #11).
+
+**Reply text for the Codex comment (C-4):** "Confirmed and fixed in `bac9ddf`, with both options. A plot opened
+while its folder is being test-imported, or waits to reload, is now held from its start
+(`_hold_if_reloading` in `run_analysis` and `reopen_plot`). It runs no old code and takes the new code with the
+folder's other plots. Separately, the round's answer no longer imports at once: `_end_round` keeps the answers and
+waits on each runner's `finished` ("Reload (waiting)") until no run of those folders' scripts is queued or computing,
+with no second probe round and no wait on the GUI thread. Tests:
+`test_a_plot_opened_while_its_folder_is_tested_waits_for_the_reload`,
+`test_the_import_waits_for_a_run_that_started_while_its_folder_was_tested`,
+`test_removing_the_folder_a_tested_reload_waits_for_lets_it_go_on`."
+
+**Checks (at `bac9ddf`):** the full suite, `pytest -n 12 --reruns 5 --reruns-delay 1`: **9293 passed, 673 skipped**,
+no RERUN (output: `.ai/temp/suite-c4.txt`). The five type checks pass: `mypy helab/ --strict` (207 files),
+`mypy tests --strict` (210), `pyright helab tests` (0 errors), `mypy helab/ --strict --platform win32` (207),
+`pyright --pythonplatform Windows helab tests` (0 errors). CI: see the report to CoCo.
+
+**Follow-ups:** none.
+
+### Round 2's review (Probe2, `review.md`, `d91c3d3`): C4-1 and C4-2 fixed
+
+- **C4-1 (Medium): confirmed, fixed in `b19a07e`** (`instance.py`, which the brief allows for holding a plot). A
+  plot held from its start whose folder then kept its code never ran. That happens when the folder's test import
+  failed, its class or action is gone, or it was removed meanwhile. `keep_script` only called `_follow_next`, and
+  nothing waited. It now runs the plot (`run()`) when the plot has no result yet and neither has a run in flight
+  nor waits for its data or its own TXY choice; otherwise it calls `_follow_next` as before. The kept code is the
+  code that stays loaded, and no import of that folder follows in the round. This also covers a plot whose first
+  run a reload cancelled.
+
+  Test: `test_a_plot_held_from_its_start_whose_folder_keeps_its_code_runs_it`, over a failed test import and the
+  folder removed. Both cases timed out before the fix and draw "old" now.
+- **C4-2 (Low): confirmed, fixed in `364ee45`.** A run ending between `_busy`'s count and the `finished` connection
+  went unseen, and the reload stayed "Reload (waiting)". In the answered wait a click on Reload couldn't recover
+  it. The fix has two parts:
+  - `_listen` connects every runner before each count, in both `_end_round` and `_try_reload` (L2's wait), and
+    `_stop_waiting` still disconnects;
+  - `_try_reload`, while an answered round waits, calls `_end_round` to count again.
+
+  Test: `test_a_run_ending_as_the_reload_counts_it_doesnt_leave_the_reload_waiting`. A `_busy` wrapper lets the
+  counted run end, its `finished` emitted (seen through a direct connection), before the count returns. Before
+  the fix the reload stayed waiting; now it imports, in one round.
+
+**Doc proposal, added to round 2's (`plots-and-scripts.md`):** "a plot held from its start that keeps its code runs
+it then (`keep_script`); the runners' `finished` is connected before runs are counted (`_listen`), and Reload during
+the answered wait counts them again".
+
+**Reply text, if CoCo mentions the review on the PR:** "Follow-up from our own review: a plot held from its start
+whose folder kept its old code now runs it (`b19a07e`), and the reload listens for runs ending before it counts
+them (`364ee45`)."
+
+**Checks (at `364ee45`):**
+- The full suite, `pytest -n 12 --reruns 5 --reruns-delay 1`: **9296 passed, 673 skipped**, no RERUN (output:
+  `.ai/temp/suite-c4b.txt`).
+- The five type checks pass: `mypy helab/ --strict` (207 files), `mypy tests --strict` (210), `pyright helab tests`
+  (0 errors), `mypy helab/ --strict --platform win32` (207), `pyright --pythonplatform Windows helab tests`
+  (0 errors).
+- CI: see the report to CoCo.

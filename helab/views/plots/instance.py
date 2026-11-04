@@ -1002,7 +1002,8 @@ class AnalysisInstance(LinkedAnalysisInstance):
     def keep_script(self, why: str) -> None:
         """Its script didn't reload (``why``: the file's error, its class or action gone, its folder
         removed): it keeps the code it has and its last result, says so in amber, and goes on (Rerun
-        and Live run the code it has) until a reload gives it new code."""
+        and Live run the code it has) until a reload gives it new code. A plot that has no result yet runs it
+        now."""
         if self.is_closed:
             return
         when = self.code_loaded_at
@@ -1013,7 +1014,13 @@ class AnalysisInstance(LinkedAnalysisInstance):
         self.status_label.setToolTip("Fix the script and Reload it in the Scripts panel (its load error is "
                                      "listed there); meanwhile Rerun and Live run the code this plot has.")
         self._show_follow()
-        if not self.job_id and not self.waiting():
+        if self.job_id or self.waiting():
+            return
+        if self.shown is None and not self._own_waits:
+            # Held before its first run (opened while its folder was tested or waited to reload, or that run
+            # cancelled by the reload): it runs the code it keeps now (C4-1; no import of it follows).
+            self.run()
+        else:
             self._follow_next()  # What waited while it was held.
 
     def _swap_script(self, metadata: ScriptMetadata, script: DatasetAnalysis, policy: LivePolicy,

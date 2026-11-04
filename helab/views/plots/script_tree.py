@@ -464,6 +464,11 @@ class TreePanelWidget(QWidget):
         # whose last test import failed (the start note's tooltip says how they were checked).
         self._probes = FolderProbes(self)
         self._probing = False
+        # C-4: the round's folders (a plot of one opened meanwhile is held from its start, ``_hold_if_reloading``),
+        # and, once its test imports answered, what the real import waits with until no run of them is in flight.
+        self._round: Set[str] = set()
+        self._answered: Optional[Tuple[Set[str], Dict[str, Optional[ProbeFailure]],
+                                       Callable[[Dict[str, Optional[ProbeFailure]]], None]]] = None
         self._adding: Set[str] = set()
         self._probe_failed: Set[str] = set()
 
@@ -572,11 +577,14 @@ class TreePanelWidget(QWidget):
     def _probe_then(self, folders: List[str],
                     then: Callable[[Dict[str, Optional[ProbeFailure]]], None]) -> None:
         """Test-import ``folders`` in separate processes (``FolderProbes``), then ``then(answers)``; at once
-        (all passed) when there are none or ``PROBING`` is off. A reload asked meanwhile runs after it."""
+        (all passed) when there are none or ``PROBING`` is off. ``then`` imports, so it waits (``_end_round``)
+        until no run of those folders' scripts is queued or computing (C-4: one may have started during the
+        round). A reload asked meanwhile runs after it."""
         if not folders or not PROBING:
             then({folder: None for folder in folders})
             return
         self._probing = True
+        self._round = set(folders)
         self.reload_button.setText("Reload (checking)")
         self.reload_button.setToolTip(f"Test-importing {len(folders):,} script folder{'' if len(folders) == 1 else 's'} "
                                       "in a separate process first")
@@ -584,12 +592,35 @@ class TreePanelWidget(QWidget):
         def answered(answers: Dict[str, Optional[ProbeFailure]]) -> None:
             if sip.isdeleted(self):
                 return
-            self._probing = False
-            self._stop_waiting()
-            then(answers)
-            if self._pending:
-                self._try_reload()
+            self._answered = (set(folders), answers, then)
+            self._end_round()
         self._probes.probe(folders, answered)
+
+    def _end_round(self) -> None:
+        """The round's test imports answered: its import (``then``) runs once no run of its folders' scripts
+        (those still listed) is queued or computing, on any runner; until then their plots are held and the
+        reload waits for ``finished`` ("Reload (waiting)"), the answers kept (no second round). Then a reload
+        asked meanwhile follows in its own round, its plots held again (this round's import let them run)."""
+        if self._answered is None:
+            return
+        folders, answers, then = self._answered
+        listed = {folder for folder in folders if self._is_remembered(folder) or
+                  any(os.path.normcase(known) == os.path.normcase(folder) for known in self.script_manager.folders())}
+        self._listen()  # (Before counting: a run ending meanwhile still reaches ``_run_ended``, C4-2.)
+        busy = self._busy(listed)
+        if busy:
+            for instance in self._plots_of(listed):
+                instance.hold_for_reload()  # (Held already, or opened another way: it submits no more meanwhile.)
+            self._wait_for_runs(busy)
+            return
+        self._answered, self._round = None, set()
+        self._probing = False
+        self._stop_waiting()
+        then(answers)
+        if self._pending:
+            for instance in self._plots_of(self._pending):
+                instance.hold_for_reload()
+            self._try_reload()
 
     def _show_start_note(self) -> None:
         """One line while remembered folders wait for Reload; their reasons in its tooltip."""
@@ -692,7 +723,9 @@ class TreePanelWidget(QWidget):
         self._refresh()
         self._show_start_note()
         self._sync_watch()
-        if not self._pending:
+        if self._answered is not None:
+            self._end_round()  # (Its answered round may have waited for this folder's runs only: L2, C-4.)
+        elif not self._pending:
             self._stop_waiting()  # (A reload waiting only for this folder's runs: nothing waits now, L2.)
 
     def _save_folders(self) -> None:
@@ -745,10 +778,19 @@ class TreePanelWidget(QWidget):
     def _plots_of(self, folders: Set[str]) -> List[AnalysisInstance]:
         """The open plots whose script was loaded from one of ``folders``."""
         keys = {os.path.normcase(folder) for folder in folders}
+        return [instance for instance in self.instances() if self._folder_key(instance) in keys]
+
+    def _folder_key(self, instance: AnalysisInstance) -> str:
         manager = self.script_manager
-        return [instance for instance in self.instances()
-                if os.path.normcase(manager.folder_of(instance.metadata.script_id)
-                                    or manager.class_folder(type(instance.script))) in keys]
+        return os.path.normcase(manager.folder_of(instance.metadata.script_id)
+                                or manager.class_folder(type(instance.script)))
+
+    def _hold_if_reloading(self, instance: AnalysisInstance) -> None:
+        """C-4: a plot opened while its folder waits to reload or is in a round of test imports is held from
+        its start (before it runs): it computes nothing on the code about to be replaced, and takes the new
+        code with the folder's other plots (``_adopt``)."""
+        if self._folder_key(instance) in {os.path.normcase(folder) for folder in self._round | self._pending}:
+            instance.hold_for_reload()
 
     @pyqtSlot()
     def _reload_clicked(self) -> None:
@@ -787,17 +829,15 @@ class TreePanelWidget(QWidget):
             if not self._probing:
                 self._stop_waiting()  # (L2: the folder it waited for was removed meanwhile.)
             return
+        if self._answered is not None:
+            self._end_round()  # (Answered, waiting for runs: count them again; this reload follows it.)
+            return
         if self._probing:
             return  # (A round of test imports runs: this reload's round follows it, ``_probe_then``.)
+        self._listen()  # (Before counting: a run ending meanwhile still reaches ``_run_ended``, C4-2.)
         busy = self._busy(self._pending)
         if busy:
-            for runner in self._runners():
-                if runner not in self._waiting_on:
-                    runner.finished.connect(self._run_ended)
-                    self._waiting_on.append(runner)
-            self.reload_button.setText("Reload (waiting)")
-            self.reload_button.setToolTip(f"The reload waits for {busy:,} run{'' if busy == 1 else 's'} of these "
-                                          "scripts to end (cancelled)")
+            self._wait_for_runs(busy)
             return
         self._stop_waiting()
         folders, self._pending = set(self._pending), set()
@@ -865,9 +905,26 @@ class TreePanelWidget(QWidget):
         return os.path.normcase(path) == os.path.normcase(folder) or \
             os.path.normcase(os.path.dirname(path)) == os.path.normcase(folder)
 
+    def _listen(self) -> None:
+        """Each runner's ``finished`` checks again (``_run_ended``); connected before the runs are counted, since
+        Qt queues a signal only to the receivers connected when it is emitted (``_stop_waiting`` disconnects)."""
+        for runner in self._runners():
+            if runner not in self._waiting_on:
+                runner.finished.connect(self._run_ended)
+                self._waiting_on.append(runner)
+
+    def _wait_for_runs(self, busy: int) -> None:
+        """Wait (never blocking) for ``busy`` runs to end: each runner's ``finished`` checks again."""
+        self._listen()
+        self.reload_button.setText("Reload (waiting)")
+        self.reload_button.setToolTip(f"The reload waits for {busy:,} run{'' if busy == 1 else 's'} of these "
+                                      "scripts to end (cancelled)")
+
     @pyqtSlot(object)
     def _run_ended(self, _result: object) -> None:
-        if self._pending:
+        if self._answered is not None:
+            self._end_round()
+        elif self._pending:
             self._try_reload()
 
     def _stop_waiting(self) -> None:
@@ -1183,6 +1240,7 @@ class TreePanelWidget(QWidget):
             return None
         instance.code_loaded_at = self.script_manager.loaded_at(metadata.script_id)
         self._analysis_instances[instance_id] = instance
+        self._hold_if_reloading(instance)
         instance.start()
         self._add_dock(instance)
         return instance
@@ -1240,6 +1298,7 @@ class TreePanelWidget(QWidget):
             return f"it failed: {error}"
         instance.code_loaded_at = self.script_manager.loaded_at(metadata.script_id)
         self._analysis_instances[instance_id] = instance
+        self._hold_if_reloading(instance)
         instance.start(saved, wait)
         if instance.open_error:
             # Without its settings page it would be recorded with none: it couldn't reopen (kept).
