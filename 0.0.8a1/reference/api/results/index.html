@@ -1,0 +1,2501 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User manual for HeLab, the Helium Experiment Lab Analysis Board.">
+      
+      
+      
+      
+        <link rel="prev" href="../dataset-view/">
+      
+      
+        <link rel="next" href="../parameters/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Run context and results - HeLab manual</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+        <script src="../../../js/iframe-worker-shim.js"></script>
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#run-context-and-results" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="HeLab manual" class="md-header__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            HeLab manual
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Run context and results
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="HeLab manual" class="md-nav__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    HeLab manual
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install and open your first folder
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/data-root/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mark a data root (.helab-root)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/live/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Follow a folder live
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/convert-txy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Convert raw files to TXY
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/write-a-script/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Write an analysis script
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../command-line/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command line
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hlb-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The .hlb file format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API for script writers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API for script writers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../script/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Script contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dataset-view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset view
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run context and results
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run context and results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisContext" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AnalysisContext
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AnalysisContext">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisContext.covered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        covered
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisContext.cancelled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cancelled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisContext.check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        check
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AnalysisResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AnalysisResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisResult.constants_record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        constants_record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisResult.reuse_key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        reuse_key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisResult.describe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        describe
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.results.Cancelled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cancelled
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.results.Coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Coverage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.Coverage.of" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        of
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.Coverage.diff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        diff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.Coverage.text" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        text
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.Coverage.to_json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_json
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.results.CoverageDiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CoverageDiff
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CoverageDiff">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.CoverageDiff.current" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        current
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shot selection and view range
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explanations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Explanations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../explanation/cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How HeLab caches data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisContext" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AnalysisContext
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AnalysisContext">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisContext.covered" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        covered
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisContext.cancelled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cancelled
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisContext.check" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        check
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AnalysisResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AnalysisResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisResult.constants_record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        constants_record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisResult.reuse_key" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        reuse_key
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.AnalysisResult.describe" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        describe
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.results.Cancelled" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cancelled
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.results.Coverage" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Coverage
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Coverage">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.Coverage.of" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        of
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.Coverage.diff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        diff
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.Coverage.text" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        text
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.Coverage.to_json" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        to_json
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.results.CoverageDiff" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CoverageDiff
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="CoverageDiff">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.results.CoverageDiff.current" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        current
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="run-context-and-results">Run context and results<a class="headerlink" href="#run-context-and-results" title="Permanent link">&para;</a></h1>
+<p><code>compute</code> gets an <code>AnalysisContext</code>: the read-only data (<code>view</code>), the plot's parameter values
+(<code>parameters</code>), the physical constants the run uses, and a way to stop when the user cancels
+(<code>check</code>, <code>cancelled</code>). <code>render</code> and <code>update</code> get an <code>AnalysisResult</code>, whose <code>data</code> is what
+<code>compute</code> returned, together with the record the plot dock shows.</p>
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="helab.analysis.results.AnalysisContext" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">helab.analysis.results.AnalysisContext</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#helab.analysis.results.AnalysisContext" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">AnalysisContext</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">action</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">view</span><span class="p">:</span> <span class="n">DatasetView</span><span class="p">,</span>
+    <span class="n">parameters</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+    <span class="n">analysis</span><span class="p">:</span> <span class="n">AnalysisIdentity</span><span class="p">,</span>
+    <span class="n">cancel_event</span><span class="p">:</span> <span class="n">Event</span> <span class="o">=</span> <span class="n">threading</span><span class="o">.</span><span class="n">Event</span><span class="p">(),</span>
+    <span class="n">coverage</span><span class="p">:</span> <span class="n">Coverage</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">constants</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">MappingProxyType</span><span class="p">({})</span>
+    <span class="p">)(),</span>
+    <span class="n">resolved_constants</span><span class="p">:</span> <span class="n">ResolvedConstants</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">constant_keys</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+    <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="n">live</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+    <span class="n">unused</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">(),</span>
+    <span class="n">to_cache</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>Everything a run gets: an immutable dataset view and its effective parameters,
+never the tab. <code>cancelled()</code> lets a long computation stop early.</p>
+<p><code>compute</code> receives it as <code>context</code>; it is immutable and holds no Qt object.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.job_id">job_id</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The run's ID.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.action">action</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The action that runs (one of the script's <code>get_actions</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.view">view</span></code></b>
+              (<code><a class="autorefs autorefs-internal" title="helab.analysis.dataset_view.DatasetView
+
+
+  
+      dataclass
+  " href="../dataset-view/#helab.analysis.dataset_view.DatasetView">DatasetView</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The data, a read-only <code>DatasetView</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.parameters">parameters</span></code></b>
+              (<code><span title="typing.Mapping">Mapping</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>)
+          –
+          <div class="doc-md-description">
+            <p>Every declared parameter's value, checked and clamped, defaults filled in.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.analysis">analysis</span></code></b>
+              (<code><span title="helab.analysis.identity.AnalysisIdentity">AnalysisIdentity</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The script's identity (its ID, version and file hash).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.cancel_event">cancel_event</span></code></b>
+              (<code><span title="threading.Event">Event</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Set when the run is cancelled (read it through <code>cancelled</code> or <code>check</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.coverage">coverage</span></code></b>
+              (<code><a class="autorefs autorefs-internal" title="helab.analysis.results.Coverage
+
+
+  
+      dataclass
+  " href="#helab.analysis.results.Coverage">Coverage</a> | None</code>)
+          –
+          <div class="doc-md-description">
+            <p>The shots the run uses (<code>DatasetAnalysis.covered_shots</code>); None: all of the
+view's (<code>covered</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.constants">constants</span></code></b>
+              (<code><span title="typing.Mapping">Mapping</span>[<span title="str">str</span>, <span title="typing.Mapping">Mapping</span>[<span title="str">str</span>, <span title="float">float</span>]]</code>)
+          –
+          <div class="doc-md-description">
+            <p>The lab and folder layers of the physical constants, as
+<code>{"lab": {key: value}, "folder": {...}}</code>, taken when the run started.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.resolved_constants">resolved_constants</span></code></b>
+              (<code><span title="helab.analysis.physics.ResolvedConstants">ResolvedConstants</span> | None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Those layers with the plot's own values, resolved when the run was
+submitted, for an analysis that uses constants; None otherwise. <code>compute</code> reads its
+constants here.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.constant_keys">constant_keys</span></code></b>
+              (<code><span title="tuple">tuple</span>[<span title="str">str</span>, ...]</code>)
+          –
+          <div class="doc-md-description">
+            <p>The constants the analysis uses, which the record names.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.owner">owner</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The plot that asked for the run ("" for a run no plot asked for, e.g. a test). An
+analysis may keep per-plot state under it (dropped in <code>DatasetAnalysis.plot_closed</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.live">live</span></code></b>
+              (<code><span title="bool">bool</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>True for a rerun following Live rather than one the user asked for: a costly
+analysis may do less then and say so.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.unused">unused</span></code></b>
+              (<code><span title="frozenset">frozenset</span>[<span title="str">str</span>]</code>)
+          –
+          <div class="doc-md-description">
+            <p>The parameters not in use under <code>parameters</code> (hidden by their <code>when</code> or
+<code>shown_with</code>), left out of the result's reuse key.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisContext.to_cache">to_cache</span></code></b>
+              (<code><span title="bool">bool</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Whether the completed result may be saved in the disk cache.</p>
+          </div>
+        </li>
+    </ul>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="helab.analysis.results.AnalysisContext.covered" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">covered</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#helab.analysis.results.AnalysisContext.covered" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">covered</span><span class="p">:</span> <span class="n">Coverage</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The shots the run uses, with their fingerprints and origins (<code>coverage</code>, else all).</p>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.results.AnalysisContext.cancelled" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">cancelled</span>
+
+
+<a href="#helab.analysis.results.AnalysisContext.cancelled" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">cancelled</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether the run was cancelled: a long <code>compute</code> checks it and returns early (or calls
+<code>check</code>).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.results.AnalysisContext.check" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">check</span>
+
+
+<a href="#helab.analysis.results.AnalysisContext.check" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">check</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Stop here (raise <code>Cancelled</code>) if the run was cancelled: call between phases.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="helab.analysis.results.AnalysisResult" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">helab.analysis.results.AnalysisResult</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#helab.analysis.results.AnalysisResult" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">AnalysisResult</span><span class="p">(</span>
+    <span class="n">job_id</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">action</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">analysis</span><span class="p">:</span> <span class="n">AnalysisIdentity</span><span class="p">,</span>
+    <span class="nb">input</span><span class="p">:</span> <span class="n">ViewKey</span><span class="p">,</span>
+    <span class="n">parameters</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+    <span class="n">state</span><span class="p">:</span> <span class="n">State</span><span class="p">,</span>
+    <span class="n">data</span><span class="p">:</span> <span class="n">Any</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">error</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="n">started_at</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">finished_at</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">0.0</span><span class="p">,</span>
+    <span class="n">policy</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">RAM_ONLY</span><span class="p">,</span>
+    <span class="n">coverage</span><span class="p">:</span> <span class="n">Coverage</span> <span class="o">=</span> <span class="n">Coverage</span><span class="p">(),</span>
+    <span class="n">input_signature</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="n">constant_layers</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">MappingProxyType</span><span class="p">({})</span>
+    <span class="p">)(),</span>
+    <span class="n">resolved_constants</span><span class="p">:</span> <span class="n">ResolvedConstants</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">constant_keys</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+    <span class="n">found</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">MappingProxyType</span><span class="p">({})</span>
+    <span class="p">)(),</span>
+    <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="n">unused</span><span class="p">:</span> <span class="nb">frozenset</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="nb">frozenset</span><span class="p">(),</span>
+    <span class="n">source</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="n">COMPUTED</span><span class="p">,</span>
+    <span class="n">outdated</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+    <span class="n">packed</span><span class="p">:</span> <span class="nb">bytes</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">packing_error</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>A run's outcome and its record: what <code>render</code> draws and what the plot dock's tooltip shows.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.job_id">job_id</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The run's ID.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.action">action</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The action that ran.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.analysis">analysis</span></code></b>
+              (<code><span title="helab.analysis.identity.AnalysisIdentity">AnalysisIdentity</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The script's identity (its ID, version and file hash).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.input">input</span></code></b>
+              (<code><a class="autorefs autorefs-internal" title="helab.analysis.dataset_view.ViewKey
+
+
+  
+      dataclass
+  " href="../dataset-view/#helab.analysis.dataset_view.ViewKey">ViewKey</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The view the run used: its identity and revision (<code>ViewKey</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.parameters">parameters</span></code></b>
+              (<code><span title="typing.Mapping">Mapping</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>)
+          –
+          <div class="doc-md-description">
+            <p>Every declared parameter's value as the run used it, defaults filled in.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.state">state</span></code></b>
+              (<code><span title="helab.analysis.results.State">State</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>"completed", "failed" or "cancelled".</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.data">data</span></code></b>
+              (<code><span title="typing.Any">Any</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>What <code>compute</code> returned (None unless completed, and once the plot is released).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.error">error</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Why the run failed ("" otherwise).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.started_at">started_at</span></code></b>
+              (<code><span title="float">float</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>When it started (s since the epoch).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.finished_at">finished_at</span></code></b>
+              (<code><span title="float">float</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>When it ended (s since the epoch).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.policy">policy</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Where it is kept: in RAM only, or also in the disk cache.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.coverage">coverage</span></code></b>
+              (<code><a class="autorefs autorefs-internal" title="helab.analysis.results.Coverage
+
+
+  
+      dataclass
+  " href="#helab.analysis.results.Coverage">Coverage</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The shots it used, with their fingerprints and origins.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.input_signature">input_signature</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The signature of the view's revision it ran on.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.constant_layers">constant_layers</span></code></b>
+              (<code><span title="typing.Mapping">Mapping</span>[<span title="str">str</span>, <span title="typing.Mapping">Mapping</span>[<span title="str">str</span>, <span title="float">float</span>]]</code>)
+          –
+          <div class="doc-md-description">
+            <p>The lab and folder layers of the constants the run got.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.resolved_constants">resolved_constants</span></code></b>
+              (<code><span title="helab.analysis.physics.ResolvedConstants">ResolvedConstants</span> | None</code>)
+          –
+          <div class="doc-md-description">
+            <p>What it resolved from them; None for an analysis without constants.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.constant_keys">constant_keys</span></code></b>
+              (<code><span title="tuple">tuple</span>[<span title="str">str</span>, ...]</code>)
+          –
+          <div class="doc-md-description">
+            <p>The constants it used.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.found">found</span></code></b>
+              (<code><span title="typing.Mapping">Mapping</span>[<span title="str">str</span>, <span title="typing.Any">Any</span>]</code>)
+          –
+          <div class="doc-md-description">
+            <p>What it found or used beyond its parameters, as JSON values
+(<code>DatasetAnalysis.result_found</code>): kept in the record after the plot is released.
+Read-only at the top level only: don't change the lists and dicts inside.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.owner">owner</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The plot that asked for it.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.unused">unused</span></code></b>
+              (<code><span title="frozenset">frozenset</span>[<span title="str">str</span>]</code>)
+          –
+          <div class="doc-md-description">
+            <p>The parameters it didn't use, left out of <code>reuse_key</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.source">source</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>"" for a result computed now; "disk" for one read back from the disk cache.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.outdated">outdated</span></code></b>
+              (<code><span title="tuple">tuple</span>[<span title="str">str</span>, ...]</code>)
+          –
+          <div class="doc-md-description">
+            <p>For one read back from the disk cache, what no longer matches the run asked
+for (empty: an exact match).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.packed">packed</span></code></b>
+              (<code><span title="bytes">bytes</span> | None</code>)
+          –
+          <div class="doc-md-description">
+            <p>Its data packed for the disk cache, when it may be saved; None otherwise.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.results.AnalysisResult.packing_error">packing_error</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>Why its data couldn't be packed ("" otherwise).</p>
+          </div>
+        </li>
+    </ul>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="helab.analysis.results.AnalysisResult.constants_record" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">constants_record</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#helab.analysis.results.AnalysisResult.constants_record" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">constants_record</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The constants the run used, as JSON values: for an analysis that declares constants
+(<code>DatasetAnalysis.constant_keys</code>), its lab and folder layers and what it resolved
+(<code>ResolvedConstants.as_record</code>), of its <code>constant_keys</code> only (all without); None for one
+that doesn't, so a lab or folder change of a value it doesn't use never makes its results
+look different. A layer with none of those keys is left out.</p>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.results.AnalysisResult.reuse_key" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">reuse_key</span>
+
+
+<a href="#helab.analysis.results.AnalysisResult.reuse_key" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">reuse_key</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>What a later reuse of this result must match, as JSON values: a saved result's lookup
+key (<code>result_cache.lookup_key</code>). What the run decided beyond its parameters and input, which a
+reuse must match too, comes from <code>found["reuse"]</code> when the script gives it
+(<code>DatasetAnalysis.result_found</code>; e.g. a box kept from an earlier run of the plot). The
+parameters are those in use (not <code>unused</code>: a hidden setting never changes the key).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.results.AnalysisResult.describe" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">describe</span>
+
+
+<a href="#helab.analysis.results.AnalysisResult.describe" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">describe</span><span class="p">(</span><span class="n">parameters_text</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s1">''</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The record, one item per line, for a plot dock's tooltip.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="helab.analysis.results.Cancelled" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">helab.analysis.results.Cancelled</span>
+
+
+<a href="#helab.analysis.results.Cancelled" class="headerlink" title="Permanent link">&para;</a></h2>
+
+
+    <div class="doc doc-contents first">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="Exception">Exception</span></code></p>
+
+
+
+        <p>Raised inside a computation that noticed <code>AnalysisContext.cancelled()</code>.</p>
+
+
+
+
+
+
+
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="helab.analysis.results.Coverage" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">helab.analysis.results.Coverage</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#helab.analysis.results.Coverage" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">Coverage</span><span class="p">(</span>
+    <span class="n">shots</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+    <span class="n">fingerprints</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="n">Fingerprint</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">MappingProxyType</span><span class="p">({})</span>
+    <span class="p">)(),</span>
+    <span class="n">origins</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">MappingProxyType</span><span class="p">({})</span>
+    <span class="p">)(),</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>The TXY shots a run used, ascending, with their fingerprints (those the view knew) and, for
+those read from HeLab's TXY, their origins (<code>helab:&lt;profile hash&gt;</code>).</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.results.Coverage.of" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">of</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#helab.analysis.results.Coverage.of" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">of</span><span class="p">(</span>
+    <span class="n">view</span><span class="p">:</span> <span class="n">DatasetView</span><span class="p">,</span> <span class="n">shots</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Coverage</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The view's <code>shots</code> (default: all of them); numbers the view lacks are left out.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.results.Coverage.diff" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">diff</span>
+
+
+<a href="#helab.analysis.results.Coverage.diff" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">diff</span><span class="p">(</span>
+    <span class="n">view</span><span class="p">:</span> <span class="n">DatasetView</span><span class="p">,</span> <span class="n">shots</span><span class="p">:</span> <span class="n">Iterable</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CoverageDiff</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>view</code>'s shots (or those of them chosen) against this coverage.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.results.Coverage.text" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">text</span>
+
+
+<a href="#helab.analysis.results.Coverage.text" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">text</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>60 shots (1–60)</code>, or <code>no shots</code>, for a record.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.results.Coverage.to_json" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">to_json</span>
+
+
+<a href="#helab.analysis.results.Coverage.to_json" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">to_json</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Origins only when some shot has one: MATLAB's TXY alone keep the key they had.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h2 id="helab.analysis.results.CoverageDiff" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">helab.analysis.results.CoverageDiff</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#helab.analysis.results.CoverageDiff" class="headerlink" title="Permanent link">&para;</a></h2>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">CoverageDiff</span><span class="p">(</span>
+    <span class="n">new</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+    <span class="n">changed</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+    <span class="n">gone</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents first">
+
+
+
+        <p>How a view differs from a result's coverage: shots it has that the run didn't use
+(<code>new</code>), used shots whose fingerprints differ now (<code>changed</code>), used shots it lacks
+(<code>gone</code>).</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="helab.analysis.results.CoverageDiff.current" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">current</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#helab.analysis.results.CoverageDiff.current" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">current</span><span class="p">:</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether the view holds exactly the shots the run used, unchanged.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.sections", "navigation.indexes", "navigation.top", "search.highlight", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

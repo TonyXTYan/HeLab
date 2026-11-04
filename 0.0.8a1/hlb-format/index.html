@@ -1,0 +1,1646 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User manual for HeLab, the Helium Experiment Lab Analysis Board.">
+      
+      
+      
+      
+        <link rel="prev" href="../reference/settings/">
+      
+      
+        <link rel="next" href="../reference/api/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>The .hlb file format - HeLab manual</title>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+        <script src="../js/iframe-worker-shim.js"></script>
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#helabs-hlb-files" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href=".." title="HeLab manual" class="md-header__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            HeLab manual
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              The .hlb file format
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href=".." title="HeLab manual" class="md-nav__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    HeLab manual
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href=".." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install and open your first folder
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how-to/data-root/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mark a data root (.helab-root)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how-to/live/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Follow a folder live
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how-to/convert-txy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Convert raw files to TXY
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../how-to/write-a-script/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Write an analysis script
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/command-line/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command line
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The .hlb file format
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The .hlb file format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-hlb-file-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a .hlb file is
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#byte-layout-format-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Byte layout (format 1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The header
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#raw-layers-kind-raw" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raw layers (kind raw)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#txy-layers-kind-txy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TXY layers (kind txy)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-format-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The format rule
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading one
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reading one">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#python-with-helab" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python, with HeLab
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-without-helab-numpy-and-python-blosc-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python, without HeLab (NumPy and python-blosc only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#from-the-command-line-read-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From the command line (read only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#matlab" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MATLAB
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../reference/api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API for script writers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API for script writers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/api/script/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Script contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/api/dataset-view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset view
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run context and results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/api/parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/api/selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shot selection and view range
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../reference/api/fits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explanations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Explanations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../explanation/cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How HeLab caches data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#what-a-hlb-file-is" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        What a .hlb file is
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#byte-layout-format-1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Byte layout (format 1)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-header" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The header
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#raw-layers-kind-raw" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Raw layers (kind raw)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#txy-layers-kind-txy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        TXY layers (kind txy)
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-format-rule" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The format rule
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#reading-one" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Reading one
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Reading one">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#python-with-helab" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python, with HeLab
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#python-without-helab-numpy-and-python-blosc-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Python, without HeLab (NumPy and python-blosc only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#from-the-command-line-read-only" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        From the command line (read only)
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#matlab" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MATLAB
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="helabs-hlb-files">HeLab's <code>.hlb</code> files<a class="headerlink" href="#helabs-hlb-files" title="Permanent link">&para;</a></h1>
+<p>HeLab's disk cache (store-v4) keeps its binary data in <code>.hlb</code> files. This page describes the format and how to
+read one with or without HeLab, from the command line, and from MATLAB. HeLab writes <code>.hlb</code> files from version
+0.0.8, which turns store-v4 on; earlier versions write none. HeLab's code: <code>helab.utils.hlb.read</code>,
+<code>helab.convert.raw_layer.columns</code>, <code>helab.convert.txy_layer.unpack_segment</code>, and <code>helab cache dump|export</code>
+(<code>helab/cache_cli.py</code>). The "without HeLab" sample below runs as a test
+(<code>tests/test_cache_cli.py</code>), checked against a file HeLab wrote.</p>
+<h2 id="what-a-hlb-file-is">What a <code>.hlb</code> file is<a class="headerlink" href="#what-a-hlb-file-is" title="Permanent link">&para;</a></h2>
+<p>HeLab's disk cache (store-v4) keeps binary data in <code>.hlb</code> files: named NumPy arrays, compressed, with a JSON header
+that says what they are and who made them. No Python pickle anywhere, so any language can read one. There are two
+kinds: a <strong>raw layer</strong>, one raw TDC file <code>d&lt;N&gt;.txt</code> parsed into its pulses (<code>store-v4/raw/&lt;uuid&gt;.hlb</code>), and a <strong>TXY
+segment</strong>, some shots of one folder's TXY layer (<code>store-v4/txy/&lt;uuid&gt;.hlb</code>).</p>
+<h2 id="byte-layout-format-1">Byte layout (format 1)<a class="headerlink" href="#byte-layout-format-1" title="Permanent link">&para;</a></h2>
+<table>
+<thead>
+<tr>
+<th>Offset</th>
+<th>Size</th>
+<th>Field</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>8</td>
+<td>magic <code>89 48 4C 42 0D 0A 1A 0A</code> (<code>\x89HLB\r\n\x1a\n</code>; a text-mode copy or a cut file fails it)</td>
+</tr>
+<tr>
+<td>8</td>
+<td>4</td>
+<td>header length <code>L</code>, unsigned little-endian (at most 16 MiB)</td>
+</tr>
+<tr>
+<td>12</td>
+<td>4</td>
+<td>CRC32 (zlib's) of the header's bytes, unsigned little-endian</td>
+</tr>
+<tr>
+<td>16</td>
+<td><code>L</code></td>
+<td>header: JSON, UTF-8</td>
+</tr>
+<tr>
+<td>16 + <code>L</code></td>
+<td>to the end</td>
+<td>the arrays' compressed chunks, back to back, in the order the header lists them</td>
+</tr>
+</tbody>
+</table>
+<p>The chunks tile the rest of the file exactly: no gap, no overlap, nothing after the last.</p>
+<h2 id="the-header">The header<a class="headerlink" href="#the-header" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code><span class="p">{</span>
+<span class="w">  </span><span class="nt">"format"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"kind"</span><span class="p">:</span><span class="w"> </span><span class="s2">"raw"</span><span class="p">,</span>
+<span class="w">  </span><span class="nt">"maker"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"maker"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;session id&gt;"</span><span class="p">,</span><span class="w"> </span><span class="nt">"record"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"helab_version"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">,</span><span class="w"> </span><span class="nt">"commit"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">,</span><span class="w"> </span><span class="nt">"hostname"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">,</span><span class="w"> </span><span class="nt">"…"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">}},</span>
+<span class="w">  </span><span class="nt">"meta"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"encoding"</span><span class="p">:</span><span class="w"> </span><span class="s2">"i8-i64d-1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"parser"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="nt">"facts"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"rows"</span><span class="p">:</span><span class="w"> </span><span class="mi">41092</span><span class="p">,</span><span class="w"> </span><span class="nt">"t_zero"</span><span class="p">:</span><span class="w"> </span><span class="s2">"13656646605557.0"</span><span class="p">,</span><span class="w"> </span><span class="nt">"…"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">},</span>
+<span class="w">           </span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"d1.txt"</span><span class="p">},</span>
+<span class="w">  </span><span class="nt">"arrays"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"channel"</span><span class="p">,</span><span class="w"> </span><span class="nt">"dtype"</span><span class="p">:</span><span class="w"> </span><span class="s2">"|i1"</span><span class="p">,</span><span class="w"> </span><span class="nt">"shape"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">41092</span><span class="p">],</span>
+<span class="w">     </span><span class="nt">"codec"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"blosc"</span><span class="p">,</span><span class="w"> </span><span class="nt">"cname"</span><span class="p">:</span><span class="w"> </span><span class="s2">"zstd"</span><span class="p">,</span><span class="w"> </span><span class="nt">"clevel"</span><span class="p">:</span><span class="w"> </span><span class="mi">9</span><span class="p">,</span><span class="w"> </span><span class="nt">"shuffle"</span><span class="p">:</span><span class="w"> </span><span class="s2">"byte"</span><span class="p">,</span><span class="w"> </span><span class="nt">"typesize"</span><span class="p">:</span><span class="w"> </span><span class="mi">1</span><span class="p">},</span>
+<span class="w">     </span><span class="nt">"chunks"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"offset"</span><span class="p">:</span><span class="w"> </span><span class="mi">0</span><span class="p">,</span><span class="w"> </span><span class="nt">"length"</span><span class="p">:</span><span class="w"> </span><span class="mi">12345</span><span class="p">,</span><span class="w"> </span><span class="nt">"size"</span><span class="p">:</span><span class="w"> </span><span class="mi">41092</span><span class="p">,</span><span class="w"> </span><span class="nt">"crc32"</span><span class="p">:</span><span class="w"> </span><span class="mi">305419896</span><span class="p">}]},</span>
+<span class="w">    </span><span class="p">{</span><span class="nt">"name"</span><span class="p">:</span><span class="w"> </span><span class="s2">"time"</span><span class="p">,</span><span class="w"> </span><span class="nt">"dtype"</span><span class="p">:</span><span class="w"> </span><span class="s2">"&lt;i8"</span><span class="p">,</span><span class="w"> </span><span class="nt">"shape"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">41092</span><span class="p">],</span><span class="w"> </span><span class="nt">"codec"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"…"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">},</span><span class="w"> </span><span class="nt">"chunks"</span><span class="p">:</span><span class="w"> </span><span class="p">[{</span><span class="nt">"…"</span><span class="p">:</span><span class="w"> </span><span class="s2">"…"</span><span class="p">}]}</span>
+<span class="w">  </span><span class="p">]</span>
+<span class="p">}</span>
+</code></pre></div>
+<ul>
+<li><code>format</code>: this layout's version. A reader refuses a higher one; it never rewrites a file.</li>
+<li><code>kind</code>: <code>raw</code> (a raw layer) or <code>txy</code> (a TXY segment).</li>
+<li><code>maker</code>: which HeLab session made the file: its id, and its record with HeLab's version and commit, the
+  machine's random id, <strong>its hostname</strong>, and Python, NumPy, SciPy and blosc versions. A file shared off the machine
+  carries the hostname.</li>
+<li><code>meta</code>: the kind's own fields (below).</li>
+<li><code>arrays</code>: each one's <code>name</code>; <code>dtype</code> in NumPy's spelling with explicit byte order (<code>|i1</code>, <code>|u1</code>, <code>&lt;i8</code>, <code>&lt;f8</code>, the
+  only ones read today); <code>shape</code>; <code>codec</code>; and <code>chunks</code>. In each chunk, <code>offset</code> counts from the end of the header,
+  <code>length</code> is its compressed bytes, <code>size</code> its uncompressed bytes (at most 64 MiB, cut at element boundaries) and
+  <code>crc32</code> is zlib's CRC32 of its compressed bytes.</li>
+<li><strong>Codec</strong> <code>blosc</code>: each chunk is one python-blosc (Blosc 1) frame, decompressed with <code>blosc.decompress</code>.
+  <code>cname</code> and <code>clevel</code> are as written (raw layers: zstd 9). <code>shuffle</code> <code>byte</code> is Blosc's byte shuffle by
+  <code>typesize</code>, undone by the decompressor itself.</li>
+</ul>
+<h2 id="raw-layers-kind-raw">Raw layers (<code>kind</code> <code>raw</code>)<a class="headerlink" href="#raw-layers-kind-raw" title="Permanent link">&para;</a></h2>
+<p><code>meta.encoding</code> says which arrays the file holds:</p>
+<ul>
+<li><strong><code>i8-i64d-1</code></strong> (the TDC's own files): <code>channel</code> (<code>|i1</code>) and <code>time</code> (<code>&lt;i8</code>). The time is stored as row 0's time,
+  then each row's difference from the one before, so <code>numpy.cumsum(time)</code> gives the absolute TDC times. <strong>Row order:</strong>
+  the file's first row (the trigger, MATLAB's <code>t_zero</code>) comes first, then every other row sorted by time, with ties
+  in file order. Every converter backend reads the pulses in this order and gives byte-identical TXY.</li>
+<li><strong><code>f64-1</code></strong> (any other file: other line endings, NaN fields, decimals, …): <code>channels</code> and <code>times</code> (<code>&lt;f8</code>), exactly
+  as HeLab's reader parses the text, <strong>in file order</strong>, NaN where a field was empty.</li>
+</ul>
+<p>Times are TDC bins. HeLab's profiles use <strong>25 ps</strong> (<code>bin_time</code> 25e-12 s), so seconds = bins × 25e-12.</p>
+<p><code>meta.facts</code> holds what HeLab's done-writing checks read from the text: <code>rows</code>, <code>t_zero</code> (as text; <code>"nan"</code> for an
+empty file), <code>first_channel</code>, <code>blank</code>, <code>final_newline</code>, <code>line_endings</code> (<code>crlf</code>, <code>lf</code>, <code>cr</code>, <code>mixed</code>, <code>none</code>) and
+<code>reader</code> (<code>strict</code> or <code>general</code>), and <code>stop_line</code>: the line where the general reader stopped at a token it couldn't
+read, as MATLAB's converter stops (an integer from 1), or <code>null</code> when the file was read to its end; layers written
+before HeLab learnt it have no <code>stop_line</code>. <code>meta.parser</code> is HeLab's parser version (1).</p>
+<h2 id="txy-layers-kind-txy">TXY layers (<code>kind</code> <code>txy</code>)<a class="headerlink" href="#txy-layers-kind-txy" title="Permanent link">&para;</a></h2>
+<p>A folder's TXY data is kept per <strong>layer</strong>: <code>matlab</code> (MATLAB's TXY) or <code>helab:&lt;profile hash&gt;</code> (one per HeLab
+profile's content hash; its tags, such as <code>m19v1</code> and <code>p22v1</code>, are names for it). Each layer is a set of
+append-only <strong>segments</strong>, each one <code>.hlb</code> holding some of the layer's shots; when a shot is in several, the newest
+segment wins (the store's rows say which segment holds each shot, so a lone segment may hold superseded shots).</p>
+<p>Arrays:</p>
+<ul>
+<li><code>shots</code> (<code>&lt;i8</code> [k]): the shot numbers, ascending;</li>
+<li><code>offsets</code> (<code>&lt;i8</code> [k+1]): shot <code>i</code>'s hits are rows <code>offsets[i]</code> to <code>offsets[i+1]</code> of <code>hits</code>;</li>
+<li><code>hits</code> (<code>&lt;f8</code> [N, 3]): T in s, X in m, Y in m, one hit per row;</li>
+<li><code>problematic</code> (<code>|u1</code> [k]): 1 where the shot's TXY had empty fields or couldn't be read whole.</li>
+</ul>
+<p><code>meta</code>: <code>layer</code>, <code>profile_hash</code> (<code>""</code> for <code>matlab</code>), <code>tags</code>, and <code>precision</code>: <code>g8</code> holds the values the
+8-significant-figure text parses to (MATLAB's TXY and <code>m19v1</code>, so a shot equals its text TXY), <code>f64</code> full float64
+(newer profiles). Codec: Blosc zstd 9 with <strong>no shuffle</strong> (<code>shuffle</code> <code>none</code>).</p>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">helab.convert</span><span class="w"> </span><span class="kn">import</span> <span class="n">txy_layer</span>
+<span class="n">shots</span><span class="p">,</span> <span class="n">problematic</span><span class="p">,</span> <span class="n">header</span> <span class="o">=</span> <span class="n">txy_layer</span><span class="o">.</span><span class="n">unpack_segment</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s2">"seg.hlb"</span><span class="p">,</span> <span class="s2">"rb"</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>  <span class="c1"># {shot: (n, 3) float64}</span>
+</code></pre></div>
+<p>Without HeLab, <code>read_hlb</code> below gives the same arrays: <code>hits[offsets[i]:offsets[i + 1]]</code> is shot <code>shots[i]</code>.</p>
+<h2 id="the-format-rule">The format rule<a class="headerlink" href="#the-format-rule" title="Permanent link">&para;</a></h2>
+<p>An <strong>additive</strong> change keeps <code>format</code> 1: a new header field, a new <code>meta</code> field, a new array, a new <code>kind</code>, a new
+encoding name, or a new codec or dtype. Readers ignore fields they don't know, and refuse an array whose dtype or
+codec they don't know (an error, never a silent guess). Only a change to this byte layout, or to what an existing
+field means, raises <code>format</code>. An older HeLab meeting a newer <code>format</code> refuses the file and <strong>never rewrites, moves
+or deletes it</strong>.</p>
+<h2 id="reading-one">Reading one<a class="headerlink" href="#reading-one" title="Permanent link">&para;</a></h2>
+<h3 id="python-with-helab">Python, with HeLab<a class="headerlink" href="#python-with-helab" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">from</span><span class="w"> </span><span class="nn">helab.utils</span><span class="w"> </span><span class="kn">import</span> <span class="n">hlb</span>
+<span class="n">header</span><span class="p">,</span> <span class="n">arrays</span> <span class="o">=</span> <span class="n">hlb</span><span class="o">.</span><span class="n">read</span><span class="p">(</span><span class="s2">"d1.hlb"</span><span class="p">)</span>               <span class="c1"># every part checked; hlb.HlbError if not</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">helab.convert</span><span class="w"> </span><span class="kn">import</span> <span class="n">raw_layer</span>
+<span class="n">layer</span><span class="p">,</span> <span class="n">header</span> <span class="o">=</span> <span class="n">raw_layer</span><span class="o">.</span><span class="n">from_hlb</span><span class="p">(</span><span class="nb">open</span><span class="p">(</span><span class="s2">"d1.hlb"</span><span class="p">,</span> <span class="s2">"rb"</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">())</span>
+<span class="n">columns</span> <span class="o">=</span> <span class="n">raw_layer</span><span class="o">.</span><span class="n">columns</span><span class="p">(</span><span class="n">layer</span><span class="p">)</span>                <span class="c1"># channel, time_bins (absolute), time_s</span>
+<span class="n">pulses</span> <span class="o">=</span> <span class="n">raw_layer</span><span class="o">.</span><span class="n">decode</span><span class="p">(</span><span class="n">layer</span><span class="p">)</span>                  <span class="c1"># or: .channels, .times (float64, TDC bins), as the converter reads them</span>
+</code></pre></div>
+<h3 id="python-without-helab-numpy-and-python-blosc-only">Python, without HeLab (NumPy and python-blosc only)<a class="headerlink" href="#python-without-helab-numpy-and-python-blosc-only" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">json</span><span class="o">,</span><span class="w"> </span><span class="nn">struct</span><span class="o">,</span><span class="w"> </span><span class="nn">zlib</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">blosc</span><span class="o">,</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+
+<span class="k">def</span><span class="w"> </span><span class="nf">read_hlb</span><span class="p">(</span><span class="n">path</span><span class="p">):</span>
+    <span class="n">data</span> <span class="o">=</span> <span class="nb">open</span><span class="p">(</span><span class="n">path</span><span class="p">,</span> <span class="s2">"rb"</span><span class="p">)</span><span class="o">.</span><span class="n">read</span><span class="p">()</span>
+    <span class="k">if</span> <span class="n">data</span><span class="p">[:</span><span class="mi">8</span><span class="p">]</span> <span class="o">!=</span> <span class="sa">b</span><span class="s2">"</span><span class="se">\x89</span><span class="s2">HLB</span><span class="se">\r\n\x1a\n</span><span class="s2">"</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"not a .hlb file"</span><span class="p">)</span>
+    <span class="n">length</span><span class="p">,</span> <span class="n">crc</span> <span class="o">=</span> <span class="n">struct</span><span class="o">.</span><span class="n">unpack_from</span><span class="p">(</span><span class="s2">"&lt;II"</span><span class="p">,</span> <span class="n">data</span><span class="p">,</span> <span class="mi">8</span><span class="p">)</span>
+    <span class="n">header_bytes</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="mi">16</span><span class="p">:</span><span class="mi">16</span> <span class="o">+</span> <span class="n">length</span><span class="p">]</span>
+    <span class="k">if</span> <span class="n">zlib</span><span class="o">.</span><span class="n">crc32</span><span class="p">(</span><span class="n">header_bytes</span><span class="p">)</span> <span class="o">!=</span> <span class="n">crc</span><span class="p">:</span>
+        <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="s2">"header damaged"</span><span class="p">)</span>
+    <span class="n">header</span> <span class="o">=</span> <span class="n">json</span><span class="o">.</span><span class="n">loads</span><span class="p">(</span><span class="n">header_bytes</span><span class="p">)</span>
+    <span class="n">base</span><span class="p">,</span> <span class="n">arrays</span> <span class="o">=</span> <span class="mi">16</span> <span class="o">+</span> <span class="n">length</span><span class="p">,</span> <span class="p">{}</span>
+    <span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">header</span><span class="p">[</span><span class="s2">"arrays"</span><span class="p">]:</span>
+        <span class="n">pieces</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="k">for</span> <span class="n">chunk</span> <span class="ow">in</span> <span class="n">entry</span><span class="p">[</span><span class="s2">"chunks"</span><span class="p">]:</span>
+            <span class="n">packed</span> <span class="o">=</span> <span class="n">data</span><span class="p">[</span><span class="n">base</span> <span class="o">+</span> <span class="n">chunk</span><span class="p">[</span><span class="s2">"offset"</span><span class="p">]:</span><span class="n">base</span> <span class="o">+</span> <span class="n">chunk</span><span class="p">[</span><span class="s2">"offset"</span><span class="p">]</span> <span class="o">+</span> <span class="n">chunk</span><span class="p">[</span><span class="s2">"length"</span><span class="p">]]</span>
+            <span class="k">if</span> <span class="n">zlib</span><span class="o">.</span><span class="n">crc32</span><span class="p">(</span><span class="n">packed</span><span class="p">)</span> <span class="o">!=</span> <span class="n">chunk</span><span class="p">[</span><span class="s2">"crc32"</span><span class="p">]:</span>
+                <span class="k">raise</span> <span class="ne">ValueError</span><span class="p">(</span><span class="n">entry</span><span class="p">[</span><span class="s2">"name"</span><span class="p">]</span> <span class="o">+</span> <span class="s2">": chunk damaged"</span><span class="p">)</span>
+            <span class="n">pieces</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">blosc</span><span class="o">.</span><span class="n">decompress</span><span class="p">(</span><span class="n">packed</span><span class="p">))</span>
+        <span class="n">arrays</span><span class="p">[</span><span class="n">entry</span><span class="p">[</span><span class="s2">"name"</span><span class="p">]]</span> <span class="o">=</span> <span class="n">np</span><span class="o">.</span><span class="n">frombuffer</span><span class="p">(</span><span class="sa">b</span><span class="s2">""</span><span class="o">.</span><span class="n">join</span><span class="p">(</span><span class="n">pieces</span><span class="p">),</span> <span class="n">dtype</span><span class="o">=</span><span class="n">entry</span><span class="p">[</span><span class="s2">"dtype"</span><span class="p">])</span><span class="o">.</span><span class="n">reshape</span><span class="p">(</span><span class="n">entry</span><span class="p">[</span><span class="s2">"shape"</span><span class="p">])</span>
+    <span class="k">return</span> <span class="n">header</span><span class="p">,</span> <span class="n">arrays</span>
+
+<span class="n">header</span><span class="p">,</span> <span class="n">arrays</span> <span class="o">=</span> <span class="n">read_hlb</span><span class="p">(</span><span class="s2">"d1.hlb"</span><span class="p">)</span>
+<span class="k">if</span> <span class="n">header</span><span class="p">[</span><span class="s2">"meta"</span><span class="p">][</span><span class="s2">"encoding"</span><span class="p">]</span> <span class="o">==</span> <span class="s2">"i8-i64d-1"</span><span class="p">:</span>
+    <span class="n">channel</span><span class="p">,</span> <span class="n">bins</span> <span class="o">=</span> <span class="n">arrays</span><span class="p">[</span><span class="s2">"channel"</span><span class="p">],</span> <span class="n">np</span><span class="o">.</span><span class="n">cumsum</span><span class="p">(</span><span class="n">arrays</span><span class="p">[</span><span class="s2">"time"</span><span class="p">])</span>
+<span class="k">else</span><span class="p">:</span>
+    <span class="n">channel</span><span class="p">,</span> <span class="n">bins</span> <span class="o">=</span> <span class="n">arrays</span><span class="p">[</span><span class="s2">"channels"</span><span class="p">],</span> <span class="n">arrays</span><span class="p">[</span><span class="s2">"times"</span><span class="p">]</span>
+<span class="n">seconds</span> <span class="o">=</span> <span class="n">bins</span> <span class="o">*</span> <span class="mf">25e-12</span>
+</code></pre></div>
+<p><em>Checked</em> against a file HeLab wrote (<code>tests/data/convert/cases/basic/d1.txt</code>'s layer): the same channels and times
+as <code>raw_layer.decode</code>.</p>
+<h3 id="from-the-command-line-read-only">From the command line (read only)<a class="headerlink" href="#from-the-command-line-read-only" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code>helab cache dump d1.hlb                                   # the header as JSON (arrays without their chunk lists)
+helab cache export d1.hlb --to npz|mat|csv [--out PATH]   # channel, time_bins, time_s, header
+helab cache export --folder /data/2026-10-31/run --to mat # every raw layer store-v4 holds for that folder
+helab cache export --folder /data/2026-10-31/run --kind txy [--layer matlab|m19v1|helab:&lt;hash&gt;] --to csv
+helab cache export seg.hlb --to npz                      # a TXY segment: t_s, x_m, y_m and a shot column
+</code></pre></div>
+<p>A file's export goes to the current folder (<code>d1.npz</code>), a folder's to <code>./helab-export-&lt;name&gt;/d&lt;N&gt;.&lt;ext&gt;</code> (with <code>--kind
+txy</code>, <code>d_txy&lt;N&gt;.&lt;ext&gt;</code>, one per shot, columns <code>t_s</code>, <code>x_m</code>, <code>y_m</code>, of the layer <code>--layer</code> names, by layer or tag, or
+the only one there is); nothing is replaced without <code>--force</code>, and nothing is ever written into a store.
+<code>--bin-time</code> changes the seconds per bin (raw layers).</p>
+<h3 id="matlab">MATLAB<a class="headerlink" href="#matlab" title="Permanent link">&para;</a></h3>
+<p>MATLAB has no Blosc reader, so export the file first: <code>helab cache export d1.hlb --to mat</code> writes a <code>.mat</code> with
+<code>channel</code> (int8), <code>time_bins</code> (absolute, int64), <code>time_s</code> (double) and <code>header</code> (the JSON text):</p>
+<div class="highlight"><pre><span></span><code><span class="n">s</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">load</span><span class="p">(</span><span class="s">'d1.mat'</span><span class="p">);</span>
+<span class="nb">plot</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">time_s</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">channel</span><span class="w"> </span><span class="o">==</span><span class="w"> </span><span class="mi">5</span><span class="p">),</span><span class="w"> </span><span class="s">'.'</span><span class="p">);</span><span class="w">   </span><span class="c">% the trigger channel's pulses</span>
+<span class="n">info</span><span class="w"> </span><span class="p">=</span><span class="w"> </span><span class="nb">jsondecode</span><span class="p">(</span><span class="n">s</span><span class="p">.</span><span class="n">header</span><span class="p">);</span>
+</code></pre></div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "..", "features": ["navigation.sections", "navigation.indexes", "navigation.top", "search.highlight", "content.code.copy"], "search": "../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

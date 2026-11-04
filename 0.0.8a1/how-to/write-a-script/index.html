@@ -1,0 +1,1539 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User manual for HeLab, the Helium Experiment Lab Analysis Board.">
+      
+      
+      
+      
+        <link rel="prev" href="../convert-txy/">
+      
+      
+        <link rel="next" href="../../reference/command-line/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Write an analysis script - HeLab manual</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+        <script src="../../js/iframe-worker-shim.js"></script>
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#write-an-analysis-script" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="HeLab manual" class="md-header__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            HeLab manual
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Write an analysis script
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="HeLab manual" class="md-nav__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    HeLab manual
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install and open your first folder
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data-root/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mark a data root (.helab-root)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../live/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Follow a folder live
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../convert-txy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Convert raw files to TXY
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Write an analysis script
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Write an analysis script
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#load-and-reload-your-scripts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load and reload your scripts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-complete-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A complete example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#threads-and-shared-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Threads and shared data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-shots-with-the-shared-shots-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose shots with the shared Shots settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#follow-live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Follow Live
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#more-in-the-api-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        More in the API reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" >
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/command-line/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command line
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hlb-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The .hlb file format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../../reference/api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API for script writers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API for script writers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/script/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Script contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/dataset-view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset view
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run context and results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shot selection and view range
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../reference/api/fits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explanations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Explanations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How HeLab caches data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#load-and-reload-your-scripts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Load and reload your scripts
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#a-complete-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        A complete example
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#threads-and-shared-data" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Threads and shared data
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#choose-shots-with-the-shared-shots-settings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Choose shots with the shared Shots settings
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#follow-live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Follow Live
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#more-in-the-api-reference" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        More in the API reference
+      
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="write-an-analysis-script">Write an analysis script<a class="headerlink" href="#write-an-analysis-script" title="Permanent link">&para;</a></h1>
+<p>An analysis script is a Python file with a class that derives from <code>DatasetAnalysis</code>. HeLab lists
+it in the Scripts panel; clicking one of its actions runs it on the data the current tab shows and
+draws the result in a new plot.</p>
+<h2 id="load-and-reload-your-scripts">Load and reload your scripts<a class="headerlink" href="#load-and-reload-your-scripts" title="Permanent link">&para;</a></h2>
+<p>Keep your scripts in a folder of your own, anywhere on your computer.</p>
+<ol>
+<li>In the Scripts panel, click <strong>Load Scripts...</strong> and choose the folder.</li>
+<li>Pick your script's group in the <strong>Group</strong> drop-down. Each script is listed with a button for
+   each of its actions (the first two).</li>
+<li>Select a folder in a tab and let its data show, then click the action's button.</li>
+</ol>
+<p>HeLab imports every <code>.py</code> file directly in the folder (not its subfolders), in name order. One
+file may hold several scripts. A file with no script in it that your scripts import is a helper
+module: put shared code there and <code>import</code> it as usual. Your scripts can also import the
+packages HeLab itself runs with, such as NumPy, SciPy and Matplotlib.</p>
+<p>HeLab remembers the folder and loads it again at each start, once the window has shown. A folder
+on a network share, or one HeLab was loading when it last stopped, waits for <strong>Reload</strong> instead,
+and an amber line under the buttons says so.</p>
+<p>After you edit a script, click <strong>Reload</strong>: HeLab imports the folder's scripts and helper modules
+again, and open plots of them run again on the new code. If any of their runs is still computing,
+the button reads <strong>Reload (waiting)</strong> until it ends. To reload whenever you save a file, turn on
+<strong>Reload when a script is saved</strong> in the menu on the arrow beside <strong>Load Scripts...</strong>. That menu
+also lists your script folders, each with <strong>Reload</strong> and <strong>Remove from the list</strong>.</p>
+<p>A file that doesn't load is listed at the end of the scripts, under
+<code>⚠ N script files didn't load</code>: hover over its line for the traceback, or double-click it for a
+window with the details. Fix it and click <strong>Reload</strong>. A plot whose script didn't reload keeps
+running the code loaded before, and says so in amber.</p>
+<p>Before HeLab imports a folder (at start, on <strong>Reload</strong> and from <strong>Load Scripts...</strong>), it test-imports
+the folder in a separate process, so a script that hangs or crashes at import can't stop HeLab;
+meanwhile the button reads <strong>Reload (checking)</strong>. A folder whose test import doesn't finish within
+10 s, or ends the process, isn't imported: it is listed with the reason, for example
+<code>didn't load: its import didn't finish within 10 s</code>. <strong>Code at the top level of your script runs
+twice</strong> (once in the test, once for real), so keep it to imports and definitions, and do the work in
+the script's methods.</p>
+<h2 id="a-complete-example">A complete example<a class="headerlink" href="#a-complete-example" title="Permanent link">&para;</a></h2>
+<p>This script plots the mean arrival time (T) of each shot's events against shot number:</p>
+<div class="highlight"><pre><span></span><code><span class="sd">"""Mean arrival time per shot: an example HeLab analysis script."""</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">dataclasses</span><span class="w"> </span><span class="kn">import</span> <span class="n">dataclass</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">typing</span><span class="w"> </span><span class="kn">import</span> <span class="n">Any</span><span class="p">,</span> <span class="n">List</span><span class="p">,</span> <span class="n">Optional</span>
+
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">np</span>
+<span class="kn">import</span><span class="w"> </span><span class="nn">numpy.typing</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">npt</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">matplotlib.figure</span><span class="w"> </span><span class="kn">import</span> <span class="n">Figure</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">PyQt6.QtWidgets</span><span class="w"> </span><span class="kn">import</span> <span class="n">QWidget</span>
+
+<span class="kn">from</span><span class="w"> </span><span class="nn">helab.analysis.backends</span><span class="w"> </span><span class="kn">import</span> <span class="n">MatplotlibPane</span><span class="p">,</span> <span class="n">matplotlib_pane</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">helab.analysis.follow</span><span class="w"> </span><span class="kn">import</span> <span class="n">LivePolicy</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">helab.analysis.parameters</span><span class="w"> </span><span class="kn">import</span> <span class="n">ParameterSpec</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">helab.analysis.results</span><span class="w"> </span><span class="kn">import</span> <span class="n">AnalysisContext</span><span class="p">,</span> <span class="n">AnalysisResult</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">helab.analysis.selection</span><span class="w"> </span><span class="kn">import</span> <span class="n">SHOT_SPECS</span><span class="p">,</span> <span class="n">select_shots</span>
+<span class="kn">from</span><span class="w"> </span><span class="nn">helab.scripts.base</span><span class="w"> </span><span class="kn">import</span> <span class="n">DatasetAnalysis</span><span class="p">,</span> <span class="n">ScriptMetadata</span>
+
+<span class="n">MIN_EVENTS</span> <span class="o">=</span> <span class="n">ParameterSpec</span><span class="p">(</span>
+    <span class="s2">"min_events"</span><span class="p">,</span> <span class="s2">"Minimum events"</span><span class="p">,</span> <span class="s2">"int"</span><span class="p">,</span> <span class="mi">10</span><span class="p">,</span> <span class="p">(</span><span class="mi">1</span><span class="p">,</span> <span class="mi">1_000_000</span><span class="p">),</span> <span class="n">group</span><span class="o">=</span><span class="s2">"Mean T"</span><span class="p">,</span>
+    <span class="n">tip</span><span class="o">=</span><span class="s2">"Shots with fewer events than this are left out."</span><span class="p">)</span>
+
+
+<span class="nd">@dataclass</span><span class="p">(</span><span class="n">frozen</span><span class="o">=</span><span class="kc">True</span><span class="p">)</span>
+<span class="k">class</span><span class="w"> </span><span class="nc">MeanT</span><span class="p">:</span>
+    <span class="n">shots</span><span class="p">:</span> <span class="n">npt</span><span class="o">.</span><span class="n">NDArray</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">]</span>
+    <span class="n">mean_t</span><span class="p">:</span> <span class="n">npt</span><span class="o">.</span><span class="n">NDArray</span><span class="p">[</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">]</span>  <span class="c1"># seconds after the trigger</span>
+    <span class="n">skipped</span><span class="p">:</span> <span class="nb">int</span>
+
+
+<span class="k">class</span><span class="w"> </span><span class="nc">MeanArrivalTime</span><span class="p">(</span><span class="n">DatasetAnalysis</span><span class="p">):</span>
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_metadata</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ScriptMetadata</span><span class="p">:</span>
+        <span class="k">return</span> <span class="bp">self</span><span class="o">.</span><span class="n">create_metadata</span><span class="p">(</span>
+            <span class="n">name</span><span class="o">=</span><span class="s2">"Mean arrival time"</span><span class="p">,</span>
+            <span class="n">description</span><span class="o">=</span><span class="s2">"Mean T of each shot's events, against shot number"</span><span class="p">,</span>
+            <span class="n">group</span><span class="o">=</span><span class="s2">"My scripts"</span><span class="p">,</span>
+            <span class="n">file_path</span><span class="o">=</span><span class="vm">__file__</span><span class="p">,</span>
+            <span class="n">analysis_id</span><span class="o">=</span><span class="s2">"mylab.mean_arrival_time"</span><span class="p">,</span>
+            <span class="n">version</span><span class="o">=</span><span class="s2">"1"</span><span class="p">,</span>
+        <span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">get_actions</span><span class="p">(</span><span class="bp">self</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="p">[</span><span class="s2">"Plot"</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">parameters</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">ParameterSpec</span><span class="p">]:</span>
+        <span class="k">return</span> <span class="p">[</span><span class="o">*</span><span class="n">SHOT_SPECS</span><span class="p">,</span> <span class="n">MIN_EVENTS</span><span class="p">]</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">live_policy</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LivePolicy</span><span class="p">:</span>
+        <span class="k">return</span> <span class="n">LivePolicy</span><span class="p">(</span><span class="n">every_shots</span><span class="o">=</span><span class="mi">5</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">compute</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="n">AnalysisContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">MeanT</span><span class="p">:</span>
+        <span class="c1"># Worker thread: no Qt here, and the view's arrays are read-only.</span>
+        <span class="n">minimum</span> <span class="o">=</span> <span class="nb">int</span><span class="p">(</span><span class="n">context</span><span class="o">.</span><span class="n">parameters</span><span class="p">[</span><span class="n">MIN_EVENTS</span><span class="o">.</span><span class="n">name</span><span class="p">])</span>
+        <span class="n">shots</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">means</span><span class="p">:</span> <span class="nb">list</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">[]</span>
+        <span class="n">skipped</span> <span class="o">=</span> <span class="mi">0</span>
+        <span class="k">for</span> <span class="n">shot</span> <span class="ow">in</span> <span class="n">select_shots</span><span class="p">(</span><span class="n">context</span><span class="o">.</span><span class="n">view</span><span class="p">,</span> <span class="n">context</span><span class="o">.</span><span class="n">parameters</span><span class="p">):</span>
+            <span class="n">context</span><span class="o">.</span><span class="n">check</span><span class="p">()</span>  <span class="c1"># stops here if the user cancelled the run</span>
+            <span class="n">events</span> <span class="o">=</span> <span class="n">context</span><span class="o">.</span><span class="n">view</span><span class="o">.</span><span class="n">shots</span><span class="p">[</span><span class="n">shot</span><span class="p">]</span>  <span class="c1"># (n, 3): T in s, X and Y in m</span>
+            <span class="k">if</span> <span class="nb">len</span><span class="p">(</span><span class="n">events</span><span class="p">)</span> <span class="o">&lt;</span> <span class="n">minimum</span><span class="p">:</span>
+                <span class="n">skipped</span> <span class="o">+=</span> <span class="mi">1</span>
+                <span class="k">continue</span>
+            <span class="n">shots</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="n">shot</span><span class="p">)</span>
+            <span class="n">means</span><span class="o">.</span><span class="n">append</span><span class="p">(</span><span class="nb">float</span><span class="p">(</span><span class="n">events</span><span class="p">[:,</span> <span class="mi">0</span><span class="p">]</span><span class="o">.</span><span class="n">mean</span><span class="p">()))</span>
+        <span class="k">return</span> <span class="n">MeanT</span><span class="p">(</span><span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">shots</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">int64</span><span class="p">),</span> <span class="n">np</span><span class="o">.</span><span class="n">array</span><span class="p">(</span><span class="n">means</span><span class="p">,</span> <span class="n">dtype</span><span class="o">=</span><span class="n">np</span><span class="o">.</span><span class="n">float64</span><span class="p">),</span> <span class="n">skipped</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">render</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="n">AnalysisResult</span><span class="p">,</span> <span class="n">parent</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">QWidget</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">QWidget</span><span class="p">:</span>
+        <span class="c1"># GUI thread: build the plot from what compute returned.</span>
+        <span class="n">figure</span> <span class="o">=</span> <span class="n">Figure</span><span class="p">(</span><span class="n">layout</span><span class="o">=</span><span class="s2">"constrained"</span><span class="p">)</span>
+        <span class="n">draw</span><span class="p">(</span><span class="n">figure</span><span class="p">,</span> <span class="n">result</span><span class="p">)</span>
+        <span class="k">return</span> <span class="n">MatplotlibPane</span><span class="p">(</span><span class="n">figure</span><span class="p">,</span> <span class="n">parent</span><span class="p">)</span>
+
+    <span class="k">def</span><span class="w"> </span><span class="nf">update</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">widget</span><span class="p">:</span> <span class="n">QWidget</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="n">AnalysisResult</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span><span class="p">:</span>
+        <span class="c1"># A rerun (e.g. Live's next shots) redraws in place, keeping the user's zoom.</span>
+        <span class="n">pane</span> <span class="o">=</span> <span class="n">matplotlib_pane</span><span class="p">(</span><span class="n">widget</span><span class="p">)</span>
+        <span class="k">if</span> <span class="n">pane</span> <span class="ow">is</span> <span class="kc">None</span><span class="p">:</span>
+            <span class="k">return</span> <span class="kc">False</span>
+        <span class="n">pane</span><span class="o">.</span><span class="n">redraw</span><span class="p">(</span><span class="k">lambda</span> <span class="n">figure</span><span class="p">:</span> <span class="n">draw</span><span class="p">(</span><span class="n">figure</span><span class="p">,</span> <span class="n">result</span><span class="p">))</span>
+        <span class="k">return</span> <span class="kc">True</span>
+
+
+<span class="k">def</span><span class="w"> </span><span class="nf">draw</span><span class="p">(</span><span class="n">figure</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="n">AnalysisResult</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span><span class="p">:</span>
+    <span class="n">data</span><span class="p">:</span> <span class="n">MeanT</span> <span class="o">=</span> <span class="n">result</span><span class="o">.</span><span class="n">data</span>
+    <span class="n">axes</span> <span class="o">=</span> <span class="n">figure</span><span class="o">.</span><span class="n">add_subplot</span><span class="p">()</span>
+    <span class="n">axes</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">shots</span><span class="p">,</span> <span class="n">data</span><span class="o">.</span><span class="n">mean_t</span> <span class="o">*</span> <span class="mf">1e3</span><span class="p">,</span> <span class="s2">"o-"</span><span class="p">,</span> <span class="n">markersize</span><span class="o">=</span><span class="mi">3</span><span class="p">)</span>
+    <span class="n">axes</span><span class="o">.</span><span class="n">set_xlabel</span><span class="p">(</span><span class="s2">"Shot number"</span><span class="p">)</span>
+    <span class="n">axes</span><span class="o">.</span><span class="n">set_ylabel</span><span class="p">(</span><span class="s2">"Mean T (ms)"</span><span class="p">)</span>
+    <span class="n">note</span> <span class="o">=</span> <span class="sa">f</span><span class="s2">" · </span><span class="si">{</span><span class="n">data</span><span class="o">.</span><span class="n">skipped</span><span class="si">}</span><span class="s2"> shots below the minimum"</span> <span class="k">if</span> <span class="n">data</span><span class="o">.</span><span class="n">skipped</span> <span class="k">else</span> <span class="s2">""</span>
+    <span class="n">figure</span><span class="o">.</span><span class="n">suptitle</span><span class="p">(</span><span class="sa">f</span><span class="s2">"</span><span class="si">{</span><span class="n">result</span><span class="o">.</span><span class="n">input</span><span class="o">.</span><span class="n">short</span><span class="p">()</span><span class="si">}</span><span class="s2"> · </span><span class="si">{</span><span class="nb">len</span><span class="p">(</span><span class="n">data</span><span class="o">.</span><span class="n">shots</span><span class="p">)</span><span class="si">}</span><span class="s2"> shots</span><span class="si">{</span><span class="n">note</span><span class="si">}</span><span class="s2">"</span><span class="p">,</span> <span class="n">fontsize</span><span class="o">=</span><span class="mi">9</span><span class="p">)</span>
+</code></pre></div>
+<p>What each part does:</p>
+<ul>
+<li><strong><code>get_metadata</code></strong> names the script. <code>name</code> is what the Scripts panel and the plot show,
+  <code>group</code> the section it is listed under. <code>analysis_id</code> is a stable ID that never changes, even
+  if you rename the script; bump <code>version</code> whenever the output changes. Every result records
+  both, with a hash of the script's file.</li>
+<li><strong><code>get_actions</code></strong> lists the actions, each a button in the Scripts panel. HeLab passes the
+  action's name back to every other method as <code>action_name</code>.</li>
+<li><strong><code>parameters</code></strong> declares the plot's settings, shown in the Settings panel. A <code>ParameterSpec</code>
+  gives the key, the title, the kind (<code>"float"</code>, <code>"int"</code>, <code>"bool"</code>, <code>"choice"</code> or <code>"text"</code>), the
+  default, and optionally limits, a unit suffix, a tooltip and a <code>group</code> (its section). In
+  <code>compute</code>, <code>context.parameters</code> holds a value for every parameter you declared, checked and
+  clamped to its limits.</li>
+<li><strong><code>compute</code></strong> does the numerical work and returns anything <code>render</code> can draw; a small dataclass
+  works well. It reads the data only from <code>context.view</code>, a <code>DatasetView</code>: <code>view.shots</code> maps each
+  shot number to its events, an (n, 3) array of T (s after the trigger), X and Y (m), in
+  ascending shot order. <code>view.events(shots)</code> joins chosen shots into one array.</li>
+<li><strong><code>render</code></strong> builds the plot's widget from the result; <code>result.data</code> is what <code>compute</code>
+  returned. <code>MatplotlibPane</code> shows a Matplotlib figure with its toolbar.</li>
+<li><strong><code>update</code></strong> (optional) shows a newer result in the plot already drawn. Return <code>False</code> to have
+  <code>render</code> draw it anew instead.</li>
+</ul>
+<div class="admonition note">
+<p class="admonition-title">Your script isn't an importable module</p>
+<p>HeLab runs a script's file rather than importing it, so after loading it isn't in
+<code>sys.modules</code>: <code>typing.get_type_hints()</code> can't resolve a script class's string annotations
+(those <code>from __future__ import annotations</code> makes). Dataclasses work either way.</p>
+</div>
+<h2 id="threads-and-shared-data">Threads and shared data<a class="headerlink" href="#threads-and-shared-data" title="Permanent link">&para;</a></h2>
+<ul>
+<li><strong><code>compute</code> runs on HeLab's analysis worker thread.</strong> Don't create or touch Qt widgets there,
+  and don't read files or watch folders: everything the run needs is in <code>context</code>.</li>
+<li><strong><code>render</code> and <code>update</code> run on the GUI thread.</strong> Keep them quick: do the heavy work in
+  <code>compute</code>.</li>
+<li><strong>The view's arrays are shared and read-only.</strong> HeLab and other plots use the same arrays, and
+  NumPy refuses to write to them. Call <code>.copy()</code> on an array before changing it.</li>
+<li><strong>Let a long run stop.</strong> Call <code>context.check()</code> between steps or in long loops: it ends the run
+  when the user cancels it. Or test <code>context.cancelled()</code> and return early.</li>
+<li><strong>Use Matplotlib's <code>matplotlib.figure.Figure</code>, never <code>pyplot</code>.</strong></li>
+<li><strong>Errors don't stop HeLab.</strong> If <code>compute</code> or <code>render</code> raises, the plot says it failed and why
+  (a plot already showing a result keeps it, with the error above it); if another method raises,
+  HeLab logs it and goes on.</li>
+</ul>
+<h2 id="choose-shots-with-the-shared-shots-settings">Choose shots with the shared Shots settings<a class="headerlink" href="#choose-shots-with-the-shared-shots-settings" title="Permanent link">&para;</a></h2>
+<p>Adding <code>SHOT_SPECS</code> from <code>helab.analysis.selection</code> to your parameters gives your plot the same
+<strong>Shots</strong> section as HeLab's own plots: all shots, the last N or a range of shot numbers, from a
+first shot. <code>select_shots(context.view, context.parameters)</code> returns the chosen shot numbers in
+ascending order, and HeLab records them as the shots the run used.</p>
+<h2 id="follow-live">Follow Live<a class="headerlink" href="#follow-live" title="Permanent link">&para;</a></h2>
+<p>While <a href="../live/">Live</a> watches a folder, its plots run again on the newest shots. A run is never
+cancelled for new data: shots that arrive meanwhile wait, and the next run takes them all. By
+default a plot runs again on every new shot. A slow analysis can ask for fewer reruns from
+<code>live_policy</code>: <code>LivePolicy(every_shots=5, min_delay=10.0)</code> reruns once five new shots have come,
+and no sooner than 10 s after the last run ended. Each plot's <strong>Live</strong> settings (<strong>Follow Live</strong>,
+<strong>Rerun every N new shots</strong>, <strong>Wait after a run</strong>) start from your policy and can change it.</p>
+<p><code>context.live</code> is <code>True</code> for a rerun that follows Live, so a costly analysis can do less then.
+A view can have no shots at all (Live started before the folder's first shot), so make sure
+<code>compute</code> and <code>render</code> handle empty data.</p>
+<h2 id="more-in-the-api-reference">More in the API reference<a class="headerlink" href="#more-in-the-api-reference" title="Permanent link">&para;</a></h2>
+<p>The <a href="../../reference/api/">API for script writers</a> documents every hook and helper:</p>
+<ul>
+<li><a href="../../reference/api/script/">the script contract</a>: <code>DatasetAnalysis</code>, <code>ScriptMetadata</code> and the
+  optional hooks, such as <code>describe_run</code> (the plot's source lines), <code>minimum_size</code> and
+  <code>parameter_warnings</code>;</li>
+<li><a href="../../reference/api/dataset-view/">the dataset view</a>: <code>DatasetView</code> and its shot times;</li>
+<li><a href="../../reference/api/results/">run context and results</a>: <code>AnalysisContext</code> and <code>AnalysisResult</code>;</li>
+<li><a href="../../reference/api/parameters/">parameters</a>: <code>ParameterSpec</code>, including SI units and
+  settings that show only under one choice;</li>
+<li><a href="../../reference/api/selection/">shot selection</a>: the Shots, View range and newest-shot settings;</li>
+<li><a href="../../reference/api/fits/">fits</a>: the fit helpers HeLab's own plots use.</li>
+</ul>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.indexes", "navigation.top", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

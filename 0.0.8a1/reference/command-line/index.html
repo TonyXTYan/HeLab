@@ -1,0 +1,1689 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User manual for HeLab, the Helium Experiment Lab Analysis Board.">
+      
+      
+      
+      
+        <link rel="prev" href="../../how-to/write-a-script/">
+      
+      
+        <link rel="next" href="../settings/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Command line - HeLab manual</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+        <script src="../../js/iframe-worker-shim.js"></script>
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#command-line" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="HeLab manual" class="md-header__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            HeLab manual
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Command line
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="HeLab manual" class="md-nav__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    HeLab manual
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install and open your first folder
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/data-root/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mark a data root (.helab-root)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/live/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Follow a folder live
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/convert-txy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Convert raw files to TXY
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../how-to/write-a-script/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Write an analysis script
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command line
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command line
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#helab" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        helab
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab-convert" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        helab convert
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="helab convert">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit codes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        helab cache
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="helab cache">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dump" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dump
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exit-codes_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit codes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../hlb-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The .hlb file format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" >
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../api/" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API for script writers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API for script writers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/script/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Script contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/dataset-view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset view
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run context and results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shot selection and view range
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../api/fits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explanations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Explanations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../explanation/cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How HeLab caches data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#helab" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        helab
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab-convert" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        helab convert
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="helab convert">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#examples" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exit-codes" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit codes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab-cache" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        helab cache
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="helab cache">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#dump" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        dump
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#export" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        export
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#examples_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Examples
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#exit-codes_1" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Exit codes
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="command-line">Command line<a class="headerlink" href="#command-line" title="Permanent link">&para;</a></h1>
+<p>HeLab installs one command, <code>helab</code>. Without a subcommand it starts the app; <code>helab convert</code> and
+<code>helab cache</code> run in the terminal, without the GUI.</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>helab</code></td>
+<td>Start the HeLab app.</td>
+</tr>
+<tr>
+<td><code>helab --version</code></td>
+<td>Print the version and build information, then exit.</td>
+</tr>
+<tr>
+<td><code>helab convert --watch FOLDER …</code></td>
+<td>Convert a folder's raw files to TXY, without the GUI.</td>
+</tr>
+<tr>
+<td><code>helab cache dump FILE.hlb</code></td>
+<td>Print a disk cache file's header. Read only.</td>
+</tr>
+<tr>
+<td><code>helab cache export …</code></td>
+<td>Export disk cache files to NumPy, MATLAB or CSV files. Read only.</td>
+</tr>
+</tbody>
+</table>
+<p><code>python -m helab</code> works the same as <code>helab</code>, with the same subcommands and options. In the packaged
+app, run the executable inside it with the same arguments: <code>HeLab.app/Contents/MacOS/HeLab convert …</code>
+on macOS, <code>HeLab.exe convert …</code> on Windows. The Windows app has no console, so its lines go only to
+the log file.</p>
+<h2 id="helab">helab<a class="headerlink" href="#helab" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>helab<span class="w">                                   </span><span class="c1"># start the app</span>
+helab<span class="w"> </span>--version<span class="w">                         </span><span class="c1"># print the version and build information</span>
+helab<span class="w"> </span>--geometry<span class="w"> </span>1600x1000+0+0<span class="w">          </span><span class="c1"># this run's window size and position</span>
+</code></pre></div>
+<p><code>--geometry WxH+X+Y</code> sets the main window's size and the top-left corner of its frame, for this run
+only.</p>
+<p><strong>One HeLab app per computer.</strong> If HeLab is already running, a second start shows <em>HeLab is already
+running on this computer … Use its window, or quit it before starting HeLab again.</em> and exits with
+code 1. <code>helab convert</code> and <code>helab cache</code> don't count: they run beside the app.</p>
+<h2 id="helab-convert">helab convert<a class="headerlink" href="#helab-convert" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>helab convert --watch FOLDER [--once] [--profile NAME|FILE.json] [--backend NAME]
+              [--output temp|cache|cache-forced|beside|beside-forced]
+              [--workers N] [--interval SECONDS] [--again]
+</code></pre></div>
+<p>Watches a folder and converts its raw files (<code>d&lt;N&gt;.txt</code>) to HeLab's TXY files
+(<code>d_txy_helab_&lt;tag&gt;_&lt;N&gt;.txt</code>) as they finish being written. It uses the same converter, rules and
+output folders as the app (see <a href="../../how-to/convert-txy/">Convert raw files to TXY</a>), runs without
+the GUI, and can run while the app is open. Its log goes to the terminal and to HeLab's log folder
+(Help › Show log folder in the app).</p>
+<p>The first check only records each raw file; a file is converted once it is unchanged between two
+checks. Ctrl-C stops it between two writes: every TXY is written under a temporary name and then
+renamed, so none is left half-written.</p>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>--watch FOLDER</code></td>
+<td>The folder of raw files. Required.</td>
+</tr>
+<tr>
+<td><code>--once</code></td>
+<td>Convert what is there now, then exit. Only files unmodified for a minute are read; the rest are reported as still waiting.</td>
+</tr>
+<tr>
+<td><code>--profile NAME</code> or <code>FILE.json</code></td>
+<td>A built-in detector profile's name, or a profile JSON file (for your own profiles, use the file). Default <code>matlab-2019</code>.</td>
+</tr>
+<tr>
+<td><code>--backend NAME</code></td>
+<td>The converter backend: <code>numpy</code> (default), <code>cython</code>, <code>reference</code>, or <code>numba</code>, <code>mlx</code>, <code>rust</code> where installed.</td>
+</tr>
+<tr>
+<td><code>--output temp</code></td>
+<td>Write the TXY to HeLab's temp folder.</td>
+</tr>
+<tr>
+<td><code>--output cache</code></td>
+<td>Write them to HeLab's cache folder. For a folder set to Don't cache, it warns and asks <code>Write to the cache folder anyway? [y/N]</code>; without a terminal, or on no, the temp folder.</td>
+</tr>
+<tr>
+<td><code>--output cache-forced</code></td>
+<td>The cache folder, even for a folder set to Don't cache, without asking.</td>
+</tr>
+<tr>
+<td><code>--output beside</code></td>
+<td>Write the TXY next to the raw files, for this run, whatever the folder's own setting. On a network share it asks first (below).</td>
+</tr>
+<tr>
+<td><code>--output beside-forced</code></td>
+<td>Beside the raw files even on a network share, without asking. The share's warning is still logged.</td>
+</tr>
+<tr>
+<td><code>--workers N</code></td>
+<td>Processes converting at once. Default: half the computer's cores, at most 4 (1 in the packaged app).</td>
+</tr>
+<tr>
+<td><code>--interval SECONDS</code></td>
+<td>Seconds between checks of the folder. Default 3.</td>
+</tr>
+<tr>
+<td><code>--again</code></td>
+<td>Convert every shot once more, current ones too (cache and temp folders only).</td>
+</tr>
+</tbody>
+</table>
+<p>Without <code>--output</code>, the TXY go where Settings › TXY converter › <strong>HeLab's TXY go to</strong> says (the
+cache folder unless you changed it). A folder without a <code>.helab-root</code>, or set to Don't cache, goes
+to the temp folder.</p>
+<p><strong>Beside the raw files on a network share</strong>, <code>--output beside</code> warns once and asks
+<code>Write the TXY beside the raw files on the share anyway? [y/N]</code>. No, or no terminal, converts to
+HeLab's own folder instead, and the log names <code>--output beside-forced</code>, which writes beside without
+asking. (Older versions had <code>--yes</code> for this; it is now a usage error naming <code>beside-forced</code>.)</p>
+<p><strong>If the share can't take a file safely</strong> (its file system can't add a file without risking
+replacing one), it asks
+<code>[r]etry, write to HeLab's [c]ache or [t]emp folder instead, or [q]uit? [r/c/t/Q]</code>. A cache or temp
+answer holds for the rest of the run. Without a terminal nothing is written beside, and the log
+suggests <code>--output cache</code> or <code>--output temp</code>.</p>
+<h3 id="examples">Examples<a class="headerlink" href="#examples" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># Follow a run's folder, converting each new shot into HeLab's cache folder</span>
+helab<span class="w"> </span>convert<span class="w"> </span>--watch<span class="w"> </span><span class="s2">"/Volumes/Data/2026/run 1"</span>
+
+<span class="c1"># Convert what is there now with another built-in profile, then exit</span>
+helab<span class="w"> </span>convert<span class="w"> </span>--watch<span class="w"> </span><span class="s2">"/Volumes/Data/2026/run 1"</span><span class="w"> </span>--once<span class="w"> </span>--profile<span class="w"> </span>matlab-2023-lab-edit
+</code></pre></div>
+<p>On Windows, for example on the acquisition computer, writing the TXY beside the raw files:</p>
+<div class="highlight"><pre><span></span><code><span class="n">helab</span> <span class="n">convert</span> <span class="p">-</span><span class="n">-watch</span> <span class="n">D</span><span class="p">:\</span><span class="n">data</span><span class="p">\</span><span class="n">run1</span> <span class="p">-</span><span class="n">-output</span> <span class="n">beside</span>
+</code></pre></div>
+<h3 id="exit-codes">Exit codes<a class="headerlink" href="#exit-codes" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Done, or stopped with Ctrl-C.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>With <code>--once</code>, the conversion failed; or you answered quit after a refused write beside the raw files. Without <code>--once</code>, a failed check is logged and the next one goes on.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>A usage error, a folder that doesn't exist, or a profile that can't be read.</td>
+</tr>
+</tbody>
+</table>
+<h2 id="helab-cache">helab cache<a class="headerlink" href="#helab-cache" title="Permanent link">&para;</a></h2>
+<div class="highlight"><pre><span></span><code>helab cache dump FILE.hlb
+helab cache export FILE.hlb [--to npz|mat|csv] [--out PATH] [--bin-time SECONDS] [--force]
+helab cache export --folder FOLDER [--kind raw|txy] [--layer LAYER] [--cache DIR]
+                   [--to npz|mat|csv] [--out DIR] [--bin-time SECONDS] [--force]
+</code></pre></div>
+<p>Looks into the <code>.hlb</code> files of HeLab's disk cache and exports them. It is <strong>read only</strong>: it never
+writes into the disk cache or a source folder, never replaces a file without <code>--force</code>, refuses an
+<code>--out</code> inside the disk cache, and works while the app is running. The file format is described in
+<a href="../../hlb-format/">HeLab's .hlb files</a>.</p>
+<h3 id="dump">dump<a class="headerlink" href="#dump" title="Permanent link">&para;</a></h3>
+<p><code>helab cache dump FILE.hlb</code> checks the whole file and prints its header as JSON: what the file is,
+which HeLab made it, and each array's name, type, shape and compressed size.</p>
+<h3 id="export">export<a class="headerlink" href="#export" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Option</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>FILE.hlb</code></td>
+<td>Export one file: a raw layer (one raw file's pulses: columns <code>channel</code>, <code>time_bins</code>, <code>time_s</code>), or a TXY segment (columns <code>shot</code>, <code>t_s</code>, <code>x_m</code>, <code>y_m</code>).</td>
+</tr>
+<tr>
+<td><code>--folder FOLDER</code></td>
+<td>Instead of a file, export what the disk cache holds for this source folder. The folder needs a <code>.helab-root</code> at or above it.</td>
+</tr>
+<tr>
+<td><code>--kind raw</code> or <code>txy</code></td>
+<td>With <code>--folder</code>: raw pulses (default), one file <code>d&lt;N&gt;.&lt;ext&gt;</code> per shot; or TXY, one file <code>d_txy&lt;N&gt;.&lt;ext&gt;</code> per shot, columns <code>t_s</code>, <code>x_m</code>, <code>y_m</code>.</td>
+</tr>
+<tr>
+<td><code>--layer LAYER</code></td>
+<td>With <code>--kind txy</code>: which TXY to export, <code>matlab</code>, a profile tag such as <code>m19v1</code>, or <code>helab:&lt;hash&gt;</code>. Needed when the folder has more than one.</td>
+</tr>
+<tr>
+<td><code>--cache DIR</code></td>
+<td>The cache folder to read. Default: the one HeLab uses.</td>
+</tr>
+<tr>
+<td><code>--to npz</code>, <code>mat</code> or <code>csv</code></td>
+<td>NumPy <code>.npz</code> (default), MATLAB <code>.mat</code>, or CSV with one row per pulse or hit. <code>.npz</code> and <code>.mat</code> files also carry the header, as JSON text.</td>
+</tr>
+<tr>
+<td><code>--out PATH</code></td>
+<td>The output file (one file) or folder (<code>--folder</code>). Default: the current folder for one file, <code>./helab-export-&lt;folder name&gt;/</code> for a folder.</td>
+</tr>
+<tr>
+<td><code>--bin-time SECONDS</code></td>
+<td>Seconds per TDC bin, for raw layers' <code>time_s</code>. Default <code>25e-12</code>.</td>
+</tr>
+<tr>
+<td><code>--force</code></td>
+<td>Replace output files that already exist.</td>
+</tr>
+</tbody>
+</table>
+<h3 id="examples_1">Examples<a class="headerlink" href="#examples_1" title="Permanent link">&para;</a></h3>
+<div class="highlight"><pre><span></span><code><span class="c1"># What is in this file?</span>
+helab<span class="w"> </span>cache<span class="w"> </span>dump<span class="w"> </span>d1.hlb
+
+<span class="c1"># Every cached raw file of a run, for MATLAB</span>
+helab<span class="w"> </span>cache<span class="w"> </span><span class="nb">export</span><span class="w"> </span>--folder<span class="w"> </span><span class="s2">"/Volumes/Data/2026/run 1"</span><span class="w"> </span>--to<span class="w"> </span>mat
+
+<span class="c1"># The cached TXY of the matlab-2019 profile, as CSV</span>
+helab<span class="w"> </span>cache<span class="w"> </span><span class="nb">export</span><span class="w"> </span>--folder<span class="w"> </span><span class="s2">"/Volumes/Data/2026/run 1"</span><span class="w"> </span>--kind<span class="w"> </span>txy<span class="w"> </span>--layer<span class="w"> </span>m19v1<span class="w"> </span>--to<span class="w"> </span>csv
+</code></pre></div>
+<h3 id="exit-codes_1">Exit codes<a class="headerlink" href="#exit-codes_1" title="Permanent link">&para;</a></h3>
+<table>
+<thead>
+<tr>
+<th>Code</th>
+<th>Meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>0</td>
+<td>Done.</td>
+</tr>
+<tr>
+<td>1</td>
+<td>Nothing to export: the disk cache holds nothing of that kind for the folder.</td>
+</tr>
+<tr>
+<td>2</td>
+<td>A file damaged or of a newer format, a usage error, or anything else that stops the export (for example no <code>.helab-root</code> above the folder, or no disk cache to read).</td>
+</tr>
+</tbody>
+</table>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../..", "features": ["navigation.sections", "navigation.indexes", "navigation.top", "search.highlight", "content.code.copy"], "search": "../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

@@ -1,0 +1,4414 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User manual for HeLab, the Helium Experiment Lab Analysis Board.">
+      
+      
+      
+      
+        <link rel="prev" href="../selection/">
+      
+      
+        <link rel="next" href="../../../explanation/cache/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Fits - HeLab manual</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+        <script src="../../../js/iframe-worker-shim.js"></script>
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#fits" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="HeLab manual" class="md-header__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            HeLab manual
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Fits
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="HeLab manual" class="md-nav__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    HeLab manual
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install and open your first folder
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/data-root/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mark a data root (.helab-root)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/live/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Follow a folder live
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/convert-txy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Convert raw files to TXY
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/write-a-script/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Write an analysis script
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../command-line/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command line
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hlb-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The .hlb file format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API for script writers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API for script writers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../script/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Script contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dataset-view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset view
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run context and results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shot selection and view range
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fits
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.fits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fits
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="fits">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.MODELS" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MODELS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.ModelParameter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ModelParameter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.Extra" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitModel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FitModel
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FitModel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitModel.names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        names
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FitResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FitResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.ok" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ok
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.reduced_chi2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        reduced_chi2
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        values
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.evaluate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        evaluate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.derived" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        derived
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.as_record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        as_record
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.CondensateChoice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CondensateChoice
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.register" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        register
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bin_bounds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bin_bounds
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bin_means" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bin_means
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bin_centres" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bin_centres
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.fit_histogram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit_histogram
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.gaussian" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gaussian
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.gaussian_area" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gaussian_area
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.thomas_fermi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        thomas_fermi
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.thomas_fermi_area" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        thomas_fermi_area
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.thomas_fermi_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        thomas_fermi_model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bimodal_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bimodal_model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.polylog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        polylog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bose_thermal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bose_thermal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bose_area" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bose_area
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bose_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bose_model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.component_areas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        component_areas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.condensate_fraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        condensate_fraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bose_order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bose_order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.acceptable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        acceptable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.choose_condensate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        choose_condensate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.fit_condensate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit_condensate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.arrival_time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arrival_time
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.arrival_time_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arrival_time_model
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        profiles
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="profiles">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.Smoothing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smoothing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Smoothing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.Smoothing.apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        apply
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.Smoothing.variance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        variance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.Smoothing.covariance_times" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        covariance_times
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AxisFit
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AxisFit">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit.ok" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ok
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit.failure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        failure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit.decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit.text" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        text
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit.as_record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        as_record
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.rate_factor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rate_factor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.value_label" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        value_label
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.smoothing_bins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        smoothing_bins
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.gaussian_kernel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gaussian_kernel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.smooth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        smooth
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.model_for" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_for
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.axis_cap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        axis_cap
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.mu_consistency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mu_consistency
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.fit_axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit_axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.smoothed_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        smoothed_model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.fit_smoothed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit_smoothed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explanations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Explanations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../explanation/cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How HeLab caches data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.fits" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fits
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="fits">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.MODELS" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        MODELS
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.ModelParameter" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ModelParameter
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.Extra" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Extra
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitModel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FitModel
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FitModel">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitModel.names" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        names
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        FitResult
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="FitResult">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.ok" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ok
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.reduced_chi2" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        reduced_chi2
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.values" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        values
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.evaluate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        evaluate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.derived" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        derived
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.FitResult.as_record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        as_record
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.CondensateChoice" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CondensateChoice
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.register" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        register
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bin_bounds" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bin_bounds
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bin_means" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bin_means
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bin_centres" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bin_centres
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.fit_histogram" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit_histogram
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.gaussian" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gaussian
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.gaussian_area" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gaussian_area
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.thomas_fermi" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        thomas_fermi
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.thomas_fermi_area" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        thomas_fermi_area
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.thomas_fermi_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        thomas_fermi_model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bimodal_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bimodal_model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.polylog" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        polylog
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bose_thermal" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bose_thermal
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bose_area" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bose_area
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bose_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bose_model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.component_areas" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        component_areas
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.condensate_fraction" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        condensate_fraction
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.bose_order" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        bose_order
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.acceptable" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        acceptable
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.choose_condensate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        choose_condensate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.fit_condensate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit_condensate
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.arrival_time" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arrival_time
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.fits.arrival_time_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        arrival_time_model
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#helab.analysis.profiles" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        profiles
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="profiles">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.Smoothing" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Smoothing
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Smoothing">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.Smoothing.apply" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        apply
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.Smoothing.variance" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        variance
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.Smoothing.covariance_times" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        covariance_times
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        AxisFit
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="AxisFit">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit.ok" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ok
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit.failure" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        failure
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit.decision" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        decision
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit.text" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        text
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.AxisFit.as_record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        as_record
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.rate_factor" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rate_factor
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.value_label" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        value_label
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.smoothing_bins" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        smoothing_bins
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.gaussian_kernel" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        gaussian_kernel
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.smooth" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        smooth
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.model_for" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        model_for
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.axis_cap" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        axis_cap
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.mu_consistency" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        mu_consistency
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.fit_axis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit_axis
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.smoothed_model" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        smoothed_model
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.analysis.profiles.fit_smoothed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        fit_smoothed
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="fits">Fits<a class="headerlink" href="#fits" title="Permanent link">&para;</a></h1>
+
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="helab.analysis.fits" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">helab.analysis.fits</span>
+
+
+<a href="#helab.analysis.fits" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>Bounded least-squares fits of 1D histograms, for the T/X/Y fits of the DLD port.</p>
+<p><code>fit_histogram(centres, counts, model)</code> fits one of the registered <code>MODELS</code> with
+<code>scipy.optimize.curve_fit</code> and returns a <code>FitResult</code>: each parameter's value ± SE (from
+the covariance), the model curve, χ² per degree of freedom and, when the fit can't be
+trusted, a <code>failure</code> reason. Failures (no data, too few points, everything in one bin, no
+convergence, an undetermined parameter) are results with a note, never exceptions, so a
+plot can say why it shows no fit.</p>
+<p>How a fit runs:
+- Input: raw counts per bin, or anything else with its errors given as <code>sigma=</code> (rates,
+  smoothed counts). The count weights assume whole-number counts and say so otherwise.
+- Weights: counts are Poisson. <code>weights="poisson"</code> (the default) first fits with each
+  bin's error √max(n, 1), then refits with the model's own variance until the parameters
+  settle: the Poisson maximum-likelihood fit (<code>_reweight</code> says why: the first fit alone
+  biases widths low). <code>"counts"</code> stops after the first fit. Either way the covariance is
+  absolute (the SEs don't scale with χ²; a poor model shows as a large reduced χ², noted).
+  <code>"none"</code> fits unweighted and scales the covariance by the residuals instead.
+- Offset: for counts (<code>nonnegative_offset</code>; by default raw counts with count weights) a
+  model's <code>offset</code> is at least 0 (a mean count can't be negative), and an offset at 0 isn't
+  noted as "at its bound"; otherwise (<code>sigma=</code> rates, background-subtracted data) it keeps
+  the model's bound, −top.
+- Bins: by default (<code>binned</code>) the model is averaged over each bin (five-point
+  Gauss–Legendre, <code>bin_means</code>), not taken at its centre: a centre value biases a
+  width by about +w²/(24σ) for bins w wide (Sheppard's correction: +0.5 SE at 50 000 events
+  in bins of σ/5, several SE at 10⁵–10⁶). Bin edges are <code>edges=</code> when given, else halfway
+  between neighbouring centres, which assumes equal-width bins of counts. <code>binned</code> may be a
+  weight function w(x) (r² for radial shells): each bin then gets ∫w·f / ∫w. The result's
+  <code>curve</code> and <code>evaluate</code> are the model itself at points (not averaged), for drawing.
+- Scaling: x and counts are mapped to order one before fitting (a T profile is ~0.4 s wide
+  ~0.1 ms, counts ~10³), each parameter by its role (a position, a width, a height or a
+  dimensionless shape), and mapped back with the covariance.
+- Starting points come from moments (each model's <code>guesses</code>); a model may give several,
+  and the converged one with the lowest χ² is kept.
+- Components: a parameter that only shapes one part of a model (a TF radius) names that
+  part's amplitude as its <code>gate</code>. When the amplitude is consistent with 0 (within 2 SE)
+  the fit says so in a note and the parameter's SE is nan, instead of failing.</p>
+<p>Models are derived from the physics, not copied from the MATLAB code (which has bugs).
+Registered now: Gaussian + offset, the Thomas–Fermi
+projection (1 − u²)^p + offset, bimodal TF^p + Gaussian with a shared centre, and the exact
+arrival-time ("Yavin") thermal profile on T (<code>arrival_time_model</code>), and the
+Bose-enhanced thermal profiles g_{5/2} and g_2 (<code>bose_model</code>, with <code>polylog</code>) and the bimodal
+TF² + g_{5/2} and TF^{3/2} + g_2 (fugacity 1). <code>condensate_fraction</code> and <code>component_areas</code> give
+N0/N and the parts' areas ± SE from a fit's covariance; <code>helab/analysis/bec.py</code> turns them into
+BEC properties and sets the R/σ_th cap per axis. Pure NumPy/SciPy, no Qt. Fits run in the
+analysis worker thread, so nothing here changes warning filters per call
+(<code>warnings.catch_warnings</code> isn't thread-safe).</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="helab.analysis.fits.MODELS" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">MODELS</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-module-attribute"><code>module-attribute</code></small>
+  </span>
+
+<a href="#helab.analysis.fits.MODELS" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">MODELS</span><span class="p">:</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">FitModel</span><span class="p">]</span> <span class="o">=</span> <span class="p">{}</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The registered fit models by key (<code>register</code>); <code>fit_histogram</code> takes a key of one.</p>
+
+    </div>
+
+</div>
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="helab.analysis.fits.ModelParameter" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">ModelParameter</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#helab.analysis.fits.ModelParameter" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">ModelParameter</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">role</span><span class="p">:</span> <span class="n">Role</span><span class="p">,</span>
+    <span class="n">gates</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>One parameter of a <code>FitModel</code>.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.fits.ModelParameter.name">name</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The key of its estimate in a <code>FitResult</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.fits.ModelParameter.title">title</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>What a plot calls it.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.fits.ModelParameter.role">role</span></code></b>
+              (<code><span title="helab.analysis.fits.Role">Role</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>How it scales with x and the counts: "position" and "width" with x, "height"
+with the counts, "shape" not at all.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.analysis.fits.ModelParameter.gates">gates</span></code></b>
+              (<code><span title="tuple">tuple</span>[<span title="str">str</span>, ...]</code>)
+          –
+          <div class="doc-md-description">
+            <p>Amplitudes of the parts this parameter shapes: when any is consistent with 0,
+this one is undetermined by design (nan SE and a note, not a failure).</p>
+          </div>
+        </li>
+    </ul>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="helab.analysis.fits.Extra" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">Extra</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#helab.analysis.fits.Extra" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">Extra</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">function</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Array</span><span class="p">],</span> <span class="nb">float</span><span class="p">],</span>
+    <span class="n">gates</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>A number computed from the parameters and reported beside them, with its SE from the
+covariance (a bimodal fit's R, fitted as a ratio).</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="helab.analysis.fits.FitModel" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">FitModel</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#helab.analysis.fits.FitModel" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">FitModel</span><span class="p">(</span>
+    <span class="n">key</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">title</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">parameters</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">ModelParameter</span><span class="p">,</span> <span class="o">...</span><span class="p">],</span>
+    <span class="n">function</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Array</span><span class="p">],</span>
+    <span class="n">guesses</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Array</span><span class="p">,</span> <span class="n">Array</span><span class="p">,</span> <span class="n">Array</span><span class="p">],</span> <span class="nb">list</span><span class="p">[</span><span class="n">Array</span><span class="p">]],</span>
+    <span class="n">bounds</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Array</span><span class="p">,</span> <span class="n">Array</span><span class="p">],</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Array</span><span class="p">,</span> <span class="n">Array</span><span class="p">]],</span>
+    <span class="n">areas</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Array</span><span class="p">],</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]]</span>
+    <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">min_bins</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">3</span><span class="p">,</span>
+    <span class="n">extras</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Extra</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+    <span class="n">fixed</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">MappingProxyType</span><span class="p">({})</span>
+    <span class="p">)(),</span>
+    <span class="nb">slice</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>A model y = function(x, *parameters), with how to start and bound a fit of it.</p>
+<p><code>guesses</code> gets the cleaned (centres, counts, errors) and <code>bounds</code> (centres, counts);
+both work in data units. <code>areas</code> gives each component's integral over x (counts × x
+units: divide by the bin width for counts), without the offset; the condensate fraction
+comes from these. <code>extras</code> are reported in the result's estimates too.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="helab.analysis.fits.FitModel.names" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">names</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#helab.analysis.fits.FitModel.names" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">names</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The parameters' names, in the order <code>function</code> takes them.</p>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="helab.analysis.fits.FitResult" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">FitResult</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#helab.analysis.fits.FitResult" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">FitResult</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">FitModel</span><span class="p">,</span>
+    <span class="n">failure</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">estimates</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Estimate</span><span class="p">],</span>
+    <span class="n">covariance</span><span class="p">:</span> <span class="n">Array</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">curve</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">chi2</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">math</span><span class="o">.</span><span class="n">nan</span><span class="p">,</span>
+    <span class="n">dof</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="n">points</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="mi">0</span><span class="p">,</span>
+    <span class="n">notes</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+    <span class="n">options</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]</span> <span class="o">=</span> <span class="p">(</span>
+        <span class="k">lambda</span><span class="p">:</span> <span class="n">MappingProxyType</span><span class="p">({})</span>
+    <span class="p">)(),</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>A fit's outcome. <code>failure</code> is "" when it worked; otherwise it says why, and the
+estimates (nan when nothing was fitted) shouldn't be shown as results. <code>notes</code> are
+warnings about a fit that worked (a parameter at its bound, a large reduced χ², a part
+consistent with 0). <code>estimates</code> has the parameters, then the model's extras. Its
+arrays are read-only.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="helab.analysis.fits.FitResult.ok" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">ok</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#helab.analysis.fits.FitResult.ok" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">ok</span><span class="p">:</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether the fit worked (<code>failure</code> is "").</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="helab.analysis.fits.FitResult.reduced_chi2" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">reduced_chi2</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#helab.analysis.fits.FitResult.reduced_chi2" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">reduced_chi2</span><span class="p">:</span> <span class="nb">float</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>χ² per degree of freedom; nan without a degree of freedom.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="helab.analysis.fits.FitResult.values" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">values</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#helab.analysis.fits.FitResult.values" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">values</span><span class="p">:</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The fitted parameters in <code>model.names</code> order (extras left out).</p>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.analysis.fits.FitResult.evaluate" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">evaluate</span>
+
+
+<a href="#helab.analysis.fits.FitResult.evaluate" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">evaluate</span><span class="p">(</span><span class="n">x</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The fitted model at <code>x</code> (a finer grid to draw it smoothly); nan without a fit.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.analysis.fits.FitResult.derived" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">derived</span>
+
+
+<a href="#helab.analysis.fits.FitResult.derived" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">derived</span><span class="p">(</span><span class="n">function</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Array</span><span class="p">],</span> <span class="nb">float</span><span class="p">])</span> <span class="o">-&gt;</span> <span class="n">Estimate</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>A number computed from the fitted parameters (in <code>model.names</code> order), with its
+SE from the covariance to first order; nan SE without a usable covariance.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.analysis.fits.FitResult.as_record" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">as_record</span>
+
+
+<a href="#helab.analysis.fits.FitResult.as_record" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">as_record</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Strict JSON (nan and inf as None) for a result's record; the curve is left out
+(<code>evaluate</code> redraws it from the model and estimates).</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="helab.analysis.fits.CondensateChoice" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">CondensateChoice</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#helab.analysis.fits.CondensateChoice" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">CondensateChoice</span><span class="p">(</span>
+    <span class="n">fit</span><span class="p">:</span> <span class="n">FitResult</span><span class="p">,</span>
+    <span class="n">bimodal</span><span class="p">:</span> <span class="n">FitResult</span><span class="p">,</span>
+    <span class="n">thermal</span><span class="p">:</span> <span class="n">FitResult</span><span class="p">,</span>
+    <span class="n">condensate</span><span class="p">:</span> <span class="nb">bool</span><span class="p">,</span>
+    <span class="n">delta_chi2</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">note</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p><code>fit_condensate</code>'s outcome: the fit to report (the bimodal one or the free-z thermal one),
+both fits, whether a condensate is reported, the χ² difference (thermal − bimodal) and why.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.register" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">register</span>
+
+
+<a href="#helab.analysis.fits.register" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">register</span><span class="p">(</span><span class="n">model</span><span class="p">:</span> <span class="n">FitModel</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FitModel</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Add a model to <code>MODELS</code> under its key (a key can be registered once).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.bin_bounds" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">bin_bounds</span>
+
+
+<a href="#helab.analysis.fits.bin_bounds" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">bin_bounds</span><span class="p">(</span><span class="n">centres</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Array</span><span class="p">,</span> <span class="n">Array</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>(lower, upper) edges of bins with these centres (any order): halfway to each
+neighbour in x, the outermost ones as wide on their open side as on the other. A single
+bin has zero width.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.bin_means" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">bin_means</span>
+
+
+<a href="#helab.analysis.fits.bin_means" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">bin_means</span><span class="p">(</span>
+    <span class="n">function</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[</span><span class="o">...</span><span class="p">,</span> <span class="n">Array</span><span class="p">],</span>
+    <span class="n">lower</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">upper</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">values</span><span class="p">:</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">float</span><span class="p">]</span> <span class="o">|</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">weight</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Array</span><span class="p">],</span> <span class="n">Array</span><span class="p">]</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>function(x, *values)</code> averaged over each bin [lower, upper] by five-point
+Gauss–Legendre quadrature (exact for polynomials up to degree 9; for a Gaussian in bins of
+σ its error is ~10⁻¹⁰ of the peak, against the centre value's ~4 %). With <code>weight</code> w(x),
+the weighted mean ∫w·f / ∫w (radial shells: w = r²), both by the same quadrature.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.bin_centres" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">bin_centres</span>
+
+
+<a href="#helab.analysis.fits.bin_centres" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">bin_centres</span><span class="p">(</span><span class="n">edges</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The centres of the bins between consecutive <code>edges</code> (one fewer than the edges).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.fit_histogram" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">fit_histogram</span>
+
+
+<a href="#helab.analysis.fits.fit_histogram" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">fit_histogram</span><span class="p">(</span>
+    <span class="n">centres</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span>
+    <span class="n">counts</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span>
+    <span class="n">model</span><span class="p">:</span> <span class="nb">str</span> <span class="o">|</span> <span class="n">FitModel</span> <span class="o">=</span> <span class="s2">"gaussian"</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">weights</span><span class="p">:</span> <span class="n">Weights</span> <span class="o">=</span> <span class="s2">"poisson"</span><span class="p">,</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="n">ArrayLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_evaluations</span><span class="p">:</span> <span class="nb">int</span> <span class="o">=</span> <span class="n">MAX_EVALUATIONS</span><span class="p">,</span>
+    <span class="n">max_radius_ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">MAX_RADIUS_RATIO</span><span class="p">,</span>
+    <span class="n">covariance_of</span><span class="p">:</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Array</span><span class="p">,</span> <span class="n">Array</span><span class="p">,</span> <span class="n">Array</span><span class="p">],</span> <span class="n">Array</span><span class="p">]</span>
+    <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">nonnegative_offset</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">binned</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">|</span> <span class="n">Callable</span><span class="p">[[</span><span class="n">Array</span><span class="p">],</span> <span class="n">Array</span><span class="p">]</span> <span class="o">=</span> <span class="kc">True</span><span class="p">,</span>
+    <span class="n">edges</span><span class="p">:</span> <span class="n">ArrayLike</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FitResult</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Fit <code>model</code> (a <code>MODELS</code> key or a <code>FitModel</code>) to a histogram's bin centres and
+raw counts. <code>sigma</code>, when given, is each bin's error (absolute) and replaces
+<code>weights</code>: pass it for anything that isn't raw counts. Bins with a non-finite centre,
+count or error, or an error ≤ 0, are left out (noted).</p>
+<p><code>max_radius_ratio</code> caps R/σ_th in models with a <code>ratio</code> parameter (bimodal; see
+<code>bimodal_model</code> for why 2, and when to raise it). A fit that ends at the cap says so;
+the cap goes in the result's <code>options</code> and record.</p>
+<p><code>covariance_of(x, values, fitted)</code>, when given, replaces the fitted parameters' covariance
+(data units, from the weights alone) before anything reads it: the SEs, the "consistent
+with 0" gating and its notes, the undetermined check and the extras. For data whose bins
+are correlated (a smoothed curve: <code>profiles.fit_smoothed</code>), where only the caller knows
+the real spread; <code>x</code> are the bins fitted.</p>
+<p><code>nonnegative_offset</code>: the offset is at least 0 (counts); None means so for raw counts
+with count weights (no <code>sigma</code>, weights not "none"). <code>binned</code>: the model is averaged
+over each bin; False takes it at the centres (point samples, or a model that already
+integrates its bins); a function w(x) averages with that weight, ∫w·f / ∫w (radial
+shells: r²). <code>edges</code> (len(centres) + 1, in the centres' order) are the bins' exact bounds,
+used whenever given; without them the edges are halfway between the centres given (before
+any are left out), which is right for equal-width bins of counts only.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.gaussian" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">gaussian</span>
+
+
+<a href="#helab.analysis.fits.gaussian" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">gaussian</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">amplitude</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">centre</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">offset</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>A exp(−(x − centre)²/2σ²) + offset: the "gaussian" model's function.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.gaussian_area" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">gaussian_area</span>
+
+
+<a href="#helab.analysis.fits.gaussian_area" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">gaussian_area</span><span class="p">(</span><span class="n">amplitude</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>∫ A exp(−(x − μ)²/2σ²) dx = A σ √(2π).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.thomas_fermi" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">thomas_fermi</span>
+
+
+<a href="#helab.analysis.fits.thomas_fermi" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">thomas_fermi</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">amplitude</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">centre</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">radius</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">offset</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">power</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>A (1 − u²)₊^power + offset with u = (x − centre)/radius: the Thomas–Fermi profile
+integrated over the other axes (power 2 for a full projection, 3/2 for a thin slice).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.thomas_fermi_area" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">thomas_fermi_area</span>
+
+
+<a href="#helab.analysis.fits.thomas_fermi_area" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">thomas_fermi_area</span><span class="p">(</span>
+    <span class="n">amplitude</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">radius</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">power</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>∫ A (1 − u²)₊^p dx = A R √π Γ(p + 1) / Γ(p + 3/2) (16/15 A R at p = 2), without the offset.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.thomas_fermi_model" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">thomas_fermi_model</span>
+
+
+<a href="#helab.analysis.fits.thomas_fermi_model" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">thomas_fermi_model</span><span class="p">(</span><span class="n">power</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FitModel</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>A (1 − (x − x₀)²/R²)₊^p + offset, with a fixed power p.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.bimodal_model" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">bimodal_model</span>
+
+
+<a href="#helab.analysis.fits.bimodal_model" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">bimodal_model</span><span class="p">(</span>
+    <span class="n">power</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">bose</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FitModel</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>A condensate on a thermal cloud, one centre:
+A_c (1 − u²)₊^p + A_t exp(−(x − x₀)²/2σ²) + offset, u = (x − x₀)/R, R = r σ with
+r = R/σ from MIN_RADIUS_RATIO up to the fit's max_radius_ratio. R is reported as an
+extra. Started from a Gaussian fit (count weights, or the caller's errors), split four
+ways (the last a cold cloud's, clipped to the cap).</p>
+<p><code>bose</code> (the polylog order, 5/2 or 2) makes the thermal part the Bose-enhanced
+A_t g_ν(e^{−(x − x₀)²/2σ²}) / ζ(ν), its fugacity fixed at 1 (see <code>bose_thermal</code>).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.polylog" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">polylog</span>
+
+
+<a href="#helab.analysis.fits.polylog" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">polylog</span><span class="p">(</span><span class="n">order</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">x</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Li_order(x) for real x in [0, 1] (clipped to it) and order &gt; 1: the Bose functions g_ν.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.bose_thermal" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">bose_thermal</span>
+
+
+<a href="#helab.analysis.fits.bose_thermal" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">bose_thermal</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">amplitude</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">centre</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">fugacity</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">offset</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">order</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>A g_ν(z e^{−(x − x₀)²/2σ²}) / g_ν(z) + offset; the Gaussian when z is (nearly) 0.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.bose_area" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">bose_area</span>
+
+
+<a href="#helab.analysis.fits.bose_area" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">bose_area</span><span class="p">(</span>
+    <span class="n">amplitude</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">fugacity</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">order</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.5</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>∫ A g_ν(z e^{−u²/2σ²}) / g_ν(z) dx = A √(2π) σ g_{ν+1/2}(z) / g_ν(z) (1 as z → 0).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.bose_model" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">bose_model</span>
+
+
+<a href="#helab.analysis.fits.bose_model" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">bose_model</span><span class="p">(</span><span class="n">order</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FitModel</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The Bose-enhanced thermal profile g_ν + offset, its fugacity z fitted in [0, 1]. Started
+from a Gaussian fit, at three fugacities (σ wider as z grows: the enhanced centre is narrower).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.component_areas" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">component_areas</span>
+
+
+<a href="#helab.analysis.fits.component_areas" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">component_areas</span><span class="p">(</span><span class="n">fit</span><span class="p">:</span> <span class="n">FitResult</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Estimate</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Each component's area (counts × x units: divide by the bin width for counts) ± SE from the
+fit's covariance (<code>FitModel.areas</code>). Empty when the model has no areas; nan without a fit.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.condensate_fraction" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">condensate_fraction</span>
+
+
+<a href="#helab.analysis.fits.condensate_fraction" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">condensate_fraction</span><span class="p">(</span><span class="n">fit</span><span class="p">:</span> <span class="n">FitResult</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Estimate</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>N0/N = A_TF / (A_TF + A_thermal) from a bimodal fit's component areas, ± SE by the delta
+method on the fitted parameters' covariance (so the areas' correlation is counted). nan for
+a failed fit or a model without a condensate part. The fraction is of the counts the
+histogram holds: a cropped box or window crops the thermal wings more than the condensate.
+On a slice model (<code>FitModel.slice</code>: TF^{3/2}, g_2) it is the slice's fraction, not the
+cloud's (a thin central slice holds relatively more condensate); the fit's notes say so
+(<code>SLICE_NOTE</code>).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.bose_order" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">bose_order</span>
+
+
+<a href="#helab.analysis.fits.bose_order" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">bose_order</span><span class="p">(</span><span class="n">power</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The Bose order that integrates the same axes as the TF exponent: 5/2 for p = 2, 2 for 3/2.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.acceptable" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">acceptable</span>
+
+
+<a href="#helab.analysis.fits.acceptable" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">acceptable</span><span class="p">(</span><span class="n">fit</span><span class="p">:</span> <span class="n">FitResult</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether a fit's reduced χ² is within <code>ACCEPTABLE_SIGMAS</code> of 1 (χ²/dof ≤ 1 + 3√(2/dof)).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.choose_condensate" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">choose_condensate</span>
+
+
+<a href="#helab.analysis.fits.choose_condensate" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">choose_condensate</span><span class="p">(</span>
+    <span class="n">bimodal</span><span class="p">:</span> <span class="n">FitResult</span><span class="p">,</span>
+    <span class="n">thermal</span><span class="p">:</span> <span class="n">FitResult</span><span class="p">,</span>
+    <span class="n">consistency</span><span class="p">:</span> <span class="n">Consistency</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CondensateChoice</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Decide between a bimodal TF + Bose (z = 1) fit and a free-z Bose fit of the same bins (see
+the comments above <code>CONDENSATE_DELTA_CHI2</code> and <code>UNSATURATED_CAP_SHARE</code>). <code>consistency</code>
+checks a bimodal fit against the run's constants (μ/k_BT both ways); None skips it.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.fit_condensate" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">fit_condensate</span>
+
+
+<a href="#helab.analysis.fits.fit_condensate" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">fit_condensate</span><span class="p">(</span>
+    <span class="n">centres</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span>
+    <span class="n">counts</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span>
+    <span class="n">power</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="mf">2.0</span><span class="p">,</span>
+    <span class="o">*</span><span class="p">,</span>
+    <span class="n">consistency</span><span class="p">:</span> <span class="n">Consistency</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="o">**</span><span class="n">options</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">CondensateChoice</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Fit the bimodal TF^p + Bose g_{p+1/2} (z = 1) and the free-z Bose g_{p+1/2} profile to the
+same histogram (<code>options</code> go to both <code>fit_histogram</code> calls; <code>max_radius_ratio</code> to the
+bimodal only) and <code>choose_condensate</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.arrival_time" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">arrival_time</span>
+
+
+<a href="#helab.analysis.fits.arrival_time" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">arrival_time</span><span class="p">(</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">amplitude</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">centre</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">sigma</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">offset</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">fall_distance</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">g</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The arrival-time thermal profile at times <code>x</code> for atoms falling <code>fall_distance</code> under
+<code>g</code> (derived in the comment above it in the source); <code>sigma</code> is σ_v/g. Where
+t = x − centre + t_f ≤ 0 it is the offset alone.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.fits.arrival_time_model" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">arrival_time_model</span>
+
+
+<a href="#helab.analysis.fits.arrival_time_model" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">arrival_time_model</span><span class="p">(</span>
+    <span class="n">fall_distance</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">g</span><span class="p">:</span> <span class="nb">float</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FitModel</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The arrival-time thermal profile for atoms falling <code>fall_distance</code> under <code>g</code> (the
+run's constants, recorded as the model's <code>fixed</code>). Its parameters are the Gaussian's:
+amplitude, centre T₀ (the arrival time of v = 0), σ (= σ_v/g) and offset.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="helab.analysis.profiles" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">helab.analysis.profiles</span>
+
+
+<a href="#helab.analysis.profiles" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>T/X/Y profiles for the histogram plot: display units, rates per shot, Gaussian
+smoothing, and the fits with their temperatures.</p>
+<p>The units and the rate method follow the MATLAB front panel's <code>dld_plot_tof.m</code>, with its bug
+fixed:
+- <strong>Axes:</strong> X and Y in mm, T in ms (<code>display_units</code>).
+- <strong>Rates:</strong> counts / bin width / number of shots, after the view range (and, when chosen,
+  the whole box) has picked the events: T in kHz per shot (per ms), X and Y per mm per shot
+  (the front panel divided X and Y by the bin width only).
+- <strong>Smoothing</strong> (optional): a Gaussian of σ over bins of σ/5 (the front panel's
+  <code>bin_factor</code>). Fits use the unsmoothed counts unless the smoothed curve is chosen.</p>
+<p>Fits are in the data's own units (s, m) on counts per bin; drawing scales the fitted curve by
+the same factor as the bars. No Qt and no I/O: runs in the analysis worker and in tests.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="helab.analysis.profiles.Smoothing" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">Smoothing</span>
+
+
+<a href="#helab.analysis.profiles.Smoothing" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">Smoothing</span><span class="p">(</span><span class="n">bins</span><span class="p">:</span> <span class="nb">int</span><span class="p">,</span> <span class="n">sigma_bins</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>The smoothing of <code>bins</code> bins with a Gaussian of <code>sigma_bins</code> bins, as the linear map
+s = S n (a sparse matrix): each bin's counts spread by the kernel, the edges reflected (the
+bins beyond an edge mirror those inside, <code>np.pad</code>'s "symmetric"), so what spreads past an
+edge folds back in and every column sums to 1: the total is kept. The same S smooths what
+is drawn and, in a fit of the smoothed curve, the model (<code>fit_axis</code>).</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.analysis.profiles.Smoothing.apply" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">apply</span>
+
+
+<a href="#helab.analysis.profiles.Smoothing.apply" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">apply</span><span class="p">(</span><span class="n">values</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>values</code> (one per bin) smoothed: S · values.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.analysis.profiles.Smoothing.variance" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">variance</span>
+
+
+<a href="#helab.analysis.profiles.Smoothing.variance" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">variance</span><span class="p">(</span><span class="n">mean_counts</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Each smoothed bin's variance when the raw bins are Poisson with these means: Σⱼ Sᵢⱼ² μⱼ.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.analysis.profiles.Smoothing.covariance_times" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">covariance_times</span>
+
+
+<a href="#helab.analysis.profiles.Smoothing.covariance_times" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">covariance_times</span><span class="p">(</span><span class="n">mean_counts</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span> <span class="n">block</span><span class="p">:</span> <span class="n">Array</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>S diag(μ) Sᵀ · block: the smoothed bins' covariance (they share raw counts) times a
+matrix, without forming the (bins × bins) covariance.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="helab.analysis.profiles.AxisFit" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">AxisFit</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#helab.analysis.profiles.AxisFit" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">AxisFit</span><span class="p">(</span>
+    <span class="n">axis</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">choice</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">fit</span><span class="p">:</span> <span class="n">FitResult</span><span class="p">,</span>
+    <span class="n">centre</span><span class="p">:</span> <span class="n">Estimate</span><span class="p">,</span>
+    <span class="n">width</span><span class="p">:</span> <span class="n">Estimate</span><span class="p">,</span>
+    <span class="n">sigma_v</span><span class="p">:</span> <span class="n">Estimate</span><span class="p">,</span>
+    <span class="n">temperature</span><span class="p">:</span> <span class="n">Estimate</span><span class="p">,</span>
+    <span class="n">x</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">y</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">notes</span><span class="p">:</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span> <span class="o">=</span> <span class="p">(),</span>
+    <span class="n">on_smoothed</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>One axis's fit: the <code>FitResult</code> (in s or m, counts per bin), the centre and width
+(σ; a bimodal fit's thermal σ) with the velocity spread and temperature they give, and
+the curve to draw (<code>x</code>, <code>y</code> in counts per bin).</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="helab.analysis.profiles.AxisFit.ok" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">ok</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#helab.analysis.profiles.AxisFit.ok" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">ok</span><span class="p">:</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether the fit worked.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="helab.analysis.profiles.AxisFit.failure" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">failure</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#helab.analysis.profiles.AxisFit.failure" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">failure</span><span class="p">:</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Why the fit failed; "" when it worked.</p>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h4 id="helab.analysis.profiles.AxisFit.decision" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">decision</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-property"><code>property</code></small>
+  </span>
+
+<a href="#helab.analysis.profiles.AxisFit.decision" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">decision</span><span class="p">:</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The condensate decision's note (<code>fits.choose_condensate</code>: "condensate: …", "no
+condensate (…)" or "possible condensate (…), not reported: …"); "" for a model without one.</p>
+
+    </div>
+
+</div>
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.analysis.profiles.AxisFit.text" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">text</span>
+
+
+<a href="#helab.analysis.profiles.AxisFit.text" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">text</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>Gaussian: centre (20,416.12 ± 0.12) ms · σ (4.65 ± 0.05) ms · T (1.00 ± 0.02) µK</code>:
+positions and widths in ms (T) or mm (X, Y), grouped by thousands; or why there is no fit.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.analysis.profiles.AxisFit.as_record" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">as_record</span>
+
+
+<a href="#helab.analysis.profiles.AxisFit.as_record" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">as_record</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Strict JSON: the fit's record and the numbers derived from it.</p>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.profiles.rate_factor" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">rate_factor</span>
+
+
+<a href="#helab.analysis.profiles.rate_factor" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">rate_factor</span><span class="p">(</span><span class="n">bin_width</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">shots</span><span class="p">:</span> <span class="nb">int</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>What turns counts per bin into a rate per shot: 1 / (bin width in ms or mm × shots).
+nan without shots or a positive width.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.profiles.value_label" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">value_label</span>
+
+
+<a href="#helab.analysis.profiles.value_label" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">value_label</span><span class="p">(</span>
+    <span class="n">axis</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">units</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">every</span><span class="p">:</span> <span class="nb">bool</span> <span class="o">=</span> <span class="kc">False</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The y axis's title: <code>Events</code> (per bin) or <code>Rate (kHz per shot)</code>; <code>every</code> (beside
+one highlighted shot's axis): <code>Events (all)</code>, <code>Rate, all (kHz per shot)</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.profiles.smoothing_bins" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">smoothing_bins</span>
+
+
+<a href="#helab.analysis.profiles.smoothing_bins" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">smoothing_bins</span><span class="p">(</span>
+    <span class="n">low</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">high</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">sigma</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span> <span class="n">axis</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">"T"</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The bin count giving bins of σ/5 over [low, high], at most <code>SMOOTH_MAX_BINS</code>, and a
+note when that cap widened them (<code>axis</code>: whose unit the note uses).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.profiles.gaussian_kernel" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">gaussian_kernel</span>
+
+
+<a href="#helab.analysis.profiles.gaussian_kernel" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">gaussian_kernel</span><span class="p">(</span><span class="n">sigma_bins</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>A normalised Gaussian of <code>sigma_bins</code> bins, cut at ±4 σ (odd length, centred).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.profiles.smooth" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">smooth</span>
+
+
+<a href="#helab.analysis.profiles.smooth" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">smooth</span><span class="p">(</span><span class="n">counts</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span> <span class="n">sigma_bins</span><span class="p">:</span> <span class="nb">float</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Array</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Counts smoothed with a Gaussian of <code>sigma_bins</code> bins; their sum is kept.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.profiles.model_for" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">model_for</span>
+
+
+<a href="#helab.analysis.profiles.model_for" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">model_for</span><span class="p">(</span>
+    <span class="n">choice</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">constants</span><span class="p">:</span> <span class="n">ResolvedConstants</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FitModel</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The fit model a choice names; the arrival-time profile with the run's g and its effective
+fall distance (<code>velocity.effective_fall_distance</code>: h, or ½ g t_f² when the fall time was set
+by hand, so that a v = 0 atom arrives t_f after release, as the velocity plots have it).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.profiles.axis_cap" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">axis_cap</span>
+
+
+<a href="#helab.analysis.profiles.axis_cap" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">axis_cap</span><span class="p">(</span><span class="n">axis</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">constants</span><span class="p">:</span> <span class="n">ResolvedConstants</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">float</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The bimodal fits' R/σ_th cap on <code>axis</code> (T, X or Y) from the run's constants
+(<code>bec.axis_caps</code>), or <code>fits.MAX_RADIUS_RATIO</code> for any other axis or constants that give
+none (a solver failure, a non-finite result).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.profiles.mu_consistency" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">mu_consistency</span>
+
+
+<a href="#helab.analysis.profiles.mu_consistency" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">mu_consistency</span><span class="p">(</span>
+    <span class="n">axis</span><span class="p">:</span> <span class="n">Axis</span><span class="p">,</span>
+    <span class="n">constants</span><span class="p">:</span> <span class="n">ResolvedConstants</span><span class="p">,</span>
+    <span class="n">bin_width</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">shots</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Consistency</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>fits.choose_condensate</code>'s check of a bimodal fit against the constants: μ/k_BT from its
+R/σ_th (R/σ = √(2μ/k_BT) λ(t_f)/√(1 + ω²t_f²) on this axis's trap axis: <code>bec.radius_ratio_cap</code>
+at μ/k_BT = 1 is √2 times that factor) against <code>bec.from_fit</code>'s μ/k_BT from N0 and T, within
+<code>fits.MU_AGREEMENT</code>. Can't check (None, with why): no shot count, an axis between the trap's
+axes, or no μ from N0 (a slice, no condensate).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.profiles.fit_axis" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">fit_axis</span>
+
+
+<a href="#helab.analysis.profiles.fit_axis" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">fit_axis</span><span class="p">(</span>
+    <span class="n">axis</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">edges</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span>
+    <span class="n">counts</span><span class="p">:</span> <span class="n">ArrayLike</span><span class="p">,</span>
+    <span class="n">choice</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">constants</span><span class="p">:</span> <span class="n">ResolvedConstants</span><span class="p">,</span>
+    <span class="n">smoothing</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">max_radius_ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+    <span class="n">shots</span><span class="p">:</span> <span class="nb">int</span> <span class="o">|</span> <span class="kc">None</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AxisFit</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Fit one histogram (<code>edges</code> in s or m, raw <code>counts</code>) with the model <code>choice</code> names.</p>
+<p>By default the raw counts, Poisson weighted (<code>fit_histogram</code>). <code>smoothing</code> (σ in the
+data's units) fits the smoothed curve instead, with the smoothing in the model
+(<code>fit_smoothed</code>): the parameters are the unsmoothed profile's, so the width (and a
+bimodal fit's R) needs no correction, and the SEs count the smoothed bins' correlation.
+Temperatures are the ideal-gas, pure-expansion ones (<code>physics</code>): along T σ_v = g σ, along
+X and Y σ_v = σ / t_f, each with the run's constants. <code>max_radius_ratio</code>: the bimodal
+fits' cap on R/σ_thermal (<code>fit_histogram</code>); None (the default) takes this axis's physical cap
+at μ/k_B T ≤ 2 (<code>axis_cap</code>: the trap frequencies, the fall time and which detector axis is the
+trap's long one), or <code>fits.MAX_RADIUS_RATIO</code> when those don't give one.</p>
+<p>The bimodal TF + Bose choices also fit the free-z Bose profile and report a condensate only
+when that one saturates and the bimodal fit is clearly better (<code>fits.choose_condensate</code>);
+otherwise the result is the free-z fit, with "no condensate (z = …)" in the notes. With
+<code>shots</code> (the shots the histogram sums), an unsaturated case is also checked against the
+constants (<code>mu_consistency</code>). A smoothed-curve fit makes that decision on the unsmoothed counts
+(two more fits: correlated smoothed bins inflate Δχ² several times) and shows the smoothed fit
+of the model it chose.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.profiles.smoothed_model" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">smoothed_model</span>
+
+
+<a href="#helab.analysis.profiles.smoothed_model" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">smoothed_model</span><span class="p">(</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">FitModel</span><span class="p">,</span> <span class="n">smoothing</span><span class="p">:</span> <span class="n">Smoothing</span><span class="p">,</span> <span class="n">centres</span><span class="p">:</span> <span class="n">Array</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">FitModel</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>model</code> with the smoothing applied to its prediction on the bins (<code>centres</code>), the
+model averaged over each bin (<code>fits.bin_means</code>): S·f̄(θ). Anywhere else (a finer grid,
+as <code>FitResult.evaluate</code> draws) it is the
+unsmoothed model: S belongs to those bins only.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h3 id="helab.analysis.profiles.fit_smoothed" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">fit_smoothed</span>
+
+
+<a href="#helab.analysis.profiles.fit_smoothed" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">fit_smoothed</span><span class="p">(</span>
+    <span class="n">centres</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">raw</span><span class="p">:</span> <span class="n">Array</span><span class="p">,</span>
+    <span class="n">model</span><span class="p">:</span> <span class="n">FitModel</span><span class="p">,</span>
+    <span class="n">sigma_bins</span><span class="p">:</span> <span class="nb">float</span><span class="p">,</span>
+    <span class="n">max_radius_ratio</span><span class="p">:</span> <span class="nb">float</span> <span class="o">=</span> <span class="n">MAX_RADIUS_RATIO</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">FitResult</span><span class="p">,</span> <span class="n">Array</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Fit the smoothed counts s = S n with the smoothed model S f(θ) (<code>smoothed_model</code>), and
+the smoothed fit's curve on the bins.</p>
+<ul>
+<li>Weights: each smoothed bin's variance from the model, Σⱼ Sᵢⱼ² μⱼ with μ = f(θ) (floored as
+  <code>fits.VARIANCE_FLOOR</code> per raw bin), refitted up to <code>SMOOTHED_ROUNDS</code> times until θ
+  settles. The first fit uses the observed counts' (S² n); weights from observed counts
+  alone would bias low-count fits.</li>
+<li>SEs: the smoothed bins share raw counts, so their covariance is S diag(μ) Sᵀ, not
+  diagonal. Each fit's covariance is the sandwich (JᵀWJ)⁻¹ JᵀW S diag(μ) Sᵀ WJ (JᵀWJ)⁻¹, with
+  J the smoothed model's derivatives and W the weights: what the estimator's spread really
+  is. It goes to <code>fit_histogram</code> (<code>covariance_of</code>), so the SEs, the "consistent with 0"
+  gating and its notes, the undetermined check and the extras (a bimodal R) all use it.</li>
+</ul>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.sections", "navigation.indexes", "navigation.top", "search.highlight", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>

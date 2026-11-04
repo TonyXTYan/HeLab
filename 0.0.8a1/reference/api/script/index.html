@@ -1,0 +1,3534 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="User manual for HeLab, the Helium Experiment Lab Analysis Board.">
+      
+      
+      
+      
+        <link rel="prev" href="../">
+      
+      
+        <link rel="next" href="../dataset-view/">
+      
+      
+        
+      
+      
+      <link rel="icon" href="../../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.8.0">
+    
+    
+      
+        <title>Script contract - HeLab manual</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/stylesheets/main.57a0d79d.min.css">
+      
+        
+        <link rel="stylesheet" href="../../../assets/stylesheets/palette.fb2fffe2.min.css">
+      
+      
+
+
+    
+    
+      
+        <script src="../../../js/iframe-worker-shim.js"></script>
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../../assets/_mkdocstrings.css">
+    
+    <script>__md_scope=new URL("../../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+  </head>
+  
+  
+    
+    
+      
+    
+    
+    
+    
+    <body dir="ltr" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#script-contract" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+      <div data-md-color-scheme="default" data-md-component="outdated" hidden>
+        
+      </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../../.." title="HeLab manual" class="md-header__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            HeLab manual
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Script contract
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+      
+        <form class="md-header__option" data-md-component="palette">
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: light)" data-md-color-scheme="default" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Dark mode"  type="radio" name="__palette" id="__palette_0">
+    
+      <label class="md-header__button md-icon" title="Dark mode" for="__palette_1" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a4 4 0 0 0-4 4 4 4 0 0 0 4 4 4 4 0 0 0 4-4 4 4 0 0 0-4-4m0 10a6 6 0 0 1-6-6 6 6 0 0 1 6-6 6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+    
+    
+    
+    <input class="md-option" data-md-color-media="(prefers-color-scheme: dark)" data-md-color-scheme="slate" data-md-color-primary="indigo" data-md-color-accent="indigo"  aria-label="Light mode"  type="radio" name="__palette" id="__palette_1">
+    
+      <label class="md-header__button md-icon" title="Light mode" for="__palette_0" hidden>
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 18c-.89 0-1.74-.2-2.5-.55C11.56 16.5 13 14.42 13 12s-1.44-4.5-3.5-5.45C10.26 6.2 11.11 6 12 6a6 6 0 0 1 6 6 6 6 0 0 1-6 6m8-9.31V4h-4.69L12 .69 8.69 4H4v4.69L.69 12 4 15.31V20h4.69L12 23.31 15.31 20H20v-4.69L23.31 12z"/></svg>
+      </label>
+    
+  
+</form>
+      
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+      <div class="md-header__source">
+        <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+      </div>
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../../.." title="HeLab manual" class="md-nav__button md-logo" aria-label="HeLab manual" data-md-component="logo">
+      
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M12 8a3 3 0 0 0 3-3 3 3 0 0 0-3-3 3 3 0 0 0-3 3 3 3 0 0 0 3 3m0 3.54C9.64 9.35 6.5 8 3 8v11c3.5 0 6.64 1.35 9 3.54 2.36-2.19 5.5-3.54 9-3.54V8c-3.5 0-6.64 1.35-9 3.54"/></svg>
+
+    </a>
+    HeLab manual
+  </label>
+  
+    <div class="md-nav__source">
+      <a href="https://github.com/TonyXTYan/HeLab" title="Go to repository" class="md-source" data-md-component="source">
+  <div class="md-source__icon md-icon">
+    
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 448 512"><!--! Font Awesome Free 7.1.0 by @fontawesome - https://fontawesome.com License - https://fontawesome.com/license/free (Icons: CC BY 4.0, Fonts: SIL OFL 1.1, Code: MIT License) Copyright 2025 Fonticons, Inc.--><path d="M439.6 236.1 244 40.5c-5.4-5.5-12.8-8.5-20.4-8.5s-15 3-20.4 8.4L162.5 81l51.5 51.5c27.1-9.1 52.7 16.8 43.4 43.7l49.7 49.7c34.2-11.8 61.2 31 35.5 56.7-26.5 26.5-70.2-2.9-56-37.3L240.3 199v121.9c25.3 12.5 22.3 41.8 9.1 55-6.4 6.4-15.2 10.1-24.3 10.1s-17.8-3.6-24.3-10.1c-17.6-17.6-11.1-46.9 11.2-56v-123c-20.8-8.5-24.6-30.7-18.6-45L142.6 101 8.5 235.1C3 240.6 0 247.9 0 255.5s3 15 8.5 20.4l195.6 195.7c5.4 5.4 12.7 8.4 20.4 8.4s15-3 20.4-8.4l194.7-194.7c5.4-5.4 8.4-12.8 8.4-20.4s-3-15-8.4-20.4"/></svg>
+  </div>
+  <div class="md-source__repository">
+    HeLab
+  </div>
+</a>
+    </div>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Home
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_2" >
+        
+          
+          <label class="md-nav__link" for="__nav_2" id="__nav_2_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Getting started
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_2_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_2">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Getting started
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../getting-started/install/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Install and open your first folder
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" >
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How-to guides
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    How-to guides
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/data-root/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Mark a data root (.helab-root)
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/live/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Follow a folder live
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/convert-txy/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Convert raw files to TXY
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../how-to/write-a-script/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Write an analysis script
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_4" id="__nav_4_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Reference
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Reference
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../command-line/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Command line
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../settings/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Settings
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../hlb-format/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    The .hlb file format
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    
+    
+      
+        
+          
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+        
+      
+    
+    
+    
+      
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_4_4" checked>
+        
+          
+          <div class="md-nav__link md-nav__container">
+            <a href="../" class="md-nav__link ">
+              
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    API for script writers
+  
+
+    
+  </span>
+  
+  
+
+            </a>
+            
+              
+              <label class="md-nav__link " for="__nav_4_4" id="__nav_4_4_label" tabindex="0">
+                <span class="md-nav__icon md-icon"></span>
+              </label>
+            
+          </div>
+        
+        <nav class="md-nav" data-md-level="2" aria-labelledby="__nav_4_4_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_4_4">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    API for script writers
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Script contract
+  
+
+    
+  </span>
+  
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Script contract
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#helab.scripts.base" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        base
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="base">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.PLOT_MINIMUM_SIZE" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PLOT_MINIMUM_SIZE
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.ScriptMetadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ScriptMetadata
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ScriptMetadata">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.ScriptMetadata.identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        identity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.HelabAnalysisScript" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HelabAnalysisScript
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="HelabAnalysisScript">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.HelabAnalysisScript.get_metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.HelabAnalysisScript.get_actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_actions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.HelabAnalysisScript.execute_action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        execute_action
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.HelabAnalysisScript.create_metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        create_metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DatasetAnalysis
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="DatasetAnalysis">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.describe_run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        describe_run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.describe_result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        describe_result
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.parameter_warnings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        parameter_warnings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.live_policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        live_policy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.constant_keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        constant_keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.run_constant_keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_constant_keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.run_constants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_constants
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.covered_shots" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        covered_shots
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.result_found" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        result_found
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.plot_closed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plot_closed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.plot_released" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plot_released
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.plot_buffers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plot_buffers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.result_record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        result_record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.minimum_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        minimum_size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.detected_parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        detected_parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.compute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        compute
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.render" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        render
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        backends
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.draw" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        draw
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        update
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_supported
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_pack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_pack
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_unpack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_unpack
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_holds_state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_holds_state
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_result
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.rerun_after_live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rerun_after_live
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.execute_action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        execute_action
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../dataset-view/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Dataset view
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../results/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Run context and results
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../parameters/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Parameters
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../selection/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Shot selection and view range
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../fits/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Fits
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+      
+        
+      
+    
+    
+    
+      
+        
+        
+      
+    
+    
+    <li class="md-nav__item md-nav__item--section md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_5" >
+        
+          
+          <label class="md-nav__link" for="__nav_5" id="__nav_5_label" tabindex="">
+            
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Explanations
+  
+
+    
+  </span>
+  
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_5_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_5">
+            <span class="md-nav__icon md-icon"></span>
+            
+  
+    Explanations
+  
+
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../../explanation/cache/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    How HeLab caches data
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#helab.scripts.base" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        base
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="base">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.PLOT_MINIMUM_SIZE" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        PLOT_MINIMUM_SIZE
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.ScriptMetadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ScriptMetadata
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="ScriptMetadata">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.ScriptMetadata.identity" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        identity
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.HelabAnalysisScript" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        HelabAnalysisScript
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="HelabAnalysisScript">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.HelabAnalysisScript.get_metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.HelabAnalysisScript.get_actions" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        get_actions
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.HelabAnalysisScript.execute_action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        execute_action
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.HelabAnalysisScript.create_metadata" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        create_metadata
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        DatasetAnalysis
+      
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="DatasetAnalysis">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.describe_run" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        describe_run
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.describe_result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        describe_result
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.parameter_warnings" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        parameter_warnings
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.live_policy" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        live_policy
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.constant_keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        constant_keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.run_constant_keys" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_constant_keys
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.run_constants" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        run_constants
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.covered_shots" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        covered_shots
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.result_found" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        result_found
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.plot_closed" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plot_closed
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.plot_released" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plot_released
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.plot_buffers" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        plot_buffers
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.result_record" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        result_record
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.minimum_size" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        minimum_size
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.detected_parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        detected_parameters
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.compute" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        compute
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.render" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        render
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.backends" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        backends
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.draw" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        draw
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.update" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        update
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_supported" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_supported
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_types" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_types
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_pack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_pack
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_unpack" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_unpack
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_holds_state" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_holds_state
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.cache_result" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        cache_result
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.rerun_after_live" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        rerun_after_live
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#helab.scripts.base.DatasetAnalysis.execute_action" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        execute_action
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="script-contract">Script contract<a class="headerlink" href="#script-contract" title="Permanent link">&para;</a></h1>
+
+
+<div class="doc doc-object doc-module">
+
+
+
+<h2 id="helab.scripts.base" class="doc doc-heading">
+            <span class="doc doc-object-name doc-module-name">helab.scripts.base</span>
+
+
+<a href="#helab.scripts.base" class="headerlink" title="Permanent link">&para;</a></h2>
+
+    <div class="doc doc-contents first">
+
+        <p>The script contract: the base classes every HeLab analysis script derives from.</p>
+<p>A script is a Python file whose class derives from <code>DatasetAnalysis</code> (an analysis of one
+loaded dataset) and names itself with <code>ScriptMetadata</code>. HeLab lists its actions in the Scripts
+panel; running one calls <code>compute</code> on the analysis worker thread with an <code>AnalysisContext</code>
+(the read-only <code>DatasetView</code> and the effective parameters), then <code>render</code> on the GUI thread to
+draw the result in a plot dock. Every other method has a default, so a script overrides only what
+it needs.</p>
+<p>This module imports no Qt at run time (<code>tests/test_headless_imports.py</code>): a script's
+<code>compute</code> and its tests run without a display.</p>
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+<div class="doc doc-object doc-attribute">
+
+
+
+<h3 id="helab.scripts.base.PLOT_MINIMUM_SIZE" class="doc doc-heading">
+            <span class="doc doc-object-name doc-attribute-name">PLOT_MINIMUM_SIZE</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-module-attribute"><code>module-attribute</code></small>
+  </span>
+
+<a href="#helab.scripts.base.PLOT_MINIMUM_SIZE" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="n">PLOT_MINIMUM_SIZE</span> <span class="o">=</span> <span class="p">(</span><span class="mi">200</span><span class="p">,</span> <span class="mi">200</span><span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>A plot's least size in its dock, (width, height) in Qt's logical pixels; the default of
+<code>DatasetAnalysis.minimum_size</code>.</p>
+
+    </div>
+
+</div>
+
+
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="helab.scripts.base.ScriptMetadata" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">ScriptMetadata</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-dataclass"><code>dataclass</code></small>
+  </span>
+
+<a href="#helab.scripts.base.ScriptMetadata" class="headerlink" title="Permanent link">&para;</a></h3>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">ScriptMetadata</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">group</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">script_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="n">analysis_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="n">version</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="n">file_hash</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+<span class="p">)</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+
+
+        <p>Metadata for a HeLab analysis script.</p>
+
+
+<p><span class="doc-section-title">Attributes:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.scripts.base.ScriptMetadata.name">name</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>What the Scripts panel and the plot dock call the script.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.scripts.base.ScriptMetadata.description">description</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>One sentence on what it shows, for the Scripts panel's tooltip.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.scripts.base.ScriptMetadata.group">group</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The Scripts panel section it is listed under.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.scripts.base.ScriptMetadata.file_path">file_path</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The script's file.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.scripts.base.ScriptMetadata.script_id">script_id</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The ID HeLab gives the loaded script, <code>&lt;file path&gt;::&lt;class name&gt;</code> (""
+until it is loaded).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.scripts.base.ScriptMetadata.analysis_id">analysis_id</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>A stable ID that never changes, across renames and versions; results
+record it.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.scripts.base.ScriptMetadata.version">version</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>A version the author bumps whenever the output changes; results record it
+beside the ID.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+          <b><code><span title="helab.scripts.base.ScriptMetadata.file_hash">file_hash</span></code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>SHA-256 of the script file as loaded (set by HeLab; "" if unreadable). When
+the folder has helper modules the scripts import, it is instead a SHA-256 of the
+file's hash and every helper's path and hash, so a change to a helper counts too; it
+then differs from the file's own SHA-256.</p>
+          </div>
+        </li>
+    </ul>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.ScriptMetadata.identity" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">identity</span>
+
+
+<a href="#helab.scripts.base.ScriptMetadata.identity" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">identity</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">AnalysisIdentity</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>What a result records about the script that made it.</p>
+
+
+<p><span class="doc-section-title">Returns:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+              <code><span title="helab.analysis.identity.AnalysisIdentity">AnalysisIdentity</span></code>
+          –
+          <div class="doc-md-description">
+            <p>The analysis ID (else the script ID, else the name), the version, the file's name</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+              <code><span title="helab.analysis.identity.AnalysisIdentity">AnalysisIdentity</span></code>
+          –
+          <div class="doc-md-description">
+            <p>and its hash.</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="helab.scripts.base.HelabAnalysisScript" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">HelabAnalysisScript</span>
+
+
+<a href="#helab.scripts.base.HelabAnalysisScript" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><span title="abc.ABC">ABC</span></code></p>
+
+
+
+        <p>Base class for HeLab analysis scripts.</p>
+<p>All analysis scripts must inherit from this class and implement its methods. A script of
+loaded data derives from <code>DatasetAnalysis</code>, which implements <code>execute_action</code>.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.HelabAnalysisScript.get_metadata" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">get_metadata</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-abstractmethod"><code>abstractmethod</code></small>
+  </span>
+
+<a href="#helab.scripts.base.HelabAnalysisScript.get_metadata" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">get_metadata</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">ScriptMetadata</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return metadata about the script.</p>
+
+
+<p><span class="doc-section-title">Returns:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+              <code><a class="autorefs autorefs-internal" title="ScriptMetadata
+
+
+  
+      dataclass
+   (helab.scripts.base.ScriptMetadata)" href="#helab.scripts.base.ScriptMetadata">ScriptMetadata</a></code>
+          –
+          <div class="doc-md-description">
+            <p>Its name, description, group and file, with its <code>analysis_id</code> and <code>version</code></p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+              <code><a class="autorefs autorefs-internal" title="ScriptMetadata
+
+
+  
+      dataclass
+   (helab.scripts.base.ScriptMetadata)" href="#helab.scripts.base.ScriptMetadata">ScriptMetadata</a></code>
+          –
+          <div class="doc-md-description">
+            <p>(<code>create_metadata</code> builds one).</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.HelabAnalysisScript.get_actions" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">get_actions</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-abstractmethod"><code>abstractmethod</code></small>
+  </span>
+
+<a href="#helab.scripts.base.HelabAnalysisScript.get_actions" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">get_actions</span><span class="p">()</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Return list of available action names.</p>
+
+
+<p><span class="doc-section-title">Returns:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+              <code><span title="typing.List">List</span>[<span title="str">str</span>]</code>
+          –
+          <div class="doc-md-description">
+            <p>The actions the Scripts panel lists under the script; each is passed back as</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+              <code><span title="typing.List">List</span>[<span title="str">str</span>]</code>
+          –
+          <div class="doc-md-description">
+            <p><code>action_name</code> to every other method.</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.HelabAnalysisScript.execute_action" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">execute_action</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-abstractmethod"><code>abstractmethod</code></small>
+  </span>
+
+<a href="#helab.scripts.base.HelabAnalysisScript.execute_action" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">execute_action</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Execute a named action with optional parameters.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>action_name</code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>One of <code>get_actions</code>.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>**kwargs</code></b>
+              (<code><span title="typing.Any">Any</span></code>, default:
+                  <code>{}</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>The action's inputs.</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.HelabAnalysisScript.create_metadata" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">create_metadata</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-classmethod"><code>classmethod</code></small>
+  </span>
+
+<a href="#helab.scripts.base.HelabAnalysisScript.create_metadata" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">create_metadata</span><span class="p">(</span>
+    <span class="n">name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">description</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">group</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">file_path</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">analysis_id</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+    <span class="n">version</span><span class="p">:</span> <span class="nb">str</span> <span class="o">=</span> <span class="s2">""</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ScriptMetadata</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Helper to create metadata object.</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>name</code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>What the Scripts panel calls the script.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>description</code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>One sentence on what it shows.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>group</code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The Scripts panel section it is listed under.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>file_path</code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The script's file (<code>__file__</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>analysis_id</code></b>
+              (<code><span title="str">str</span></code>, default:
+                  <code>&#39;&#39;</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>A stable ID that never changes.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>version</code></b>
+              (<code><span title="str">str</span></code>, default:
+                  <code>&#39;&#39;</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>The version, bumped whenever the output changes.</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Returns:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+              <code><a class="autorefs autorefs-internal" title="ScriptMetadata
+
+
+  
+      dataclass
+   (helab.scripts.base.ScriptMetadata)" href="#helab.scripts.base.ScriptMetadata">ScriptMetadata</a></code>
+          –
+          <div class="doc-md-description">
+            <p>The script's <code>ScriptMetadata</code>.</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-class">
+
+
+
+<h3 id="helab.scripts.base.DatasetAnalysis" class="doc doc-heading">
+            <span class="doc doc-object-name doc-class-name">DatasetAnalysis</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis" class="headerlink" title="Permanent link">&para;</a></h3>
+
+
+    <div class="doc doc-contents ">
+            <p class="doc doc-class-bases">
+              Bases: <code><a class="autorefs autorefs-internal" title="HelabAnalysisScript (helab.scripts.base.HelabAnalysisScript)" href="#helab.scripts.base.HelabAnalysisScript">HelabAnalysisScript</a></code></p>
+
+
+
+        <p>An analysis of one loaded dataset.</p>
+<p>The Scripts panel runs an action on the current tab's dataset view: <code>compute</code> gets an
+<code>AnalysisContext</code> (the immutable view and the effective parameters, never the tab) and
+runs in the analysis worker thread, so it must not touch Qt widgets. <code>render</code> then
+builds the plot dock's content from the result on the GUI thread. Arrays in the view
+are shared and read-only: copy one before changing it.</p>
+<p>A plot of the folder Live watches follows it: HeLab reruns it on each newer revision of the
+view, as the script's <code>live_policy</code> allows. A script never reads files or watches folders
+itself, and a view may have no shots yet (Live started before the first one): its plot then
+shows that it is empty, not an error.</p>
+<p>Metadata must give <code>analysis_id</code> and <code>version</code>. Parameter values are plain JSON values
+(numbers, booleans, strings).</p>
+<p>An analysis that uses physical constants adds <code>constant_layers.constants_specs(keys)</code> to its
+parameters: the plot's settings then show each constant's value and source, and can set it
+for that plot. Each run gets the lab and folder layers in <code>context.constants</code> and, resolved
+with the plot's own values when it was submitted, <code>context.resolved_constants</code>, which its
+result records; <code>compute</code> reads them there, never from the table's defaults. An analysis
+with its own override parameters declares <code>constant_keys</code> and <code>run_constants</code> instead.</p>
+
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-children">
+
+
+
+
+
+
+
+
+
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.parameters" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">parameters</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.parameters" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">parameters</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="n">ParameterSpec</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The action's parameters (defaults, limits, units).</p>
+<p>The plot's settings show them as a tree, and <code>compute</code> gets their values, checked and
+clamped (<code>ParameterSpec.coerce</code>), in <code>context.parameters</code>. Default: none.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.describe_run" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">describe_run</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.describe_run" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">describe_run</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">values</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+    <span class="n">view</span><span class="p">:</span> <span class="n">DatasetView</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">str</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Two short texts for the plot dock's source lines: what part of the view the run used
+(line 1, after the folder and revision, e.g. "shots 51–60 (10 of 60)"; "" for all of
+it) and its settings in short form (line 2, e.g. "last 10 shots · auto-crop 99 %").
+The dock's tooltip always holds the full record. By default: no selection, and every
+parameter in use as <code>title value</code> (the Constants group left out: the dock adds the
+constants the run resolved).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.describe_result" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">describe_result</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.describe_result" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">describe_result</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="n">AnalysisResult</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">str</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>What a completed run found that the dock's settings line should add after
+<code>describe_run</code>'s settings, in short form (e.g. a spectrum's resolution and Nyquist
+frequency, or a bin width chosen from the data); "" for nothing. Called for completed
+results only (as <code>result_record</code>). Default: nothing.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.parameter_warnings" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">parameter_warnings</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.parameter_warnings" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">parameter_warnings</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">values</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Settings the run could not follow as given, and what it did instead (e.g. "X: min &gt;
+max, using full extent"), for the dock's source line, its record and the settings tab.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.live_policy" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">live_policy</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.live_policy" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">live_policy</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">LivePolicy</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>When a plot following Live reruns by default (the plot's settings can change it):
+on every new shot unless a long analysis declares fewer reruns.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.constant_keys" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">constant_keys</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.constant_keys" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">constant_keys</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The physical constants the analysis uses (<code>physics.TABLE</code> keys): its plots resolve them
+when each run starts, name them in their settings and source line, and are marked when a
+lab or folder value of one changes. Default: the keys of its Constants group
+(<code>constant_layers.constants_specs</code>); none without one.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.run_constant_keys" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">run_constant_keys</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.run_constant_keys" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">run_constant_keys</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">values</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="o">...</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Of <code>constant_keys</code>, the ones a run with these parameter <code>values</code> uses (e.g. the trap's
+only while a fit that needs them is on): its result records and names these, and only a
+change of one marks its plot. Default: all of <code>constant_keys</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.run_constants" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">run_constants</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.run_constants" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">run_constants</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">values</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+    <span class="n">layers</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="nb">float</span><span class="p">]],</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">ResolvedConstants</span> <span class="o">|</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The constants a run with these parameter <code>values</code> uses, from the lab and folder
+<code>layers</code> (<code>AnalysisContext.constants</code>) and the plot's own values. Pure (it runs on the
+GUI thread when the run is submitted). Default: the Constants group's choices
+(<code>constant_layers.resolve_for_run</code>); an analysis with its own override parameters
+returns its own resolution here, or None when this run uses no constants (it is then
+neither keyed on them nor marked when one changes).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.covered_shots" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">covered_shots</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.covered_shots" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">covered_shots</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">values</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">],</span>
+    <span class="n">view</span><span class="p">:</span> <span class="n">DatasetView</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">int</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The view's shots a run with <code>values</code> uses, recorded as its coverage: those the shared
+Shots parameters choose (<code>selection.SHOT_SPECS</code>) when it has them, else all.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.result_found" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">result_found</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.result_found" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">result_found</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>What a completed run found or used beyond its parameters, as JSON values (fit results,
+the constants and where each came from), from <code>compute</code>'s data, in the worker thread:
+kept as the result's <code>found</code>, in its record even after the plot is released. Its
+<code>"reuse"</code> entry, when given, is what the run decided beyond its parameters and input
+that a reuse must match too (e.g. a range kept from an earlier run of the plot): it goes
+into <code>AnalysisResult.reuse_key</code>. Default: nothing.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.plot_closed" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">plot_closed</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.plot_closed" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">plot_closed</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>A plot of this analysis closed (GUI thread): drop what the script kept for it, under
+<code>owner</code> (<code>AnalysisContext.owner</code>), and for its folder <code>path</code> if no other plot needs
+it. Default: nothing kept.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.plot_released" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">plot_released</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.plot_released" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">plot_released</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">path</span><span class="p">:</span> <span class="nb">str</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>A plot of this analysis was released to keep RAM within the budget (GUI thread; it
+stays open and may run again): drop the arrays kept for it (<code>plot_buffers</code>) that a
+later run can rebuild. Default: nothing kept.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.plot_buffers" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">plot_buffers</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.plot_buffers" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">plot_buffers</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Buffers</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The memory of arrays the script keeps for the plot <code>owner</code> between runs (beyond
+its results), for the RAM budget (<code>helab.utils.ram_buffers.buffers</code>; GUI thread).
+Default: none.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.result_record" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">result_record</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.result_record" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">result_record</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="n">AnalysisResult</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">List</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Lines a completed run adds to the plot dock's record (its tooltip), after the
+parameters, from the result's <code>found</code>. Default: its <code>record_lines</code>, if any.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.minimum_size" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">minimum_size</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.minimum_size" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">minimum_size</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="nb">int</span><span class="p">,</span> <span class="nb">int</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The least size (width, height; logical pixels) of the action's plot in its dock, with
+its source lines, whatever it shows (the plot, its picture, an empty or failed run). Set
+by the script's design, not by the user. Default: <code>PLOT_MINIMUM_SIZE</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.detected_parameters" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">detected_parameters</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.detected_parameters" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">detected_parameters</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="n">AnalysisResult</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Parameter values a completed run found in the data (e.g. where peaks are), which the
+plot's settings then show, so switching to manual starts from them. Default: none.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.compute" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">compute</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-abstractmethod"><code>abstractmethod</code></small>
+  </span>
+
+<a href="#helab.scripts.base.DatasetAnalysis.compute" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">compute</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">context</span><span class="p">:</span> <span class="n">AnalysisContext</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The numerical result (no Qt). Check <code>context.cancelled()</code> in long loops.</p>
+<p>Runs on the analysis worker thread. It reads the data only from <code>context.view</code> and
+never changes its arrays (copy one first).</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>action_name</code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The action the user ran (one of <code>get_actions</code>).</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>context</code></b>
+              (<code><a class="autorefs autorefs-internal" title="helab.analysis.results.AnalysisContext
+
+
+  
+      dataclass
+  " href="../results/#helab.analysis.results.AnalysisContext">AnalysisContext</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The view, the effective parameter values and the run's constants.</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Returns:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+              <code><span title="typing.Any">Any</span></code>
+          –
+          <div class="doc-md-description">
+            <p>Anything <code>render</code> can draw; HeLab keeps it as the result's <code>data</code>.</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.render" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">render</span>
+
+
+  <span class="doc doc-labels">
+      <small class="doc doc-label doc-label-abstractmethod"><code>abstractmethod</code></small>
+  </span>
+
+<a href="#helab.scripts.base.DatasetAnalysis.render" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">render</span><span class="p">(</span>
+    <span class="n">result</span><span class="p">:</span> <span class="n">AnalysisResult</span><span class="p">,</span> <span class="n">parent</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">QWidget</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">QWidget</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The plot for a completed result (GUI thread).</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>result</code></b>
+              (<code><a class="autorefs autorefs-internal" title="helab.analysis.results.AnalysisResult
+
+
+  
+      dataclass
+  " href="../results/#helab.analysis.results.AnalysisResult">AnalysisResult</a></code>)
+          –
+          <div class="doc-md-description">
+            <p>The completed run; <code>result.data</code> is what <code>compute</code> returned.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>parent</code></b>
+              (<code><span title="typing.Optional">Optional</span>[<span title="PyQt6.QtWidgets.QWidget">QWidget</span>]</code>, default:
+                  <code>None</code>
+)
+          –
+          <div class="doc-md-description">
+            <p>The widget the plot goes in, if any.</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Returns:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+              <code><span title="PyQt6.QtWidgets.QWidget">QWidget</span></code>
+          –
+          <div class="doc-md-description">
+            <p>The widget the plot dock shows.</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.backends" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">backends</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.backends" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">backends</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="nb">str</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The plotting libraries (<code>helab.analysis.backends</code>) this action's plot can be drawn
+with, the default first; the plot's settings choose one (Drawing › Library) when there are
+two or more. Default: none named, <code>render</code> alone draws it.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.draw" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">draw</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.draw" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">draw</span><span class="p">(</span>
+    <span class="n">result</span><span class="p">:</span> <span class="n">AnalysisResult</span><span class="p">,</span>
+    <span class="n">backend</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+    <span class="n">parent</span><span class="p">:</span> <span class="n">Optional</span><span class="p">[</span><span class="n">QWidget</span><span class="p">]</span> <span class="o">=</span> <span class="kc">None</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">QWidget</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The plot for a completed result, drawn with <code>backend</code> (one of <code>backends</code>; GUI
+thread). Default: <code>render</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.update" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">update</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.update" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">update</span><span class="p">(</span><span class="n">widget</span><span class="p">:</span> <span class="n">QWidget</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="n">AnalysisResult</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Show a newer result in the plot already drawn (<code>widget</code>, from <code>render</code>), in place,
+keeping what the user did to the view (e.g. a 3D scatter's camera); GUI thread. Whether
+it did: if not, <code>render</code> draws the plot anew. Default: not.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.cache_supported" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">cache_supported</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.cache_supported" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">cache_supported</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether the action's completed one-off runs may be saved in the disk cache and reused:
+for costly runs (a bootstrap, pair counting), not for quick ones. Default: no.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.cache_types" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">cache_types</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.cache_types" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">cache_types</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Sequence</span><span class="p">[</span><span class="n">result_codec</span><span class="o">.</span><span class="n">Declared</span><span class="p">]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>The dataclasses and enums <code>compute</code>'s data may hold, and <code>Reducer</code>s for objects saved
+by their data (a fit model: <code>result_types.FIT_MODEL</code>), for the default <code>cache_pack</code> and
+<code>cache_unpack</code> (<code>helab.analysis.result_codec</code>): only these are rebuilt from a file.
+Default: none (plain values, tuples, dicts and NumPy arrays only).</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.cache_pack" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">cache_pack</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.cache_pack" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">cache_pack</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">data</span><span class="p">:</span> <span class="n">Any</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">tuple</span><span class="p">[</span><span class="n">Any</span><span class="p">,</span> <span class="n">Dict</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]]</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p><code>compute</code>'s data as a JSON tree and the NumPy arrays it names (worker thread). Default:
+<code>result_codec.encode</code> with <code>cache_types</code>; raise to keep a result out of the cache.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.cache_unpack" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">cache_unpack</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.cache_unpack" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">cache_unpack</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">tree</span><span class="p">:</span> <span class="n">Any</span><span class="p">,</span> <span class="n">arrays</span><span class="p">:</span> <span class="n">Mapping</span><span class="p">[</span><span class="nb">str</span><span class="p">,</span> <span class="n">Any</span><span class="p">]</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Any</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>What <code>cache_pack</code> gave, rebuilt as <code>compute</code>'s data (GUI thread; arrays read-only).
+Default: <code>result_codec.decode</code> with <code>cache_types</code>.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.cache_holds_state" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">cache_holds_state</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.cache_holds_state" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">cache_holds_state</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">owner</span><span class="p">:</span> <span class="nb">str</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether the script keeps something for the plot <code>owner</code> between runs that a next run
+may start from (a box or a detection kept, pairs counted): its run may then differ from a
+plot's first run, so it is neither looked up in nor, unless <code>cache_result</code> says it is
+the same, saved to the disk cache. Default: nothing kept.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.cache_result" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">cache_result</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.cache_result" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">cache_result</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="n">AnalysisResult</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether a completed one-off run gave what a plot keeping nothing would give (nothing
+kept from an earlier run used, every shot counted), so it may be saved (worker thread).
+Default: yes.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.rerun_after_live" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">rerun_after_live</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.rerun_after_live" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">rerun_after_live</span><span class="p">(</span>
+    <span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="n">result</span><span class="p">:</span> <span class="n">AnalysisResult</span>
+<span class="p">)</span> <span class="o">-&gt;</span> <span class="nb">bool</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Whether a completed run following Live (<code>AnalysisContext.live</code>) left out work, such as
+a shot bootstrap, that one more run on the same shots does once Live stops (GUI thread).
+Default: no.</p>
+
+
+    </div>
+
+</div>
+
+<div class="doc doc-object doc-function">
+
+
+<h4 id="helab.scripts.base.DatasetAnalysis.execute_action" class="doc doc-heading">
+            <span class="doc doc-object-name doc-function-name">execute_action</span>
+
+
+<a href="#helab.scripts.base.DatasetAnalysis.execute_action" class="headerlink" title="Permanent link">&para;</a></h4>
+<div class="doc-signature highlight"><pre><span></span><code><span class="nf">execute_action</span><span class="p">(</span><span class="n">action_name</span><span class="p">:</span> <span class="nb">str</span><span class="p">,</span> <span class="o">**</span><span class="n">kwargs</span><span class="p">:</span> <span class="n">Any</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="kc">None</span>
+</code></pre></div>
+
+    <div class="doc doc-contents ">
+
+        <p>Run <code>compute</code> directly, outside the Scripts panel (its result isn't kept).</p>
+
+
+<p><span class="doc-section-title">Parameters:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+            <b><code>action_name</code></b>
+              (<code><span title="str">str</span></code>)
+          –
+          <div class="doc-md-description">
+            <p>The action to run.</p>
+          </div>
+        </li>
+        <li class="doc-section-item field-body">
+            <b><code>**kwargs</code></b>
+              (<code><span title="typing.Any">Any</span></code>, default:
+                  <code>{}</code>
+)
+          –
+          <div class="doc-md-description">
+            <p><code>context</code>, the <code>AnalysisContext</code> to run on.</p>
+          </div>
+        </li>
+    </ul>
+
+
+<p><span class="doc-section-title">Raises:</span></p>
+    <ul>
+        <li class="doc-section-item field-body">
+              <code><span title="ValueError">ValueError</span></code>
+            –
+          <div class="doc-md-description">
+            <p>No <code>context</code> was given: the analysis needs loaded data.</p>
+          </div>
+        </li>
+    </ul>
+
+
+    </div>
+
+</div>
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+  </div>
+
+    </div>
+
+</div>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+          <button type="button" class="md-top md-icon" data-md-component="top" hidden>
+  
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M13 20h-2V8l-5.5 5.5-1.42-1.42L12 4.16l7.92 7.92-1.42 1.42L13 8z"/></svg>
+  Back to top
+</button>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      
+      <script id="__config" type="application/json">{"annotate": null, "base": "../../..", "features": ["navigation.sections", "navigation.indexes", "navigation.top", "search.highlight", "content.code.copy"], "search": "../../../assets/javascripts/workers/search.a7633da7.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": {"provider": "mike"}}</script>
+    
+    
+      <script src="../../../assets/javascripts/bundle.c21346df.min.js"></script>
+      
+    
+  </body>
+</html>
