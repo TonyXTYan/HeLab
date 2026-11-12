@@ -506,6 +506,10 @@ TonyXTYan/HeLab#11):
   importing `helab.utils.constants`, refreshed the index under its lock, and its 2 s timeout's kill under load
   left an empty `index.lock` that stopped the next commit (floors and Ground). Fixed in `8e882fa`
   (`GIT_OPTIONAL_LOCKS=0`; merged `e6603ab`); the per-process git calls remain (A74.3).
+- [x] `test_convert_helab.py::test_a_raw_file_unreadable_for_20_s_is_unconvertible_and_holds_nothing_up`
+  reran once (Windows CI 43150068338, Tests (2/3), the lab copy's run of `58304e7`): it asked for
+  "Couldn't be read for 25 s:" and got 26 s, the clock going on during a slow run (the app was right).
+  Fixed 2026-11-12: the test accepts 25–29 s.
 - [x] `test_accessible_names.py::test_every_script_and_each_library`: "Basic plots › Plot T, X, Y histograms:
   QTabBar < QMainWindow < QSplitter < HelabMainWindow: no ID" (Windows CI 41086378298, 41465454700, Ground CI
   42765698387). Cause: the walk ran before the debounced dock fit that names the tab bar, late behind a stall in

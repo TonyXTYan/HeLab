@@ -764,7 +764,10 @@ def test_a_raw_file_unreadable_for_20_s_is_unconvertible_and_holds_nothing_up(
     third = run(source, request)
     [refused] = of(third, "shot_unconvertible")
     assert (refused["shot"], refused["reason"]) == (1, convert.READ_FAILED)
-    assert refused["message"].startswith("Couldn't be read for 25 s: ") and "Permission denied" in refused["message"]
+    seconds = refused["message"].removeprefix("Couldn't be read for ").partition(" s: ")[0]
+    # (25 s, or a little more on a slow runner: the clock goes on during the run, 26 s on Windows CI.)
+    assert refused["message"].startswith("Couldn't be read for ") and 25 <= int(seconds) < 30, refused["message"]
+    assert "Permission denied" in refused["message"]
     assert [entry[0] for entry in summary(third)["unconvertible"]] == ["d1.txt"] and summary(third)["waiting"] == []
     # Skipped while unchanged (sent back as skip): not read again, and a later shot converts.
     write_raw(source, 3, whole)
