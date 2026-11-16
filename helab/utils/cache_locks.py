@@ -9,6 +9,10 @@ All live in the per-user app folder, outside every cache folder:
 - ``instances/<pid>.lock``: held by each running HeLab for its whole life.
 - ``running.lock``: held by the one HeLab app running on this computer (Q39.1), for its life; a
   second start finds it held and stops. (``helab convert`` doesn't take it.)
+- ``update.lock``: held by HeLab's updater (``helab/updates/updater.py``, which has its own copy of
+  this lock's code) while it changes the checkout's code and venv, with its token in it. The app
+  and ``helab convert`` look at it once they hold their own lock, and stop
+  (:func:`update_in_progress`).
 
 They are OS file locks (``flock``; ``msvcrt.locking`` on Windows): exclusive, and released by
 the OS when their process ends, so a crashed HeLab never leaves one stuck and no takeover is
@@ -103,6 +107,28 @@ def held_with(path: str, token: str) -> bool:
     """Whether a live process holds the lock at ``path`` with ``token`` written in it: a move
     helper checks this, so it acts only while the HeLab that asked for it still holds the cache."""
     return bool(token) and locked_elsewhere(path) and read_token(path) == token
+
+
+UPDATE_LOCK = "update.lock"
+# The updater starts the new HeLab with its token here; the lock holds the same one.
+UPDATE_TOKEN_ENV = "HELAB_UPDATE_TOKEN"
+
+
+def update_in_progress(app_dir: str) -> bool:
+    """Whether HeLab's updater is changing this HeLab's code or venv now (it holds ``update.lock``),
+    and this process isn't the start that update makes itself (``HELAB_UPDATE_TOKEN`` is the token
+    written in the lock).
+
+    The order makes it certain: a starting HeLab takes its own lock first (``running.lock``; a
+    ``helab convert`` its ``instances/<pid>.lock``) and looks here second, while the updater takes
+    ``update.lock`` first and waits for those locks to be free second. Whichever comes later sees
+    the other, so no HeLab starts inside an update. Looking at a free lock takes it for an instant
+    (the updater tries for a few seconds)."""
+    path = os.path.join(app_dir, UPDATE_LOCK)
+    if not locked_elsewhere(path):
+        return False
+    token = os.environ.get(UPDATE_TOKEN_ENV, "")
+    return not (token and read_token(path) == token)
 
 
 def cache_lock(app_dir: str) -> FileLock:

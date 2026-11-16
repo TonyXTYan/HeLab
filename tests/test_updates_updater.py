@@ -37,6 +37,12 @@ with log.open("a") as f:
 if Path(os.environ["FAKE_UV_FAIL"]).exists():
     print("fake uv: failing as asked", file=sys.stderr)
     raise SystemExit(1)
+if sys.argv[1] == "pip" and Path(os.environ["FAKE_UV_PAUSE"]).exists():
+    # The build stops here, as a slow install does, until the test deletes the file.
+    import time
+    Path(os.environ["FAKE_UV_PAUSE"] + ".reached").write_text("")
+    while Path(os.environ["FAKE_UV_PAUSE"]).exists():
+        time.sleep(0.05)
 if sys.argv[1] == "venv":
     venv.EnvBuilder(with_pip=False, symlinks=sys.platform != "win32").create(sys.argv[-1])
     raise SystemExit(0)
@@ -56,8 +62,27 @@ base = Path(sys.argv[1])
 token = os.environ.get("HELAB_UPDATE_TOKEN", "")
 checkout = Path.cwd()
 version = (checkout / "helab" / "_version.py").read_text().split('"')[1]
+# What a real HeLab finds at its start: the updater's lock, and whose token is in it.
+lock = Path(os.environ["FAKE_APP_DIR"]) / "update.lock"
+held, fd = False, os.open(lock, os.O_RDWR) if lock.exists() else -1
+if fd >= 0:
+    try:
+        if sys.platform == "win32":
+            import msvcrt
+            os.lseek(fd, 1 << 30, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            os.lseek(fd, 1 << 30, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(fd, fcntl.LOCK_UN)
+    except OSError:
+        held = True
+    os.close(fd)
 with (base / "launches.jsonl").open("a") as f:
-    f.write(json.dumps({"token": token, "version": version, "python": sys.executable}) + "\n")
+    f.write(json.dumps({"token": token, "version": version, "python": sys.executable, "update_lock": held,
+                        "lock_token": lock.read_text() if held else ""}) + "\n")
 behaviour = (base / "behaviour").read_text().strip() if (base / "behaviour").exists() else "ok"
 if token and behaviour == "crash-new":
     raise SystemExit(3)
@@ -102,7 +127,8 @@ class Lab:
                         GIT_COMMITTER_NAME="Test", GIT_COMMITTER_EMAIL="test@example.invalid",
                         HELAB_UPDATER_TEST_ROOT=str(base), HELAB_UPDATER_TEST_ELEVATED="0",
                         FAKE_UV_LOG=str(base / "uv.log"), FAKE_UV_FAIL=str(base / "uv-fail"),
-                        FAKE_UV_STUBS=str(self.stubs), FAKE_APP_DIR=str(self.app_dir))
+                        FAKE_UV_PAUSE=str(base / "uv-pause"), FAKE_UV_STUBS=str(self.stubs),
+                        FAKE_APP_DIR=str(self.app_dir))
         self.env.pop("PYTHONPATH", None)
         assert os.environ.get("HELAB_TEST_SOURCE_GUARD")  # (conftest: the updater's own guard is on.)
         for script, text in (("fake_uv.py", FAKE_UV), ("fake_helab.py", FAKE_HELAB)):
@@ -778,3 +804,272 @@ def test_the_updater_imports_only_the_standard_library() -> None:
     imported |= {(node.module or "").split(".")[0] for node in ast.walk(tree)
                  if isinstance(node, ast.ImportFrom) and node.level == 0}
     assert imported and imported <= set(sys.stdlib_module_names) | {"__future__"}, imported - set(sys.stdlib_module_names)
+
+
+# -- The venv's swaps are all or nothing (review R1) -------------------------------------------------------
+
+def inside(lab: Lab, monkeypatch: pytest.MonkeyPatch, **request: Any) -> tuple[int, dict[str, Any]]:
+    """The real run in this process (so a test can replace one of the updater's functions), for a HeLab that
+    has quit; its exit code and ``last.json``."""
+    from helab.updates import updater
+    for key in [key for key in os.environ if key not in lab.env]:
+        monkeypatch.delenv(key)
+    for key, value in lab.env.items():
+        monkeypatch.setenv(key, value)
+    quit_helab = subprocess.Popen([sys.executable, "-c", "pass"])
+    quit_helab.wait()
+    code = updater.main([str(lab.request(pid=quit_helab.pid, **request))])
+    return code, lab.last()
+
+
+def fail_rename(monkeypatch: pytest.MonkeyPatch, at: int) -> list[tuple[Path, Path]]:
+    """The updater's ``at``-th rename fails (as a folder Windows still holds does, after its tries); the renames
+    asked for, in order."""
+    from helab.updates import updater
+    asked: list[tuple[Path, Path]] = []
+    real = updater._rename
+
+    def rename(source: Path, destination: Path, log: Any) -> None:
+        asked.append((source, destination))
+        if len(asked) == at:
+            raise PermissionError(13, "held by another program", str(source))
+        real(source, destination, log)
+
+    monkeypatch.setattr(updater, "_rename", rename)
+    return asked
+
+
+def marker(folder: Path) -> str:
+    return (folder / "marker.txt").read_text().strip().splitlines()[-1]
+
+
+def python_of(venv: Path) -> Path:
+    return venv / ("Scripts/python.exe" if sys.platform == "win32" else "bin/python")
+
+
+@pytest.mark.parametrize("at", [1, 2])
+def test_a_venv_swap_that_fails_at_any_rename_leaves_the_venv_as_it_was(lab: Lab, monkeypatch: pytest.MonkeyPatch,
+                                                                         at: int) -> None:
+    """The first update of a checkout (no ``venv.previous`` yet): venv → .previous, .new → venv."""
+    before = lab.head()
+    target = lab.publish("0.0.2", lock="b")
+    asked = fail_rename(monkeypatch, at)
+    code, last = inside(lab, monkeypatch, mode="branch", branch="main", target=target)
+    assert code == 1 and last["outcome"] == "failed" and "held by another program" in last["reason"], why(last)
+    assert len(asked) == at + (at - 1)  # (Those before the failed one were undone, last first.)
+    assert marker(lab.venv) == "old" and python_of(lab.venv).exists()  # The venv HeLab starts from is there
+    assert lab.head() == before
+    assert not list(lab.checkout.glob("venv.*"))  # no .previous, .new, .failed or dated folder left
+    assert not (lab.app_dir / "updates" / "previous.json").exists()
+    assert [launch["version"] for launch in lab.launches(1)] == ["0.0.1"]
+
+
+@pytest.mark.parametrize("at", [1, 2, 3])
+def test_a_failed_swap_keeps_the_earlier_updates_venv_and_restore_record(lab: Lab, monkeypatch: pytest.MonkeyPatch,
+                                                                         at: int) -> None:
+    """A second update (``venv.previous`` is the first one's): .previous → dated, venv → .previous, .new → venv.
+    Whichever rename fails, the first update's venv is still ``.previous`` and Restore still goes back to it."""
+    first = lab.publish("0.0.2", lock="b")
+    assert lab.run(mode="branch", branch="main", target=first)["outcome"] == "updated"
+    record = (lab.app_dir / "updates" / "previous.json").read_text()
+    second = lab.publish("0.0.3", lock="c")
+    fail_rename(monkeypatch, at)
+    code, last = inside(lab, monkeypatch, mode="branch", branch="main", target=second)
+    assert code == 1 and last["outcome"] == "failed", why(last)
+    assert lab.head() == first and marker(lab.venv) == "b" and python_of(lab.venv).exists()
+    assert marker(lab.checkout / "venv.previous") == "old"
+    assert sorted(path.name for path in lab.checkout.glob("venv.*")) == ["venv.previous"]
+    assert (lab.app_dir / "updates" / "previous.json").read_text() == record
+    monkeypatch.undo()
+    plan = lab.dry_run(action="restore", mode="branch", branch="main")
+    assert plan["ok"] and plan["rebuild"], plan
+    assert lab.run(action="restore", mode="branch", branch="main")["outcome"] == "restored"
+    assert marker(lab.venv) == "old"
+
+
+@pytest.mark.parametrize("at", [1, 2, 3])
+def test_a_restore_that_fails_at_any_rename_leaves_both_venvs_where_they_were(
+        lab: Lab, monkeypatch: pytest.MonkeyPatch, at: int) -> None:
+    target = lab.publish("0.0.2", lock="b")
+    assert lab.run(mode="branch", branch="main", target=target)["outcome"] == "updated"
+    record = (lab.app_dir / "updates" / "previous.json").read_text()
+    fail_rename(monkeypatch, at)
+    code, last = inside(lab, monkeypatch, action="restore", mode="branch", branch="main")
+    assert code == 1 and last["outcome"] == "failed", why(last)
+    assert lab.head() == target and marker(lab.venv) == "b" and python_of(lab.venv).exists()
+    assert marker(lab.checkout / "venv.previous") == "old"
+    assert sorted(path.name for path in lab.checkout.glob("venv.*")) == ["venv.previous"]
+    assert (lab.app_dir / "updates" / "previous.json").read_text() == record
+    assert [launch["version"] for launch in lab.launches(2)][-1] == "0.0.2"  # the version that stayed starts again
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="symlinks need privileges on Windows")
+def test_a_failed_swap_of_a_symlinked_venv_leaves_the_link_and_its_folder(lab: Lab,
+                                                                          monkeypatch: pytest.MonkeyPatch) -> None:
+    real = lab.checkout / "venv.nosync"
+    shutil.rmtree(lab.venv)
+    lab.make_venv(real, "old")
+    lab.venv.symlink_to("venv.nosync")
+    target = lab.publish("0.0.2", lock="b")
+    fail_rename(monkeypatch, 2)  # (.new → venv.nosync, after venv.nosync → .previous.)
+    code, last = inside(lab, monkeypatch, mode="branch", branch="main", target=target)
+    assert code == 1 and last["outcome"] == "failed", why(last)
+    assert lab.venv.is_symlink() and os.readlink(lab.venv) == "venv.nosync"
+    assert marker(real) == "old" and python_of(lab.venv).exists()
+    assert sorted(path.name for path in lab.checkout.glob("venv*")) == ["venv", "venv.nosync"]
+
+
+def test_a_rollback_whose_swap_fails_keeps_the_new_venv_with_the_new_code(lab: Lab,
+                                                                         monkeypatch: pytest.MonkeyPatch) -> None:
+    """The new version exits before starting and the venv can't be put back (the rollback's second rename fails):
+    the new venv stays the venv, so the new code stays with it, and ``previous.json`` still lets Restore try
+    again; the outcome says the previous version was not put back."""
+    target = lab.publish("0.0.2", lock="b")
+    (lab.base / "behaviour").write_text("crash-new")
+    fail_rename(monkeypatch, 4)  # (2 for the swap in; then venv → .failed, .previous → venv.)
+    code, last = inside(lab, monkeypatch, mode="branch", branch="main", target=target)
+    assert code == 1 and last["outcome"] == "failed", why(last)
+    assert "putting the previous version back failed too" in last["reason"]
+    assert lab.head() == target and marker(lab.venv) == "b" and python_of(lab.venv).exists()
+    assert marker(lab.checkout / "venv.previous") == "old"
+    assert json.loads((lab.app_dir / "updates" / "previous.json").read_text())["to"] == target
+    monkeypatch.undo()
+    assert lab.dry_run(action="restore", mode="branch", branch="main")["ok"]
+
+
+# -- No HeLab starts inside an update (review R2) -----------------------------------------------------------
+
+def wait_for(path: Path, seconds: float = 60) -> None:
+    deadline = time.monotonic() + seconds
+    while not path.exists():
+        assert time.monotonic() < deadline, f"{path.name} never came"
+        time.sleep(0.05)
+
+
+def test_the_update_lock_is_held_with_the_token_and_read_by_helabs_own_lock_code(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The updater's copy of the lock (it imports nothing from HeLab) and ``cache_locks`` agree, on every OS."""
+    from helab.updates import updater
+    from helab.utils import cache_locks
+    assert updater.UPDATE_LOCK == cache_locks.UPDATE_LOCK and updater._LOCK_OFFSET == cache_locks._LOCK_OFFSET
+    monkeypatch.delenv(cache_locks.UPDATE_TOKEN_ENV, raising=False)
+    app = tmp_path / "app"
+    assert not cache_locks.update_in_progress(str(app)) and not app.exists()  # (Looking makes no file.)
+    lock = updater.UpdateLock(app / updater.UPDATE_LOCK)
+    assert lock.take("ab12cd34")
+    try:
+        assert cache_locks.update_in_progress(str(app))
+        assert cache_locks.read_token(str(app / "update.lock")) == "ab12cd34"
+        assert updater.lock_held(app / "update.lock")
+        assert not updater.UpdateLock(app / "update.lock").take("ffff0000", seconds=0.2)  # a second updater
+        monkeypatch.setenv(cache_locks.UPDATE_TOKEN_ENV, "another")
+        assert cache_locks.update_in_progress(str(app))
+        monkeypatch.setenv(cache_locks.UPDATE_TOKEN_ENV, "ab12cd34")  # the start this update makes
+        assert not cache_locks.update_in_progress(str(app))
+    finally:
+        lock.release()
+    monkeypatch.delenv(cache_locks.UPDATE_TOKEN_ENV)
+    assert not cache_locks.update_in_progress(str(app))  # (Its file stays; nobody holds it.)
+    other = FileLock(str(app / "update.lock"))
+    assert other.try_lock("x")
+    try:
+        assert not lock.take("ab12cd34", seconds=0.2)
+    finally:
+        other.unlock()
+
+
+def test_a_second_updater_changes_nothing_while_one_holds_the_lock(lab: Lab) -> None:
+    before = lab.head()
+    target = lab.publish("0.0.2", lock="b")
+    running = FileLock(str(lab.app_dir / "update.lock"))
+    assert running.try_lock("0123456789abcdef")
+    try:
+        second = lab.start(mode="branch", branch="main", target=target)
+        _, err = second.communicate(timeout=60)
+        assert second.returncode == 2, err
+    finally:
+        running.unlock()
+    updates = lab.app_dir / "updates"
+    assert not list(updates.glob("ready-*")) and not (updates / "last.json").exists()  # (The first one's to write.)
+    assert lab.head() == before and marker(lab.venv) == "old" and not lab.uv_calls() and not lab.launches()
+    assert "Another update of HeLab is running" in next(updates.glob("update-*.log")).read_text()
+    plan = lab.dry_run(mode="branch", branch="main", target=target)
+    assert plan["ok"], plan  # (And once it is free, an update is offered as before.)
+
+
+def test_nothing_of_helab_starts_from_the_updaters_start_to_the_new_versions(lab: Lab) -> None:
+    """The lock is held while the updater waits for HeLab to quit (before the code moves) and through the venv's
+    build (before the swap): a start then is refused; the start the updater makes itself finds the lock held
+    with its own token; afterwards it is free."""
+    from helab.utils import cache_locks
+    app = str(lab.app_dir)
+    target = lab.publish("0.0.2", lock="b")
+    (lab.base / "uv-pause").write_text("")
+    helab = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(120)"])
+    token = "feedc0de" * 2
+    updater = lab.start(helab=helab, mode="branch", branch="main", target=target, token=token)
+    try:
+        wait_for(lab.app_dir / "updates" / f"ready-{token}")
+        # HeLab hasn't quit yet and no file has changed: already no new HeLab, converter or updater
+        assert cache_locks.update_in_progress(app) and cache_locks.read_token(str(lab.app_dir / "update.lock")) == token
+        assert lab.head() != target
+        second = lab.start(mode="branch", branch="main", target=target)
+        assert second.wait(timeout=60) == 2
+        helab.kill()
+        helab.wait()
+        wait_for(lab.base / "uv-pause.reached")
+        # The code has moved and the new venv is being built: still none
+        assert lab.head() == target and marker(lab.venv) == "old"
+        assert cache_locks.update_in_progress(app)
+        dry = lab.dry_run(mode="branch", branch="main", target=target)
+        assert "Not while another update of HeLab is running." in dry["refusals"]
+    finally:
+        helab.kill()
+        (lab.base / "uv-pause").unlink()
+    _, err = updater.communicate(timeout=120)
+    last = lab.last(err)
+    assert last["outcome"] == "updated", why(last)
+    assert not cache_locks.update_in_progress(app)
+    started = lab.launches(1)
+    assert [(launch["version"], launch["update_lock"], launch["lock_token"]) for launch in started] == [
+        ("0.0.2", True, token)]  # its own start: under the lock, which names it
+
+
+def test_a_helab_that_starts_and_stays_during_the_build_stops_the_update(lab: Lab) -> None:
+    """One that doesn't honour the lock (it holds ``running.lock`` when the venv is ready): the updater waits, then
+    swaps nothing and puts the code back, rather than change the venv under it."""
+    from helab.utils import cache_locks
+    before = lab.head()
+    target = lab.publish("0.0.2", lock="b")
+    (lab.base / "uv-pause").write_text("")
+    updater = lab.start(mode="branch", branch="main", target=target, timeouts={"helab": 20, "others": 2, "started": 20})
+    intruder = FileLock(str(lab.app_dir / "running.lock"))
+    try:
+        wait_for(lab.base / "uv-pause.reached")
+        assert intruder.try_lock("4242")
+        (lab.base / "uv-pause").unlink()
+        _, err = updater.communicate(timeout=120)
+    finally:
+        (lab.base / "uv-pause").unlink(missing_ok=True)
+        intruder.unlock()
+    last = lab.last(err)
+    assert last["outcome"] == "failed" and "HeLab was started again while it was being updated" in last["reason"], why(last)
+    assert "HeLab is still running" in last["reason"]
+    assert lab.head() == before and marker(lab.venv) == "old" and not list(lab.checkout.glob("venv.*"))
+    assert not cache_locks.update_in_progress(str(lab.app_dir))
+
+
+@pytest.mark.parametrize("behaviour, outcome", [("uv-fail", "failed"), ("crash-new", "rolled back")])
+def test_a_failed_or_rolled_back_update_frees_the_lock_before_the_previous_version_starts(
+        lab: Lab, behaviour: str, outcome: str) -> None:
+    from helab.utils import cache_locks
+    target = lab.publish("0.0.2", lock="b")
+    if behaviour == "uv-fail":
+        (lab.base / "uv-fail").write_text("")
+    else:
+        (lab.base / "behaviour").write_text(behaviour)
+    last = lab.run(mode="branch", branch="main", target=target)
+    assert last["outcome"] == outcome, why(last)
+    assert not cache_locks.update_in_progress(str(lab.app_dir))
+    again = lab.launches(2 if outcome == "rolled back" else 1)[-1]
+    assert (again["token"], again["version"], again["update_lock"]) == ("", "0.0.1", False)

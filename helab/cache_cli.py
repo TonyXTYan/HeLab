@@ -151,19 +151,10 @@ def _read_only(database: pathlib.Path) -> sqlite3.Connection:
 
 
 def _app_folder() -> pathlib.Path:
-    """HeLab's app folder, as ``constants.app_folder`` gives it (that module loads Qt; a test keeps the two
-    equal)."""
-    override = os.environ.get("HELAB_APP_DIR_OVERRIDE")
-    if override:
-        return pathlib.Path(override)
-    home = pathlib.Path.home()
-    if sys.platform == "darwin":
-        base = home / "Library" / "Caches"
-    elif sys.platform == "win32":
-        base = pathlib.Path(os.environ.get("LOCALAPPDATA") or home / "AppData" / "Local")
-    else:
-        base = pathlib.Path(os.environ.get("XDG_CACHE_HOME") or home / ".cache")
-    return base / "HeLab"
+    """HeLab's app folder, as ``constants.app_folder`` gives it (that module loads Qt; both use
+    ``helab.utils.app_dirs``)."""
+    from helab.utils.app_dirs import app_folder
+    return pathlib.Path(app_folder())
 
 
 def cache_folder() -> pathlib.Path:

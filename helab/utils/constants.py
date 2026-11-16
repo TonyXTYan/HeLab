@@ -10,6 +10,7 @@ from helab.build_info import get_build_info
 from typing import Optional
 
 from PyQt6.QtCore import QSettings, QDir
+from helab.utils.app_dirs import app_folder as app_folder, default_app_dir as default_app_dir
 from helab.utils.settings_store import app_settings
 from helab.utils.number_format import byte_unit
 # Settings' keys (re-exported: they were defined here) and defaults: helab/utils/settings_defaults.py.
@@ -299,21 +300,8 @@ logging.debug(f"{QDir_ROOT_DIRECTORY = }")
 logging.debug(f"{QDir_TEMP_DIRECTORY = }")
 
 
-def default_app_dir(kind: str) -> str:
-    """Persistent per-user folder for HeLab's ``"caches"`` or ``"temps"``.
-
-    macOS ``~/Library/Caches/HeLab``, Windows ``%LOCALAPPDATA%\\HeLab``, otherwise
-    ``$XDG_CACHE_HOME/HeLab`` (``~/.cache/HeLab``). Unlike the system temp folder,
-    the OS does not delete these after a few days without use.
-    """
-    home = os.path.expanduser("~")
-    if sys.platform == "darwin":
-        base = os.path.join(home, "Library", "Caches")
-    elif sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA") or os.path.join(home, "AppData", "Local")
-    else:
-        base = os.environ.get("XDG_CACHE_HOME") or os.path.join(home, ".cache")
-    return os.path.join(base, "HeLab", kind)
+# (``default_app_dir`` and ``app_folder`` are in ``helab/utils/app_dirs.py``, which loads no Qt: the check for a
+# running update at the top of ``helab.main`` needs the app folder before anything else is imported.)
 
 
 # Created on first use; the last candidate keeps HeLab starting when the
@@ -503,11 +491,6 @@ def cache_dir_enabled() -> bool:
 def set_cache_dir(path: str, refused: str = "", enabled: bool = True) -> None:
     """Switch the cache folder in place (after a move, or a move recovered at startup)."""
     _cache_dir_state[:] = [path, refused, enabled]
-
-
-def app_folder() -> str:
-    """The per-user app folder, outside every cache: the cache-move record and the locks."""
-    return os.environ.get("HELAB_APP_DIR_OVERRIDE") or os.path.dirname(default_app_dir("caches"))
 
 
 # The cache folder the GUI resolved (A44.2), for ``helab cache``, which reads no settings (no Qt).

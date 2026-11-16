@@ -20,13 +20,64 @@ if "--helab-script-probe" in sys.argv:
     from helab.scripts.probe import main as probe_main
     raise SystemExit(probe_main(sys.argv[probe_arg + 1:probe_arg + 3]))
 
+
+UPDATING = ("HeLab is being updated. It starts again by itself when the update has finished; start it then if it "
+            "doesn't.")
+UPDATING_COMMAND = "HeLab is being updated: run this again when the update has finished."
+
+
+def _stop_during_update(command: bool) -> None:
+    """While HeLab's updater changes this checkout's code and venv (it holds ``update.lock``), nothing of HeLab
+    starts but the start the updater makes itself: checked here before the rest of HeLab is imported (the app,
+    ``helab convert`` and ``helab cache``; not the helpers above, which belong to a HeLab already running, and
+    which the updater waits for). The app and the converter check again once they hold their own lock, which
+    is what makes it certain (``cache_locks.update_in_progress``); this one keeps a start from importing code
+    that is being replaced. Read only: no file is made. An app folder that can't be read stops nothing."""
+    from helab.utils.app_dirs import app_folder as _app_folder
+    from helab.utils.cache_locks import update_in_progress
+    try:
+        if not update_in_progress(_app_folder()):
+            return
+    except OSError:
+        return
+    if command:
+        if sys.stderr is not None:
+            print(UPDATING_COMMAND, file=sys.stderr)
+    else:
+        _say_updating()
+    raise SystemExit(1)
+
+
+def _say_updating() -> None:
+    """The app's start refused during an update: said in a window that closes itself, because a HeLab left
+    waiting at a message would hold up the update it is told about (the updater waits for every process of
+    this venv). Qt is the venv's, which may be half replaced: if it can't be shown, the line on the console
+    is all."""
+    if sys.stderr is not None:
+        print(UPDATING, file=sys.stderr)
+    try:
+        from PyQt6.QtCore import QTimer as _QTimer
+        from PyQt6.QtWidgets import QApplication as _QApplication, QMessageBox as _QMessageBox
+        app = _QApplication.instance() or _QApplication(sys.argv[:1])
+        box = _QMessageBox(_QMessageBox.Icon.Information, "HeLab is being updated", UPDATING)
+        _QTimer.singleShot(UPDATING_SHOWN_MS, box.close)
+        box.exec()
+        del app
+    except Exception:  # (Nothing to add: the update goes on, and starts HeLab when it is done.)
+        pass
+
+
+UPDATING_SHOWN_MS = 8000
+
 # The headless converter (``helab convert --watch <folder>``, also ``HeLab convert …`` in the
 # packaged app): before any Qt widgets, caches or Dash.
 if len(sys.argv) > 1 and sys.argv[1] == "convert":
+    _stop_during_update(command=True)
     from helab.convert_cli import main as convert_main
     raise SystemExit(convert_main(sys.argv[2:]))
 # ``helab cache dump|export …`` (caching v2's .hlb files, read only): before any Qt widgets, caches or Dash too.
 if len(sys.argv) > 1 and sys.argv[1] == "cache":
+    _stop_during_update(command=True)
     from helab.cache_cli import main as cache_main
     raise SystemExit(cache_main(sys.argv[2:]))
 
@@ -54,6 +105,9 @@ if "--version" in sys.argv:
     if sys.stdout is not None:
         print(get_build_info().description())
     raise SystemExit(0)
+
+# The app itself: not while it is being updated (before Qt and the rest of HeLab are imported).
+_stop_during_update(command=False)
 
 # This Python file uses the following encoding: utf-8
 import atexit
@@ -208,14 +262,25 @@ _RUNNING_LOCK: list[object] = []
 
 def _another_running() -> bool:
     """Whether another HeLab app runs on this computer (its app folder's ``running.lock``; an override's
-    folder has its own), which a message box then says; else this one holds the lock from now on. A lock
-    that can't be checked (the app folder unwritable) doesn't stop HeLab: it is logged."""
-    from helab.utils.cache_locks import take_running
+    folder has its own), or HeLab is being updated (``update.lock``), which a message box then says; else
+    this one holds the lock from now on. A lock that can't be checked (the app folder unwritable) doesn't
+    stop HeLab: it is logged."""
+    from helab.utils import cache_locks
     try:
-        lock, pid = take_running(app_folder())
+        lock, pid = cache_locks.take_running(app_folder())
+        # Its own lock first, the updater's second (``cache_locks.update_in_progress``): an updater that came
+        # first holds ``update.lock`` by now, and one that comes later waits for ``running.lock``. (A lock that
+        # wasn't free may have been the updater looking at it.)
+        updating = cache_locks.update_in_progress(app_folder())
     except OSError as exc:
         logging.warning(f"Couldn't check for another running HeLab: {exc}")
         return False
+    if updating:
+        if lock is not None:
+            lock.unlock()
+        logging.warning(UPDATING)
+        _say_updating()
+        return True
     if lock is not None:
         _RUNNING_LOCK.append(lock)
         return False

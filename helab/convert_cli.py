@@ -92,11 +92,16 @@ def _profile(choice: str) -> dict[str, Any]:
         return DetectorProfile.from_json(file.read()).to_dict()
 
 
+class UpdateRunning(Exception):
+    """HeLab's updater is changing this checkout's code and venv: the converter doesn't start."""
+
+
 def _start_cache() -> tuple[dict[str, Any], object]:
     """As the app starts: wait out another HeLab's cache move, register as a running HeLab (held
     until this process ends), and the disk cache's options ({} when it is off). A move a crash
-    interrupted is left for the app to finish: the disk cache stays off for this run."""
-    from helab.utils.cache_locks import startup
+    interrupted is left for the app to finish: the disk cache stays off for this run. Raises
+    ``UpdateRunning``, registered no longer, while HeLab is being updated."""
+    from helab.utils.cache_locks import startup, update_in_progress
     from helab.utils.cache_move import read_record
     from helab.utils.cache_store import store_root
     from helab.utils.constants import app_folder, cache_dir, cache_dir_enabled, cache_dir_refused, start_cache_dir
@@ -117,6 +122,11 @@ def _start_cache() -> tuple[dict[str, Any], object]:
         start_cache_dir(settings)
         return ""
     message, instance = startup(app_folder(), recover, wait)
+    # Registered first, the updater's lock second (``cache_locks.update_in_progress``): an updater that came
+    # first holds it by now, and one that comes later waits for this instance's lock.
+    if update_in_progress(app_folder()):
+        instance.unlock()
+        raise UpdateRunning()
     if message:
         LOG.warning(message)
     if not cache_dir_enabled():
@@ -358,7 +368,11 @@ def main(argv: list[str]) -> int:
     except (OSError, ProfileError) as exc:
         LOG.error("Profile %s: %s", args.profile, exc)
         return 2
-    cache, instance = _start_cache()
+    try:
+        cache, instance = _start_cache()
+    except UpdateRunning:
+        LOG.error("HeLab is being updated: run this again when the update has finished.")
+        return 1
     log = _Log()
     _discover_root(folder, cache, log)
     try:

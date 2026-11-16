@@ -13,17 +13,22 @@ comes from the command line but the request's path and ``--check``.
 ``--check`` is the dry run, while HeLab runs: it fetches the target and prints the refusals and the plan as one
 JSON line, changing nothing else. Without it, the updater:
 
-1. opens a handle on HeLab's process (safe against pid reuse), then writes ``ready-<token>``, after which HeLab
+1. takes ``update.lock`` in the app folder, with its token in it, and holds it until the code and the venv are
+   as they will stay (a rollback included): a HeLab or a ``helab convert`` started meanwhile finds it and stops,
+   unless it is the start this update makes (step 5); a second updater stops too;
+2. opens a handle on HeLab's process (safe against pid reuse), then writes ``ready-<token>``, after which HeLab
    quits through its normal path;
-2. waits for that process, then for HeLab's locks (``running.lock``, ``instances/*.lock``, ``move.lock``) and
+3. waits for that process, then for HeLab's locks (``running.lock``, ``instances/*.lock``, ``move.lock``) and
    for every process still running from the checkout's venv (macOS and Linux: ``ps``, by the program's folder;
-   Windows: each program's path, and the modules each Python loaded): **no file changes before**;
-3. checks every refusal again, records the previous state (``previous.json``), stashes if asked (never drops or
+   Windows: each program's path, and the modules each Python loaded): **no file changes before**, and the same
+   is checked again before the code moves and before the venv is swapped;
+4. checks every refusal again, records the previous state (``previous.json``), stashes if asked (never drops or
    pops a stash), moves the code (``git checkout --detach <tag>`` or ``git merge --ff-only``), runs
    ``git submodule update``, and only when ``requirements.lock`` or ``setup.py`` changed builds a new venv beside
    the old one (``uv venv --relocatable``), checks it imports HeLab, and swaps it in (the old one kept for
-   Restore; a ``venv`` symlink stays a symlink);
-4. starts HeLab again, detached, with ``HELAB_UPDATE_TOKEN``, and waits for its started mark; a HeLab that exits
+   Restore; a ``venv`` symlink stays a symlink). The swap's renames are one step: one that fails undoes those
+   before it;
+5. starts HeLab again, detached, with ``HELAB_UPDATE_TOKEN``, and waits for its started mark; a HeLab that exits
    before marking its start is rolled back (code and venv), once its helpers have gone too, and the old one
    started. A slow one is never killed.
 
@@ -68,6 +73,7 @@ REBUILD_FILES = ("requirements.lock", "setup.py")
 # every older one (renamed ``<venv>.previous-<UTC>``) until deleted by hand.
 DELETE_OLDER_VENV = True
 _LOCK_OFFSET = 1 << 30  # (cache_locks: Windows locks a byte range far past the token.)
+UPDATE_LOCK = "update.lock"  # (cache_locks.UPDATE_LOCK: in the app folder.)
 GITHUB_REMOTE = re.compile(r"(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
                            r"(?P<owner>[A-Za-z0-9-]+)/(?P<name>[A-Za-z0-9._-]+?)(?:\.git)?/?")
 SHA = re.compile(r"[0-9a-f]{40,64}")
@@ -235,6 +241,69 @@ def lock_held(path: Path) -> bool:
         return False
     finally:
         os.close(fd)
+
+
+class UpdateLock:
+    """``<app folder>/update.lock``, held with this run's token written in it while HeLab's code and venv change.
+
+    HeLab's start and ``helab convert`` look at it once they hold their own lock (``cache_locks.update_in_progress``)
+    and stop, unless they are the start this update makes (their ``HELAB_UPDATE_TOKEN`` is the token in it). The
+    updater takes it first and only then waits for their locks to be free, so whichever comes second sees the
+    other. The same OS lock as HeLab's (``cache_locks.FileLock``: ``flock``; on Windows a byte far past the token,
+    which stays readable): the OS frees it when this process ends, however it ends."""
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+        self._fd = -1
+
+    def take(self, token: str, seconds: float = 3.0) -> bool:
+        """Whether it is held now. Tried for ``seconds``: a HeLab looking at it holds it for an instant."""
+        deadline = time.monotonic() + seconds
+        while not self._try(token):
+            if time.monotonic() > deadline:
+                return False
+            time.sleep(0.05)
+        return True
+
+    def _try(self, token: str) -> bool:
+        if self._fd >= 0:
+            return True
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
+        try:
+            if sys.platform == "win32":
+                os.lseek(fd, _LOCK_OFFSET, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            return False
+        self._fd = fd
+        try:
+            os.ftruncate(fd, 0)
+            os.lseek(fd, 0, os.SEEK_SET)
+            os.write(fd, token.encode())
+            os.fsync(fd)
+        except OSError:
+            self.release()
+            return False
+        return True
+
+    def release(self) -> None:
+        fd, self._fd = self._fd, -1
+        if fd < 0:
+            return
+        try:
+            if sys.platform == "win32":
+                os.lseek(fd, _LOCK_OFFSET, os.SEEK_SET)
+                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
 
 
 def helab_locks(app_dir: Path, own_pid: int | None) -> list[str]:
@@ -587,8 +656,13 @@ def plan(job: Job, log: Log, *, running: bool) -> Plan:
     if not _same(top.resolve(), job.checkout.resolve()):
         refuse(f"{job.checkout} isn't the top of its git checkout.")
         return found
-    for held in helab_locks(job.app_dir, job.pid if running else None):
-        refuse(f"Not while {held}.")
+    if running:
+        # (The dry run. The real run has waited for these, ``wait_for_helab``, and waits again before each
+        # change, ``check_quiet``: a start that honours ``update.lock`` holds its own lock for a moment.)
+        for held in helab_locks(job.app_dir, job.pid):
+            refuse(f"Not while {held}.")
+        if lock_held(job.app_dir / UPDATE_LOCK):
+            refuse("Not while another update of HeLab is running.")
     found.previous = out(job, "rev-parse", "HEAD")
     head = git(job, "symbolic-ref", "-q", "HEAD", check=False).stdout.strip()
     found.previous_branch = head.removeprefix("refs/heads/") if head.startswith("refs/heads/") else ""
@@ -726,33 +800,64 @@ def build_venv(job: Job, commit: str, log: Log) -> Path:
     return new
 
 
+def _renames(steps: list[tuple[Path, Path]], log: Log) -> None:
+    """Renames in order, as one step: when one fails (Windows: a file still held after ``_rename``'s tries), or
+    the updater is interrupted between two, those already made are undone, last first, and the failure goes
+    on to the caller. So a swap either happened or left every folder where it was; the active venv is never
+    left missing. If an undo fails too, that is raised (the log has each rename made, to finish by hand)."""
+    done: list[tuple[Path, Path]] = []
+    try:
+        for source, destination in steps:
+            _rename(source, destination, log)
+            done.append((source, destination))
+    except BaseException as failed:
+        log(f"A rename failed ({failed!r}): undoing the {len(done)} before it")
+        for source, destination in reversed(done):
+            _rename(destination, source, log)
+        raise
+
+
 def swap_in(job: Job, new: Path, log: Log) -> Path | None:
     """``new`` becomes the venv, the current one ``<venv>.previous``; the one kept before that is set aside
-    (``<venv>.previous-<UTC>``) and returned, for ``discard_older`` once the new HeLab has started."""
+    (``<venv>.previous-<UTC>``) and returned, for ``discard_older`` once the new HeLab has started. All or
+    nothing (``_renames``): if it raises, the venv, ``.previous`` and ``new`` are where they were."""
     real = venv_real(job)
     previous = Path(str(real) + ".previous")
     older = None
+    steps: list[tuple[Path, Path]] = []
     if previous.exists():
         older = Path(f"{previous}-{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S')}")
-        _rename(previous, older, log)
-    _rename(real, previous, log)
-    _rename(new, real, log)
+        steps.append((previous, older))
+    _renames([*steps, (real, previous), (new, real)], log)
     return older
 
 
 def swap_back(job: Job, older: Path | None, log: Log) -> None:
+    """``swap_in`` undone: ``<venv>.previous`` is the venv again, the one kept before it ``.previous`` again, and
+    the venv this update built is deleted. All or nothing too: if it raises, the built venv is still the venv."""
     real = venv_real(job)
     previous = Path(str(real) + ".previous")
+    failed = Path(str(real) + ".failed")
+    steps: list[tuple[Path, Path]] = []
     if previous.is_dir():
-        failed = Path(str(real) + ".failed")
         if failed.exists():
             shutil.rmtree(failed, ignore_errors=True)
         if real.exists():
-            _rename(real, failed, log)
-        _rename(previous, real, log)
-        shutil.rmtree(failed, ignore_errors=True)  # (The venv this update built.)
+            steps.append((real, failed))
+        steps.append((previous, real))
     if older is not None and older.exists():
-        _rename(older, previous, log)
+        steps.append((older, previous))
+    _renames(steps, log)
+    shutil.rmtree(failed, ignore_errors=True)  # (The venv this update built.)
+
+
+def swap_previous(job: Job, log: Log) -> None:
+    """Restore: the venv and ``<venv>.previous`` change places (through ``<venv>.restoring``), all or nothing. Its
+    own undo, too."""
+    real = venv_real(job)
+    previous = Path(str(real) + ".previous")
+    spare = Path(str(real) + ".restoring")
+    _renames([(real, spare), (previous, real), (spare, previous)], log)
 
 
 def discard_older(older: Path | None, log: Log) -> None:
@@ -877,9 +982,40 @@ def move_code_back(job: Job, found: Plan, log: Log) -> None:
     log(f"Moved the code back to {found.previous[:7]}")
 
 
+def check_quiet(job: Job, change: str) -> None:
+    """Before each change (the code; minutes later, the venv): still no HeLab lock held and nothing running from
+    the venv or the checkout. A start made meanwhile that honours ``update.lock`` is on its way out (it holds its
+    own lock for a moment before it finds this update), so this waits as ``wait_quiet`` does; one that stays
+    stops the update, which is then undone like any other failure."""
+    busy = wait_quiet(job)
+    if busy:
+        raise Failed(f"HeLab was started again while it was being updated ({'; '.join(busy[:3])}), so {change}")
+
+
 def update(job: Job, log: Log) -> int:
-    """The real run: wait, check, change, restart. (``main`` has checked the test guard.)"""
+    """The real run: wait, check, change, restart. (``main`` has checked the test guard.)
+
+    All of it under ``update.lock`` (``UpdateLock``), released once the code and the venv are as they will stay;
+    the previous version, when that is what stays, is started only after."""
     job.updates.mkdir(parents=True, exist_ok=True)
+    lock = UpdateLock(job.app_dir / UPDATE_LOCK)
+    if not lock.take(job.token):
+        # No ready mark and no record: the HeLab that asked keeps running and says the updater didn't start, and
+        # ``last.json`` is the running update's to write.
+        log("Another update of HeLab is running (update.lock is held): this one changes nothing and ends.")
+        return 2
+    try:
+        code, start_previous = _update(job, log, lock)
+    finally:
+        lock.release()
+    if start_previous:
+        relaunch(job, None, log)
+    return code
+
+
+def _update(job: Job, log: Log, lock: UpdateLock) -> tuple[int, bool]:
+    """``update``, holding ``lock``: the exit code, and whether to start the version that stayed (the previous
+    one) once the lock is released."""
     handle = ProcessHandle(job.pid)
     write_json(job.updates / f"ready-{job.token}", {"pid": os.getpid()})
     found = Plan()
@@ -892,17 +1028,20 @@ def update(job: Job, log: Log) -> int:
         except Refused as refused:
             record(job, "refused", str(refused), found.previous, found.target, log)
             if handle.wait(0):
-                relaunch(job, None, log)
-            else:  # (It never quit: a second one would only find it running.)
-                log("HeLab is still running: not started again")
-            return 2
+                return 2, True
+            # (It never quit: a second one would only find it running.)
+            log("HeLab is still running: not started again")
+            return 2, False
     finally:
         handle.close()
-    previous_record = read_json(job.updates / "previous.json") if job.action == RESTORE else {}
+    # What Restore went back to before this run: put back if this run is undone (an update that fails leaves the
+    # earlier update's record, and its venv, for Restore).
+    previous_record = read_json(job.updates / "previous.json")
     stash_message = ""
     moved = swapped = False
     older: Path | None = None
     try:
+        check_quiet(job, "nothing was changed.")
         if found.stash:
             stash_message = f"HeLab update {found.previous[:7]} → {found.target[:7]}"
             git(job, "stash", "push", "-m", stash_message)
@@ -910,14 +1049,11 @@ def update(job: Job, log: Log) -> int:
         moved = True
         move_code(job, found, log)
         if job.action == RESTORE and found.rebuild:
-            real = venv_real(job)
-            spare = Path(str(real) + ".restoring")
-            _rename(real, spare, log)
-            _rename(Path(str(real) + ".previous"), real, log)
-            _rename(spare, Path(str(real) + ".previous"), log)
+            swap_previous(job, log)
             swapped = True
         elif found.rebuild:
             new = build_venv(job, found.target, log)
+            check_quiet(job, "the update was undone.")
             older = swap_in(job, new, log)
             swapped = True
         write_json(job.updates / "previous.json", {
@@ -927,11 +1063,11 @@ def update(job: Job, log: Log) -> int:
             "time": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     except Exception as failed:  # (Anything once a file may have changed: put it all back.)
         log(f"Failed: {failed!r}")
-        rollback(job, found, moved, swapped, older, previous_record, log)
-        record(job, "failed", str(failed), found.previous, found.target, log, stash=stash_message)
-        relaunch(job, None, log)
-        return 1
-    process = relaunch(job, job.token, log)
+        undone = rollback(job, found, moved, swapped, older, previous_record, log)
+        record(job, "failed", str(failed) + ("" if undone else NOT_UNDONE.format(checkout=job.checkout)),
+               found.previous, found.target, log, stash=stash_message)
+        return 1, True
+    process = relaunch(job, job.token, log)  # (Under the lock: its token lets it, and only it, start.)
     state = wait_started(job, process, job.token)
     if state == "exited":
         log("The new version exited before it started")
@@ -942,12 +1078,14 @@ def update(job: Job, log: Log) -> int:
                    + "; ".join(busy[:3]) + "), so it was left in place. Once they have gone, use Help › Restore "
                    f"previous version, or by hand: git -C \"{job.checkout}\" checkout {found.previous[:12]}",
                    found.previous, found.target, log, stash=stash_message)
-            return 1
-        rollback(job, found, moved, swapped, older, previous_record, log)
-        record(job, "rolled back", "The new version didn't start, so the previous one was put back.",
-               found.previous, found.target, log, stash=stash_message)
-        relaunch(job, None, log)
-        return 1
+            return 1, False
+        if rollback(job, found, moved, swapped, older, previous_record, log):
+            record(job, "rolled back", "The new version didn't start, so the previous one was put back.",
+                   found.previous, found.target, log, stash=stash_message)
+        else:
+            record(job, "failed", "The new version didn't start" + NOT_UNDONE.format(checkout=job.checkout),
+                   found.previous, found.target, log, stash=stash_message)
+        return 1, True
     if state == "started":
         # (A restore says what it left, so the startup reminder skips it: design §7.)
         left = ({"mode": str(previous_record.get("mode", "")), "tag": str(previous_record.get("tag", ""))}
@@ -956,23 +1094,28 @@ def update(job: Job, log: Log) -> int:
         # can take a while on a slow disk; the deletion never changes the outcome (its errors are ignored).
         record(job, "restored" if job.action == RESTORE else "updated", "", found.previous, found.target, log,
                stash=stash_message, **left)
+        lock.release()  # (The code and the venv stay as they are: the older venv is nothing HeLab runs from.)
         discard_older(older, log)
     else:
         record(job, "unconfirmed", "The new version is still starting: it wasn't stopped.", found.previous,
                found.target, log, stash=stash_message)
-    return 0
+    return 0, False
+
+
+# After a failure's reason, when putting the previous version back failed as well.
+NOT_UNDONE = (", and putting the previous version back failed too (see the log). Check the checkout by hand: "
+              "git -C \"{checkout}\" status")
 
 
 def rollback(job: Job, found: Plan, moved: bool, swapped: bool, older: Path | None,
-             previous_record: dict[str, Any], log: Log) -> None:
+             previous_record: dict[str, Any], log: Log) -> bool:
+    """Everything this run changed, put back; whether all of it was. The venv first: if that can't be put back
+    (its renames are one step, so the venv this run made active stays active), the code stays with it, and
+    ``previous.json`` as it is, rather than the previous code on the new venv."""
     try:
         if swapped:
             if job.action == RESTORE:
-                real = venv_real(job)
-                spare = Path(str(real) + ".restoring")
-                _rename(real, spare, log)
-                _rename(Path(str(real) + ".previous"), real, log)
-                _rename(spare, Path(str(real) + ".previous"), log)
+                swap_previous(job, log)
             else:
                 swap_back(job, older, log)
         else:
@@ -981,12 +1124,14 @@ def rollback(job: Job, found: Plan, moved: bool, swapped: bool, older: Path | No
                 shutil.rmtree(new, ignore_errors=True)  # (This update's own half-built venv.)
         if moved:
             move_code_back(job, found, log)
-        if job.action == RESTORE and previous_record:
+        if previous_record:
             write_json(job.updates / "previous.json", previous_record)
-        elif job.action == UPDATE and moved:
+        elif moved:
             (job.updates / "previous.json").unlink(missing_ok=True)
     except Exception as failed:
         log(f"Rolling back failed too: {failed!r}. Fix the checkout by hand: git -C {job.checkout} status")
+        return False
+    return True
 
 
 def check(job: Job, log: Log) -> dict[str, Any]:
