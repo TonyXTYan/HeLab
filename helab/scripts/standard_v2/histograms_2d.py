@@ -291,9 +291,9 @@ class Display:
     factors: tuple[float, float]
 
 
-def display_of(image: npt.NDArray[np.floating[Any]], h_edges: npt.NDArray[np.float64],
+def display_of(image: npt.NDArray[np.floating[Any]] | npt.NDArray[np.integer[Any]], h_edges: npt.NDArray[np.float64],
                v_edges: npt.NDArray[np.float64], side: int) -> Optional[Display]:
-    """``image`` drawn at most ``side`` a side, or None when it is that small already."""
+    """``image`` (an image, or counts) drawn at most ``side`` a side, or None when it is that small already."""
     shape = (int(image.shape[0]), int(image.shape[1]))
     drawn = display_shape(shape, side)
     if drawn == shape:

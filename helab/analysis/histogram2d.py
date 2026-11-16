@@ -153,7 +153,8 @@ def _cells(image: npt.NDArray[Any], cells: int, axis: int) -> npt.NDArray[Any]:
     return sums
 
 
-def cell_mean(image: npt.NDArray[np.floating[Any]], shape: tuple[int, int]) -> npt.NDArray[np.float32]:
+def cell_mean(image: npt.NDArray[np.floating[Any]] | npt.NDArray[np.integer[Any]],
+              shape: tuple[int, int]) -> npt.NDArray[np.float32]:
     """``image`` drawn as ``shape`` equal cells (at most its own shape): each the mean of the bins it covers, a bin
     on a cell's border counted by the part of it inside (when the bins divide, whole blocks of bins). Values
     keep their units (per bin, or a rate), and the cells' sum times the bins a cell covers is the image's sum."""
