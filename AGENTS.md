@@ -176,6 +176,9 @@ Each rule names the area file with the detail.
 - One HeLab app per computer: `main()` takes `running.lock` in the app folder
   (`cache_locks.take_running`) before anything opens; a second start says so and exits 1 (Q39.1,
   A39.3; [app-runtime](.ai/architecture/app-runtime-and-ui.md)). `helab convert` doesn't take it.
+- While HeLab's updater holds `update.lock`, nothing of HeLab starts but the start it makes
+  (`cache_locks.update_in_progress`; the app and `helab convert` take their own lock first;
+  [release-and-ci](.ai/architecture/release-and-ci.md)).
 
 **The disk cache** ([cache-store](.ai/architecture/cache-store.md),
 [data-roots](.ai/architecture/data-roots.md)):

@@ -620,6 +620,16 @@ A56.7, A58.2 and A56.4 done; landed `20dd672`, CI 41770471113).
   (`read_failed`)" gains "; unconvertible once unchanged and unreadable for 20 s"; `ShotUnconvertibleEvent`'s
   reasons gain `read_failed` (unchanged and unreadable for `DAMAGED_SECONDS`, by its mtime and since first seen).
 
+## Review fixes at 09ca79b (block 75; [handoff](sessions/2026-11-17-claude-review-09ca79b-fixes/handoff.md))
+
+- [ ] **A75.1 Laserlock's auto-lock after a plain sweep** (A~1): `_sweep` with `lock_thz` engages without checking a
+  new reading at the target, as N3's hold did; the same fix as the hold of 0 would do.
+- [ ] **A75.2 The cloud environment's venv** (A~2): it installs `requirements.txt`, not `requirements.lock` (PyQt6
+  6.12.1 for 6.11.0, mypy 2.4.1 for 2.4.0), and then `mypy helab` reports 165 errors. Its setup script should
+  install the lock. The PyQt6 6.12.1 ViewBox failure is in known-issues.
+- [ ] **A75.3 `test_a_killed_helpers_workers_exit`: count a zombie as exited** (A~3; `psutil.STATUS_ZOMBIE`), the
+  second symptom in its known-issues entry. Not reproduced yet, so a fix would be unchecked.
+
 ## Not AI work (stays in MANUAL_TODO)
 
 These need a real share, lab hardware or a person in the lab:

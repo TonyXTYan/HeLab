@@ -481,6 +481,18 @@ How to use it:
   in Ledger's local run on `agent/folder-info` (`4dd31db`, 2026-11-05), 1 in its final run, and 2 under load ~500 in
   Relay's on `agent/app-updates`; passed on rerun, unrelated to both branches. Likely fix: wait briefly (bounded) for
   the children before asserting, or have the helper report its pool's pids.
+  A second symptom (block 75's review, 2026-11-11 and 2026-11-17, its sandbox): `assert [psutil.Process…] == []`,
+  three Python processes in `status='zombie'`, 2 reruns then failed in both runs. The workers had exited; likely the
+  sandbox's process 1 doesn't reap orphans. Not reproduced in the cloud session's three runs, nor with pytest as
+  process 1 (`unshare --pid --fork`). Likely fix: count a zombie as exited (A75.3).
+- [ ] **`test_basic_plots_v2_hist2d.py::test_toggling_planes_removes_and_restores_their_rate_bars[PyQtGraph]`**
+  (`RuntimeError: wrapped C/C++ object of type ViewBox has been deleted`, in `SpaceScale.fit` → `sizes`): fails every
+  time with PyQt6 6.12.1 (a cloud container's unpinned venv, on `09ca79b` too); passes with the lock's 6.11.0. A
+  timer's fit after the panels were replaced. Look at it before PyQt6 is bumped (block 75).
+- [ ] Sightings from block 75's review (its first run, 2026-11-11, on `d2bd306`), not seen since:
+  `test_basic_plots_v2_hist2d.py::test_dots_on_a_black_or_white_plot_area[local density]` (worker crashed, passed on
+  rerun, cause not established) and `test_correlations.py::test_fifty_shots_of_two_thousand_events_take_seconds`
+  (25.5 s against 20, passed on rerun; see its entry above).
 - [ ] **The updater on Windows, not yet seen on a lab PC** (Sentry's AU-7, AU-8; `ba22460`): whether a DLL uv
   hard-linked into HeLab's venv and loaded by another venv's Python is told apart (built: each Python's modules by
   path, a test on Windows CI), and whether git or uv flash console windows during an update (built:
@@ -498,6 +510,16 @@ crashed" on CI with no traceback is usually CI's 120 s timeout, whose stacks
 Landed in `dev/v0.0.9` (`dev/v0.0.8`'s were dropped at the v0.0.8a1 tidy-up; their release-notes lines are in
 TonyXTYan/HeLab#11):
 
+- [x] `test_quit_confirms.py::test_a_teardown_stuck_where_the_watch_cant_run_is_ended_from_the_crash_files_timer`
+  (`assert '__del__' in ''`, 2 reruns then failed in both of block 75's review runs, Python 3.13.5): Python 3.13.5
+  closes the crash file's object in its last collection (3.13.14 doesn't, which is why CI passed). Fixed in
+  `7b1e5ef` (R5: faulthandler's timer gets an `os.dup` of the descriptor; fast-forwarded `6230b19`).
+- [x] `side_projects/laserlock/tests/test_laserlock.py::test_window_draws_hops` (`assert 0 == 1`, the review's
+  laserlock run): the window redraws hops at most once a second from its last redraw, and the test waited a fixed
+  0.8 s. Fixed in `d64999b` (waits for the line, 10 s at most).
+- [x] `test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]`
+  (`OSError: [Errno 97] Address family not supported by protocol`, 5 reruns then failed, a cloud container, on
+  `09ca79b` too): no IPv6 in the kernel while `socket.has_ipv6` is true. Fixed in `05deb92` (skips there).
 - [x] **Live stopped picking up shots after a conversion** (the lab PC, 2026-11-11, twice: no check or
   conversion for 2 h and 1.5 h until Live off and on). A Live check answering `live_unchanged` stayed in
   `FolderCache.jobs` until its `done`, so a check asked for in between was joined to it and never ran. Fixed in

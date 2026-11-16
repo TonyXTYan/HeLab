@@ -188,10 +188,21 @@ Landed `ba22460` (the App Updates floor; Q65.1 (b), Q65.3, Q68.1–Q68.12; [plan
   venv is deleted and shown once by the new HeLab on its own start (`after_start` polls for its token's outcome,
   AU-1, AU-13); `tidy`. Every child through `_run` (UTF-8, no console window). Not checked: that the base Python is
   outside the checkout (the README's setup), or `git`/`uv` versions.
+- **`update.lock`** (R2, block 75, `a0c2c34`) in the app folder (`UpdateLock`; HeLab's side
+  `cache_locks.update_in_progress`): held with the run's token from before the ready mark until the code and venv are
+  as they will stay; the app (after `running.lock`), `helab convert` (after its instance lock) and the top of
+  `helab.main` (before Qt, read only; `app_folder`/`default_app_dir` live in the standard-library
+  `helab/utils/app_dirs.py` for it) stop while another process holds it, unless `HELAB_UPDATE_TOKEN` is the token in
+  it. Whichever takes its own lock later sees the other. `check_quiet` runs before the code moves and before the
+  swap; a HeLab still holding `running.lock` when the venv is ready means nothing is swapped and the code is put
+  back. The lock is released before a failed update starts the previous version, and before the older venv is
+  deleted. The venv's renames are all or nothing (`_renames`, used by `swap_in`, `swap_back`, `swap_previous`);
+  `rollback` returns whether it put everything back; a failed update puts the earlier `previous.json` back. Not
+  durable across a kill between two renames (Q75.6); the update's log has a line for each rename.
 - **Test seams:** `HELAB_UPDATER_TEST_ROOT` (required under the guard), `HELAB_UPDATER_TEST_ELEVATED` (only under the
   guard; CI's Windows runners run elevated), `UpdateLauncher.start_detached`, `launch.checkout` / `venv_prefix`;
   `tests/test_updates_updater.py`'s `Lab` (bare remote, `insteadOf`, empty global config, `GIT_ALLOW_PROTOCOL=file`,
-  fake uv, fake HeLab).
+  fake uv, fake HeLab); `FAKE_UV_PAUSE` (the fake uv stops in `pip install` until that file is deleted).
 
 ## The manual's site
 

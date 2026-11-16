@@ -413,6 +413,14 @@ and M42.1 on a lab PC with the switch on (one Live session).
   `chmod 000`). Within about 25 s it shows as unconvertible, "Couldn't be read for 20 s: …", later shots go on,
   and after unlocking it converts on Live off and on.
 
+## Review fixes at 09ca79b (added 2026-11-17, block 75)
+
+- [ ] **M75.1 Laserlock on the real DG1022 and WS8** (N1–N3; nothing ran on an instrument): Release while locked
+  with the wavemeter fast (the output must not move after it); each write no bigger than Max step; Find stable range
+  with the beam blocked during the hold (it must return, unlocked).
+- [ ] **M75.2 An update that rebuilds the venv, on Windows and macOS** (R2): start HeLab and `helab convert` by hand
+  during the build; each says HeLab is being updated and stops, and the update finishes and starts HeLab.
+
 ## The GUI thread audit (added 2026-11-10, block 73)
 
 - [ ] **M73.1 A dead mapped drive at start** (GT-7, Windows lab PC): with a mapped drive whose server is off,
