@@ -109,15 +109,16 @@ def estimated_bytes(plane_bins: Sequence[int], adaptive: bool = False, drawn: Se
 
 
 # Drawn at screen resolution (Q~1, Tony 2026-11-10; GT-4 of the GUI-thread audit): an image is drawn from the mean of
-# whole blocks of bins, at most DISPLAY_SIDE a side (Plotly's at most PLOTLY_SIDE), made on the worker; the bins
-# and the counts stay as chosen.
+# blocks of bins, at most DISPLAY_SIDE a side (Plotly's at most PLOTLY_SIDE), made on the worker; the bins and the
+# counts stay as chosen. The drawn cells are all the same size: every library stretches an image evenly over its
+# range, so cells of unequal size (a smaller last block, when the bins don't divide) would be drawn off their place.
 DISPLAY_SIDE = 2048
 PLOTLY_SIDE = 1000
 DISPLAY_BYTES_PER_CELL = 4  # float32
 
 
 def display_factors(shape: tuple[int, int], side: int = DISPLAY_SIDE) -> tuple[int, int]:
-    """How many bins of each axis one drawn cell takes (1: every bin), so neither side passes ``side``."""
+    """How many bins of each axis one drawn cell takes at most (1: every bin), so neither side passes ``side``."""
     return (max(1, -(-shape[0] // side)), max(1, -(-shape[1] // side)))
 
 
@@ -127,24 +128,52 @@ def display_shape(shape: tuple[int, int], side: int = DISPLAY_SIDE) -> tuple[int
     return (-(-shape[0] // factors[0]), -(-shape[1] // factors[1]))
 
 
-def block_mean(image: npt.NDArray[np.floating[Any]], factors: tuple[int, int]) -> npt.NDArray[np.float32]:
-    """``image`` reduced to the mean of each block of ``factors`` bins (the last block of an axis may be smaller):
-    values keep their units (per bin, or a rate)."""
-    if factors == (1, 1):
-        return np.asarray(image, dtype=np.float32)
+def _cells(image: npt.NDArray[Any], cells: int, axis: int) -> npt.NDArray[Any]:
+    """``image`` (float64, or whole numbers) with ``axis`` reduced to ``cells`` equal cells: each the sum of the bins
+    it covers, a bin on a cell's border shared by the part of it on either side. Nothing the size of ``image`` is
+    made."""
+    bins = image.shape[axis]
+    if cells == bins:
+        return image
+    edges = np.linspace(0.0, float(bins), cells + 1)  # the cells' borders, in bins
+    first = np.minimum(np.floor(edges).astype(np.intp), bins - 1)[:-1]  # the bin each cell starts in
+    part = edges[:-1] - first  # how much of that bin belongs to the cell before
+    sums = np.add.reduceat(image, first, axis=axis)  # whole bins, from each cell's first to the next cell's
+    if not part.any():  # (The bins divide: whole blocks.)
+        return sums
+    sums = sums.astype(np.float64, copy=False)
+    shape = [1, 1]
+    shape[axis] = cells
+    border = np.take(image, first, axis=axis) * part.reshape(shape)  # each first bin's share of the cell before
+    sums -= border
+    before = [slice(None), slice(None)]
+    after = [slice(None), slice(None)]
+    before[axis], after[axis] = slice(0, cells - 1), slice(1, cells)
+    sums[tuple(before)] += border[tuple(after)]
+    return sums
+
+
+def cell_mean(image: npt.NDArray[np.floating[Any]], shape: tuple[int, int]) -> npt.NDArray[np.float32]:
+    """``image`` drawn as ``shape`` equal cells (at most its own shape): each the mean of the bins it covers, a bin
+    on a cell's border counted by the part of it inside (when the bins divide, whole blocks of bins). Values
+    keep their units (per bin, or a rate), and the cells' sum times the bins a cell covers is the image's sum."""
     rows, columns = image.shape
-    starts = (np.arange(0, rows, factors[0]), np.arange(0, columns, factors[1]))
-    sums = np.add.reduceat(np.add.reduceat(np.asarray(image, dtype=np.float64), starts[0], axis=0), starts[1], axis=1)
-    sizes = (np.diff(np.append(starts[0], rows)).astype(np.float64),
-             np.diff(np.append(starts[1], columns)).astype(np.float64))
-    means: npt.NDArray[np.float32] = (sums / np.multiply.outer(sizes[0], sizes[1])).astype(np.float32)
+    if shape == (rows, columns):
+        return np.asarray(image, dtype=np.float32)
+    # Summed in float64 (a float32 image is converted), or exactly in whole numbers (counts: no copy of them).
+    exact = image if image.dtype == np.float64 or image.dtype.kind in "iu" else np.asarray(image, dtype=np.float64)
+    sums = _cells(_cells(exact, shape[0], 0), shape[1], 1)
+    means: npt.NDArray[np.float32] = (sums / ((rows / shape[0]) * (columns / shape[1]))).astype(np.float32)
     return means
 
 
-def block_edges(edges: npt.NDArray[np.float64], factor: int) -> npt.NDArray[np.float64]:
-    """The drawn cells' edges: every ``factor``-th bin edge, and the last."""
-    picked = edges[::factor]
-    return picked if (len(edges) - 1) % factor == 0 else np.append(picked, edges[-1])
+def cell_edges(edges: npt.NDArray[np.float64], cells: int) -> npt.NDArray[np.float64]:
+    """The drawn cells' edges: ``cells`` equal steps over the bins' range (the bins' own edges when ``cells`` is
+    their number)."""
+    if cells == len(edges) - 1:
+        return edges
+    spaced: npt.NDArray[np.float64] = np.linspace(float(edges[0]), float(edges[-1]), cells + 1)
+    return spaced
 
 
 def histogram2d(events: Events, plane: str, keep: float, bins: tuple[int, int] = (0, 0),

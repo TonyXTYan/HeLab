@@ -31,8 +31,8 @@ from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis import image_filters
 from helab.analysis.display_units import si_text
 from helab.analysis.histogram2d import (DISPLAY_SIDE, LINEAR, LOG, MAX_AUTO_BINS, MAX_BINS, PLANES, PLOTLY_SIDE, POWER,
-                                        SCALES, Histogram2D, bin_area, block_edges, block_mean, compress,
-                                        display_factors, display_shape, estimated_bytes, histogram2d, scale_text)
+                                        SCALES, Histogram2D, bin_area, cell_edges, cell_mean, compress,
+                                        display_shape, estimated_bytes, histogram2d, scale_text)
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import Kind, ParameterSpec, Value
 from helab.analysis.results import AnalysisContext, AnalysisResult
@@ -281,27 +281,36 @@ def at_screen(values: Mapping[str, Any]) -> bool:
 
 @dataclass(frozen=True)
 class Display:
-    """A plane's image as drawn at screen resolution (Q~1): the mean of each block of ``factors`` bins
-    (``block_mean``, float32), and those blocks' edges. Made on the worker, by ``compute``."""
+    """A plane's image as drawn at screen resolution (Q~1): equal cells, each the mean of the ``factors`` bins it
+    covers (``cell_mean``, float32; whole blocks of bins when they divide, else a bin on a border counts by its
+    part inside), and those cells' edges, evenly spaced, so the image drawn over its range has every cell in its
+    place. Made on the worker, by ``compute``."""
     image: npt.NDArray[np.float32]
     h_edges: npt.NDArray[np.float64]
     v_edges: npt.NDArray[np.float64]
-    factors: tuple[int, int]
+    factors: tuple[float, float]
 
 
 def display_of(image: npt.NDArray[np.floating[Any]], h_edges: npt.NDArray[np.float64],
                v_edges: npt.NDArray[np.float64], side: int) -> Optional[Display]:
     """``image`` drawn at most ``side`` a side, or None when it is that small already."""
-    factors = display_factors((int(image.shape[0]), int(image.shape[1])), side)
-    if factors == (1, 1):
+    shape = (int(image.shape[0]), int(image.shape[1]))
+    drawn = display_shape(shape, side)
+    if drawn == shape:
         return None
-    return Display(block_mean(image, factors), block_edges(h_edges, factors[0]), block_edges(v_edges, factors[1]),
-                   factors)
+    return Display(cell_mean(image, drawn), cell_edges(h_edges, drawn[0]), cell_edges(v_edges, drawn[1]),
+                   (shape[0] / drawn[0], shape[1] / drawn[1]))
+
+
+def cell_bins(bins: float) -> str:
+    """The bins one drawn cell covers along an axis: a whole number when the bins divide, else to 4 figures."""
+    return f"{round(bins):,}" if abs(bins - round(bins)) < 1e-9 else f"{bins:.4g}"
 
 
 def display_note(display: Display) -> str:
     rows, columns = display.image.shape
-    return f"drawn at {rows:,} × {columns:,}, each the mean of {display.factors[0]:,} × {display.factors[1]:,} bins"
+    return (f"drawn at {rows:,} × {columns:,}, each the mean of {cell_bins(display.factors[0])} × "
+            f"{cell_bins(display.factors[1])} bins")
 
 
 @dataclass(frozen=True)
@@ -1133,7 +1142,7 @@ def planes_plotly(result: AnalysisResult) -> go.Figure:
                 hovertemplate=f"{across} %{{x:.6g}}<br>{up} %{{y:.6g}}<br>%{{customdata:,}} events · %{{z:.4g}}"
                               f"<extra>{histogram.plane}</extra>"), row=1, col=column)
         else:  # (A block's mean: no one bin's events to show.)
-            blocks = f"{display.factors[0]:,} × {display.factors[1]:,} bins"
+            blocks = f"{cell_bins(display.factors[0])} × {cell_bins(display.factors[1])} bins"
             figure.add_trace(go.Heatmap(
                 z=image.T, x=centres_h, y=centres_v, coloraxis=colour_axis, name=histogram.plane,
                 hovertemplate=f"{across} %{{x:.6g}}<br>{up} %{{y:.6g}}<br>%{{z:.4g}} (the mean of {blocks})"
