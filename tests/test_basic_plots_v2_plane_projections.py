@@ -2,6 +2,7 @@
 histogram of the events flattened onto it (``helab.analysis.planes``); XY, XT and YT are the presets."""
 from __future__ import annotations
 
+import dataclasses
 import math
 from typing import Any
 
@@ -47,12 +48,12 @@ def view_of(velocities: Array, shots: int = 2) -> DatasetView:
     return build_view(Dataset("/data/root/run_planes", "sig-planes", data, {"fingerprint": prints}, 0))
 
 
-def run(view: DatasetView, values: dict[str, Any] | None = None) -> AnalysisResult:
+def run(view: DatasetView, values: dict[str, Any] | None = None, ram_budget: int = 0) -> AnalysisResult:
     params = effective(SCRIPT.parameters("Plot"), {"keep_percent": 100.0, **(values or {})})
     layers: dict[str, dict[str, float]] = {"lab": {}, "folder": dict(SAVED)}
     context = AnalysisContext("p1", "Plot", view, params, SCRIPT.get_metadata().identity(), constants=layers,
                               resolved_constants=SCRIPT.run_constants("Plot", params, layers),
-                              constant_keys=SCRIPT.constant_keys("Plot"))
+                              constant_keys=SCRIPT.constant_keys("Plot"), ram_budget=ram_budget)
     return AnalysisResult.of(context, "completed", SCRIPT.compute("Plot", context))
 
 
@@ -190,3 +191,96 @@ def test_drawn_and_updated_in_place(qtbot: QtBot, backend: str) -> None:
     assert [trace.type for trace in traces].count("heatmap") == 4
     layout: Any = figure.layout
     assert layout.scene.aspectmode == "data" and layout.xaxis.title.text == "v_x (m/s)"
+
+
+# Memory and drawing at many bins (review R4, 2026-11-17)
+
+
+def estimate(values: dict[str, Any]) -> int:
+    return SCRIPT.estimated_bytes("Plot", effective(SCRIPT.parameters("Plot"), values))
+
+
+def test_the_estimate_counts_every_plane_on_and_its_bins() -> None:
+    """Up to four planes of 10,000 × 10,000 int64 counts: 3.2 GB held before anything is drawn. The estimate is
+    what the settings page's memory warning (Undo, Cancel) reads; it was 0."""
+    bins, drawn = 10_000 * 10_000, 1_000 * 1_000
+    four = {"panel_bins": 10_000, "plane4_on": True}
+    # held: counts (8 B a bin) and the drawn image (4 B a cell); for a moment NumPy's float64 histogram of one plane
+    assert estimate(four) == 8 * 4 * bins + 4 * 4 * drawn + 8 * bins
+    assert estimate(four) > 3_200_000_000
+    assert estimate({"panel_bins": 10_000}) == 8 * 3 * bins + 4 * 3 * drawn + 8 * bins  # three on by default
+    assert estimate({"panel_bins": 10_000, "plane2_on": False, "plane3_on": False}) == 8 * bins + 4 * drawn + 8 * bins
+    assert estimate({f"plane{index}_on": False for index in range(1, 5)}) == 0
+    # automatic bins: counted at their most (1,000 a side), drawn as they are; drawing three planes is the moment
+    assert estimate({}) == 8 * 3 * drawn + 32 * 3 * drawn
+    sizes = [estimate({"panel_bins": bins_}) for bins_ in (500, 1_000, 2_000, 5_000, 10_000)]
+    assert sizes == sorted(sizes) and len(set(sizes)) == 5
+    assert plane_projections.planes_bytes([]) == 0
+    assert plane_projections.planes_bytes([(1_200, 1_200)]) == 8 * 1_440_000 + 4 * 360_000 + 32 * 360_000
+
+
+def test_a_run_over_half_the_ram_budget_says_so() -> None:
+    view = view_of(shell(np.random.default_rng(5), 4_000, 0.05))
+    values = {"panel_bins": 1_200}
+    wanted = plane_projections.planes_bytes([(1_200, 1_200)] * 3)
+    assert wanted == estimate(values)  # (Set bins: the settings page's estimate is the run's.)
+    over = run(view, values, ram_budget=2 * wanted)  # at half of it
+    warned = [text for text in over.data.warnings if text.startswith("Estimated memory")]
+    assert len(warned) == 1 and "50 % of the RAM budget" in warned[0]
+    assert SCRIPT.describe_result("Plot", over) == f"⚠ {warned[0]}"
+    assert warned[0] in " ".join(plane_projections.heading(over, over.data))
+    for budget in (2 * wanted + 2, 0):  # under half of it, or unknown
+        under = run(view, values, ram_budget=budget)
+        assert not any(text.startswith("Estimated memory") for text in under.data.warnings)
+        assert SCRIPT.describe_result("Plot", under) == ""
+
+
+@pytest.mark.parametrize("bins, cells", [(2_500, 834), (1_001, 501), (1_000, 1_000), (300, 300)])
+def test_many_bins_are_counted_whole_and_drawn_with_at_most_a_thousand_cells_a_side(bins: int, cells: int) -> None:
+    """The counts keep every bin (the analysis, a saved result); what Plotly is sent and Matplotlib draws is made on
+    the worker, bounded, each cell the mean of the bins it covers and in their place."""
+    view = view_of(shell(np.random.default_rng(6), 6_000, 0.05))
+    result = run(view, {"panel_bins": bins, "plane2_on": False, "plane3_on": False, "velocity_unit": "m/s"})
+    data = result.data
+    image = data.images[0]
+    assert image.counts.shape == (bins, bins) and image.counts.dtype == np.int64 and image.inside > 0
+    display = data.displays[0]
+    reduced = cells < bins
+    assert len(data.displays) == 1 and (display is not None) is reduced
+    trace: Any = next(trace for trace in plane_projections.projections_plotly(result).data if trace.type == "heatmap")
+    z, x = np.asarray(trace.z), np.asarray(trace.x)
+    assert z.shape == (cells, cells) and z.size <= 1_000 * 1_000 and len(x) == cells
+    assert np.allclose(np.diff(x), (image.h_edges[-1] - image.h_edges[0]) / cells)  # equal cells over the range
+    assert x[0] - np.diff(x)[0] / 2 == pytest.approx(image.h_edges[0])
+    assert x[-1] + np.diff(x)[0] / 2 == pytest.approx(image.h_edges[-1])
+    title = plane_projections.plane_title(image, data)
+    assert (f"{bins:,} × {bins:,} bins drawn at {cells:,} × {cells:,}" in title) is reduced
+    axes = plane_projections.projections_matplotlib(result).axes[1]
+    if reduced:
+        assert display is not None
+        assert float(display.image.astype(np.float64).sum()) * (bins / cells) ** 2 == pytest.approx(image.inside, rel=1e-4)
+        assert "the mean of" in trace.hovertemplate and trace.zmax == pytest.approx(float(display.image.max()))
+        raster = axes.images[0]
+        assert raster.get_array().shape == (cells, cells) and not axes.collections
+        assert raster.get_extent() == pytest.approx([image.h_edges[0], image.h_edges[-1], image.v_edges[0],
+                                                     image.v_edges[-1]])
+    else:
+        assert np.array_equal(z, image.counts.T) and trace.zmax == max(image.peak, 1)
+        assert not axes.images and len(axes.collections) == 1  # (pcolormesh, a quad a bin, as before.)
+
+
+def test_a_drawn_image_survives_the_codec_and_an_older_result_is_reduced_when_drawn() -> None:
+    result = run(view_of(shell(np.random.default_rng(7), 3_000, 0.05)),
+                 {"panel_bins": 1_200, "plane2_on": False, "plane3_on": False})
+    tree, arrays = encode(result.data, SCRIPT.cache_types("Plot"))
+    back = decode(tree, arrays, SCRIPT.cache_types("Plot"))
+    assert isinstance(back, Projections) and back.displays[0] is not None and result.data.displays[0] is not None
+    np.testing.assert_array_equal(back.displays[0].image, result.data.displays[0].image)
+    assert back.displays[0].factors == (2.0, 2.0)
+    older = dataclasses.replace(result.data, displays=())  # as saved before the drawn images were kept
+    drawn = older.drawn(0)
+    assert drawn is not None and drawn.image.shape == (600, 600)
+    np.testing.assert_array_equal(drawn.image, result.data.displays[0].image)
+    trace: Any = next(trace for trace in plane_projections.projections_plotly(
+        dataclasses.replace(result, data=older)).data if trace.type == "heatmap")
+    assert np.asarray(trace.z).shape == (600, 600)

@@ -23,11 +23,13 @@ import plotly.graph_objs as go
 from PyQt6.QtWidgets import QWidget
 
 from helab.analysis.backends import MATPLOTLIB, PLOTLY, MatplotlibPane, mpl_colour, mpl_figure
+from helab.analysis.budget_core import ESTIMATE_PREFIX, estimate_over, estimate_text
 from helab.analysis.dataset_view import DatasetView
 from helab.analysis.display_units import LENGTH_SCALE, WIDTH_DIGITS, number_text, time_text
 from helab.analysis.empty import empty_pane, empty_text
 from helab.analysis.follow import LivePolicy
-from helab.analysis.histogram2d import scale_text
+from helab.analysis.histogram2d import (DISPLAY_BYTES_PER_CELL, MAX_AUTO_BINS, MOMENT_BYTES_PER_BIN, PLOTLY_SIDE,
+                                        display_shape, scale_text)
 from helab.analysis.panes import PlotlyPane
 from helab.analysis.parameters import ParameterSpec
 from helab.analysis.planes import CUSTOM, XT, XY, YT, Plane, PlaneImage, as_xyz, plane_image
@@ -44,7 +46,8 @@ from helab.scripts.dld.velocity_distributions import (ASSUMED_NOTE, CONSTANT_KEY
 from helab.analysis.constant_layers import resolve_for_run
 from helab.scripts.standard.basic_plots import matplotlib_update, plotly_update
 from helab.scripts.standard_v2 import group
-from helab.scripts.standard_v2.histograms_2d import DECADES, GAMMA, SCALE, Colours, matplotlib_norm, plotly_scale
+from helab.scripts.standard_v2.histograms_2d import (DECADES, GAMMA, SCALE, Colours, Display, cell_bins, display_of,
+                                                    matplotlib_norm, plotly_scale)
 
 Array = npt.NDArray[np.float64]
 
@@ -136,7 +139,31 @@ HALF_WIDTH = ParameterSpec("panel_half_width", "Half-width (0 = auto)", "float",
                            tip="Above 0: every histogram spans this either side of its plane's centre on both axes, "
                                "so the planes compare at one scale.")
 BINS = ParameterSpec("panel_bins", "Bins per axis (0 = auto)", "int", 0, (0, 10_000), group=IMAGE_GROUP,
-                     tip="Bins along each histogram axis; 0 = automatic (Freedman–Diaconis, at most 1,000).")
+                     tip="Bins along each histogram axis; 0 = automatic (Freedman–Diaconis, at most 1,000). A "
+                         f"histogram of more than {PLOTLY_SIDE:,} bins a side is drawn from the mean of blocks of "
+                         f"bins, at most {PLOTLY_SIDE:,} a side; its counts keep every bin.")
+# Memory (``estimated_bytes``). Held while the plot is open: each plane's int64 counts, and its drawn image when
+# that is smaller. For a moment: NumPy's float64 histogram the counts are made from, one plane at a time; and
+# what drawing takes a drawn cell, every plane in one figure (as the XY, XT, YT histograms count it).
+HELD_BYTES_PER_BIN = 8
+MAKING_BYTES_PER_BIN = 8
+
+
+def drawn_cells(shape: tuple[int, int]) -> int:
+    """The cells a histogram of ``shape`` bins is drawn with (``PLOTLY_SIDE`` a side at most)."""
+    rows, columns = display_shape(shape, PLOTLY_SIDE)
+    return rows * columns
+
+
+def planes_bytes(shapes: Sequence[tuple[int, int]]) -> int:
+    """The most memory the planes' histograms of ``shapes`` bins take at once (bytes), drawing included."""
+    if not shapes:
+        return 0
+    bins = [rows * columns for rows, columns in shapes]
+    drawn = [drawn_cells(shape) for shape in shapes]
+    shown = sum(DISPLAY_BYTES_PER_CELL * cells for size, cells in zip(bins, drawn) if cells < size)
+    return (HELD_BYTES_PER_BIN * sum(bins) + shown
+            + max(MAKING_BYTES_PER_BIN * max(bins), MOMENT_BYTES_PER_BIN * sum(drawn)))
 POINTS_GROUP = "3D view"
 POINT_SIZE = ParameterSpec("point_size", "Point size", "float", 1.5, (0.5, 10.0), " px", group=POINTS_GROUP,
                            tip="Marker size in pixels.")
@@ -176,6 +203,17 @@ class Projections:
     notes: tuple[str, ...] = ()
     warnings: tuple[str, ...] = ()
     planes: int = 0  # planes turned on
+    # Each image as drawn (``drawn``), made on the worker: None where every bin is drawn. (Empty in a result saved
+    # before these were kept.)
+    displays: tuple[Optional[Display], ...] = ()
+
+    def drawn(self, index: int) -> Optional[Display]:
+        """Plane ``index``'s image as drawn, at most ``PLOTLY_SIDE`` cells a side, or None when its bins are that
+        few: 10,000 bins a side are 100 million cells, which no library draws (or sends to a web page) at once."""
+        if index < len(self.displays):
+            return self.displays[index]
+        image = self.images[index]  # (A result from before: reduced here.)
+        return display_of(image.counts, image.h_edges, image.v_edges, PLOTLY_SIDE)
 
 
 def release_text(source: RunVelocitySource) -> str:
@@ -212,6 +250,10 @@ def plane_title(image: PlaneImage, data: Projections) -> str:
     parts.append(f"{image.inside:,} events")
     if image.kept > image.inside:
         parts.append(f"{image.kept - image.inside:,} outside")
+    display = data.drawn(next(index for index, item in enumerate(data.images) if item is image))
+    if display is not None:
+        rows, columns = display.image.shape
+        parts.append(f"{image.counts.shape[0]:,} × {image.counts.shape[1]:,} bins drawn at {rows:,} × {columns:,}")
     return " · ".join(parts)
 
 
@@ -252,7 +294,18 @@ class PlaneProjections(DatasetAnalysis):
         return CONSTANT_KEYS
 
     def cache_types(self, action_name: str) -> Sequence[Any]:
-        return (Projections, PlaneImage, Plane)
+        return (Projections, PlaneImage, Plane, Display)
+
+    def estimated_bytes(self, action_name: str, values: Mapping[str, Any]) -> int:
+        """Every plane on, at the bins set (automatic: counted at its most, ``MAX_AUTO_BINS``), and drawing them."""
+        bins = int(values.get(BINS.name, 0)) or MAX_AUTO_BINS
+        return planes_bytes([(bins, bins)] * len(planes_of(values)))
+
+    def describe_result(self, action_name: str, result: AnalysisResult) -> str:
+        """The memory warning, for the dock's settings line and Plot info."""
+        data = result.data
+        warnings = data.warnings if isinstance(data, Projections) else ()
+        return " · ".join(f"⚠ {note}" for note in warnings if note.startswith(ESTIMATE_PREFIX))
 
     def live_policy(self, action_name: str) -> LivePolicy:
         # As the Velocity distributions plot: a run converts every event and may detect t_r (seconds on a large folder).
@@ -318,13 +371,23 @@ class PlaneProjections(DatasetAnalysis):
         keep = float(values.get(KEEP.name, KEEP.default)) / 100
         bins = int(values.get(BINS.name, 0))
         half = float(values.get(HALF_WIDTH.name, 0.0))
-        images = []
+        images, displays = [], []
         for plane in planes:
             context.check()
-            images.append(plane_image(xyz, plane, keep, bins, half, context.check))
+            image = plane_image(xyz, plane, keep, bins, half, context.check)
+            images.append(image)
+            # Drawn from the mean of blocks of bins, made here on the worker: the GUI thread never handles more
+            # than PLOTLY_SIDE cells a side (review R4; as the XY, XT, YT histograms' screen resolution, GT-4).
+            context.check()
+            displays.append(display_of(image.counts, image.h_edges, image.v_edges, PLOTLY_SIDE))
+        # The memory its bins take (as they came out: automatic ones known now), against the RAM budget.
+        estimate = planes_bytes([(int(image.counts.shape[0]), int(image.counts.shape[1])) for image in images])
+        if estimate_over(estimate, context.ram_budget):
+            warnings += (estimate_text(estimate, context.ram_budget),)
         points = xyz[display_sample(len(xyz), int(values.get(CAP.name, CAP.default)))]
         return Projections(data.shots, data.total_shots, data.events, len(inside), len(xyz), unit, factor,
-                           tuple(images), points, release_text(source), "", tuple(notes), warnings, len(planes))
+                           tuple(images), points, release_text(source), "", tuple(notes), warnings, len(planes),
+                           tuple(displays))
 
     def backends(self, action_name: str) -> Sequence[str]:
         return (PLOTLY, MATPLOTLIB)
@@ -346,6 +409,12 @@ class PlaneProjections(DatasetAnalysis):
             return False
         return (plotly_update(widget, projections_plotly(result))
                 or matplotlib_update(widget, lambda figure: projections_matplotlib(result, figure)))
+
+
+def drawn_peak(display: Display) -> float:
+    """The colour range's top for a drawn image: its largest mean, so the colours read what is drawn (at least a
+    hundredth of an event a bin, for an image with nothing in it)."""
+    return max(float(display.image.max()) if display.image.size else 0.0, 0.01)
 
 
 def rgb(colour: tuple[int, int, int]) -> str:
@@ -390,11 +459,20 @@ def projections_plotly(result: AnalysisResult) -> go.Figure:
                                       line=dict(color=rgb(colour), width=4), name=image.plane.label,
                                       hoverinfo="name", showlegend=False), row=1, col=1)
         across, up = image.plane.axis_names()
-        figure.add_trace(go.Heatmap(
-            x=centres(image.h_edges) / factor, y=centres(image.v_edges) / factor, z=image.counts.T, zmin=0,
-            zmax=max(image.peak, 1), colorscale=scale, showscale=False, name=image.plane.label,
-            hovertemplate=f"{across} %{{x:.4g}}<br>{up} %{{y:.4g}}<br>%{{z:,}} events<extra></extra>"),
-            row=2, col=column)
+        display = data.drawn(column - 1)
+        if display is None:
+            figure.add_trace(go.Heatmap(
+                x=centres(image.h_edges) / factor, y=centres(image.v_edges) / factor, z=image.counts.T, zmin=0,
+                zmax=max(image.peak, 1), colorscale=scale, showscale=False, name=image.plane.label,
+                hovertemplate=f"{across} %{{x:.4g}}<br>{up} %{{y:.4g}}<br>%{{z:,}} events<extra></extra>"),
+                row=2, col=column)
+        else:  # (A block's mean: no one bin's events to show.)
+            blocks = f"{cell_bins(display.factors[0])} × {cell_bins(display.factors[1])} bins"
+            figure.add_trace(go.Heatmap(
+                x=centres(display.h_edges) / factor, y=centres(display.v_edges) / factor, z=display.image.T, zmin=0,
+                zmax=drawn_peak(display), colorscale=scale, showscale=False, name=image.plane.label,
+                hovertemplate=f"{across} %{{x:.4g}}<br>{up} %{{y:.4g}}<br>%{{z:.4g}} events a bin (the mean of "
+                              f"{blocks})<extra></extra>"), row=2, col=column)
         subplot: Any = figure.get_subplot(2, column)  # (Plotly is loosely typed.)
         figure.update_xaxes(title_text=axis_title(across, data), row=2, col=column)
         figure.update_yaxes(title_text=axis_title(up, data), row=2, col=column,
@@ -438,8 +516,15 @@ def projections_matplotlib(result: AnalysisResult, drawn: Any = None) -> Any:
         view.add_collection3d(Poly3DCollection([corners], facecolors=[mpl_colour(colour, solid)],
                                                edgecolors=[mpl_colour(colour)], linewidths=1.5))
         axes = figure.add_subplot(grid[1, column])
-        axes.pcolormesh(image.h_edges / factor, image.v_edges / factor, image.counts.T, cmap="viridis",
-                        norm=matplotlib_norm(colours, max(image.peak, 1)), shading="flat", rasterized=True)
+        display = data.drawn(column)
+        if display is None:
+            axes.pcolormesh(image.h_edges / factor, image.v_edges / factor, image.counts.T, cmap="viridis",
+                            norm=matplotlib_norm(colours, max(image.peak, 1)), shading="flat", rasterized=True)
+        else:  # One raster of equal cells (a quad a bin is too many to draw).
+            axes.imshow(display.image.T, origin="lower", cmap="viridis", interpolation="nearest",
+                        norm=matplotlib_norm(colours, drawn_peak(display)),
+                        extent=(display.h_edges[0] / factor, display.h_edges[-1] / factor,
+                                display.v_edges[0] / factor, display.v_edges[-1] / factor))
         axes.set_aspect("equal")
         across, up = image.plane.axis_names()
         axes.set_xlabel(axis_title(across, data), fontsize=8)
