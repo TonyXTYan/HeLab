@@ -1,0 +1,489 @@
+bringing up nodes...
+bringing up nodes...
+
+....sssssssssssssssssss..s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.sss [  0%]
+.s..ss.s.s.s..ss..s.s.s.s.ss.s..s.s.s.ss.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s [  1%]
+.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s........................ [  2%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+..........................................................s..ss.s..ss.s. [  4%]
+.s.s.s.s.s.s.s.s.s.s.ss.s.s.s.s.s.s..s.s.ss.s.s..s.ss..s.s.s.s.ss.s..s.s [  5%]
+.s.ss..ss.s.s.s.s.s..s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s [  6%]
+.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s..ss..s.s.s.ss..s.s.s.s.s.s.s.s.s.s.s.s.s. [  6%]
+ss..s.s.s.s.s.ss..s.s.ss.s.s.s..ss..s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s..s.s [  7%]
+.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s..ss..s.s.ss.s.s.s.s.s.s.s.s.s.s.s.s.s.s [  8%]
+.s.s.s.s.s.s.s.s.s.s.................................................... [  8%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+........................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+........................................................................ [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 14%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+........RRERUN REASON tests/test_typing.py::test_pyright_tests (call):
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+tests/test_typing.py:61: AssertionError
+........................................................................ [ 16%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+....................................s.s................................. [ 21%]
+........................................................................ [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+........................................................................ [ 25%]
+........................................................................ [ 25%]
+........................................................................ [ 26%]
+........................................................................ [ 27%]
+........................................................................ [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 29%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+..................................................................This plugin does not support propagateSizeHints()
+...... [ 31%]
+........................................................................ [ 31%]
+........................................................................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 33%]
+........................................................................ [ 34%]
+........................................................................ [ 35%]
+........................................................................ [ 35%]
+.............ss.s.s.s................................................... [ 36%]
+.....................RRERUN REASON tests/test_typing.py::test_pyright_tests (call):
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+tests/test_typing.py:61: AssertionError
+........................................................................ [ 37%]
+........................................................................ [ 38%]
+........................................................................ [ 38%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+........................................................................ [ 40%]
+..............................................INFO:werkzeug:127.0.0.1 - - [16/Nov/2026 20:30:02] "GET /plot/a6dead2217054ae4abd34272eb44df70 HTTP/1.1" 200 -
+.......................... [ 41%]
+..............................................................This plugin does not support propagateSizeHints()
+.......... [ 42%]
+........................................................................ [ 42%]
+........................................................................ [ 43%]
+..........................s...RRERUN REASON tests/test_typing.py::test_pyright_tests (call):
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+tests/test_typing.py:61: AssertionError
+..................................................This plugin does not support propagateSizeHints()
+...................... [ 44%]
+........................................................................ [ 45%]
+........................................................................ [ 45%]
+...........................................RRERUN REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+RRERUN REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+...RRERUN REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+........RRERUN REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+..RRERUN REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+FFAILED REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+.........................s................This plugin does not support propagateSizeHints()
+.....This plugin does not support propagateSizeHints()
+......................... [ 47%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+........................................................................ [ 49%]
+..............................................RRERUN REASON tests/test_typing.py::test_pyright_tests (call):
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+tests/test_typing.py:61: AssertionError
+.................................................s...................... [ 50%]
+........................................................................ [ 51%]
+........................................................................ [ 52%]
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+...............This plugin does not support propagateSizeHints()
+.This plugin does not support propagateSizeHints()
+...This plugin does not support propagateSizeHints()
+...................INFO:werkzeug:127.0.0.1 - - [16/Nov/2026 20:31:58] "GET /plot/452b2672254447789c086306562dae0b HTTP/1.1" 200 -
+.................................. [ 54%]
+........................................................................ [ 54%]
+.........This plugin does not support propagateSizeHints()
+............................................................... [ 55%]
+........................................................................ [ 56%]
+........................................................................ [ 56%]
+.............................................................ss.sss.s.ss [ 57%]
+sssss........................................................This plugin does not support propagateSizeHints()
+........... [ 58%]
+........................................................................ [ 58%]
+.......................................................s................ [ 59%]
+........................................................................ [ 60%]
+................................RRERUN REASON tests/test_typing.py::test_pyright_tests (call):
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+tests/test_typing.py:61: AssertionError
+............................This plugin does not support propagateSizeHints()
+........................INFO:werkzeug:127.0.0.1 - - [16/Nov/2026 20:32:47] "GET /plot/499c42d90f8649338032a2bd91f9de68 HTTP/1.1" 200 -
+This plugin does not support propagateSizeHints()
+.................... [ 61%]
+..................This plugin does not support propagateSizeHints()
+...This plugin does not support propagateSizeHints()
+..This plugin does not support propagateSizeHints()
+.............s................................... [ 61%]
+........................................................................ [ 62%]
+......................................This plugin does not support propagateSizeHints()
+.This plugin does not support propagateSizeHints()
+.This plugin does not support propagateSizeHints()
+.This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+............................... [ 63%]
+.........This plugin does not support propagateSizeHints()
+................This plugin does not support propagateSizeHints()
+............................................... [ 64%]
+........................................................................ [ 64%]
+........................................................................ [ 65%]
+......s...........This plugin does not support propagateSizeHints()
+........This plugin does not support propagateSizeHints()
+..................................This plugin does not support propagateSizeHints()
+....This plugin does not support propagateSizeHints()
+.This plugin does not support propagateSizeHints()
+....... [ 66%]
+.............................................................This plugin does not support propagateSizeHints()
+........... [ 66%]
+........................................................................ [ 67%]
+................This plugin does not support propagateSizeHints()
+.........................This plugin does not support propagateSizeHints()
+...........This plugin does not support propagateSizeHints()
+.................... [ 68%]
+........................................................................ [ 68%]
+.............................................FFAILED REASON tests/test_typing.py::test_pyright_tests (call):
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+tests/test_typing.py:61: AssertionError
+......................................................This plugin does not support propagateSizeHints()
+.................. [ 69%]
+........................................................................ [ 70%]
+..........................This plugin does not support propagateSizeHints()
+..................................This plugin does not support propagateSizeHints()
+............ [ 71%]
+............................................................This plugin does not support propagateSizeHints()
+............ [ 71%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+........................................................................ [ 73%]
+................................................................s..This plugin does not support propagateSizeHints()
+..... [ 74%]
+..................ss.s.s................s..s..s..s..s..s..s..s..s..s..s. [ 75%]
+.s.s..s...ss....s..s..s.s...s.s...s..s..s..s..s.s..s..s..s..s.s..s..s..s [ 75%]
+...s..s..s..s..s..s..s.s..s..s..s..s..s..s..s..s..s.s...s..s..s..s...s.s [ 76%]
+..s.s..s...s.s..s.s..s..s..s..s..s.s.s.s.s.s.s.s.s.s.s.s..s..s.s..s..s.. [ 77%]
+s..s..s..s...ss...s..s.s..s.s..s.s..s...s..s..s..s..s.s.s.s..s.s.s.s.s.. [ 77%]
+s..s..s..s..s.s..s..ss...s.s..s..s.s.s.s.s.s.s.ss..ss..ss.s.s.s.s.s..... [ 78%]
+......s.s...s....s...s...s....s...s...s..s...s...s...s...s...s..s....s.. [ 79%]
+s....s...s...s...s...s...s...s...s...s...s...s...s...s...s....s..s...s.. [ 79%]
+...s....s...s..s...s...s....s...s...s...s..s...s...s....s..s...s....s... [ 80%]
+s...s..s....s...s...s..s....s...s...s...s...s...s..s...s...s...s...s...s [ 81%]
+...s...s...s...s...s..s....s....s...s.s.s.s.s.s.s.s.s.s.s.s.s..s.s.ss... [ 82%]
+.............................s....s....s...s.....s..............s..s.s.s [ 82%]
+....s...s................................................s.s............ [ 83%]
+.......................s....s.........s...s..s.s..s..s..s...s...s..s..s. [ 84%]
+.s.s..s..s.s..s.s...s...s.s..s..s..s..s..s..s..s..s..s..s.s..s..s..s..s. [ 84%]
+.s.s.s..s..s..s..s..s.s..s...s.s...ss..s.s...s.s...ss.s.s.s..s...s..s.s. [ 85%]
+s..s.s..ss.s.s..s.s.s...s.s...s..s.s..s..ss..s.s.s.s..s.s..s.s.s..s.s.s. [ 86%]
+s..s..s..s..s..s..s..s...s...s..s..s..s..s..s........................... [ 86%]
+.....................s.................................................. [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+........................................................................ [ 90%]
+........................................................................ [ 90%]
+........................................................................ [ 91%]
+........................................................................ [ 92%]
+........................................................................ [ 92%]
+........................................................................ [ 93%]
+........................................................................ [ 94%]
+........................................................................ [ 94%]
+........................................................................ [ 95%]
+........................................................................ [ 96%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+..........This plugin does not support propagateSizeHints()
+.............................................................. [ 98%]
+...........................................s.......s..................s. [ 98%]
+........................................................................ [ 99%]
+............................................                             [100%]
+=================================== FAILURES ===================================
+____ test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] ____
+[gw3] linux -- Python 3.13.14 <checkout>/venv/bin/python
+
+servers = [<helab.utils.dash_server.DashServer object at 0x7fdd61f525d0>]
+family = <AddressFamily.AF_INET6: 10>
+
+    @pytest.mark.parametrize("family", [socket.AF_INET, socket.AF_INET6], ids=["ipv4", "ipv6"])
+    def test_a_port_another_program_holds_on_all_addresses_is_left_to_it(
+            servers: list[DashServer], family: socket.AddressFamily) -> None:
+        """plots-4: on macOS (SO_REUSEADDR) and Windows, 127.0.0.1:8050 could bind beside another program
+        listening on all addresses, which then lost its localhost connections to HeLab (Windows CI run
+        41158691080 showed it there). HeLab moves to another port."""
+        if family == socket.AF_INET6 and not socket.has_ipv6:
+            pytest.skip("no IPv6")
+        if family == socket.AF_INET6 and os.name == "nt":
+            # Windows binds 127.0.0.1 (and even a [::] probe) beside a dual-stack [::] listener, and which
+            # socket then gets 127.0.0.1's connections isn't known (CI runs 41160242383, 41161383176).
+            pytest.skip("Windows beside a dual-stack listener: not handled (known issue)")
+        server = DashServer()
+        servers.append(server)
+>       with socket.socket(family) as other:
+             ^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_dash_server.py:56: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET6: 10>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically.
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+>       _socket.socket.__init__(self, family, type, proto, fileno)
+E       OSError: [Errno 97] Address family not supported by protocol
+
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+______________________________ test_pyright_tests ______________________________
+[gw0] linux -- Python 3.13.14 <checkout>/venv/bin/python
+
+    def test_pyright_tests() -> None:
+        result = subprocess.run(['pyright', 'tests'], capture_output=True, text=True, cwd=ROOT)
+        print(result.stdout)
+        print(result.stderr)
+>       assert result.returncode == 0, "pyright type check on tests failed"
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+
+tests/test_typing.py:61: AssertionError
+----------------------------- Captured stdout call -----------------------------
+<checkout>/tests/test_basic_plots_v2_draw_at.py
+  <checkout>/tests/test_basic_plots_v2_draw_at.py:113:31 - error: Cannot access attribute "x" for class "BaseFigure*"
+    Attribute "x" is unknown (reportAttributeAccessIssue)
+<checkout>/tests/test_basic_plots_v2_plane_projections.py
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+7 errors, 0 warnings, 0 informations
+
+
+----------------------------- Captured stdout call -----------------------------
+<checkout>/tests/test_basic_plots_v2_draw_at.py
+  <checkout>/tests/test_basic_plots_v2_draw_at.py:113:31 - error: Cannot access attribute "x" for class "BaseFigure*"
+    Attribute "x" is unknown (reportAttributeAccessIssue)
+<checkout>/tests/test_basic_plots_v2_plane_projections.py
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+7 errors, 0 warnings, 0 informations
+
+
+----------------------------- Captured stdout call -----------------------------
+<checkout>/tests/test_basic_plots_v2_draw_at.py
+  <checkout>/tests/test_basic_plots_v2_draw_at.py:113:31 - error: Cannot access attribute "x" for class "BaseFigure*"
+    Attribute "x" is unknown (reportAttributeAccessIssue)
+<checkout>/tests/test_basic_plots_v2_plane_projections.py
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+7 errors, 0 warnings, 0 informations
+
+
+----------------------------- Captured stdout call -----------------------------
+<checkout>/tests/test_basic_plots_v2_draw_at.py
+  <checkout>/tests/test_basic_plots_v2_draw_at.py:113:31 - error: Cannot access attribute "x" for class "BaseFigure*"
+    Attribute "x" is unknown (reportAttributeAccessIssue)
+<checkout>/tests/test_basic_plots_v2_plane_projections.py
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+7 errors, 0 warnings, 0 informations
+
+
+----------------------------- Captured stdout call -----------------------------
+<checkout>/tests/test_basic_plots_v2_draw_at.py
+  <checkout>/tests/test_basic_plots_v2_draw_at.py:113:31 - error: Cannot access attribute "x" for class "BaseFigure*"
+    Attribute "x" is unknown (reportAttributeAccessIssue)
+<checkout>/tests/test_basic_plots_v2_plane_projections.py
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+7 errors, 0 warnings, 0 informations
+
+
+----------------------------- Captured stdout call -----------------------------
+<checkout>/tests/test_basic_plots_v2_draw_at.py
+  <checkout>/tests/test_basic_plots_v2_draw_at.py:113:31 - error: Cannot access attribute "x" for class "BaseFigure*"
+    Attribute "x" is unknown (reportAttributeAccessIssue)
+<checkout>/tests/test_basic_plots_v2_plane_projections.py
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:250:101 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['data']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['layout']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+  <checkout>/tests/test_basic_plots_v2_plane_projections.py:285:64 - error: Cannot access attribute "type" for class "Literal['frames']"
+    Attribute "type" is unknown (reportAttributeAccessIssue)
+7 errors, 0 warnings, 0 informations
+
+
+=============================== warnings summary ===============================
+tests/test_convert_harness.py::test_timing_runs_each_stage_and_writes_the_txy[Parallelism.PROCESSES]
+tests/test_convert_harness.py::test_timing_runs_each_stage_and_writes_the_txy[Parallelism.PROCESSES]
+tests/test_convert_split.py::test_pieces_run_on_a_pool[ProcessPoolExecutor]
+tests/test_convert_split.py::test_pieces_run_on_a_pool[ProcessPoolExecutor]
+  /root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/multiprocessing/popen_fork.py:73: DeprecationWarning: This process (pid=17565) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    self.pid = os.fork()
+
+tests/test_accessible_names.py::test_every_script_and_each_library
+tests/test_accessible_names.py::test_every_script_and_each_library
+tests/test_accessible_names.py::test_every_script_and_each_library
+tests/test_accessible_names.py::test_every_script_and_each_library
+tests/test_basic_plots_v2_hist2d.py::test_colour_tick_numbers_stay_inside_and_keep_physical_values_after_resize[640-360]
+tests/test_basic_plots_v2_hist2d.py::test_colour_tick_numbers_stay_inside_and_keep_physical_values_after_resize[640-360]
+tests/test_basic_plots_v2_hist2d.py::test_colour_tick_numbers_stay_inside_and_keep_physical_values_after_resize[1200-600]
+tests/test_basic_plots_v2_hist2d.py::test_colour_tick_numbers_stay_inside_and_keep_physical_values_after_resize[1200-600]
+  <checkout>/venv/lib/python3.13/site-packages/pyqtgraph/functions.py:1853: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    d1.shape = tuple(s)
+
+tests/test_t_spectrum.py::test_drawn_with_its_peak_list_and_updated_in_place
+tests/test_t_spectrum.py::test_drawn_with_its_peak_list_and_updated_in_place
+  <checkout>/venv/lib/python3.13/site-packages/pyqtgraph/functions.py:2996: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    arr.shape = (3, 3)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ rerun reasons =================================
+tests/test_typing.py::test_pyright_tests
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+tests/test_typing.py:61: AssertionError
+tests/test_typing.py::test_pyright_tests
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+tests/test_typing.py:61: AssertionError
+tests/test_typing.py::test_pyright_tests
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+tests/test_typing.py:61: AssertionError
+tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+tests/test_typing.py::test_pyright_tests
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+tests/test_typing.py:61: AssertionError
+tests/test_typing.py::test_pyright_tests
+E       AssertionError: pyright type check on tests failed
+E       assert 1 == 0
+E        +  where 1 = CompletedProcess(args=['pyright', 'tests'], returncode=1, stdout='<checkout>/tests/test_basic_plots_v2_draw_at.p...  \xa0\xa0Attribute "type" is unknown (reportAttributeAccessIssue)\n7 errors, 0 warnings, 0 informations\n', stderr='').returncode
+tests/test_typing.py:61: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+FAILED tests/test_typing.py::test_pyright_tests - AssertionError: pyright typ...
+2 failed, 9951 passed, 701 skipped, 14 warnings, 10 rerun in 508.62s (0:08:28)
+exit 1

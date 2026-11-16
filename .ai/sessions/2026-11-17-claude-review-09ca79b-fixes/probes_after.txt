@@ -1,0 +1,8 @@
+N1 not reproduced: the 3.0100 V correction that waited is withdrawn by Release; the output stays 3.0000 V (lock released, holding 3.0000 V)
+N2 not reproduced: ten readings before one write move the output 0.0100 V with max_step=0.0100 V
+N3 not reproduced: a hold with no readings fails: 'only 0 valid readings in the 0.005 s hold (at least 3 needed: hold for longer, or measure faster)'
+R1 not reproduced: the failed swap undid its first rename; the venv is the original, nothing is stranded
+R2 not reproduced: a start during the build finds update.lock held and stops; with running.lock held all the same, the updater swaps nothing (HeLab was started again while it was being updated (HeLab is…)
+R3 not reproduced: the last drawn cell starts at 2047.000976, where the even raster puts it (2047.000976), and holds the last bin
+R4 not reproduced: Plane projections estimates 4.02 GB for four planes of 10,000 bins
+R5 not reproduced on Python 3.13.14: the timer's crash file names the stuck __del__

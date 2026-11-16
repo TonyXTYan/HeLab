@@ -1,0 +1,312 @@
+bringing up nodes...
+bringing up nodes...
+
+......s..ss..s.ss.s..s.s.s.s.s.ss..s.ss..ss..ss.s.s.s.s.s.s.s.s.s.s.s.s. [  0%]
+s.ss..s.s.s.s.ss..s.s.s.s.s.s.s.s.s.s.s.s.s.ss..s.s.ss.s.s.s.s.s.s.s.s.s [  1%]
+.s.s.ss..s.s.ss..s.s.ss.s..ss..ss..s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.... [  2%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  4%]
+...........s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s [  5%]
+.s.ss.s..ss.s.s.s..ss..s.ss.s.s.s.s..ss.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s. [  6%]
+s.s.s.s.s.ss..s.ss..ss..ss..s.ss..ss.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s [  6%]
+.s.s.s.s.s.s.ss..s.s.s.s.s.sss.s.s..s.s.s.s.ss.s.s.s.s..ss.s..ss.s.s.s.s [  7%]
+.s.s.s.s.s.s.s.s.s.s.s..ss.s.s.s.s.s.s..s.ss..s.ss.s.s.s..s.s.s.s.s.s.s. [  8%]
+s.s..ss.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s.s................................. [  8%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+........................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+........................................................................ [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 14%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+........................................................................ [ 16%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+........................................................................ [ 22%]
+.....s..s............................................................... [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+........................................................................ [ 25%]
+........................................................................ [ 25%]
+.............................s..................................s...s..s [ 26%]
+..s...............s..s..s..s..s..s..s.s...s..s..s..s..s..s..s..s..s..s.. [ 27%]
+s..s..s..s..s..s.s...s..s..s..s..s..s..s..s..s..s..s..s..s..s..s..s..s.. [ 27%]
+s..s..s..s..s..s..s..s..s..s.s..s..s..s..s..s..s..s..s..s..s..s..s..s..s [ 28%]
+..s..s..s..s..s..s..s..s..s..s.s..s..s..s..s...s..s..s..s..s..s..s..s..s [ 29%]
+..s..s.s...s..s..s.s..s..s...s..s..s..s..ss...s...s..s..s..s..s..s..s..s [ 29%]
+..s...s..s..s..s.s..s...s..s..s..s..s.s...s..s..s.s...s...s.s..s..s..s.s [ 30%]
+..s...s..s..s..s..s..................s.s.....s.....s.....s.....s.....s.. [ 31%]
+...s.....s.....s.....s.....s.....s.....s.....s......s.....s....s......s. [ 31%]
+....s.....s.....s.....s.....s.....s...s.....s.......s.....s.......s..... [ 32%]
+s...s......s......s......s......s......s......s.....s......s......s..... [ 33%]
+..s......s.....s.......s......s.....s.....s.....s.....s.....s.....s..... [ 33%]
+s.....s.....s......s.....s.....s.....s.....s.....s.....s.....s.....s.... [ 34%]
+..s.....s.....s....s......s.....s.....s.....s.....s....s.....s......s... [ 35%]
+..s.....s.....s.....s..s..s..s..s..s.s...s.s...s..s...s..s...s...s.s.... [ 35%]
+.s...................................................................... [ 36%]
+........s.........s.......s.......s........s............................ [ 37%]
+sss...s.......s.......s................................................. [ 37%]
+...........................s...s......................................s. [ 38%]
+.......s............s...s...s...s...s...s...s...s...s...s....s...s...s.. [ 39%]
+.s..s....s...s...s...s...s...s...s..s...s...s...s...s...s..s...s..s....s [ 39%]
+...s...s...s...s...s...s...s...s...s...s...s...s...s...s...s...s...s...s [ 40%]
+...s..s....s..s...s.s.....s..s..s.s..s..s.....s..s..s....s..s....s...s.. [ 41%]
+.s..s..s..s..s...s...s...s..s.s.s..s...s..s.s..s...s..s...s..s.s...s..ss [ 41%]
+.....s..s..s..s..s..s...s.s...s...s..s..s..This plugin does not support propagateSizeHints()
+............................. [ 42%]
+.........................................................s.s..s.s.s..... [ 43%]
+........................................................................ [ 43%]
+........................................................................ [ 44%]
+........................................................................ [ 45%]
+........................................................................ [ 45%]
+........................................................................ [ 46%]
+.............This plugin does not support propagateSizeHints()
+........................................................... [ 47%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+.s....................................................................This plugin does not support propagateSizeHints()
+.. [ 50%]
+..............INFO:werkzeug:127.0.0.1 - - [16/Nov/2026 20:43:26] "GET /plot/f683fce5c27943ae929c4ad19818a627 HTTP/1.1" 200 -
+.......................................................... [ 50%]
+........................................................................ [ 51%]
+........................................................................ [ 52%]
+This plugin does not support propagateSizeHints()
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+........................................................................ [ 56%]
+........................................................................ [ 57%]
+...........RRERUN REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+....RRERUN REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+....RRERUN REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+........RRERUN REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+.......................RRERUN REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+..FFAILED REASON tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] (call):
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+..................INFO:werkzeug:127.0.0.1 - - [16/Nov/2026 20:44:27] "GET /_dash-component-suites/dash/deps/polyfill@7.v4_4_1m1794860147.12.1.min.js HTTP/1.1" 200 -
+.INFO:werkzeug:127.0.0.1 - - [16/Nov/2026 20:44:27] "GET /_dash-component-suites/dash/deps/react@18.v4_4_1m1794860147.3.1.min.js HTTP/1.1" 200 -
+...........................INFO:werkzeug:127.0.0.1 - - [16/Nov/2026 20:44:29] "GET /plot/152caa38a18648aeabfda4f114f83615 HTTP/1.1" 200 -
+.INFO:werkzeug:127.0.0.1 - - [16/Nov/2026 20:44:29] "GET /_dash-component-suites/dash/deps/polyfill@7.v4_4_1m1794860147.12.1.min.js HTTP/1.1" 200 -
+.....................s... [ 58%]
+....This plugin does not support propagateSizeHints()
+..This plugin does not support propagateSizeHints()
+.....This plugin does not support propagateSizeHints()
+.......This plugin does not support propagateSizeHints()
+..............INFO:werkzeug:127.0.0.1 - - [16/Nov/2026 20:44:32] "GET /_dash-component-suites/dash/deps/prop-types@15.v4_4_1m1794860147.8.1.min.js HTTP/1.1" 200 -
+........................................ [ 59%]
+..................................................This plugin does not support propagateSizeHints()
+...................... [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 61%]
+........................................................................ [ 62%]
+........................................................................ [ 62%]
+................................................ssssss..s.s..ss.s..s.s.. [ 63%]
+........................................................................ [ 64%]
+...........................This plugin does not support propagateSizeHints()
+............................................. [ 64%]
+........................................................................ [ 65%]
+...............s........................................................ [ 66%]
+........................................................................ [ 66%]
+.s...............................INFO:werkzeug:127.0.0.1 - - [16/Nov/2026 20:45:09] "GET /plot/b3d510b4785c4d0387731ddee54c823b HTTP/1.1" 200 -
+.This plugin does not support propagateSizeHints()
+............................This plugin does not support propagateSizeHints()
+.......... [ 67%]
+..................................................This plugin does not support propagateSizeHints()
+.....This plugin does not support propagateSizeHints()
+.......This plugin does not support propagateSizeHints()
+.......... [ 68%]
+..........s..This plugin does not support propagateSizeHints()
+........................................................... [ 68%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+.............................................................s.......... [ 70%]
+....................................................This plugin does not support propagateSizeHints()
+......This plugin does not support propagateSizeHints()
+.This plugin does not support propagateSizeHints()
+.......This plugin does not support propagateSizeHints()
+This plugin does not support propagateSizeHints()
+...... [ 71%]
+....This plugin does not support propagateSizeHints()
+....This plugin does not support propagateSizeHints()
+................................................................ [ 72%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+...................................................................This plugin does not support propagateSizeHints()
+..... [ 74%]
+.........................This plugin does not support propagateSizeHints()
+............................................... [ 74%]
+.............This plugin does not support propagateSizeHints()
+.........This plugin does not support propagateSizeHints()
+..............This plugin does not support propagateSizeHints()
+.................................... [ 75%]
+........................................................................ [ 76%]
+................This plugin does not support propagateSizeHints()
+........................................................ [ 76%]
+..............This plugin does not support propagateSizeHints()
+.....................This plugin does not support propagateSizeHints()
+........................This plugin does not support propagateSizeHints()
+.........This plugin does not support propagateSizeHints()
+.... [ 77%]
+........................................................................ [ 78%]
+........................................................................ [ 78%]
+........................This plugin does not support propagateSizeHints()
+................................................ [ 79%]
+..........................This plugin does not support propagateSizeHints()
+.......................This plugin does not support propagateSizeHints()
+....................... [ 80%]
+............................................................This plugin does not support propagateSizeHints()
+............ [ 80%]
+........................................................................ [ 81%]
+........................................................................ [ 82%]
+........................................................................ [ 82%]
+..................This plugin does not support propagateSizeHints()
+...................................................... [ 83%]
+........................................................................ [ 84%]
+........................................................................ [ 84%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 87%]
+........................................................................ [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+........................................................................ [ 89%]
+.............................s.......................................... [ 90%]
+s.................s..................................................... [ 91%]
+........................................................................ [ 91%]
+...................s.................................................... [ 92%]
+........................................................................ [ 93%]
+........................................................................ [ 93%]
+........................................................................ [ 94%]
+........................................................................ [ 95%]
+........................................................................ [ 95%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+.............................................This plugin does not support propagateSizeHints()
+........................... [ 97%]
+.............................................s.......................... [ 98%]
+..........s............................................................s [ 99%]
+........................................................................ [ 99%]
+...............                                                          [100%]
+=================================== FAILURES ===================================
+____ test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6] ____
+[gw1] linux -- Python 3.13.14 <checkout>/venv/bin/python
+
+servers = [<helab.utils.dash_server.DashServer object at 0x7f1911667980>]
+family = <AddressFamily.AF_INET6: 10>
+
+    @pytest.mark.parametrize("family", [socket.AF_INET, socket.AF_INET6], ids=["ipv4", "ipv6"])
+    def test_a_port_another_program_holds_on_all_addresses_is_left_to_it(
+            servers: list[DashServer], family: socket.AddressFamily) -> None:
+        """plots-4: on macOS (SO_REUSEADDR) and Windows, 127.0.0.1:8050 could bind beside another program
+        listening on all addresses, which then lost its localhost connections to HeLab (Windows CI run
+        41158691080 showed it there). HeLab moves to another port."""
+        if family == socket.AF_INET6 and not socket.has_ipv6:
+            pytest.skip("no IPv6")
+        if family == socket.AF_INET6 and os.name == "nt":
+            # Windows binds 127.0.0.1 (and even a [::] probe) beside a dual-stack [::] listener, and which
+            # socket then gets 127.0.0.1's connections isn't known (CI runs 41160242383, 41161383176).
+            pytest.skip("Windows beside a dual-stack listener: not handled (known issue)")
+        server = DashServer()
+        servers.append(server)
+>       with socket.socket(family) as other:
+             ^^^^^^^^^^^^^^^^^^^^^
+
+tests/test_dash_server.py:56: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <socket.socket fd=-1, family=0, type=0, proto=0>
+family = <AddressFamily.AF_INET6: 10>, type = <SocketKind.SOCK_STREAM: 1>
+proto = 0, fileno = None
+
+    def __init__(self, family=-1, type=-1, proto=-1, fileno=None):
+        # For user code address family and type values are IntEnum members, but
+        # for the underlying _socket.socket they're just integers. The
+        # constructor of _socket.socket converts the given argument to an
+        # integer automatically.
+        if fileno is None:
+            if family == -1:
+                family = AF_INET
+            if type == -1:
+                type = SOCK_STREAM
+            if proto == -1:
+                proto = 0
+>       _socket.socket.__init__(self, family, type, proto, fileno)
+E       OSError: [Errno 97] Address family not supported by protocol
+
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+=============================== warnings summary ===============================
+tests/test_convert_harness.py::test_timing_runs_each_stage_and_writes_the_txy[Parallelism.PROCESSES]
+tests/test_convert_harness.py::test_timing_runs_each_stage_and_writes_the_txy[Parallelism.PROCESSES]
+  /root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/multiprocessing/popen_fork.py:73: DeprecationWarning: This process (pid=15648) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    self.pid = os.fork()
+
+tests/test_convert_split.py::test_pieces_run_on_a_pool[ProcessPoolExecutor]
+tests/test_convert_split.py::test_pieces_run_on_a_pool[ProcessPoolExecutor]
+  /root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/multiprocessing/popen_fork.py:73: DeprecationWarning: This process (pid=15645) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    self.pid = os.fork()
+
+tests/test_basic_plots_v2_hist2d.py::test_colour_tick_numbers_stay_inside_and_keep_physical_values_after_resize[640-360]
+tests/test_basic_plots_v2_hist2d.py::test_colour_tick_numbers_stay_inside_and_keep_physical_values_after_resize[640-360]
+tests/test_basic_plots_v2_hist2d.py::test_colour_tick_numbers_stay_inside_and_keep_physical_values_after_resize[1200-600]
+tests/test_basic_plots_v2_hist2d.py::test_colour_tick_numbers_stay_inside_and_keep_physical_values_after_resize[1200-600]
+tests/test_basic_plots_v2_threads.py::test_compute_on_the_worker_drawing_and_updates_on_the_gui_thread
+tests/test_basic_plots_v2_threads.py::test_compute_on_the_worker_drawing_and_updates_on_the_gui_thread
+tests/test_basic_plots_v2_threads.py::test_compute_on_the_worker_drawing_and_updates_on_the_gui_thread
+tests/test_basic_plots_v2_threads.py::test_compute_on_the_worker_drawing_and_updates_on_the_gui_thread
+  <checkout>/venv/lib/python3.13/site-packages/pyqtgraph/functions.py:1853: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    d1.shape = tuple(s)
+
+tests/test_t_spectrum.py::test_drawn_with_its_peak_list_and_updated_in_place
+tests/test_t_spectrum.py::test_drawn_with_its_peak_list_and_updated_in_place
+  <checkout>/venv/lib/python3.13/site-packages/pyqtgraph/functions.py:2996: DeprecationWarning: Setting the shape on a NumPy array has been deprecated in NumPy 2.5.
+  As an alternative, you can create a new view using np.reshape (with copy=False if needed).
+    arr.shape = (3, 3)
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+================================ rerun reasons =================================
+tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+E       OSError: [Errno 97] Address family not supported by protocol
+/root/.local/share/uv/python/cpython-3.13.14-linux-x86_64-gnu/lib/python3.13/socket.py:233: OSError
+=========================== short test summary info ============================
+FAILED tests/test_dash_server.py::test_a_port_another_program_holds_on_all_addresses_is_left_to_it[ipv6]
+1 failed, 9952 passed, 701 skipped, 14 warnings, 5 rerun in 371.79s (0:06:11)
+exit 1
