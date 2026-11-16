@@ -40,10 +40,16 @@ from the voltage already applied. The lock runs once per new wavemeter reading.
 
 Each update:
 
-- the output stays within **Output min/max** (inside 0–7 V) and moves at most **Max step** from the last;
+- the output stays within **Output min/max** (inside 0–7 V) and moves at most **Max step** from the voltage
+  applied. The limit is on each write to the DG1022: the wavemeter can measure faster than the DG1022 takes
+  commands (one per 100 ms), and several readings between two writes still move the output by one step;
 - when a limit cuts the output the integrator is reset to what was applied (no windup);
 - no reading (low signal, …) or an error beyond **Capture range** (a mode hop, a wrong reading: the WS8 here
   gave readings about 19.7 GHz off now and then, 2026-11-11) holds the voltage.
+
+**Release** holds the voltage that is applied: a correction still waiting for the DG1022's turn is dropped,
+not written afterwards. The same goes for a lost lock, a fault, and a manual voltage typed just before a
+lock, sweep or calibration starts.
 
 **Calibrate tuning** (unlocked only) averages the frequency at the output now (V) and at V + **Cal. step**,
 returns to V, and sets the tuning sign and the P and I gains from the slope (D is left alone): P corrects a
@@ -140,8 +146,10 @@ direction jumped next to it. Then:
 
 - if the setpoint lies in a stable stretch at least **Margin** (default 0.3 V) from its ends, it ramps there
   from below (as the up sweep came), **holds** (default 5 s) and watches for mode hops; no hop: it sets the
-  gains from the stretch's slope, keeps the output inside the stretch, and locks;
-- otherwise (not in one, too near an edge, or a hop while holding) it returns to where it started and the
+  gains from the stretch's slope, keeps the output inside the stretch, and locks. The hold needs readings:
+  it fails when no new valid reading comes for 1 s (or five of the wavemeter's update periods, if that is
+  longer), also if the signal then comes back, and when fewer than 3 valid readings came in all;
+- otherwise (not in one, too near an edge, a hop or no readings while holding) it returns to where it started and the
   table lists every stable stretch, widest in frequency first: its output range, where the setpoint falls
   in it or the **shift** the laser needs (+ raises its frequency) to put the setpoint at its centre, its
   width, slope and frequencies. Tweak the hardware by about that shift and press it again.

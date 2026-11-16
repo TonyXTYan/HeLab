@@ -454,6 +454,8 @@ class MainWindow(QMainWindow):
         self.v_min = spin(HARD_V_MIN, HARD_V_MAX, 4, 0.1, s.v_min, " V")
         self.v_max = spin(HARD_V_MIN, HARD_V_MAX, 4, 0.1, s.v_max, " V")
         self.max_step = spin(0.0001, 1.0, 4, 0.001, s.max_step, " V")
+        self.max_step.setToolTip("The most one write to the DG1022 moves the output while locked, from the voltage "
+                                 "applied (at most one write every 100 ms, however fast the wavemeter measures)")
         self.capture = spin(1.0, 1e6, 1, 100.0, s.capture_mhz, " MHz")
         self.hop_mhz = spin(10.0, 1e6, 0, 100.0, engine.hops.min_jump_mhz, " MHz")
         self.hop_mhz.setToolTip("A jump at least this big that holds for a few readings counts as a mode hop")

@@ -4,6 +4,11 @@ Writes go out at most every `out.min_interval` (100 ms): the latest wanted volta
 comes, so a fast wavemeter never queues commands. The GUI reads `snapshot()` and `drain()`; it never waits on
 an instrument. An instrument that stops answering ends the lock (mode "fault") and leaves the voltage where
 it was.
+
+A wanted voltage belongs to the mode that asked for it. It waits in the engine, never inside the device, and
+a change of mode (Release, a lost lock, a fault, a sweep starting) withdraws it: nothing the lock computed is
+written after the lock has ended. While locked, one write moves the output at most `max_step` from the
+voltage applied, however many readings came since the last write.
 """
 
 from __future__ import annotations
@@ -68,7 +73,8 @@ class Engine:
         self._mode = "idle"
         self._state = "idle"
         self._message = ""
-        self._target: float | None = None  # wanted voltage not yet written
+        self._target: float | None = None  # wanted voltage not yet written (this mode's: see `_enter`)
+        self._session = 0  # +1 at every change of mode: a write that began before one knows it by this
         self._volts = out.get()
         self._reading = source.read()
         self._error: float | None = None
@@ -84,7 +90,7 @@ class Engine:
         self._recent: collections.deque[tuple[float, float]] = collections.deque(maxlen=32)  # (reading t, volts)
         self._periods: collections.deque[float] = collections.deque(maxlen=50)
         self._last_seq = self._reading.seq
-        self._last_write = 0.0
+        self._last_cmd = 0.0  # when the last command to the output returned (loop thread)
         self._stop = threading.Event()
         self._cal_request: tuple[float, float, float] | None = None
         self._abort = threading.Event()
@@ -133,14 +139,16 @@ class Engine:
                 self._message = "set a setpoint first"
                 return
             self.pi.engage(self._volts)
-            self._mode, self._message = "locked", "lock engaged"
+            self._enter("locked")  # starts from the voltage applied: a manual voltage not yet written is dropped
+            self._message = "lock engaged"
             self._out_since = None
         log.info("lock engaged at %.4f V, setpoint %.7f THz", self._volts, self._settings.setpoint_thz)
 
     def release(self) -> None:
         with self._lock:
             if self._mode == "locked":
-                self._mode, self._state, self._message = "idle", "idle", f"lock released, holding {self._volts:.4f} V"
+                self._enter("idle")  # and the correction waiting for the output's turn is never written
+                self._state, self._message = "idle", RELEASED.format(self._volts)
                 log.info("lock released at %.4f V", self._volts)
 
     def set_voltage(self, volts: float) -> None:
@@ -155,7 +163,8 @@ class Engine:
             if self._mode == "idle":
                 self._cal_request = (step_v, settle_s, average_s)
                 self._abort.clear()
-                self._mode, self._message = "calibrating", "calibrating…"
+                self._enter("calibrating")
+                self._message = "calibrating…"
 
     def abort_calibration(self) -> None:
         self._abort.set()
@@ -173,7 +182,8 @@ class Engine:
             if self._mode == "idle" and step > 0:
                 self._sweep_request = SweepRequest(v_start, v_stop, step, settle_s, dwell_s, lock_thz)
                 self._abort.clear()
-                self._mode, self._message = "sweeping", "sweep: starting"  # at once, so no one sees "idle" in between
+                self._enter("sweeping")  # at once, so no one sees "idle" in between
+                self._message = "sweep: starting"
 
     def find_stable(self, v_lo: float, v_hi: float, step: float, settle_s: float, dwell_s: float,
                     target_thz: float, margin_v: float = 0.3, hold_s: float = 5.0) -> None:
@@ -187,7 +197,8 @@ class Engine:
                 lo, hi = sorted((v_lo, v_hi))
                 self._scan_request = ScanRequest(lo, hi, step, settle_s, dwell_s, target_thz, margin_v, hold_s)
                 self._abort.clear()
-                self._mode, self._message = "sweeping", "find stable range: starting"
+                self._enter("sweeping")
+                self._message = "find stable range: starting"
 
     def lock_stretch(self, stretch: Stretch) -> None:
         """Goes to the centre of a stable stretch (from below, as the scan's up sweep), takes the frequency
@@ -196,7 +207,8 @@ class Engine:
             if self._mode == "idle":
                 self._goto_request = stretch
                 self._abort.clear()
-                self._mode, self._message = "sweeping", "going to the stretch"
+                self._enter("sweeping")
+                self._message = "going to the stretch"
 
     def scan_data(self) -> tuple[int, ScanResult | None]:
         with self._lock:
@@ -276,14 +288,15 @@ class Engine:
             except DeviceFault as e:
                 log.error("%s", e)
                 with self._lock:
-                    self._mode, self._state, self._message = "fault", "fault", str(e)
-                    self._target = None
+                    self._enter("fault")
+                    self._state, self._message = "fault", str(e)
                 self._stop.wait(0.5)
                 continue
             except Exception:
                 log.exception("engine loop")
                 with self._lock:
-                    self._mode, self._message = "fault", "internal error (see the log)"
+                    self._enter("fault")
+                    self._message = "internal error (see the log)"
             self._stop.wait(POLL_S)
 
     def _wavemeter_timing(self) -> None:
@@ -322,7 +335,8 @@ class Engine:
             locked = self._mode == "locked"
             lost_why = ""
             if locked:
-                step = self.pi.update(r.thz, r.t)
+                # from the voltage applied, not the last step's: several readings can come per write
+                step = self.pi.update(r.thz, r.t, self._volts)
                 self._target, self._error, self._state = step.voltage, step.error_mhz, step.state
                 if step.state == "out of capture":
                     self._out_since = r.t if self._out_since is None else self._out_since
@@ -361,8 +375,8 @@ class Engine:
 
     def _lose(self, why: str) -> None:
         """The lock is gone (called holding the lock): unlock, hold the output, say so; relock if asked."""
-        self._mode, self._state = "idle", "lost"
-        self._target = None
+        self._enter("idle")
+        self._state = "lost"
         self._out_since = None
         self._lost += 1
         when = time.strftime("%H:%M:%S")
@@ -371,22 +385,60 @@ class Engine:
         if self._relock is not None:
             self._scan_request = replace(self._relock, target_thz=self._settings.setpoint_thz)
             self._abort.clear()
-            self._mode = "sweeping"
+            self._enter("sweeping")
             self._message += " — finding a stable range to relock"
 
+    def _enter(self, mode: str) -> None:
+        """Changes the mode (called holding the lock). A wanted voltage belongs to the mode that asked for it,
+        so one not yet written is withdrawn: a correction of a lock that has ended, or a manual voltage typed
+        just before a sweep, is never written later."""
+        if mode != self._mode:
+            self._mode = mode
+            self._session += 1
+            self._target = None
+
+    def _set_out(self, volts: float) -> None:
+        """One offset command, at once (loop thread; sweeps, ramps and calibration)."""
+        applied = self.out.set(volts)
+        self._last_cmd = time.monotonic()
+        self._volts = applied
+
+    def _output_on(self) -> bool:
+        on = self.out.output_on()
+        self._last_cmd = time.monotonic()
+        return on
+
     def _flush_output(self) -> None:
-        with self._lock:
-            target = self._target
-        if target is None or abs(target - self._volts) < 5e-5:
+        """Writes the wanted voltage once the output's turn has come.
+
+        Until then the target waits here, where a change of mode withdraws it; it never waits inside the
+        device (every command of the loop thread is timed in `_last_cmd`, and nothing else talks to the
+        output). The mode is checked again, holding the lock, in the same step that hands the voltage to
+        the device. While locked the write is held to `max_step` from the voltage applied."""
+        if time.monotonic() - self._last_cmd < self.out.min_interval:
             return
-        if time.monotonic() - self._last_write < self.out.min_interval:
-            return
-        applied = self.out.set(target)  # outside the lock: may wait for the DG1022's turn
-        self._last_write = time.monotonic()
         with self._lock:
-            self._volts = applied
-            if self._target == target:
-                self._target = None
+            wanted, session = self._target, self._session
+            if wanted is None:
+                return
+            target = wanted
+            if self._mode == "locked":
+                step = self._settings.max_step
+                target = min(max(target, self._volts - step), self._volts + step)
+            if abs(target - self._volts) < 5e-5:
+                return
+        applied = self.out.set(target)  # outside the lock: the window never waits on an instrument
+        self._last_cmd = time.monotonic()
+        with self._lock:
+            before, self._volts = self._volts, applied
+            if self._session == session:
+                if self._target == wanted == target:
+                    self._target = None
+            elif self._mode == "locked":
+                self.pi.engage(applied)  # Lock came while a manual voltage was on its way: start from it
+            elif self._message == RELEASED.format(before):
+                # Release came while this command was already on its way to the device: say what is held
+                self._message = RELEASED.format(applied)
 
     def _collect(self, seconds: float) -> list[float]:
         values: list[float] = []
@@ -405,21 +457,23 @@ class Engine:
         gains. A one-sided step keeps the laser to one side of where it is (away from a mode hop on the other)."""
         with self._lock:
             self._cal_request = None
-            self._mode, self._state, self._message = "calibrating", "calibrating", "calibrating…"
+            self._enter("calibrating")
+            self._state, self._message = "calibrating", "calibrating…"
             s = self._settings
         v0 = self._volts
         lo, hi = v0, min(max(v0 + step_v, s.v_min), s.v_max)
         result = "calibration aborted"
         if abs(hi - lo) < 1e-3:
             with self._lock:
-                self._mode, self._state = "idle", "idle"
+                self._enter("idle")
+                self._state = "idle"
                 self._message = (f"calibration: no room for a {step_v:+.4f} V step from {v0:.4f} V inside "
                                  f"{s.v_min:g}–{s.v_max:g} V (try the other sign)")
             return
         try:
             means = []
             for v in (lo, hi):
-                self._volts = self.out.set(v)
+                self._set_out(v)
                 self._collect(settle_s)
                 vals = self._collect(average_s)
                 if self._abort.is_set() or len(vals) < 3:
@@ -438,9 +492,10 @@ class Engine:
                 except ValueError:
                     result = "calibration: no frequency change seen"
         finally:
-            self._volts = self.out.set(v0)
+            self._set_out(v0)
             with self._lock:
-                self._mode, self._state, self._message = "idle", "idle", result
+                self._enter("idle")
+                self._state, self._message = "idle", result
             log.info("%s", result)
 
     # ---------------------------------------------------------------- sweep and auto-lock
@@ -455,13 +510,14 @@ class Engine:
         v = min(max(v, HARD_V_MIN), HARD_V_MAX)
         while abs(v - self._volts) > 5e-5 and not self._abort.is_set():
             nxt = self._volts + max(min(v - self._volts, step), -step)
-            self._volts = self.out.set(nxt)
+            self._set_out(nxt)
             self._tick()
 
     def _sweep(self, req: SweepRequest) -> None:
         with self._lock:
             self._sweep_request = None
-            self._mode, self._state = "sweeping", "sweeping"
+            self._enter("sweeping")
+            self._state = "sweeping"
             self._sweep_points = []
             self._sweep_choice = None
             self._scan = None
@@ -470,7 +526,7 @@ class Engine:
         result = "sweep aborted"
         locked = False
         try:
-            if not self.out.output_on():
+            if not self._output_on():
                 result = "the DG1022's output is off: switch it on at the front panel first"
                 return
             lo, hi = sorted((min(max(req.v_start, HARD_V_MIN), HARD_V_MAX), min(max(req.v_stop, HARD_V_MIN), HARD_V_MAX)))
@@ -484,7 +540,7 @@ class Engine:
             for i, v in enumerate(vs):
                 if self._abort.is_set():
                     return
-                self._volts = self.out.set(v)
+                self._set_out(v)
                 self._collect(req.settle_s)
                 vals = self._collect(req.dwell_s)
                 point = sweep_point(self._volts, vals)
@@ -516,7 +572,8 @@ class Engine:
                                          capture_mhz=max(self._settings.capture_mhz, 2 * abs(choice.mhz_per_v) * req.step))
                 self.pi.s = replace(self._settings)
                 self.pi.engage(self._volts)
-                self._mode, self._state = "locked", "locked"
+                self._enter("locked")
+                self._state = "locked"
                 locked = True
             result = (f"auto-lock engaged at {choice.volts:.4f} V (tuning {choice.mhz_per_v:+.0f} MHz/V, "
                       f"hop-free {choice.v_lo:.3f}–{choice.v_hi:.3f} V kept as the output range)")
@@ -527,7 +584,8 @@ class Engine:
                     self._abort.clear()
                     self._ramp_to(v_back)
                 with self._lock:
-                    self._mode, self._state = "idle", "idle"
+                    self._enter("idle")
+                    self._state = "idle"
             with self._lock:
                 self._message = result
             log.info("%s", result)
@@ -539,7 +597,7 @@ class Engine:
         for i, v in enumerate(vs):
             if self._abort.is_set():
                 return False
-            self._volts = self.out.set(v)
+            self._set_out(v)
             self._collect(req.settle_s)
             point = sweep_point(self._volts, self._collect(req.dwell_s))
             with self._lock:
@@ -549,20 +607,49 @@ class Engine:
         return True
 
     def _hold_test(self, seconds: float, expect_thz: float, limit_mhz: float) -> str | None:
-        """Watches the frequency for `seconds`; returns why it isn't stable, or None."""
+        """Watches the frequency for `seconds`; returns why it isn't known to be stable, or None.
+
+        Stable needs evidence: new valid readings all through the hold, none of them a mode hop and fewer
+        than three out of range. Readings that stop for longer than `_hold_gap()` (no signal, or the
+        wavemeter repeating its last value), at any time up to the hold's end, fail it at once, also if they
+        would have come back; so do fewer than HOLD_MIN_READINGS in all."""
         hops0 = self._hop_count
-        far = 0
-        end = time.monotonic() + seconds
-        while time.monotonic() < end and not self._abort.is_set():
-            for f in self._collect(min(0.5, max(end - time.monotonic(), 0.0))):
-                if abs(f - expect_thz) * 1e6 > limit_mhz:
-                    far += 1
+        far = valid = 0
+        gap = self._hold_gap()
+        start = last_valid = time.monotonic()
+        end = start + seconds
+        while not self._abort.is_set():
+            left = end - time.monotonic()
+            if left <= 0:
+                break
+            values = self._collect(min(HOLD_CHUNK_S, left))
+            now = time.monotonic()
+            if values:
+                valid += len(values)
+                last_valid = now
+                far += sum(abs(f - expect_thz) * 1e6 > limit_mhz for f in values)
             if self._hop_count != hops0:
                 return "a mode hop came while holding"
             if far >= 3:
                 return f"the frequency left ±{limit_mhz:.0f} MHz of the expected while holding"
-            self._set_progress(f"find stable range: holding, {max(end - time.monotonic(), 0):.0f} s left")
-        return "aborted" if self._abort.is_set() else None
+            if now - last_valid > gap:
+                status = self._reading.status
+                why = "the wavemeter repeated its last value" if status == "ok" else f"wavemeter: {status}"
+                return f"no new valid reading for {now - last_valid:.1f} s while holding ({why})"
+            self._set_progress(f"find stable range: holding, {max(end - now, 0):.0f} s left")
+        if self._abort.is_set():
+            return "aborted"
+        if valid < HOLD_MIN_READINGS:
+            return (f"only {valid} valid reading{'' if valid == 1 else 's'} in the {seconds:g} s hold "
+                    f"(at least {HOLD_MIN_READINGS} needed: hold for longer, or measure faster)")
+        return None
+
+    def _hold_gap(self) -> float:
+        """The longest a hold goes without a new valid reading: HOLD_GAP_S, or five of the wavemeter's
+        update periods if that is longer (a slow wavemeter isn't a lost signal)."""
+        with self._lock:
+            update = statistics.median(self._periods) if self._periods else 0.0
+        return max(HOLD_GAP_S, 5 * update)
 
     def _engage_in(self, stretch: Stretch, setpoint_thz: float, extra_capture_mhz: float) -> None:
         update = statistics.median(self._periods) if self._periods else 0.1
@@ -573,12 +660,14 @@ class Engine:
                                      capture_mhz=max(self._settings.capture_mhz, extra_capture_mhz))
             self.pi.s = replace(self._settings)
             self.pi.engage(self._volts)
-            self._mode, self._state = "locked", "locked"
+            self._enter("locked")
+            self._state = "locked"
 
     def _find_stable(self, req: ScanRequest) -> None:
         with self._lock:
             self._scan_request = None
-            self._mode, self._state = "sweeping", "sweeping"
+            self._enter("sweeping")
+            self._state = "sweeping"
             self._scan = ScanResult(req, [], [], [], None, "")
             self._scan_seq += 1
             scan = self._scan
@@ -587,7 +676,7 @@ class Engine:
         result = "find stable range: aborted"
         locked = False
         try:
-            if not self.out.output_on():
+            if not self._output_on():
                 result = "the DG1022's output is off: switch it on at the front panel first"
                 return
             lo, hi = max(req.v_lo, HARD_V_MIN), min(req.v_hi, HARD_V_MAX)
@@ -639,7 +728,8 @@ class Engine:
                 self._abort.clear()
                 self._ramp_to(v_back)
             with self._lock:
-                self._mode, self._state = "idle", "idle"
+                self._enter("idle")
+                self._state = "idle"
         with self._lock:
             self._message = result
             if self._scan is not None:
@@ -650,7 +740,8 @@ class Engine:
     def _lock_stretch(self, stretch: Stretch) -> None:
         with self._lock:
             self._goto_request = None
-            self._mode, self._state = "sweeping", "sweeping"
+            self._enter("sweeping")
+            self._state = "sweeping"
         v_back = self._volts
         result = "aborted"
         locked = False
@@ -680,6 +771,10 @@ class Engine:
 
 
 POLL_S = 0.01  # the wavemeter is polled every 10 ms (it measures every ~40 ms here)
+RELEASED = "lock released, holding {:.4f} V"
+HOLD_GAP_S = 1.0  # a stable-range hold fails after this long without a new valid reading (see `_hold_gap`)
+HOLD_MIN_READINGS = 3  # and with fewer valid readings than this in all
+HOLD_CHUNK_S = 0.2  # how often a hold checks
 RAMP_STEP_V = 0.05  # V per write when ramping (one write per 100 ms: 0.5 V/s)
 HOP_MIN_MHZ = 300.0  # a jump between sweep points at least this big (and well off the trend) is a mode hop
 

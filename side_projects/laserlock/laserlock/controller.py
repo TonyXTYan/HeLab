@@ -9,7 +9,9 @@ low-pass filtered (time constant `d_filter_s`), since the wavemeter's noise diff
 default) is a PI lock.
 
 Safety, per update:
-- the output stays within [v_min, v_max] and moves at most `max_step` from the last output;
+- the output stays within [v_min, v_max] and moves at most `max_step` from the last output. The last output
+  is the voltage applied, which the caller passes when it doesn't write every step (the engine writes at
+  most every 100 ms and the wavemeter can be faster): the limit then bounds each write, not each reading;
 - when either limit cuts the output, the integrator is set to what was applied minus the P term
   (back-calculation), so it never winds up beyond what the output can do;
 - no reading, or an error beyond `capture_mhz` (a mode hop, a wrong wavelength): hold the voltage, don't
@@ -70,8 +72,13 @@ class PILock:
         self.last_t = self.last_thz = None
         self.rate = self.d_term = 0.0
 
-    def update(self, thz: float | None, t: float) -> Step:
+    def update(self, thz: float | None, t: float, applied: float | None = None) -> Step:
+        """One step. `applied` is the voltage on the output now, when that isn't the last step's (None: every
+        step was written). The step limit is measured from it and a hold stays at it, so steps that were
+        never written don't add up into one large move."""
         s = self.s
+        if applied is not None:
+            self.voltage = applied
         if thz is None:
             self.last_t = self.last_thz = None
             return Step(self.voltage, None, "no reading")

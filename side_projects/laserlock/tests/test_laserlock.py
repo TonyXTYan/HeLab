@@ -13,7 +13,7 @@ pytest.importorskip("laserlock")
 
 from laserlock import config
 from laserlock.controller import LockSettings, PILock, nm_to_thz, suggest_gains, thz_to_nm
-from laserlock.devices import DG1022, HARD_V_MAX, DeviceFault
+from laserlock.devices import DG1022, HARD_V_MAX, DeviceFault, Reading
 from laserlock.engine import Engine
 from laserlock.sim import SimDG1022, SimLaser, SimWavemeter
 
@@ -480,12 +480,19 @@ def test_window_draws_hops(tmp_path: Any) -> None:
                 app.processEvents()
                 time.sleep(0.02)
 
+        def shown() -> int:
+            return sum(a.isVisible() for a, _ in win._hop_pool)
+
         win.hop_lines.setChecked(True)
         pump(0.6)
         laser.extra_mhz = 12_000.0
-        pump(0.8)
+        # The window redraws hops at most once a second, counted from its last redraw, so how long the line
+        # takes depends on when the first redraw fell: wait for it, not for a fixed time.
+        deadline = time.monotonic() + 10
+        while time.monotonic() < deadline and not shown():
+            pump(0.05)
         assert "Mode hops: 1" in win.hop_label.text()
-        assert sum(a.isVisible() for a, _ in win._hop_pool) == 1  # one line on each time plot
+        assert shown() == 1  # one line on each time plot
         xs, ys = win.hop_dots.getData()
         assert xs is not None and len(xs) == 1 and ys[0] == pytest.approx(eng.snapshot().volts)
         win.hop_mhz.setValue(20_000)
@@ -948,3 +955,353 @@ def test_range_presets(tmp_path: Any) -> None:
     assert win.err_range.auto.isChecked()
     win.close()
     app.processEvents()
+
+
+# ---------------------------------------------------------------- whose voltage, the step per write, the hold's readings
+
+
+class StepSource:
+    """A wavemeter whose every read is a new measurement (`fresh` off: it repeats the last one)."""
+
+    def __init__(self, thz: float | None = F0 - 100e-6) -> None:
+        self.thz, self.status, self.fresh, self.seq = thz, "low signal", True, 0
+        self._reading = Reading(time.monotonic(), None, "no value", 0)
+
+    def read(self) -> Reading:
+        if self.fresh:
+            self.seq += 1
+            self._reading = Reading(time.monotonic(), self.thz, "ok" if self.thz is not None else self.status, self.seq)
+        return self._reading
+
+    def describe(self) -> str:
+        return "step source"
+
+    def close(self) -> None:
+        pass
+
+
+class FakeOut:
+    """An output that takes every command at once and keeps `digits` decimals, as the DG1022 keeps 4."""
+
+    min_interval = 0.1
+
+    def __init__(self, volts: float = 3.0, digits: int = 4) -> None:
+        self.volts, self.digits = volts, digits
+        self.writes: list[float] = []
+        self.on_set: Any = None  # called while the device takes a command
+
+    def get(self) -> float:
+        return self.volts
+
+    def set(self, volts: float) -> float:
+        if self.on_set is not None:
+            self.on_set()
+        self.volts = round(min(max(volts, 0.0), HARD_V_MAX), self.digits)
+        self.writes.append(self.volts)
+        return self.volts
+
+    def readback(self) -> float:
+        return self.volts
+
+    def output_on(self) -> bool:
+        return True
+
+    def describe(self) -> str:
+        return "fake output"
+
+    def close(self) -> None:
+        pass
+
+
+NOT_YET = 1e12  # as `Engine._last_cmd`: the output's turn never comes (0.0: it has come)
+
+
+def _fake_engine(lock: bool = True, **settings: Any) -> tuple[Engine, StepSource, FakeOut]:
+    """An engine on fakes, its loop thread not started: the test calls `_tick` and `_flush_output` itself.
+    The source reads 100 MHz low, so a locked engine wants more voltage than `max_step` gives at once."""
+    src, out = StepSource(), FakeOut()
+    values: dict[str, Any] = {"setpoint_thz": F0, "kp": 0.001, "ki": 0.1, "v_min": 0, "v_max": 7, "max_step": 0.01}
+    eng = Engine(src, out, LockSettings(**{**values, **settings}))
+    if lock:
+        eng.engage()
+    return eng, src, out
+
+
+def test_release_withdraws_the_correction_waiting_for_the_outputs_turn() -> None:
+    eng, src, out = _fake_engine()
+    eng._last_cmd = NOT_YET
+    eng._tick()
+    eng._flush_output()
+    assert eng._target == pytest.approx(3.01) and out.writes == []  # a correction waits for its turn
+    eng.release()
+    eng._last_cmd = 0.0  # its turn comes, after Release
+    eng._tick()
+    eng._flush_output()
+    snap = eng.snapshot()
+    assert out.writes == [] and (snap.mode, snap.volts) == ("idle", 3.0)
+    assert snap.message == "lock released, holding 3.0000 V"
+    # a manual voltage after Release is still written
+    eng.set_voltage(3.2)
+    eng._flush_output()
+    assert out.writes == [3.2]
+    # and a new lock starts from the voltage applied
+    eng._last_cmd = NOT_YET
+    eng.engage()
+    eng._tick()
+    eng._flush_output()
+    assert out.writes == [3.2]
+    eng._last_cmd = 0.0
+    eng._flush_output()
+    assert out.writes == [3.2, pytest.approx(3.21)]
+
+
+def test_a_lost_lock_and_a_fault_withdraw_the_waiting_correction() -> None:
+    eng, src, out = _fake_engine(capture_mhz=500, lost_after_s=0.0)
+    eng._last_cmd = NOT_YET
+    eng._tick()
+    assert eng._target is not None
+    src.thz = F0 + 2000e-6  # out of capture: lost at once (lost_after_s = 0)
+    eng._tick()
+    assert eng.snapshot().state == "lost" and eng._target is None
+    eng._last_cmd = 0.0
+    eng._flush_output()
+    assert out.writes == []
+
+    eng, src, out = _fake_engine()
+    eng._last_cmd = NOT_YET
+    eng._tick()
+    with eng._lock:
+        eng._enter("fault")
+    eng._last_cmd = 0.0
+    eng._flush_output()
+    assert out.writes == []
+
+
+@pytest.mark.parametrize("start", ["engage", "sweep", "find_stable", "calibrate"])
+def test_a_manual_voltage_not_yet_written_is_dropped_when_the_mode_changes(start: str) -> None:
+    eng, src, out = _fake_engine(lock=False)
+    eng._last_cmd = NOT_YET
+    eng.set_voltage(4.0)
+    eng._flush_output()
+    assert eng._target == 4.0 and out.writes == []
+    if start == "engage":
+        eng.engage()
+    elif start == "sweep":
+        eng.sweep(3.0, 3.1, 0.05, 0.0, 0.01)
+    elif start == "find_stable":
+        eng.find_stable(3.0, 3.2, 0.05, 0.0, 0.01, F0)
+    else:
+        eng.calibrate(0.05, 0.0, 0.01)
+    assert eng.snapshot().mode != "idle" and eng._target is None  # nothing left to write after the sweep either
+    eng._last_cmd = 0.0
+    eng._flush_output()
+    assert out.writes == []
+
+
+def test_release_or_lock_while_a_command_is_on_its_way() -> None:
+    # Release lands while the DG1022 is taking the correction: it is applied, and the window says what is held
+    eng, src, out = _fake_engine()
+    out.on_set = eng.release
+    eng._tick()
+    eng._flush_output()
+    snap = eng.snapshot()
+    assert out.writes == [pytest.approx(3.01)] and (snap.mode, snap.volts) == ("idle", out.volts)
+    assert snap.message == "lock released, holding 3.0100 V"
+    out.on_set = None
+    eng._last_cmd = 0.0
+    eng._tick()
+    eng._flush_output()
+    assert len(out.writes) == 1  # and nothing follows it
+    # Lock lands while a manual voltage is on its way: the lock starts from that voltage
+    eng, src, out = _fake_engine(lock=False)
+    out.on_set = eng.engage
+    eng.set_voltage(3.5)
+    eng._flush_output()
+    assert eng.snapshot().mode == "locked" and eng.pi.voltage == eng.pi.integral == 3.5
+    out.on_set = None
+    eng._last_cmd = 0.0
+    eng._tick()
+    eng._flush_output()
+    assert out.writes == [3.5, pytest.approx(3.51)]
+
+
+def test_a_correction_never_waits_inside_the_dg1022(dg: tuple[DG1022, FakeVisa]) -> None:
+    d, fake = dg
+
+    def offsets() -> list[str]:
+        return [c for _, c in fake.log if c.startswith("VOLT:OFFS ")]
+
+    eng = Engine(StepSource(), d, LockSettings(setpoint_thz=F0, kp=0.001, ki=0.1, max_step=0.01))
+    eng.engage()
+    assert eng._output_on()  # a query has just taken the DG1022's turn
+    eng._tick()
+    began = time.monotonic()
+    eng._flush_output()
+    assert time.monotonic() - began < d.min_interval / 2  # it came back at once: no command waits in the device
+    assert eng._target is not None and offsets() == []
+    eng.release()
+    time.sleep(d.min_interval + 0.02)  # the turn comes
+    eng._tick()
+    eng._flush_output()
+    assert offsets() == []  # nothing of the released lock is written
+    eng.engage()  # control: a lock's correction is written when the turn has come
+    eng._tick()
+    eng._flush_output()
+    assert offsets() == ["VOLT:OFFS 0.0100"]
+
+
+def test_pi_measures_the_step_from_the_voltage_applied() -> None:
+    pi = PILock(LockSettings(setpoint_thz=F0, kp=0.0, ki=1.0, sign=1, v_min=0, v_max=7, max_step=0.01))
+    pi.engage(3.0)
+    # far low for 20 readings, and nothing was written between them: still one step from the 3 V applied
+    vs = [pi.update(F0 - 100e-6, t * 0.1, 3.0).voltage for t in range(20)]
+    assert max(vs) == pytest.approx(3.01) and vs[-1] == pytest.approx(3.01)
+    assert pi.update(F0 + 1e-6, 2.1, 3.0).voltage < 3.01  # no windup: the first opposite error turns it back
+    assert pi.update(None, 2.2, 3.0).voltage == 3.0  # a hold stays at the voltage applied
+    assert pi.update(F0 + 1.0, 2.3, 3.0).voltage == 3.0
+
+
+def test_ten_readings_before_one_write_move_the_output_one_step() -> None:
+    eng, src, out = _fake_engine(kp=0.0, ki=1.0)
+    eng._last_cmd = NOT_YET
+    for _ in range(10):  # the wavemeter measures while the DG1022's turn hasn't come
+        time.sleep(0.002)
+        eng._tick()
+        eng._flush_output()
+    assert out.writes == []
+    eng._last_cmd = 0.0
+    eng._flush_output()
+    assert out.writes == [pytest.approx(3.01)]  # one max_step, not ten
+    src.thz = F0 + 1e-6  # the integrator didn't wind up meanwhile: the first opposite error turns it back
+    time.sleep(0.002)
+    eng._tick()
+    assert eng._target is not None and eng._target < 3.01
+
+
+@pytest.mark.parametrize("digits", [4, 3])
+def test_every_write_stays_within_max_step_of_the_last(digits: int) -> None:
+    """A source faster than the output, integral action, an error that changes sign, long waits for the
+    output's turn, a device that rounds (to 1 mV with digits = 3) and that is slow enough to miss readings."""
+    eng, src, out = _fake_engine(kp=0.0005, ki=2.0)
+    out.digits = digits
+    out.on_set = lambda: [src.read() for _ in range(3)]  # readings come and go while it takes the command
+    steps: list[float] = []
+    for i in range(600):
+        src.thz = F0 + 90e-6 * math.sin(i / 40)
+        time.sleep(0.0005)
+        eng._tick()
+        waiting = i % 4 != 0 or 200 <= i < 260  # one turn per four readings, and none at all for a while
+        eng._last_cmd = NOT_YET if waiting else 0.0
+        before = out.volts
+        eng._flush_output()
+        if out.volts != before:
+            steps.append(out.volts - before)
+    assert len(steps) > 50 and min(steps) < 0 < max(steps)  # it moved, both ways
+    assert max(abs(x) for x in steps) <= 0.01 + 1e-9, max(abs(x) for x in steps)
+    assert all(0.0 <= v <= HARD_V_MAX for v in out.writes)
+
+
+def test_a_stable_range_hold_needs_new_valid_readings(monkeypatch: pytest.MonkeyPatch) -> None:
+    from laserlock import engine
+
+    monkeypatch.setattr(engine, "HOLD_GAP_S", 0.15)
+    monkeypatch.setattr(engine, "HOLD_CHUNK_S", 0.05)
+    eng, src, out = _fake_engine(lock=False)
+    src.thz = F0
+    assert eng._hold_test(0.4, F0, 100.0) is None  # new readings all through, all in range: stable
+    src.thz = None  # the signal disappears
+    why = eng._hold_test(0.4, F0, 100.0)
+    assert why is not None and why.startswith("no new valid reading") and "low signal" in why
+    src.thz = F0
+    eng._tick()
+    src.fresh = False  # the wavemeter repeats its last value
+    why = eng._hold_test(0.4, F0, 100.0)
+    assert why is not None and why.startswith("no new valid reading") and "repeated its last value" in why
+    src.fresh = True
+    monkeypatch.setattr(eng, "_collect", lambda seconds: [])  # nothing at all is collected
+    why = eng._hold_test(0.4, F0, 100.0)
+    assert why is not None and why.startswith("no new valid reading")
+    monkeypatch.undo()
+    # readings that are out of range still fail it, and an abort is an abort
+    src.thz = F0 + 500e-6
+    assert "left ±100 MHz" in (eng._hold_test(0.4, F0, 100.0) or "")
+    eng._abort.set()
+    assert eng._hold_test(0.4, F0, 100.0) == "aborted"
+
+
+def test_a_hold_fails_when_the_signal_is_lost_for_too_long_even_if_it_comes_back(monkeypatch: pytest.MonkeyPatch) -> None:
+    from laserlock import engine
+
+    monkeypatch.setattr(engine, "HOLD_CHUNK_S", 0.05)
+
+    class Dropout(StepSource):
+        """No signal from `lost[0]` to `lost[1]` seconds after `began`."""
+
+        began, lost = 0.0, (0.0, 0.0)
+
+        def read(self) -> Reading:
+            since = time.monotonic() - self.began
+            self.thz = None if self.lost[0] <= since < self.lost[1] else F0
+            return super().read()
+
+    src, out = Dropout(), FakeOut()
+    eng = Engine(src, out, LockSettings())
+    monkeypatch.setattr(engine, "HOLD_GAP_S", 0.2)
+    src.began, src.lost = time.monotonic(), (0.1, 0.6)  # lost for 0.5 s, back for the last 0.4 s of the hold
+    why = eng._hold_test(1.0, F0, 100.0)
+    assert why is not None and why.startswith("no new valid reading")
+    monkeypatch.setattr(engine, "HOLD_GAP_S", 2.0)
+    src.began, src.lost = time.monotonic(), (0.1, 0.2)  # a dropout shorter than the limit is not a lost signal
+    assert eng._hold_test(0.6, F0, 100.0) is None
+
+
+def test_a_hold_with_too_few_readings_fails() -> None:
+    class Slow(StepSource):
+        """A new measurement every 0.4 s."""
+
+        due = 0.0
+
+        def read(self) -> Reading:
+            self.fresh = time.monotonic() >= self.due
+            if self.fresh:
+                self.due = time.monotonic() + 0.4
+            return super().read()
+
+    src = Slow(F0)
+    eng = Engine(src, FakeOut(), LockSettings())
+    why = eng._hold_test(0.5, F0, 100.0)  # one or two readings in the hold: no gap over the limit, but too few
+    assert why is not None and why.startswith("only ") and "at least 3 needed" in why
+
+
+def test_find_stable_doesnt_lock_when_the_signal_goes_after_the_scan() -> None:
+    class Wavemeter(SimWavemeter):
+        lost = False
+
+        def read(self) -> Reading:
+            r = super().read()
+            return Reading(r.t, None, "low signal", r.seq) if self.lost else r
+
+    laser = SimLaser(f0_thz=F0, mhz_per_v=300.0, noise_mhz=0.2, walk_mhz_per_rt_s=0.0, sine_mhz=0.0, seed=15,
+                     hop_every_v=2.0, hop_mhz=1500.0)
+    out = SimDG1022(laser, min_interval=0.01, volts=1.5)
+    wm = Wavemeter(laser, period=0.01)
+    eng = Engine(wm, out, LockSettings())
+    eng.start()
+    try:
+        eng.find_stable(0.0, 7.0, 0.25, 0.0, 0.1, F0 + 300e-6, 0.3, 4.0)  # the target is crossed at 1 V
+        deadline = time.monotonic() + 60
+        while time.monotonic() < deadline and "holding" not in eng.snapshot().message:
+            time.sleep(0.01)
+        assert "holding" in eng.snapshot().message
+        wm.lost = True  # the scan was fine; the signal goes during the hold
+        while time.monotonic() < deadline and eng.snapshot().mode == "sweeping":
+            time.sleep(0.05)
+        snap = eng.snapshot()
+        assert snap.mode == "idle", snap
+        assert snap.message.startswith("find stable range: not locked, no new valid reading"), snap.message
+        assert "low signal" in snap.message
+        assert out.get() == pytest.approx(1.5)  # back where it started, unlocked
+        _, scan = eng.scan_data()
+        assert scan is not None and scan.message == snap.message
+    finally:
+        eng.stop()
