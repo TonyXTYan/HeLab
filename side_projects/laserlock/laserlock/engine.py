@@ -707,9 +707,14 @@ class Engine:
             self._set_progress(f"find stable range: approaching {choice.target_v:.4f} V from below")
             self._ramp_to(choice.v_lo)
             self._ramp_to(choice.target_v)
-            self._collect(req.settle_s + 0.3)
+            arrived = self._collect(req.settle_s + 0.3)
             limit = max(5 * abs(choice.mhz_per_v) * req.step, HOP_MIN_MHZ)
-            failed = self._hold_test(req.hold_s, req.target_thz, limit)
+            if req.hold_s > 0:
+                failed = self._hold_test(req.hold_s, req.target_thz, limit)
+            elif self._abort.is_set():
+                failed = "aborted"
+            else:  # a hold of 0 skips the watch, not the reading: the laser must still be measured there
+                failed = None if arrived else f"no valid reading there (wavemeter: {self._reading.status})"
             if failed is not None:
                 result = f"find stable range: not locked, {failed} at {choice.target_v:.4f} V"
                 return

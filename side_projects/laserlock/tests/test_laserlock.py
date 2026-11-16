@@ -1273,7 +1273,10 @@ def test_a_hold_with_too_few_readings_fails() -> None:
     assert why is not None and why.startswith("only ") and "at least 3 needed" in why
 
 
-def test_find_stable_doesnt_lock_when_the_signal_goes_after_the_scan() -> None:
+@pytest.mark.parametrize("hold, at, why", [(4.0, "holding", "no new valid reading"),
+                                           (0.0, "approaching", "no valid reading there")])
+def test_find_stable_doesnt_lock_when_the_signal_goes_after_the_scan(hold: float, at: str, why: str) -> None:
+    """The scan was fine; the signal goes during the hold, or (a hold of 0: no watch) on the way to the target."""
     class Wavemeter(SimWavemeter):
         lost = False
 
@@ -1288,20 +1291,33 @@ def test_find_stable_doesnt_lock_when_the_signal_goes_after_the_scan() -> None:
     eng = Engine(wm, out, LockSettings())
     eng.start()
     try:
-        eng.find_stable(0.0, 7.0, 0.25, 0.0, 0.1, F0 + 300e-6, 0.3, 4.0)  # the target is crossed at 1 V
+        eng.find_stable(0.0, 7.0, 0.25, 0.0, 0.1, F0 + 300e-6, 0.3, hold)  # the target is crossed at 1 V
         deadline = time.monotonic() + 60
-        while time.monotonic() < deadline and "holding" not in eng.snapshot().message:
-            time.sleep(0.01)
-        assert "holding" in eng.snapshot().message
-        wm.lost = True  # the scan was fine; the signal goes during the hold
+        while time.monotonic() < deadline and at not in eng.snapshot().message:
+            time.sleep(0.002)
+        assert at in eng.snapshot().message
+        wm.lost = True
         while time.monotonic() < deadline and eng.snapshot().mode == "sweeping":
             time.sleep(0.05)
         snap = eng.snapshot()
         assert snap.mode == "idle", snap
-        assert snap.message.startswith("find stable range: not locked, no new valid reading"), snap.message
+        assert snap.message.startswith(f"find stable range: not locked, {why}"), snap.message
         assert "low signal" in snap.message
         assert out.get() == pytest.approx(1.5)  # back where it started, unlocked
         _, scan = eng.scan_data()
         assert scan is not None and scan.message == snap.message
+    finally:
+        eng.stop()
+
+
+def test_find_stable_with_a_hold_of_zero_locks_on_a_reading_at_the_target() -> None:
+    laser = SimLaser(f0_thz=F0, mhz_per_v=300.0, noise_mhz=0.2, walk_mhz_per_rt_s=0.0, sine_mhz=0.0, seed=16,
+                     hop_every_v=2.0, hop_mhz=1500.0)
+    eng = Engine(SimWavemeter(laser, period=0.01), SimDG1022(laser, min_interval=0.01, volts=1.5), LockSettings())
+    eng.start()
+    try:
+        msg = _run_scan(eng, F0 + 300e-6, hold=0.0)
+        assert msg.startswith("find stable range: locked"), msg
+        assert eng.snapshot().mode == "locked"
     finally:
         eng.stop()

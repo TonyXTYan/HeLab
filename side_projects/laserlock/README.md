@@ -148,7 +148,8 @@ direction jumped next to it. Then:
   from below (as the up sweep came), **holds** (default 5 s) and watches for mode hops; no hop: it sets the
   gains from the stretch's slope, keeps the output inside the stretch, and locks. The hold needs readings:
   it fails when no new valid reading comes for 1 s (or five of the wavemeter's update periods, if that is
-  longer), also if the signal then comes back, and when fewer than 3 valid readings came in all;
+  longer), also if the signal then comes back, and when fewer than 3 valid readings came in all. A hold of
+  0 skips the watch, but the laser must still be read at the target once it has settled;
 - otherwise (not in one, too near an edge, a hop or no readings while holding) it returns to where it started and the
   table lists every stable stretch, widest in frequency first: its output range, where the setpoint falls
   in it or the **shift** the laser needs (+ raises its frequency) to put the setpoint at its centre, its
