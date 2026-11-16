@@ -53,7 +53,14 @@ def test_a_port_another_program_holds_on_all_addresses_is_left_to_it(
         pytest.skip("Windows beside a dual-stack listener: not handled (known issue)")
     server = DashServer()
     servers.append(server)
-    with socket.socket(family) as other:
+    try:
+        other = socket.socket(family)
+    except OSError as exc:
+        if family != socket.AF_INET6:
+            raise
+        # (Python has IPv6 but the kernel doesn't: a container. "Address family not supported by protocol".)
+        pytest.skip(f"no IPv6 here: {exc}")
+    with other:
         if family == socket.AF_INET6:
             try:
                 other.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)  # IPv4 too, as a dual-stack server
