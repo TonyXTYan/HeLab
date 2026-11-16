@@ -39,6 +39,9 @@ else:
     from helab.utils import app_log
     path = app_log.start_crash_file(folder, getattr(app_log, name))
 print(path, flush=True)
+if how == "armed":  # As ``main`` arms the last resort at quit, then exits cleanly well before it is due.
+    from helab.utils import crash_file
+    assert crash_file.exit_after(600)
 if how == "crash":
     import faulthandler
     ready = threading.Event()
@@ -73,6 +76,48 @@ def test_a_clean_exit_removes_the_empty_crash_file(tmp_path: Path) -> None:
     result, path = child(tmp_path, "CRASH_NAME", "exit")
     assert result.returncode == 0, result.stderr
     assert path.name.startswith("crash-") and not path.exists()
+
+
+def test_a_clean_exit_with_the_last_resort_armed_leaves_the_file_for_the_tidy(tmp_path: Path) -> None:
+    """Armed at quit (``exit_after``), the timer may still write during teardown, so a clean exit doesn't remove
+    the file; nothing was written, and the next start's tidy removes empty ones."""
+    result, path = child(tmp_path, "CRASH_NAME", "armed")
+    assert result.returncode == 0, result.stderr
+    assert path.exists() and path.read_text() == ""
+
+
+def test_the_last_resort_writes_through_a_descriptor_of_its_own(tmp_path: Path) -> None:
+    """Review R5: the timer's output is an OS descriptor this module keeps (a duplicate of the crash file's), not
+    the Python file object, which Python 3.13.5 closed under it in the interpreter's last collection (the stuck
+    teardown itself: ``tests/test_quit_confirms.py``). Arming again closes the one before; ``end`` closes the file
+    object and leaves the timer's descriptor, and the file, alone."""
+    import faulthandler
+    from helab.utils import crash_file
+    assert crash_file._crash is None and crash_file._armed is None
+    assert crash_file.exit_after(3600) is False  # (No crash file: nothing to arm.)
+    path = crash_file.start(str(tmp_path))
+    try:
+        assert crash_file._crash is not None
+        file = crash_file._crash[0]
+        assert crash_file.exit_after(3600)
+        first = crash_file._armed
+        assert isinstance(first, int) and first != file.fileno() and os.path.samestat(os.fstat(first), os.stat(path))
+        assert crash_file.exit_after(3600)
+        second = crash_file._armed
+        assert isinstance(second, int) and os.path.samestat(os.fstat(second), os.stat(path))
+        if second != first:  # (The first one's number may be given out again.)
+            with pytest.raises(OSError):
+                os.fstat(first)
+        crash_file.end()
+        assert file.closed and os.path.exists(path)  # armed: not removed, though empty
+        os.write(second, b"still open\n")  # as the timer writes, after the file object has gone
+        assert Path(path).read_text() == "still open\n"
+    finally:
+        faulthandler.cancel_dump_traceback_later()
+        crash_file.end()
+        if crash_file._armed is not None:
+            os.close(crash_file._armed)
+            crash_file._armed = None
 
 
 def test_no_crash_file_where_it_cant_be_written(tmp_path: Path, caplog: pytest.LogCaptureFixture,

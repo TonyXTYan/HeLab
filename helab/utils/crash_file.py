@@ -20,8 +20,12 @@ HELPER_CRASH_NAME = "helper-crash-{pid}.txt"
 HELPER_DIR_ENV = "HELAB_HELPER_CRASH_DIR"
 
 _crash: tuple[IO[str], str] | None = None
-# The file ``exit_after``'s timer writes to: kept open to the process's end once armed.
-_armed: IO[str] | None = None
+# The descriptor ``exit_after``'s timer writes to: this module's own, a duplicate of the crash file's that no
+# Python object owns, so nothing in Python's teardown can close it. (The file object itself didn't last: with
+# Python 3.13.5 the timer fired in the interpreter's last collection and wrote nothing, whatever still referred
+# to the file; a plain descriptor kept the stack.) Left open on purpose until the process ends, when the OS
+# closes it; arming again closes the one before.
+_armed: int | None = None
 
 
 def start(folder: str, name: str = CRASH_NAME) -> str:
@@ -43,13 +47,23 @@ def exit_after(seconds: float) -> bool:
     """Quit's last resort (``helab.views.quit_watch``): if this process still runs ``seconds`` from now,
     every thread's stack goes to the crash file and the process ends, with exit code 1. The timer is
     ``faulthandler``'s own C thread, which outlives Python's teardown, where a daemon thread (the quit watch)
-    no longer runs (GT-2). False without a crash file. The file then stays open to the process's end, and
-    stays even while empty (the startup tidy removes empty ones)."""
+    no longer runs (GT-2). False without a crash file (or if its descriptor can't be duplicated). The timer
+    writes through a descriptor of its own (``_armed``), which stays open to the process's end; the file stays
+    even while empty (the startup tidy removes empty ones)."""
     global _armed
     if _crash is None:
         return False
-    _armed = _crash[0]
-    faulthandler.dump_traceback_later(seconds, exit=True, file=_armed)
+    try:
+        descriptor = os.dup(_crash[0].fileno())
+    except (OSError, ValueError):  # (No descriptor left, or the file closed.)
+        return False
+    faulthandler.dump_traceback_later(seconds, exit=True, file=descriptor)  # (Replaces a timer armed before.)
+    before, _armed = _armed, descriptor
+    if before is not None:
+        try:
+            os.close(before)
+        except OSError:
+            pass
     return True
 
 
@@ -61,11 +75,10 @@ def end() -> None:
     file, path = _crash
     _crash = None
     faulthandler.disable()
-    if file is _armed:
-        return  # (Its last resort may still write during teardown.)
     try:
         file.close()
-        if os.path.getsize(path) == 0:
+        # (Armed: the last resort may still write during teardown, through its own descriptor. The file stays.)
+        if _armed is None and os.path.getsize(path) == 0:
             os.remove(path)
     except OSError:  # (Gone, or held elsewhere on Windows: the tidy at the next start takes it.)
         pass
