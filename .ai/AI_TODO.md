@@ -629,6 +629,8 @@ A56.7, A58.2 and A56.4 done; landed `20dd672`, CI 41770471113).
   install the lock. The PyQt6 6.12.1 ViewBox failure is in known-issues.
 - [ ] **A75.3 `test_a_killed_helpers_workers_exit`: count a zombie as exited** (A~3; `psutil.STATUS_ZOMBIE`), the
   second symptom in its known-issues entry. Not reproduced yet, so a fix would be unchecked.
+- [ ] **A75.4 Laserlock: "Max step / update" becomes "Max step / write"** (Q75.3, decided): the label in
+  `side_projects/laserlock/laserlock/gui.py` (and the README's wording if it names it).
 
 ## Not AI work (stays in MANUAL_TODO)
 

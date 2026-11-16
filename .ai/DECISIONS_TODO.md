@@ -42,24 +42,24 @@ since the v0.0.7a1 tidy-up):
 
 ## Review fixes at 09ca79b (block 75; [handoff](sessions/2026-11-17-claude-review-09ca79b-fixes/handoff.md))
 
-Built on `claude/gracious-brahmagupta-0cghhu` (a cloud session), fast-forwarded into `dev/v0.0.9` at `6230b19`.
+Built on `claude/gracious-brahmagupta-0cghhu` (a cloud session), fast-forwarded into `dev/v0.0.9` at `6230b19`. Tony in Chat, 2026-11-17: "Q75.x ok" (all as proposed).
 
-- **Q75.1** (open) Wording when HeLab is started during an update. The app: a window titled "HeLab is being
+- **Q75.1** (decided) Wording when HeLab is started during an update. The app: a window titled "HeLab is being
   updated", "HeLab is being updated. It starts again by itself when the update has finished; start it then if it
   doesn't.", which closes itself after 8 s (a HeLab left waiting at a message would hold up the update). A command:
   "HeLab is being updated: run this again when the update has finished." Proposed: keep.
-- **Q75.2** (open) The drawn image's title when the bins don't divide (R3): "each the mean of 2.999 × 1 bins"
+- **Q75.2** (decided) The drawn image's title when the bins don't divide (R3): "each the mean of 2.999 × 1 bins"
   (4 figures), or "about 3 × 1 bins". Proposed: keep the figures.
-- **Q75.3** (open) Laserlock's "Max step / update" label now limits each write to the DG1022. Rename to "Max step /
-  write"? Proposed: yes (only a tooltip was added so far).
-- **Q75.4** (open) Laserlock: a manual voltage not yet written (a 100 ms window) is dropped when Lock, a sweep, a scan
+- **Q75.3** (decided) Laserlock's "Max step / update" label now limits each write to the DG1022. Rename to "Max step /
+  write"? Proposed: yes (only a tooltip was added so far). Its build: A75.4.
+- **Q75.4** (decided) Laserlock: a manual voltage not yet written (a 100 ms window) is dropped when Lock, a sweep, a scan
   or a calibration starts; before, it was written after the sweep or under the new lock. Proposed: keep.
-- **Q75.5** (open) Laserlock's hold limits (N3): 1 s or five update periods without a valid reading, at least 3
+- **Q75.5** (decided) Laserlock's hold limits (N3): 1 s or five update periods without a valid reading, at least 3
   readings, no recovery once the limit passed, a hold of 0 needs one reading at the target. Proposed: keep.
-- **Q75.6** (open) A durable journal for the updater (a kill or power cut between two venv renames; R1 made the
+- **Q75.6** (decided) A durable journal for the updater (a kill or power cut between two venv renames; R1 made the
   renames all or nothing only while the updater runs). Proposed: not for v0.0.9.
-- **Q75.7** (open) `helab cache` (read only) is refused during an update too. Proposed: keep.
-- **Q75.8** (open) Plane projections' Bins tooltip gained a sentence on the drawn image. Proposed: keep.
+- **Q75.7** (decided) `helab cache` (read only) is refused during an update too. Proposed: keep.
+- **Q75.8** (decided) Plane projections' Bins tooltip gained a sentence on the drawn image. Proposed: keep.
 
 Also for Tony to know (no question): laserlock's default lock now moves 0.1 V/s, not 0.25 V/s (N2: each write at
 most Max step from the applied voltage); raise **Max step** if a lock needs the old rate.
