@@ -73,7 +73,10 @@ the events flattened onto it. Every axis is a velocity at the same scale, so a p
 - **Thickness**: 0 flattens every event onto the plane; above 0 only the events within half of it, either side,
   are kept: a slice (a thin slice through a halo's centre shows its ring).
 - **Images**: **Range: keep** (each histogram spans the shortest range holding this share), or a **Half-width**
-  that gives every histogram the same span; **Bins per axis**; the colour scale (sqrt, log, power γ).
+  that gives every histogram the same span; **Bins per axis**; the colour scale (sqrt, log, power γ). A
+  histogram of more than 1,000 bins a side is drawn from the mean of blocks of bins, at most 1,000 a side (its
+  title says so); the counts keep every bin. Many bins on several planes take a lot of memory: the settings
+  page warns when the plot would take half of HeLab's RAM budget, as it does for the XY, XT, YT histograms.
 - **3D view**: point size, opacity, the display cap and how solid the planes are drawn.
 
 It is drawn with Plotly (turn the 3D view with the mouse; it keeps its camera as Live adds shots) or Matplotlib.

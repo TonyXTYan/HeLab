@@ -109,8 +109,8 @@ def test_every_library_draws_each_cell_over_the_bins_it_averages(bins: tuple[int
     assert drawn.get_array().shape == (bins[1], cells)
     assert np.allclose(np.linspace(left, right, cells + 1), display.h_edges, atol=1e-12)
     assert (bottom, top) == (histogram.v_edges[0], histogram.v_edges[-1])
-    trace = histograms_2d.planes_plotly(result).data[0]
-    across = np.asarray(trace.x)
+    figure: Any = histograms_2d.planes_plotly(result)
+    across = np.asarray(figure.data[0].x)
     assert np.allclose(np.diff(across), np.diff(across)[0])  # Plotly's cells: equal, borders midway between centres
     assert across[0] - np.diff(across)[0] / 2 == pytest.approx(histogram.h_edges[0])
     assert across[-1] + np.diff(across)[0] / 2 == pytest.approx(histogram.h_edges[-1])

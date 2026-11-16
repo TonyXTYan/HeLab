@@ -57,6 +57,9 @@ newer one is offered again.
    packages (`requirements.lock` or `setup.py` changed) does it build a new venv first, beside the old one,
    which takes a few minutes; otherwise the venv is kept.
 
+While the updater works, HeLab can't be started: started by hand, HeLab (or `helab convert`) says it is being
+updated and stops, and the update goes on. HeLab starts by itself when the update has finished.
+
 When HeLab starts again, the status bar says it was updated. If anything went wrong, HeLab is put back as
 it was and starts again, and a message says what happened, with the updater's log. (If the new version
 couldn't start and its helper processes still ran two minutes later, it is left in place instead, and the
@@ -70,7 +73,7 @@ HeLab won't update, and says why, when:
   `git stash apply` bring them back), or untracked files the update would overwrite;
 - `git` isn't installed, or `uv` isn't when the venv must be rebuilt;
 - the new version needs another Python version;
-- another HeLab (a `helab convert`) or a cache move is running;
+- another HeLab (a `helab convert`), a cache move or another update is running;
 - the checkout isn't on the branch it follows, has commits the repository's branch doesn't, or the release
   isn't on the repository's `main`.
 

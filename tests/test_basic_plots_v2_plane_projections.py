@@ -200,6 +200,12 @@ def estimate(values: dict[str, Any]) -> int:
     return SCRIPT.estimated_bytes("Plot", effective(SCRIPT.parameters("Plot"), values))
 
 
+def heatmap(result: AnalysisResult) -> Any:
+    """The first plane's histogram as Plotly is given it."""
+    figure: Any = plane_projections.projections_plotly(result)
+    return next(trace for trace in figure.data if trace.type == "heatmap")
+
+
 def test_the_estimate_counts_every_plane_on_and_its_bins() -> None:
     """Up to four planes of 10,000 × 10,000 int64 counts: 3.2 GB held before anything is drawn. The estimate is
     what the settings page's memory warning (Undo, Cancel) reads; it was 0."""
@@ -247,7 +253,7 @@ def test_many_bins_are_counted_whole_and_drawn_with_at_most_a_thousand_cells_a_s
     display = data.displays[0]
     reduced = cells < bins
     assert len(data.displays) == 1 and (display is not None) is reduced
-    trace: Any = next(trace for trace in plane_projections.projections_plotly(result).data if trace.type == "heatmap")
+    trace = heatmap(result)
     z, x = np.asarray(trace.z), np.asarray(trace.x)
     assert z.shape == (cells, cells) and z.size <= 1_000 * 1_000 and len(x) == cells
     assert np.allclose(np.diff(x), (image.h_edges[-1] - image.h_edges[0]) / cells)  # equal cells over the range
@@ -281,6 +287,5 @@ def test_a_drawn_image_survives_the_codec_and_an_older_result_is_reduced_when_dr
     drawn = older.drawn(0)
     assert drawn is not None and drawn.image.shape == (600, 600)
     np.testing.assert_array_equal(drawn.image, result.data.displays[0].image)
-    trace: Any = next(trace for trace in plane_projections.projections_plotly(
-        dataclasses.replace(result, data=older)).data if trace.type == "heatmap")
+    trace = heatmap(dataclasses.replace(result, data=older))
     assert np.asarray(trace.z).shape == (600, 600)
